@@ -1,5 +1,5 @@
-import { OFFLINE_CAP_LABEL, OFFLINE_CAP_SECONDS } from "./game/content";
-import { formatDuration } from "./game/format";
+import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
+import { unlockBanner } from "./data/achievements";
 import { buy, prestige, scrape, tick } from "./game/logic";
 import { clearSlot, equipCard, equipFirstEmpty, moveSlot, patchSlot, toggleSlot } from "./automation/engine";
 import {
@@ -19,21 +19,31 @@ import "./style.css";
 
 const AUTOSAVE_MS = 15_000;
 const BACKGROUND_NOTICE_SECONDS = 5;
+const OFFLINE_MODAL_SECONDS = 30;
 
 const app = document.querySelector("#app");
 if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 
 const store = localStorageSafe();
-const loaded = store ? loadGame(store) : { state: createInitialState(), appliedSeconds: 0, rawSeconds: 0, capped: false };
+let loaded: OfflineCatchup = emptyCatchup(createInitialState());
+let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
+if (store) {
+  try {
+    loaded = loadGame(store);
+  } catch {
+    loaded = emptyCatchup(createInitialState());
+    status = "存档无法读取，已重新开始";
+  }
+}
 
 let state: GameState = loaded.state;
-let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
-let banner: string | null = offlineBanner(loaded.appliedSeconds, loaded.capped);
+let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
+let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
-view.update(present(state, status, banner));
+view.update(present(state, status, banner, catchup));
 
 let lastFrame = performance.now();
 window.requestAnimationFrame(frame);
@@ -48,19 +58,27 @@ function frame(now: number): void {
   const gap = (now - lastFrame) / 1000;
   lastFrame = now;
   if (gap >= BACKGROUND_NOTICE_SECONDS) {
-    const applied = Math.min(gap, OFFLINE_CAP_SECONDS);
-    state = tick(state, applied, "offline");
-    banner = offlineBanner(applied, gap > OFFLINE_CAP_SECONDS);
+    const result = catchUp(state, gap);
+    state = result.state;
+    if (result.appliedSeconds >= OFFLINE_MODAL_SECONDS) catchup = result;
+    const unlocked = unlockBanner(result.newAchievementIds);
+    if (unlocked) banner = unlocked;
     persist("已追赶后台进度");
   } else if (gap > 0) {
+    const before = state.unlocked;
     state = tick(state, gap);
+    const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
+    if (unlocked) banner = unlocked;
   }
-  view.update(present(state, status, banner));
+  view.update(present(state, status, banner, catchup));
   window.requestAnimationFrame(frame);
 }
 
 async function handleAction(action: UiAction): Promise<void> {
-  if (action.type === "scrape") {
+  const before = state.unlocked;
+  if (action.type === "dismiss-offline") {
+    catchup = null;
+  } else if (action.type === "scrape") {
     state = scrape(state);
     status = "采集 +1 金属";
   } else if (action.type === "protocol-palette") {
@@ -96,7 +114,7 @@ async function handleAction(action: UiAction): Promise<void> {
     status = gained.gte(1) ? `已购买 ${gained.toFixed(0)} 台` : "资源不足";
     if (gained.gte(1)) persist();
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";
@@ -121,17 +139,23 @@ async function handleAction(action: UiAction): Promise<void> {
     if (!window.confirm("清空本地存档并重新开始？")) return;
     if (store) clearSave(store);
     state = createInitialState();
+    catchup = null;
     banner = null;
     status = "已重置";
     view.setTransferText("");
   }
-  view.update(present(state, status, banner));
+  if (action.type === "scrape" || action.type === "buy" || action.type === "prestige") {
+    const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
+    if (note) banner = note;
+  }
+  view.update(present(state, status, banner, catchup));
 }
 
 function applyImport(json: string): void {
   try {
     const file = importSave(json);
     state = deserializeState(file.state);
+    catchup = null;
     banner = null;
     status = "已导入存档";
     persist("已导入并存入本地");
@@ -152,12 +176,6 @@ function persist(nextStatus?: string): void {
   } catch {
     status = "写入本地存储失败";
   }
-}
-
-function offlineBanner(appliedSeconds: number, capped: boolean): string | null {
-  if (appliedSeconds < 1) return null;
-  const extra = capped ? "超出上限的部分已丢弃。" : "";
-  return `已结算离线进度 ${formatDuration(appliedSeconds)}（上限 ${OFFLINE_CAP_LABEL}）。${extra}`;
 }
 
 function download(json: string): void {

@@ -1,6 +1,24 @@
 import { big } from "./decimal";
 import { FREE_SOLAR_PLANTS } from "./content";
-import { PRODUCER_IDS, PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type GameState, type ProtocolLoadout, type ProtocolSlotState } from "./types";
+import {
+  PRODUCER_IDS,
+  PROTOCOL_SLOT_COUNT,
+  RESOURCE_IDS,
+  type GameState,
+  type PlayerStats,
+  type ProtocolLoadout,
+  type ProtocolSlotState,
+} from "./types";
+
+export function emptyStats(): PlayerStats {
+  return {
+    scrapes: 0,
+    launches: 0,
+    seenEnergyShort: false,
+    manualActions: 0,
+    automatedLaunches: 0,
+  };
+}
 
 function zeros<T extends string>(ids: readonly T[]): Record<T, ReturnType<typeof big>> {
   const out = {} as Record<T, ReturnType<typeof big>>;
@@ -33,5 +51,8 @@ export function createInitialState(): GameState {
     hasPrestiged: false,
     unlockedCards: [],
     protocols: createDefaultProtocols(),
+    unlocked: [],
+    stats: emptyStats(),
+    offlineBonusHours: 0,
   };
 }

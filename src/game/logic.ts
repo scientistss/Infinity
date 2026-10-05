@@ -1,4 +1,5 @@
 import { evaluateLoadout, hasRunnableProtocol, refreshUnlocks } from "../automation/engine";
+import { achievementFactor, ACHIEVEMENTS } from "../data/achievements";
 import {
   CORE_BONUS_PER_CORE,
   MANUAL_METAL_PER_CLICK,
@@ -40,11 +41,14 @@ export interface EnergyReport {
  * Pure: the input state is not mutated.
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live"): GameState {
-  if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return state;
+  const ready = applyAchievementUnlocks(state);
+  if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return ready;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : LIVE_PROTOCOL_SECONDS;
-  if (!hasRunnableProtocol(state)) return refreshUnlocks(markEnergyShortage(produce(state, dtSeconds)));
+  if (!hasRunnableProtocol(ready)) {
+    return applyAchievementUnlocks(refreshUnlocks(markEnergyShortage(produce(ready, dtSeconds))));
+  }
 
-  let current = state;
+  let current = ready;
   let remaining = dtSeconds;
   let guard = 0;
   const limit = Math.ceil(dtSeconds / period) + 2;
@@ -63,7 +67,26 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     if (accruedNext >= period - 1e-8) current = evaluateLoadout(setAccumulator(current, 0), period);
     else current = setAccumulator(current, accruedNext);
   }
-  return refreshUnlocks(markEnergyShortage(current));
+  return applyAchievementUnlocks(refreshUnlocks(markEnergyShortage(current)));
+}
+
+/** Record an energy shortage, then append any newly met achievements. Already unlocked stays unlocked. */
+export function applyAchievementUnlocks(state: GameState): GameState {
+  const marked = markEnergyShortage(state);
+  const owned = new Set(marked.unlocked);
+  let added = false;
+  for (const def of ACHIEVEMENTS) {
+    if (owned.has(def.id)) continue;
+    if (def.met(marked)) {
+      owned.add(def.id);
+      added = true;
+    }
+  }
+  if (!added && marked === state) return state;
+  return {
+    ...marked,
+    unlocked: ACHIEVEMENTS.filter((def) => owned.has(def.id)).map((def) => def.id),
+  };
 }
 
 function produce(state: GameState, dtSeconds: number): GameState {
@@ -81,14 +104,14 @@ function setAccumulator(state: GameState, accumulator: number): GameState {
   return { ...state, protocols: { ...state.protocols, accumulator } };
 }
 
-/** Unspent warp cores and robotics factories. Does not include energy efficiency. */
+/** Unspent warp cores, robotics factories, and +1% per achievement. Does not include energy efficiency. */
 export function globalMultiplier(state: GameState): BigNumber {
   let mult = big(1).add(state.warpCores.mul(CORE_BONUS_PER_CORE));
   for (const producer of PRODUCERS) {
     if (producer.globalProductionMult === 1) continue;
     mult = mult.mul(big(producer.globalProductionMult).pow(state.producers[producer.id]));
   }
-  return mult;
+  return mult.mul(achievementFactor(state));
 }
 
 export function energyReport(state: GameState): EnergyReport {
@@ -110,9 +133,14 @@ export function resourceMultiplier(state: GameState): BigNumber {
 }
 
 export function markEnergyShortage(state: GameState): GameState {
-  if (state.seenEnergyShortage) return state;
-  if (energyReport(state).efficiency.lt(1)) return { ...state, seenEnergyShortage: true };
-  return state;
+  if (state.seenEnergyShortage && state.stats.seenEnergyShort) return state;
+  const short = state.seenEnergyShortage || energyReport(state).efficiency.lt(1);
+  if (!short) return state;
+  return {
+    ...state,
+    seenEnergyShortage: true,
+    stats: { ...state.stats, seenEnergyShort: true },
+  };
 }
 
 export function productionPerSecond(state: GameState, id: ResourceId): BigNumber {
@@ -141,7 +169,7 @@ export function warpGain(state: GameState): BigNumber {
 
 /**
  * Launch the colony ship. Resets the surface and banks warp cores.
- * Protocol cards, unlocks, and manual-click progress stay.
+ * Protocol cards, unlocks, achievements, and manual-click progress stay.
  * Returns the same state when the gain would be zero.
  */
 export function prestige(state: GameState): GameState {
@@ -154,6 +182,15 @@ export function prestige(state: GameState): GameState {
   next.seenEnergyShortage = state.seenEnergyShortage;
   next.hasPrestiged = true;
   next.unlockedCards = state.unlockedCards.slice();
+  next.unlocked = state.unlocked.slice();
+  next.offlineBonusHours = state.offlineBonusHours;
+  next.stats = {
+    scrapes: state.stats.scrapes,
+    launches: state.stats.launches + 1,
+    seenEnergyShort: state.stats.seenEnergyShort,
+    manualActions: 0,
+    automatedLaunches: state.stats.automatedLaunches + (state.stats.manualActions === 0 ? 1 : 0),
+  };
   next.protocols = {
     accumulator: 0,
     slots: state.protocols.slots.map((slot) => ({
@@ -161,18 +198,25 @@ export function prestige(state: GameState): GameState {
       card: slot.card ? structuredClone(slot.card) : null,
     })),
   };
-  return refreshUnlocks(next);
+  return applyAchievementUnlocks(refreshUnlocks(next));
 }
 
 /** Manual collect. Counts toward the auto-collect unlock. Auto-collect does not call this. */
 export function scrape(state: GameState): GameState {
   const gain = big(MANUAL_METAL_PER_CLICK);
-  return refreshUnlocks({
-    ...state,
-    manualClicks: state.manualClicks + 1,
-    resources: { ...state.resources, metal: state.resources.metal.add(gain) },
-    lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) },
-  });
+  return applyAchievementUnlocks(
+    refreshUnlocks({
+      ...state,
+      manualClicks: state.manualClicks + 1,
+      resources: { ...state.resources, metal: state.resources.metal.add(gain) },
+      lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) },
+      stats: {
+        ...state.stats,
+        scrapes: state.stats.scrapes + 1,
+        manualActions: state.stats.manualActions + 1,
+      },
+    }),
+  );
 }
 
 export function isProducerUnlocked(state: GameState, id: ProducerId): boolean {
@@ -227,7 +271,7 @@ export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
   return count;
 }
 
-export function buy(state: GameState, id: ProducerId, mode: BuyMode): GameState {
+export function buy(state: GameState, id: ProducerId, mode: BuyMode, manual = true): GameState {
   if (!isProducerUnlocked(state, id)) return state;
   const affordable = maxBuyCount(state, id);
   const qty = mode === "max" ? affordable : affordable.gte(mode) ? big(mode) : big(0);
@@ -244,13 +288,15 @@ export function buy(state: GameState, id: ProducerId, mode: BuyMode): GameState 
     resources[resourceId] = next.lt(0) ? big(0) : next;
   }
 
-  return refreshUnlocks(
-    markEnergyShortage({
-      ...state,
-      resources,
-      producers: { ...state.producers, [id]: owned.add(qty) },
-    }),
-  );
+  const bought = markEnergyShortage({
+    ...state,
+    resources,
+    producers: { ...state.producers, [id]: owned.add(qty) },
+    stats: manual
+      ? { ...state.stats, manualActions: state.stats.manualActions + 1 }
+      : state.stats,
+  });
+  return applyAchievementUnlocks(refreshUnlocks(bought));
 }
 
 function emptyCosts(): Record<ResourceId, BigNumber> {

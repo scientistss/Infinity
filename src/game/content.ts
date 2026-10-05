@@ -30,13 +30,22 @@ export interface ProducerDef {
   unlock: ProducerUnlock;
 }
 
-export const SAVE_VERSION = 3;
+/** v4 adds achievements, player stats, and offline bonus hours. v1–v3 migrate on load. */
+export const SAVE_VERSION = 4;
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.save.v1";
 
-export const OFFLINE_CAP_SECONDS = balance.offline.baseCapHours * 60 * 60;
-export const OFFLINE_CAP_LABEL = `${balance.offline.baseCapHours} 小时`;
+/** Base offline cap. Curvature tech adds {@link OFFLINE_TECH_STEP_HOURS} up to the max. */
+export const OFFLINE_BASE_HOURS = balance.offline.baseCapHours;
+export const OFFLINE_MAX_HOURS = balance.offline.techMaxHours;
+export const OFFLINE_TECH_STEP_HOURS = 2;
+export const OFFLINE_BASE_SECONDS = OFFLINE_BASE_HOURS * 60 * 60;
+export const OFFLINE_MAX_SECONDS = OFFLINE_MAX_HOURS * 60 * 60;
+export const OFFLINE_CAP_SECONDS = OFFLINE_BASE_SECONDS;
+export const OFFLINE_CAP_LABEL = `${OFFLINE_BASE_HOURS} 小时`;
 export const OFFLINE_PROTOCOL_SECONDS = balance.offline.protocolEvalIntervalSeconds;
+/** Offline protocol cards are considered on this cadence. Online play uses 1 second. */
+export const PROTOCOL_OFFLINE_EVAL_SECONDS = OFFLINE_PROTOCOL_SECONDS;
 
 /** gain = floor(sqrt(score / PRESTIGE_SCORE_UNIT)) */
 export const PRESTIGE_SCORE_UNIT = balance.prestige.divisor;
