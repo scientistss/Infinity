@@ -20,7 +20,7 @@ export interface SerializedState {
   resources: Record<ResourceId, string>;
   producers: Record<ProducerId, string>;
   lifetime: Record<ResourceId, string>;
-  telemetry: string;
+    warpCores: string;
   totalTime: string;
 }
 
@@ -42,7 +42,7 @@ export function serializeState(state: GameState): SerializedState {
     resources: mapResources(state.resources, bigToString),
     producers: mapProducers(state.producers, bigToString),
     lifetime: mapResources(state.lifetime, bigToString),
-    telemetry: bigToString(state.telemetry),
+    warpCores: bigToString(state.warpCores),
     totalTime: bigToString(state.totalTime),
   };
 }
@@ -53,7 +53,7 @@ export function deserializeState(raw: unknown): GameState {
   state.resources = readResourceMap(raw.resources, "资源");
   state.producers = readProducerMap(raw.producers, "设施");
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
-  state.telemetry = readAmount(raw.telemetry, "遥测");
+  state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.totalTime = readAmount(raw.totalTime, "游玩时间");
   return state;
 }
@@ -144,11 +144,11 @@ function readResourceMap(raw: unknown, label: string): Record<ResourceId, BigNum
 function readProducerMap(raw: unknown, label: string): Record<ProducerId, BigNumber> {
   if (!isRecord(raw)) throw new Error(`${label} 格式不正确`);
   return {
-    miner: readAmount(raw.miner, `${label}·地表采矿机`),
-    drill: readAmount(raw.drill, `${label}·晶壳钻探机`),
-    well: readAmount(raw.well, `${label}·重氢冷凝井`),
-    smelter: readAmount(raw.smelter, `${label}·磁选熔炉`),
-    survey: readAmount(raw.survey, `${label}·前哨勘测塔`),
+    metal_mine: readAmount(raw.metal_mine, `${label}·金属矿`),
+    solar_plant: readAmount(raw.solar_plant, `${label}·太阳能电站`),
+    crystal_mine: readAmount(raw.crystal_mine, `${label}·晶体矿`),
+    deuterium_synth: readAmount(raw.deuterium_synth, `${label}·重氢合成器`),
+    robotics_factory: readAmount(raw.robotics_factory, `${label}·机器人工厂`),
   };
 }
 

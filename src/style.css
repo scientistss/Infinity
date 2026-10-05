@@ -302,6 +302,11 @@ textarea {
 
 .status { min-height: 1.5rem; margin: 0.7rem 0 0; }
 
+.panel-head p.energy-short { color: var(--danger); }
+.facility.locked { opacity: 0.72; }
+.protocol-list { margin: 0.6rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+.protocol-list strong { color: var(--ink); font-weight: 600; }
+
 @media (max-width: 720px) {
   .mast,
   .facility-head,

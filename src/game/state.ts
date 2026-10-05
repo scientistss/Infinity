@@ -8,11 +8,13 @@ function zeros<T extends string>(ids: readonly T[]): Record<T, ReturnType<typeof
 }
 
 export function createInitialState(): GameState {
+  const producers = zeros(PRODUCER_IDS);
+  producers.solar_plant = big(1);
   return {
     resources: zeros(RESOURCE_IDS),
-    producers: zeros(PRODUCER_IDS),
+    producers,
     lifetime: zeros(RESOURCE_IDS),
-    telemetry: big(0),
+    warpCores: big(0),
     totalTime: big(0),
   };
 }

@@ -8,22 +8,20 @@ import {
   type BigNumber,
 } from "./decimal";
 import {
-  PASSIVE_RATES,
   PRESTIGE_SCORE_UNIT,
   PRODUCERS,
+  PROTOCOL_SLOT_CAP,
+  ROBOTICS_MULTIPLIER,
+  WARP_CORE_BONUS,
   producerById,
   type ProducerDef,
 } from "./content";
 import { createInitialState } from "./state";
 import { RESOURCE_IDS, type GameState, type ProducerId, type ResourceId } from "./types";
 
-export type BuyMode = "one" | "max";
+export type BuyMode = "one" | "ten" | "max";
 
-/**
- * Advance the simulation by `dtSeconds`.
- * Pure: the input state is not mutated. Production is linear in dt, so a
- * single call can cover a frame or a capped offline gap.
- */
+/** Pure. Production is linear in dt, so one call can cover a frame or an offline gap. */
 export function tick(state: GameState, dtSeconds: number): GameState {
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return state;
 
@@ -43,55 +41,99 @@ export function tick(state: GameState, dtSeconds: number): GameState {
   };
 }
 
-/** Global output multiplier from the placeholder sqrt prestige layer. */
-export function outputMultiplier(state: GameState): BigNumber {
-  return big(1).add(bigSqrt(state.telemetry));
+export function isUnlocked(state: GameState, id: ProducerId): boolean {
+  return producerById(id).unlock(state);
 }
 
-/** Current per-second gain of one resource, including passive weathering and telemetry. */
+/** (1 + 2% per unspent core) × (1.25 ^ robotics factories). */
+export function outputMultiplier(state: GameState): BigNumber {
+  const cores = big(1).add(state.warpCores.mul(WARP_CORE_BONUS));
+  const robots = big(ROBOTICS_MULTIPLIER).pow(state.producers.robotics_factory);
+  return cores.mul(robots);
+}
+
+export function energySupply(state: GameState): BigNumber {
+  let supply = big(0);
+  for (const producer of PRODUCERS) {
+    if (producer.energySupply <= 0) continue;
+    supply = supply.add(state.producers[producer.id].mul(producer.energySupply));
+  }
+  return supply;
+}
+
+export function energyDemand(state: GameState): BigNumber {
+  let demand = big(0);
+  for (const producer of PRODUCERS) {
+    if (producer.energyCost <= 0) continue;
+    demand = demand.add(state.producers[producer.id].mul(producer.energyCost));
+  }
+  return demand;
+}
+
+/** min(1, supply/demand). No demand means full efficiency. */
+export function energyEfficiency(state: GameState): BigNumber {
+  const demand = energyDemand(state);
+  if (demand.lte(0)) return big(1);
+  const supply = energySupply(state);
+  if (supply.gte(demand)) return big(1);
+  return supply.div(demand);
+}
+
+export function energyShortage(state: GameState): BigNumber {
+  const gap = energyDemand(state).sub(energySupply(state));
+  return gap.gt(0) ? gap : big(0);
+}
+
 export function productionPerSecond(state: GameState, id: ResourceId): BigNumber {
-  let rate = big(PASSIVE_RATES[id]);
+  let rate = big(0);
   for (const producer of PRODUCERS) {
     const each = producer.rates[id];
     if (each === 0) continue;
     rate = rate.add(state.producers[producer.id].mul(each));
   }
-  return rate.mul(outputMultiplier(state));
+  return rate.mul(outputMultiplier(state)).mul(energyEfficiency(state));
 }
 
 export function expansionScore(state: GameState): BigNumber {
-  return state.lifetime.metal
-    .add(state.lifetime.crystal.mul(5))
-    .add(state.lifetime.deuterium.mul(20));
+  return state.lifetime.metal.add(state.lifetime.crystal.mul(3)).add(state.lifetime.deuterium.mul(10));
 }
 
-/** Telemetry granted by an uplink from this run. Zero when the score is short. */
-export function telemetryGain(state: GameState): BigNumber {
+export function warpGain(state: GameState): BigNumber {
   const score = expansionScore(state);
   if (score.lt(PRESTIGE_SCORE_UNIT)) return big(0);
   return bigFloor(bigSqrt(score.div(PRESTIGE_SCORE_UNIT)));
 }
 
-/**
- * Placeholder prestige. Resets the planet surface and banks sqrt(score).
- * Returns the same state when the gain would be zero.
- */
+/** Score still needed before the next curvature core. */
+export function scoreToNextCore(state: GameState): BigNumber {
+  const next = warpGain(state).add(1);
+  const target = next.pow(2).mul(PRESTIGE_SCORE_UNIT);
+  const gap = target.sub(expansionScore(state));
+  return gap.gt(0) ? gap : big(0);
+}
+
+/** Launch a colony ship. Keeps cores and play time, and grants the starting solar plant again. */
 export function prestige(state: GameState): GameState {
-  const gain = telemetryGain(state);
+  const gain = warpGain(state);
   if (gain.lt(1)) return state;
   const next = createInitialState();
-  next.telemetry = state.telemetry.add(gain);
+  next.warpCores = state.warpCores.add(gain);
   next.totalTime = state.totalTime;
   return next;
 }
 
-/** Manual surface scrape: +1 metal, counted toward this run's score. */
+/** Manual mining: +1 metal, counted toward this run. */
 export function scrape(state: GameState): GameState {
   return {
     ...state,
     resources: { ...state.resources, metal: state.resources.metal.add(1) },
     lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(1) },
   };
+}
+
+export function protocolSlots(state: GameState): BigNumber {
+  const slots = big(1).add(state.producers.robotics_factory.div(2).floor());
+  return slots.gt(PROTOCOL_SLOT_CAP) ? big(PROTOCOL_SLOT_CAP) : slots;
 }
 
 export function nextUnitCost(def: ProducerDef, owned: BigNumber): Record<ResourceId, BigNumber> {
@@ -118,6 +160,7 @@ export function canAfford(state: GameState, costs: Record<ResourceId, BigNumber>
 }
 
 export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
+  if (!isUnlocked(state, id)) return big(0);
   const def = producerById(id);
   const owned = state.producers[id];
   let cap: BigNumber | null = null;
@@ -141,7 +184,8 @@ export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
 
 export function buy(state: GameState, id: ProducerId, mode: BuyMode): GameState {
   const affordable = maxBuyCount(state, id);
-  const qty = mode === "one" ? bigMin(big(1), affordable) : affordable;
+  const requested = mode === "one" ? big(1) : mode === "ten" ? big(10) : affordable;
+  const qty = bigMin(requested, affordable);
   if (qty.lt(1)) return state;
 
   const def = producerById(id);

@@ -1,8 +1,8 @@
 # Infinity
 
-**English.** Infinity is a sci-fi idle game about expanding from a single planet toward the multiverse. Automation is meant to be unlockable visual rule cards, not handwritten scripts. This repository is the v0.1 planet-surface scaffold: resources tick, facilities can be bought (including Buy Max), and a single square-root prestige stub can reset the surface.
+**English.** Infinity is a sci-fi idle game about expanding from a barren planet toward the multiverse. Automation is visual protocol cards, not scripts. This repository is the planet-surface scaffold: mines tick, you can buy them, and launching a colony ship banks curvature cores.
 
-从一颗行星的地表开始，向恒星系、星系、宇宙、多元宇宙扩张。当前版本是可玩的垂直切片，不是完整游戏。
+从一颗荒芜行星的地表开始。当前是可玩切片，不是完整游戏。设计见 [docs/DESIGN.md](docs/DESIGN.md)。
 
 ## 运行
 
@@ -28,11 +28,11 @@ npm run preview
 
 ## v0.1 里能玩什么
 
-- 三种资源：金属、晶体、重氢。地表风化每秒提供一点金属，所以一打开就能看到数字在跳。
-- 五座地表设施：地表采矿机、晶壳钻探机、重氢冷凝井、磁选熔炉、前哨勘测塔。支持购买 1 台和最大购买。
-- 占位声望「轨道上行」：按本轮扩张分的平方根获得遥测，重置地表，并用 `1 + √遥测` 提高产量。
-- 存档写入 `localStorage`。可以导出 / 导入 JSON，顶层固定为 `{ version, savedAt, state }`。
-- 离线或后台回来时会补结算，**上限 8 小时**（界面里写明了）。
+- 金属、晶体、重氢，加上不累积的能源（供给/需求）。先点「手动采矿」，买下金属矿后资源会自己增长。
+- 五座生产者：金属矿、太阳能电站、晶体矿、重氢合成器、机器人工厂。购买 ×1 / ×10 / 最大。开局赠送 1 座太阳能电站。
+- 「发射殖民舰」：`floor(sqrt(产出分 / 1e6))` 个曲率核心。未花费核心每个 +2% 产出。
+- 协议板只展示卡槽和卡种，规则还不会执行。
+- 存档写入 `localStorage`。导出 JSON 为 `{ version, savedAt, state }`。离线上限 **2 小时**。
 
 界面是中文优先，设施名旁边有英文。代码和注释是英文。
 
@@ -44,9 +44,9 @@ npm run preview
   "savedAt": 1710000000000,
   "state": {
     "resources": { "metal": "10", "crystal": "0", "deuterium": "0" },
-    "producers": { "miner": "1", "drill": "0", "well": "0", "smelter": "0", "survey": "0" },
+    "producers": { "metal_mine": "1", "solar_plant": "1", "crystal_mine": "0", "deuterium_synth": "0", "robotics_factory": "0" },
     "lifetime": { "metal": "10", "crystal": "0", "deuterium": "0" },
-    "telemetry": "0",
+    "warpCores": "0",
     "totalTime": "12"
   }
 }

@@ -1,10 +1,10 @@
-import { isProducerId, OFFLINE_CAP_LABEL, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
+import { isProducerId, OFFLINE_CAP_LABEL, PROTOCOL_CARDS, PRODUCERS, RESOURCES } from "../game/content";
 import type { ProducerId } from "../game/types";
 import type { ViewModel } from "./present";
 
 export type UiAction =
   | { type: "scrape" }
-  | { type: "buy"; id: ProducerId; mode: "one" | "max" }
+  | { type: "buy"; id: ProducerId; mode: "one" | "ten" | "max" }
   | { type: "prestige" }
   | { type: "save" }
   | { type: "export" }
@@ -37,7 +37,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "reset") onAction({ type: "reset" });
     if (action === "buy") {
       const id = button.dataset.id ?? "";
-      const mode = button.dataset.mode === "max" ? "max" : "one";
+      const mode = button.dataset.mode === "max" ? "max" : button.dataset.mode === "ten" ? "ten" : "one";
       if (isProducerId(id)) onAction({ type: "buy", id, mode });
     }
   });
@@ -50,14 +50,17 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
 
   return {
     update(model) {
-      setText(root, "telemetry", model.telemetry);
+      setText(root, "warp-cores", model.warpCores);
       setText(root, "multiplier", `产量 ${model.multiplier}`);
       setText(root, "played", `累计 ${model.played}`);
-      setText(root, "passive", model.passive);
+      setText(root, "energy", model.energy);
+      setText(root, "slots", model.slots);
       setText(root, "score", model.score);
-      setText(root, "gain", model.gain);
+      setText(root, "preview", model.preview);
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
+
+      requiredElement(root, "energy").classList.toggle("energy-short", model.energyShort);
 
       const banner = requiredElement(root, "banner");
       banner.hidden = model.banner === null;
@@ -68,16 +71,16 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         setText(root, `rate-${resource.id}`, resource.rate);
       }
 
-      const prestige = requiredButton(root, "action-prestige");
-      prestige.disabled = !model.canPrestige;
+      requiredButton(root, "action-prestige").disabled = !model.canPrestige;
 
       for (const producer of model.producers) {
         setText(root, `owned-${producer.id}`, producer.owned);
-        setText(root, `rates-${producer.id}`, producer.rates);
+        setText(root, `effect-${producer.id}`, producer.effect);
         setText(root, `cost-${producer.id}`, producer.cost);
-        const one = requiredButton(root, `buy-one-${producer.id}`);
+        requiredElement(root, `facility-${producer.id}`).classList.toggle("locked", !producer.unlocked);
+        requiredButton(root, `buy-one-${producer.id}`).disabled = !producer.canBuyOne;
+        requiredButton(root, `buy-ten-${producer.id}`).disabled = !producer.canBuyTen;
         const max = requiredButton(root, `buy-max-${producer.id}`);
-        one.disabled = !producer.canBuyOne;
         max.disabled = !producer.canBuyMax;
         max.textContent = producer.maxLabel;
       }
@@ -105,7 +108,7 @@ function shellMarkup(): string {
   const producers = PRODUCERS.map((producer, index) => {
     const idx = String(index + 1).padStart(2, "0");
     return `
-      <article class="facility">
+      <article class="facility" data-bind="facility-${producer.id}">
         <div class="facility-head">
           <div>
             <h3><span class="idx">${idx}</span> ${producer.name} <small>${producer.nameEn}</small></h3>
@@ -116,16 +119,21 @@ function shellMarkup(): string {
             <strong data-bind="owned-${producer.id}">0</strong>
           </div>
         </div>
-        <p class="rates" data-bind="rates-${producer.id}"></p>
+        <p class="rates" data-bind="effect-${producer.id}"></p>
         <div class="facility-buy">
           <p class="cost" data-bind="cost-${producer.id}"></p>
           <div class="actions">
-            <button type="button" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">购买 1</button>
-            <button type="button" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大购买</button>
+            <button type="button" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">×1</button>
+            <button type="button" data-action="buy" data-mode="ten" data-id="${producer.id}" data-bind="buy-ten-${producer.id}">×10</button>
+            <button type="button" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大</button>
           </div>
         </div>
       </article>`;
   }).join("");
+
+  const cards = PROTOCOL_CARDS.map(
+    (card) => `<li><strong>${card.name}</strong> · 未实装 · ${card.unlock}</li>`,
+  ).join("");
 
   return `
     <div class="sky" aria-hidden="true"></div>
@@ -140,11 +148,11 @@ function shellMarkup(): string {
         <div>
           <p class="kicker">Planet surface · v0.1</p>
           <h1>Infinity <span>无限</span></h1>
-          <p class="lede">行星地表的第一座前哨。资源会自己增长，设施可以买到最大数量。</p>
+          <p class="lede">殖民一颗荒芜行星。先手动采矿，再用矿井和电站把产出转起来。</p>
         </div>
         <aside class="mast-stat">
-          <span>遥测 Telemetry</span>
-          <strong data-bind="telemetry">0</strong>
+          <span>曲率核心 Warp Core</span>
+          <strong data-bind="warp-cores">0</strong>
           <span data-bind="multiplier">产量 ×1.00</span>
           <span data-bind="played">累计 0 秒</span>
         </aside>
@@ -155,42 +163,51 @@ function shellMarkup(): string {
       <section class="panel" aria-labelledby="stock-title">
         <div class="panel-head">
           <h2 id="stock-title">库存</h2>
-          <p data-bind="passive">风化拾取</p>
-          <button type="button" data-action="scrape">徒手刮取 +1</button>
+          <p data-bind="energy">能源</p>
+          <button type="button" data-action="scrape">手动采矿 +1</button>
         </div>
         <div class="resources">${resources}</div>
       </section>
 
       <section class="panel" aria-labelledby="facility-title">
         <div class="panel-head">
-          <h2 id="facility-title">地表设施</h2>
-          <p>价格按几何级数上涨。最大购买会在付得起的范围内一次买满。</p>
+          <h2 id="facility-title">地表生产者</h2>
+          <p>成本 = 基础 × 成长^已拥有。能源不足时，矿的效率按供给/需求下降。</p>
         </div>
         <div class="facilities">${producers}</div>
       </section>
 
+      <section class="panel" aria-labelledby="protocol-title">
+        <div class="panel-head">
+          <h2 id="protocol-title">协议板</h2>
+          <p data-bind="slots">卡槽 1 / 6</p>
+        </div>
+        <p class="blurb">可视化协议卡，不写代码。一句可读的规则，例如：当 每 5 秒 若 能源 &lt; 100% 则 建造 太阳能电站 ×1。本脚手架只展示卡槽和卡种，不执行规则。</p>
+        <ul class="protocol-list">${cards}</ul>
+      </section>
+
       <section class="panel prestige" aria-labelledby="prestige-title">
         <div class="panel-head">
-          <h2 id="prestige-title">轨道上行</h2>
-          <p>占位声望层。获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。上行清空地表库存、设施和本轮累计，只保留遥测。产量倍率 = 1 + √遥测。</p>
+          <h2 id="prestige-title">发射殖民舰</h2>
+          <p>产出分 = 金属累计 + 3×晶体累计 + 10×重氢累计。核心 = ⌊√(产出分 / 1e6)⌋。未花费核心每个 +2% 全局产出。发射清空资源和生产者，保留曲率核心，并重新获得 1 座太阳能电站。</p>
         </div>
         <dl class="prestige-stats">
           <div>
-            <dt>本轮扩张分</dt>
+            <dt>本轮产出分</dt>
             <dd data-bind="score">0.00</dd>
           </div>
           <div>
-            <dt>预计遥测</dt>
-            <dd data-bind="gain">0</dd>
+            <dt>预览</dt>
+            <dd data-bind="preview">可得 0 核心</dd>
           </div>
         </dl>
-        <button type="button" data-action="prestige" data-bind="action-prestige" disabled>执行轨道上行</button>
+        <button type="button" data-action="prestige" data-bind="action-prestige" disabled>发射殖民舰</button>
       </section>
 
       <section class="panel" aria-labelledby="save-title">
         <div class="panel-head">
           <h2 id="save-title">存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, state }。离线进度最多结算 <strong data-bind="offline-cap">${OFFLINE_CAP_LABEL}</strong>。</p>
+          <p>自动写入 localStorage。导出 JSON 为 { version, savedAt, state }。离线进度最多结算 <strong data-bind="offline-cap">${OFFLINE_CAP_LABEL}</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>
@@ -202,7 +219,7 @@ function shellMarkup(): string {
           <button type="button" data-action="reset" class="danger">重置</button>
         </div>
         <label class="transfer-label" for="transfer">导入文本</label>
-        <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON，或用导出填入此框"></textarea>
+        <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON"></textarea>
         <button type="button" data-action="import-text">从文本导入</button>
         <p class="status" data-bind="status" role="status">就绪</p>
       </section>
