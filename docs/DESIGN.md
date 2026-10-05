@@ -118,7 +118,7 @@ interface ProtocolCard {
 ## 7. 系统目标
 
 - 离线：批量计算，基础上限 **2 小时**，科技可到 8 小时。离线时协议卡按每 60 秒简化执行。回归时汇总。
-- 成就约 15 个，每个 +1% 全局产出。未实装。
+- 成就 10 个已实装，每个 +1% 全局产出（设计目标约 15 个）。
 - 存档：localStorage；导出目标是带 `version` 的 JSON（设计上可再包一层 base64）。导入失败不得覆盖当前局。大数用十进制字符串。
 - 目标目录：`src/core/`、`src/automation/`、`src/prestige/`、`src/save/`、`src/ui/`、`src/data/`。当前代码仍在 `src/game/` 与 `src/ui/`。
 
@@ -138,6 +138,7 @@ interface ProtocolCard {
 - 手动采矿、开局 1 座太阳能电站、解锁条件
 - 发射殖民舰与曲率核心的 Sqrt 公式，以及 +2% 未花费核心
 - 协议卡引擎执行已装配的卡。在线大约每 1 秒，离线每 60 秒。目录在 `src/data/protocol-cards.ts`，求值在 `src/automation/`。说明见 [AUTOMATION.md](AUTOMATION.md)
-- localStorage 与 `{ version, savedAt, state }` JSON 导入导出；离线上限 2 小时。存档版本 3，版本 1 和 2 会迁入
+- 10 个成就，每个 +1% 全局产出，发射后保留。回归时弹出离线结算（基础上限 2 小时，预留到 8 小时）
+- localStorage 与 `{ version, savedAt, lastTickAt, state }` JSON 导入导出。存档版本 4，版本 1–3 会迁入
 
-未做：曲率科技、成就、推荐卡组、base64、目录重构、星系及以上。
+未做：曲率科技、推荐卡组、base64、目录重构、星系及以上。

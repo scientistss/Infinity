@@ -359,6 +359,64 @@ textarea {
 
 .status { min-height: 1.5rem; margin: 0.7rem 0 0; }
 
+.ach-list,
+.offline-gains {
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ach {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(243, 234, 219, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.ach.unlocked { border-color: rgba(226, 181, 106, 0.55); }
+
+.ach-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ach-top span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ach.unlocked .ach-top span { color: var(--metal); }
+.ach p { margin: 0.15rem 0 0; font-size: 0.85rem; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.modal[hidden] { display: none; }
+
+.modal-card {
+  width: min(32rem, 100%);
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--metal);
+  background: #1a1612;
+  box-shadow: var(--shadow);
+}
+
+.modal-card h2 { font-size: 1.6rem; margin-bottom: 0.4rem; }
+.offline-applied { margin: 0.2rem 0 0.6rem; font-size: 1.15rem; }
+.offline-applied strong { color: var(--metal); font-variant-numeric: tabular-nums; }
+.offline-gains { margin: 0 0 0.7rem; }
+.offline-gains li { font-variant-numeric: tabular-nums; }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .protocol-board { position: static; max-height: none; }

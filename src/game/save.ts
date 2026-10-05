@@ -1,8 +1,12 @@
 import type { Condition, ProtocolCard, Trigger } from "../data/protocol-cards";
+import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { isCatalogId, isResId, refreshUnlocks } from "../automation/engine";
+import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
 import {
   FREE_SOLAR_PLANTS,
+  OFFLINE_BASE_HOURS,
   OFFLINE_CAP_SECONDS,
+  OFFLINE_MAX_HOURS,
   OFFLINE_PROTOCOL_SECONDS,
   SAVE_VERSION,
   STORAGE_KEY,
@@ -10,13 +14,14 @@ import {
 } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
 import { markEnergyShortage, tick } from "./logic";
-import { createDefaultProtocols, createInitialState, emptyProtocolSlot } from "./state";
+import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
   PROTOCOL_SLOT_COUNT,
   PRODUCER_IDS,
   RESOURCE_IDS,
   type CardLamp,
   type GameState,
+  type PlayerStats,
   type ProducerId,
   type ProtocolLoadout,
   type ProtocolSlotState,
@@ -55,11 +60,16 @@ export interface SerializedState {
       card: ProtocolCard | null;
     }>;
   };
+  unlocked: string[];
+  stats: PlayerStats;
+  offlineBonusHours: number;
 }
 
 export interface SaveFile {
   version: number;
   savedAt: number;
+  /** Wall clock of the last simulated tick. Older files use savedAt. */
+  lastTickAt: number;
   state: SerializedState;
 }
 
@@ -82,6 +92,9 @@ export function serializeState(state: GameState): SerializedState {
     hasPrestiged: state.hasPrestiged,
     unlockedCards: state.unlockedCards.slice(),
     protocols: serializeProtocols(state.protocols),
+    unlocked: state.unlocked.slice(),
+    stats: { ...state.stats },
+    offlineBonusHours: state.offlineBonusHours,
   };
 }
 
@@ -98,6 +111,14 @@ export function deserializeState(raw: unknown): GameState {
   state.hasPrestiged = raw.hasPrestiged === true || state.warpCores.gt(0);
   state.unlockedCards = readUnlocked(raw.unlockedCards);
   state.protocols = readProtocols(raw.protocols);
+  state.unlocked = readAchievements(raw.unlocked);
+  state.stats = readStats(raw.stats, {
+    scrapes: state.manualClicks,
+    seenEnergyShort: state.seenEnergyShortage,
+    launches: state.hasPrestiged ? 1 : 0,
+  });
+  state.offlineBonusHours = readBonusHours(raw.offlineBonusHours);
+  if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
 
@@ -105,6 +126,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   const file: SaveFile = {
     version: SAVE_VERSION,
     savedAt,
+    lastTickAt: savedAt,
     state: serializeState(state),
   };
   return JSON.stringify(file, null, 2);
@@ -118,15 +140,18 @@ export function importSave(json: string): SaveFile {
     throw new Error("不是有效的 JSON");
   }
   if (!isRecord(parsed)) throw new Error("存档必须是 JSON 对象");
-  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== SAVE_VERSION) {
-    throw new Error(`不支持的存档版本（需要 1、2 或 ${SAVE_VERSION}）`);
+  if (!isSupportedVersion(parsed.version)) {
+    throw new Error(`不支持的存档版本（支持 1–${SAVE_VERSION}）`);
   }
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
+  const lastTickAt =
+    typeof parsed.lastTickAt === "number" && Number.isFinite(parsed.lastTickAt) ? parsed.lastTickAt : parsed.savedAt;
   return {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
+    lastTickAt,
     state: serializeState(deserializeState(parsed.state)),
   };
 }
@@ -157,13 +182,12 @@ export function applyOffline(state: GameState, elapsedSeconds: number, nowCap = 
   };
 }
 
-export function loadGame(store: KeyValueStore, now = Date.now()): OfflineResult {
+/** Apply elapsed real time since lastTickAt, capped at the current offline limit. */
+export function loadGame(store: KeyValueStore, now = Date.now()): OfflineCatchup {
   const file = readSave(store);
-  if (!file) {
-    return { state: createInitialState(), appliedSeconds: 0, rawSeconds: 0, capped: false };
-  }
-  const elapsed = (now - file.savedAt) / 1000;
-  return applyOffline(deserializeState(file.state), elapsed);
+  if (!file) return emptyCatchup(createInitialState());
+  const elapsed = (now - file.lastTickAt) / 1000;
+  return catchUp(deserializeState(file.state), elapsed);
 }
 
 function readAmount(raw: unknown, label: string): BigNumber {
@@ -201,6 +225,46 @@ function readProducerMap(raw: unknown, label: string): Record<ProducerId, BigNum
   }
   if (!solarExplicit) out.solar_plant = big(FREE_SOLAR_PLANTS);
   return out;
+}
+
+function readAchievements(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const found = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry === "string" && isAchievementId(entry)) found.add(entry);
+  }
+  return ACHIEVEMENTS.map((def) => def.id).filter((id) => found.has(id));
+}
+
+function readStats(
+  raw: unknown,
+  fallback: { scrapes: number; seenEnergyShort: boolean; launches: number },
+): PlayerStats {
+  if (!isRecord(raw)) {
+    return {
+      ...emptyStats(),
+      scrapes: fallback.scrapes,
+      seenEnergyShort: fallback.seenEnergyShort,
+      launches: fallback.launches,
+    };
+  }
+  return {
+    scrapes: readCount(raw.scrapes),
+    launches: readCount(raw.launches),
+    seenEnergyShort: raw.seenEnergyShort === true,
+    manualActions: readCount(raw.manualActions),
+    automatedLaunches: readCount(raw.automatedLaunches),
+  };
+}
+
+function readBonusHours(raw: unknown): number {
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : 0;
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(OFFLINE_MAX_HOURS - OFFLINE_BASE_HOURS, value);
+}
+
+function isSupportedVersion(version: unknown): version is number {
+  return typeof version === "number" && Number.isInteger(version) && version >= 1 && version <= SAVE_VERSION;
 }
 
 function readUnlocked(raw: unknown): GameState["unlockedCards"] {

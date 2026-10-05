@@ -34,6 +34,20 @@ export interface ProtocolLoadout {
   slots: ProtocolSlotState[];
 }
 
+/** Counters that achievements read. Kept across colonial launches except `manualActions`. */
+export interface PlayerStats {
+  /** Lifetime manual mining clicks. */
+  scrapes: number;
+  /** Successful colonial launches. */
+  launches: number;
+  /** True once energy demand has exceeded supply. */
+  seenEnergyShort: boolean;
+  /** Manual mining and manual purchases since the last launch. */
+  manualActions: number;
+  /** Launches finished with zero manual actions that run. */
+  automatedLaunches: number;
+}
+
 export interface GameState {
   resources: Record<ResourceId, BigNumber>;
   producers: Record<ProducerId, BigNumber>;
@@ -52,6 +66,14 @@ export interface GameState {
   /** Catalog ids that have ever met their unlock. */
   unlockedCards: CardCatalogId[];
   protocols: ProtocolLoadout;
+  /** Unlocked achievement ids, in catalog order. Kept across launches. */
+  unlocked: string[];
+  stats: PlayerStats;
+  /**
+   * Extra offline hours from curvature tech. 0 until that tech exists.
+   * Total cap is min(8h, 2h + this).
+   */
+  offlineBonusHours: number;
 }
 
 export interface ResourceAmounts {

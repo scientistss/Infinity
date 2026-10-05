@@ -1,5 +1,6 @@
+import { ACHIEVEMENTS } from "../data/achievements";
 import { CARD_CATALOG } from "../data/protocol-cards";
-import { isProducerId, OFFLINE_CAP_LABEL, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
+import { isProducerId, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
 import { PROTOCOL_SLOT_COUNT, type ProducerId } from "../game/types";
 import type { ViewModel } from "./present";
 
@@ -12,6 +13,7 @@ export type UiAction =
   | { type: "import-text"; text: string }
   | { type: "import-file"; file: File }
   | { type: "reset" }
+  | { type: "dismiss-offline" }
   | { type: "protocol-equip"; index: number; cardId: string }
   | { type: "protocol-palette"; cardId: string }
   | { type: "protocol-toggle"; index: number; enabled: boolean }
@@ -42,6 +44,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "export") onAction({ type: "export" });
     if (action === "import-text") onAction({ type: "import-text", text: transfer.value });
     if (action === "reset") onAction({ type: "reset" });
+    if (action === "dismiss-offline") onAction({ type: "dismiss-offline" });
     if (action === "buy") {
       const id = button.dataset.id ?? "";
       const mode = button.dataset.mode === "max" ? "max" : "one";
@@ -132,6 +135,31 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "gain", model.gain);
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
+      setText(root, "ach-summary", model.achievementSummary);
+
+      for (const achievement of model.achievements) {
+        setText(root, `ach-progress-${achievement.id}`, achievement.progress);
+        requiredElement(root, `ach-${achievement.id}`).classList.toggle("unlocked", achievement.unlocked);
+      }
+
+      const modal = requiredElement(root, "offline-modal");
+      modal.hidden = model.offline === null;
+      if (model.offline) {
+        setText(root, "offline-applied", model.offline.applied);
+        setText(root, "offline-detail", model.offline.detail);
+        setText(root, "offline-protocol", model.offline.protocol);
+        const gains = requiredElement(root, "offline-gains");
+        const signature = model.offline.gains.map((gain) => `${gain.id}:${gain.amount}`).join("|");
+        if (gains.dataset.sig !== signature) {
+          gains.dataset.sig = signature;
+          gains.replaceChildren();
+          for (const gain of model.offline.gains) {
+            const item = document.createElement("li");
+            item.textContent = `${gain.name} ${gain.amount}`;
+            gains.append(item);
+          }
+        }
+      }
 
       const banner = requiredElement(root, "banner");
       banner.hidden = model.banner === null;
@@ -216,6 +244,17 @@ function shellMarkup(): string {
       </article>`,
   ).join("");
 
+  const achievements = ACHIEVEMENTS.map(
+    (achievement) => `
+      <li class="ach" data-bind="ach-${achievement.id}">
+        <div class="ach-top">
+          <strong>${achievement.name}</strong>
+          <span data-bind="ach-progress-${achievement.id}">0 / 1</span>
+        </div>
+        <p>${achievement.detail}</p>
+      </li>`,
+  ).join("");
+
   const producers = PRODUCERS.map((producer, index) => {
     const idx = String(index + 1).padStart(2, "0");
     return `
@@ -242,6 +281,17 @@ function shellMarkup(): string {
   }).join("");
 
   return `
+    <div class="modal" data-bind="offline-modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="offline-title">
+        <p class="kicker">Welcome back</p>
+        <h2 id="offline-title">欢迎回来</h2>
+        <p class="offline-applied">结算离线 <strong data-bind="offline-applied">0 秒</strong></p>
+        <ul class="offline-gains" data-bind="offline-gains"></ul>
+        <p data-bind="offline-detail"></p>
+        <p data-bind="offline-protocol"></p>
+        <button type="button" data-action="dismiss-offline">知道了</button>
+      </div>
+    </div>
     <div class="sky" aria-hidden="true"></div>
     <svg class="horizon" viewBox="0 0 960 88" preserveAspectRatio="none" aria-hidden="true">
       <path d="M0 58 C 140 18 250 22 380 46 C 520 72 640 20 780 40 C 860 50 920 48 960 42 V 88 H 0 Z" fill="#2c241c"/>
@@ -285,10 +335,19 @@ function shellMarkup(): string {
         <div class="facilities">${producers}</div>
       </section>
 
+      <section class="panel" aria-labelledby="ach-title">
+        <div class="panel-head">
+          <h2 id="ach-title">成就</h2>
+          <p data-bind="ach-summary">已解锁 0 / 10 · 全局产出 +0%</p>
+        </div>
+        <p class="blurb">每个已解锁成就 +1% 全局产出，互相加算，再与曲率核心和机器人工厂相乘。发射殖民舰不会清空成就。</p>
+        <ul class="ach-list">${achievements}</ul>
+      </section>
+
       <section class="panel prestige" aria-labelledby="prestige-title">
         <div class="panel-head">
           <h2 id="prestige-title">发射殖民舰</h2>
-          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心和协议卡。每颗核心使全局产量 +2%。</p>
+          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
         </div>
         <dl class="prestige-stats">
           <div>
@@ -306,7 +365,7 @@ function shellMarkup(): string {
       <section class="panel" aria-labelledby="save-title">
         <div class="panel-head">
           <h2 id="save-title">存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, state }。离线进度最多结算 <strong data-bind="offline-cap">${OFFLINE_CAP_LABEL}</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–3 会补上成就字段。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>

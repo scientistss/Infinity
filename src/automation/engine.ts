@@ -389,7 +389,7 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
     return { state, ok: false, reason: `${producerById(action.producer).name}未解锁` };
   }
   const before = state.producers[action.producer];
-  const next = buy(state, action.producer, action.amount === "max" ? "max" : action.amount);
+  const next = buy(state, action.producer, action.amount === "max" ? "max" : action.amount, false);
   const gained = next.producers[action.producer].sub(before);
   if (gained.lt(1)) return { state, ok: false, reason: `买不起${producerById(action.producer).name}` };
   const qty = action.amount === "max" ? gained.toFixed(0) : String(action.amount);

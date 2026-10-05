@@ -1,7 +1,18 @@
 import { CARD_CATALOG, SLOT_RULES } from "../data/protocol-cards";
 import { protocolSentence, slotFields, slotUnlockHint, unlockProgress, unlockedSlotCount, type ParamField } from "../automation/engine";
-import { OFFLINE_CAP_LABEL, PRODUCERS, RESOURCES, producerById, type ProducerDef } from "../game/content";
-import { formatAmount, formatCount, formatMultiplier, formatPlayed, formatRate } from "../game/format";
+import { offlineCapSeconds, type OfflineCatchup } from "../core/offline";
+import { ACHIEVEMENTS, ACHIEVEMENT_BONUS } from "../data/achievements";
+import {
+  OFFLINE_BASE_HOURS,
+  OFFLINE_MAX_HOURS,
+  OFFLINE_TECH_STEP_HOURS,
+  PROTOCOL_OFFLINE_EVAL_SECONDS,
+  PRODUCERS,
+  RESOURCES,
+  producerById,
+  type ProducerDef,
+} from "../game/content";
+import { formatAmount, formatCount, formatDuration, formatMultiplier, formatPlayed, formatRate } from "../game/format";
 import {
   energyReport,
   expansionScore,
@@ -50,6 +61,25 @@ export interface SlotView {
   fieldsKey: string;
 }
 
+export interface AchievementView {
+  id: string;
+  unlocked: boolean;
+  progress: string;
+}
+
+export interface OfflineGainView {
+  id: ResourceId;
+  name: string;
+  amount: string;
+}
+
+export interface OfflineView {
+  applied: string;
+  detail: string;
+  gains: OfflineGainView[];
+  protocol: string;
+}
+
 export interface ViewModel {
   telemetry: string;
   multiplier: string;
@@ -67,9 +97,17 @@ export interface ViewModel {
   protocolMeta: string;
   catalog: CatalogView[];
   slots: SlotView[];
+  achievements: AchievementView[];
+  achievementSummary: string;
+  offline: OfflineView | null;
 }
 
-export function present(state: GameState, status: string, banner: string | null): ViewModel {
+export function present(
+  state: GameState,
+  status: string,
+  banner: string | null,
+  catchup: OfflineCatchup | null,
+): ViewModel {
   const scale = resourceMultiplier(state);
   const open = unlockedSlotCount(state);
   return {
@@ -101,7 +139,7 @@ export function present(state: GameState, status: string, banner: string | null)
     canPrestige: warpGain(state).gte(1),
     status,
     banner,
-    offlineCap: OFFLINE_CAP_LABEL,
+    offlineCap: `${formatDuration(offlineCapSeconds(state))}（基础 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时）`,
     protocolEnergy: describeEnergy(state),
     protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 每 ${SLOT_RULES.roboticsPerLevels} 座机器人工厂 +1`,
     catalog: CARD_CATALOG.map((entry) => ({
@@ -111,6 +149,43 @@ export function present(state: GameState, status: string, banner: string | null)
       hint: unlockProgress(state, entry.id),
     })),
     slots: presentSlots(state, open),
+    achievements: ACHIEVEMENTS.map((def) => {
+      const unlocked = state.unlocked.includes(def.id);
+      const progress = def.progress(state);
+      const current = progress.amount ? formatAmount(progress.current) : formatCount(progress.current);
+      const goal = progress.amount ? formatAmount(progress.goal) : formatCount(progress.goal);
+      return {
+        id: def.id,
+        unlocked,
+        progress: unlocked ? "已达成 · +1%" : `${current} / ${goal}`,
+      };
+    }),
+    achievementSummary: achievementSummary(state),
+    offline: presentOffline(catchup),
+  };
+}
+
+function achievementSummary(state: GameState): string {
+  const unlocked = state.unlocked.length;
+  const bonus = Math.round(unlocked * ACHIEVEMENT_BONUS * 100);
+  return `已解锁 ${unlocked} / ${ACHIEVEMENTS.length} · 全局产出 +${bonus}%`;
+}
+
+function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
+  if (!catchup || catchup.appliedSeconds < 1) return null;
+  const cap = formatDuration(catchup.capSeconds);
+  const applied = formatDuration(catchup.appliedSeconds);
+  const raw = formatDuration(catchup.rawSeconds);
+  const limit = catchup.capped ? `已触顶，超出 ${cap} 的部分不结算。` : "未触顶。";
+  return {
+    applied,
+    detail: `离开 ${raw}，结算 ${applied}。当前上限 ${cap}。${limit} 基础上限 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时。`,
+    gains: RESOURCES.map((resource) => ({
+      id: resource.id,
+      name: resource.name,
+      amount: `+${formatAmount(catchup.gains[resource.id])}`,
+    })),
+    protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次。`,
   };
 }
 
