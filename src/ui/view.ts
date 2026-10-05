@@ -1,7 +1,8 @@
 import { ACHIEVEMENTS } from "../data/achievements";
+import { CURVATURE_TECH, isCurvatureId } from "../data/curvature-tech";
 import { CARD_CATALOG } from "../data/protocol-cards";
 import { isProducerId, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
-import { PROTOCOL_SLOT_COUNT, type ProducerId } from "../game/types";
+import { PROTOCOL_SLOT_COUNT, type CurvatureId, type ProducerId } from "../game/types";
 import type { ViewModel } from "./present";
 
 export type UiAction =
@@ -14,6 +15,7 @@ export type UiAction =
   | { type: "import-file"; file: File }
   | { type: "reset" }
   | { type: "dismiss-offline" }
+  | { type: "buy-tech"; id: CurvatureId }
   | { type: "protocol-equip"; index: number; cardId: string }
   | { type: "protocol-palette"; cardId: string }
   | { type: "protocol-toggle"; index: number; enabled: boolean }
@@ -45,6 +47,10 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "import-text") onAction({ type: "import-text", text: transfer.value });
     if (action === "reset") onAction({ type: "reset" });
     if (action === "dismiss-offline") onAction({ type: "dismiss-offline" });
+    if (action === "buy-tech") {
+      const id = button.dataset.id ?? "";
+      if (isCurvatureId(id)) onAction({ type: "buy-tech", id });
+    }
     if (action === "buy") {
       const id = button.dataset.id ?? "";
       const mode = button.dataset.mode === "max" ? "max" : "one";
@@ -136,6 +142,17 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
+      setText(root, "unspent-line", model.unspentLine);
+      setText(root, "action-scrape", model.scrapeLabel);
+
+      for (const tech of model.techs) {
+        setText(root, `tech-owned-${tech.id}`, tech.owned);
+        setText(root, `tech-detail-${tech.id}`, tech.detail);
+        setText(root, `tech-preview-${tech.id}`, tech.preview);
+        const buy = requiredButton(root, `tech-buy-${tech.id}`);
+        buy.disabled = !tech.canBuy;
+        buy.textContent = tech.button;
+      }
 
       for (const achievement of model.achievements) {
         setText(root, `ach-progress-${achievement.id}`, achievement.progress);
@@ -322,7 +339,7 @@ function shellMarkup(): string {
         <div class="panel-head">
           <h2 id="stock-title">库存</h2>
           <p data-bind="passive">风化拾取</p>
-          <button type="button" data-action="scrape">手动采集 +1</button>
+          <button type="button" data-action="scrape" data-bind="action-scrape">手动采集 +1</button>
         </div>
         <div class="resources">${resources}</div>
       </section>
@@ -347,7 +364,7 @@ function shellMarkup(): string {
       <section class="panel prestige" aria-labelledby="prestige-title">
         <div class="panel-head">
           <h2 id="prestige-title">发射殖民舰</h2>
-          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
         </div>
         <dl class="prestige-stats">
           <div>
@@ -362,10 +379,19 @@ function shellMarkup(): string {
         <button type="button" data-action="prestige" data-bind="action-prestige" disabled>发射殖民舰</button>
       </section>
 
+      <section class="panel" aria-labelledby="tech-title">
+        <div class="panel-head">
+          <h2 id="tech-title">曲率科技</h2>
+          <p data-bind="unspent-line">未花费 0 / 已花费 0 · 被动 +0%</p>
+        </div>
+        <p class="blurb">花费曲率核心购买永久效果。买下后该核心不再提供 +2% 被动。无需确认。</p>
+        <div class="facilities">${techCards()}</div>
+      </section>
+
       <section class="panel" aria-labelledby="save-title">
         <div class="panel-head">
           <h2 id="save-title">存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–3 会补上成就字段。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–4 会补上成就和曲率科技。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>
@@ -393,6 +419,31 @@ function shellMarkup(): string {
       </aside>
       </div>
     </main>`;
+}
+
+function techCards(): string {
+  return CURVATURE_TECH.map((node, index) => {
+    const idx = String(index + 1).padStart(2, "0");
+    return `
+      <article class="facility">
+        <div class="facility-head">
+          <div>
+            <h3><span class="idx">${idx}</span> ${node.name} <small>${node.nameEn}</small></h3>
+            <p data-bind="tech-detail-${node.id}">${node.effect}</p>
+          </div>
+          <div class="owned">
+            <span>状态</span>
+            <strong data-bind="tech-owned-${node.id}">未购</strong>
+          </div>
+        </div>
+        <div class="facility-buy">
+          <p class="cost" data-bind="tech-preview-${node.id}">花费 ${node.cost} 核心</p>
+          <div class="actions">
+            <button type="button" data-action="buy-tech" data-id="${node.id}" data-bind="tech-buy-${node.id}">花费 ${node.cost}</button>
+          </div>
+        </div>
+      </article>`;
+  }).join("");
 }
 
 function catalogButtons(): string {

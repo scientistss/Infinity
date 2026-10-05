@@ -1,8 +1,10 @@
+import { CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
 import { CARD_CATALOG, SLOT_RULES } from "../data/protocol-cards";
 import { protocolSentence, slotFields, slotUnlockHint, unlockProgress, unlockedSlotCount, type ParamField } from "../automation/engine";
 import { offlineCapSeconds, type OfflineCatchup } from "../core/offline";
 import { ACHIEVEMENTS, ACHIEVEMENT_BONUS } from "../data/achievements";
 import {
+  CORE_BONUS_PER_CORE,
   OFFLINE_BASE_HOURS,
   OFFLINE_MAX_HOURS,
   OFFLINE_TECH_STEP_HOURS,
@@ -24,7 +26,8 @@ import {
   resourceMultiplier,
   warpGain,
 } from "../game/logic";
-import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type GameState, type ProducerId, type ResourceId } from "../game/types";
+import { manualClickAmount, producerOutputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
+import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ProducerId, type ResourceId } from "../game/types";
 
 export interface ResourceView {
   id: ResourceId;
@@ -80,6 +83,15 @@ export interface OfflineView {
   protocol: string;
 }
 
+export interface TechView {
+  id: CurvatureId;
+  owned: string;
+  detail: string;
+  preview: string;
+  button: string;
+  canBuy: boolean;
+}
+
 export interface ViewModel {
   telemetry: string;
   multiplier: string;
@@ -100,6 +112,9 @@ export interface ViewModel {
   achievements: AchievementView[];
   achievementSummary: string;
   offline: OfflineView | null;
+  techs: TechView[];
+  unspentLine: string;
+  scrapeLabel: string;
 }
 
 export function present(
@@ -108,8 +123,10 @@ export function present(
   banner: string | null,
   catchup: OfflineCatchup | null,
 ): ViewModel {
-  const scale = resourceMultiplier(state);
+  const outputScale = producerOutputScale(state);
+  const scale = resourceMultiplier(state).mul(outputScale);
   const open = unlockedSlotCount(state);
+  const unspent = unspentCores(state);
   return {
     telemetry: formatCount(state.warpCores),
     multiplier: `全局 ${formatMultiplier(globalMultiplier(state))}`,
@@ -127,7 +144,7 @@ export function present(
       return {
         id: producer.id,
         owned: formatCount(owned),
-        rates: describeRates(producer.id, scale),
+        rates: describeRates(producer.id, scale, outputScale),
         cost: describeCost(state, producer.id),
         maxLabel: max.gte(1) ? `最大购买 ${formatCount(max)}` : "最大购买",
         canBuyOne: unlocked && max.gte(1),
@@ -162,7 +179,37 @@ export function present(
     }),
     achievementSummary: achievementSummary(state),
     offline: presentOffline(catchup),
+    techs: CURVATURE_TECH.map((node) => techView(state, node.id)),
+    unspentLine: `未花费 ${formatCount(unspent)} / 已花费 ${formatCount(spentCores(state))} · 被动 ${passiveLabel(unspent)}`,
+    scrapeLabel: `手动采集 +${manualClickAmount(state)}`,
   };
+}
+
+function techView(state: GameState, id: CurvatureId): TechView {
+  const node = curvatureById(id);
+  const rank = techRank(state, id);
+  const maxed = rank >= node.maxRank;
+  const unspent = unspentCores(state);
+  const canBuy = !maxed && unspent.gte(node.cost);
+  const owned = node.maxRank > 1 ? `${rank}/${node.maxRank}` : rank > 0 ? "已购" : "未购";
+  return {
+    id,
+    owned,
+    detail: `${node.effect}。${node.note}`,
+    preview: maxed ? "效果已生效" : spendPreview(unspent, node.cost),
+    button: maxed ? "已购" : `花费 ${node.cost}`,
+    canBuy,
+  };
+}
+
+function spendPreview(unspent: GameState["warpCores"], cost: number): string {
+  const after = unspent.sub(cost);
+  const next = after.gt(0) ? after : unspent.sub(unspent);
+  return `花费后未花费 ${formatCount(unspent)} → ${formatCount(next)}，被动 ${passiveLabel(unspent)} → ${passiveLabel(next)}`;
+}
+
+function passiveLabel(cores: GameState["warpCores"]): string {
+  return `+${cores.mul(CORE_BONUS_PER_CORE).mul(100).toFixed(0)}%`;
 }
 
 function achievementSummary(state: GameState): string {
@@ -196,7 +243,7 @@ function presentSlots(state: GameState, open: number): SlotView[] {
     return {
       index,
       unlocked,
-      lockHint: unlocked ? "" : slotUnlockHint(index),
+      lockHint: unlocked ? "" : slotUnlockHint(state, index),
       enabled: slot.card?.enabled ?? false,
       sentence: unlocked && slot.card ? protocolSentence(slot.card) : "",
       lamp: slot.lamp,
@@ -213,7 +260,7 @@ function describeEnergy(state: GameState): string {
   return `供给 ${formatAmount(energy.supply)}/s · 需求 ${formatAmount(energy.demand)}/s · 效率 ${energy.efficiency.mul(100).toFixed(0)}%${lack}`;
 }
 
-function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultiplier>): string {
+function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultiplier>, outputScale: number): string {
   const def = producerById(id);
   const parts: string[] = [];
   for (const resourceId of RESOURCE_IDS) {
@@ -222,7 +269,7 @@ function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultipli
     const resource = RESOURCES.find((entry) => entry.id === resourceId);
     parts.push(`${resource?.name ?? resourceId} ${formatRate(scale.mul(base))}`);
   }
-  if (def.producesEnergy > 0) parts.push(`能源 +${def.producesEnergy}/s`);
+  if (def.producesEnergy > 0) parts.push(`能源 +${def.producesEnergy * outputScale}/s`);
   if (def.globalProductionMult !== 1) parts.push(`全局 ×${def.globalProductionMult}`);
   if (def.consumesEnergy > 0) parts.push(`负载 ${def.consumesEnergy}`);
   return parts.length > 0 ? `每台 ${parts.join(" · ")}` : "无产出";
@@ -231,7 +278,7 @@ function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultipli
 function describeCost(state: GameState, id: ProducerId): string {
   const def = producerById(id);
   if (!isProducerUnlocked(state, id)) return `未解锁 · ${unlockLine(def)}`;
-  const costs = nextUnitCost(def, state.producers[id]);
+  const costs = nextUnitCost(state, def, state.producers[id]);
   const parts: string[] = [];
   for (const resourceId of RESOURCE_IDS) {
     if (costs[resourceId].lte(0)) continue;

@@ -30,8 +30,8 @@ export interface ProducerDef {
   unlock: ProducerUnlock;
 }
 
-/** v4 adds achievements, player stats, and offline bonus hours. v1–v3 migrate on load. */
-export const SAVE_VERSION = 4;
+/** v5 adds `state.curvature`. v1–v4 migrate with an empty tree. */
+export const SAVE_VERSION = 5;
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.save.v1";
 

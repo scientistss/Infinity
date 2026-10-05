@@ -14,6 +14,18 @@ export const PRODUCER_IDS = [
   "robotics_factory",
 ] as const satisfies readonly ProducerId[];
 
+export const CURVATURE_IDS = [
+  "seed_stock",
+  "output_double",
+  "growth_cut",
+  "offline_extend",
+  "slot_plus",
+  "manual_ten",
+  "early_protocols",
+  "score_boost",
+] as const;
+export type CurvatureId = (typeof CURVATURE_IDS)[number];
+
 export const PROTOCOL_SLOT_COUNT = 6;
 
 export type CardLamp = "green" | "gray" | "red";
@@ -53,8 +65,10 @@ export interface GameState {
   producers: Record<ProducerId, BigNumber>;
   /** Resources gained this run. Prestige clears this. */
   lifetime: Record<ResourceId, BigNumber>;
-  /** Warp cores. Persist across a colony launch. */
+  /** Curvature cores earned. Spent ranks live in `curvature`, not in this total. */
   warpCores: BigNumber;
+  /** Purchased ranks on the curvature tree. Kept across launches. */
+  curvature: Record<CurvatureId, number>;
   /** Seconds the save has been ticking, including offline catch-up. */
   totalTime: BigNumber;
   /** Manual collect clicks. Auto-collect does not increment this. */
