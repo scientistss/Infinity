@@ -1,4 +1,6 @@
-import type { GameState, ProducerId, ResourceId } from "./types";
+import balance from "../data/balance.json";
+import type { ProducerId } from "../data/protocol-cards";
+import type { ResourceId } from "./types";
 
 export interface ResourceDef {
   id: ResourceId;
@@ -7,129 +9,107 @@ export interface ResourceDef {
   blurb: string;
 }
 
+export type ProducerUnlock =
+  | { kind: "start" }
+  | { kind: "ownedGte"; producer: ProducerId; value: number }
+  | { kind: "lifetimeGte"; res: ResourceId; value: string };
+
 export interface ProducerDef {
   id: ProducerId;
   name: string;
   nameEn: string;
   description: string;
-  /** Resource per second per building, before global multipliers and energy efficiency. */
+  /** Base resource per second per owned building, before global and energy multipliers. */
   rates: Record<ResourceId, number>;
   costs: Record<ResourceId, number>;
   ratio: number;
-  /** Energy demanded per building. */
-  energyCost: number;
-  /** Energy supplied per building. */
-  energySupply: number;
-  /** Extra effect that is not a direct resource rate. */
-  note: string;
-  unlockText: string;
-  unlock: (state: GameState) => boolean;
+  consumesEnergy: number;
+  producesEnergy: number;
+  /** Each owned copy multiplies global resource output by this (1 = no bonus). */
+  globalProductionMult: number;
+  unlock: ProducerUnlock;
 }
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 3;
+/** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.save.v1";
 
-/** Base offline cap. Warp tech may raise this later; the scaffold does not. */
-export const OFFLINE_CAP_SECONDS = 2 * 60 * 60;
-export const OFFLINE_CAP_LABEL = "2 小时";
+export const OFFLINE_CAP_SECONDS = balance.offline.baseCapHours * 60 * 60;
+export const OFFLINE_CAP_LABEL = `${balance.offline.baseCapHours} 小时`;
+export const OFFLINE_PROTOCOL_SECONDS = balance.offline.protocolEvalIntervalSeconds;
 
 /** gain = floor(sqrt(score / PRESTIGE_SCORE_UNIT)) */
-export const PRESTIGE_SCORE_UNIT = 1e6;
+export const PRESTIGE_SCORE_UNIT = balance.prestige.divisor;
+export const SCORE_WEIGHTS = balance.prestige.scoreWeights;
+export const CORE_BONUS_PER_CORE = balance.prestige.unspentCoreBonusPerCore;
 
-/** Each unspent curvature core adds this much global output. */
-export const WARP_CORE_BONUS = 0.02;
-
-export const ROBOTICS_MULTIPLIER = 1.25;
-export const PROTOCOL_SLOT_CAP = 6;
+export const MANUAL_METAL_PER_CLICK = balance.starting.manualMineMetalPerClick;
+export const FREE_SOLAR_PLANTS = balance.starting.freeSolarPlant;
 
 export const RESOURCES: readonly ResourceDef[] = [
-  { id: "metal", name: "金属", nameEn: "Metal", blurb: "基础资源，几乎所有建造都用。" },
-  { id: "crystal", name: "晶体", nameEn: "Crystal", blurb: "中级资源，用于高级建筑与协议卡。" },
-  { id: "deuterium", name: "重氢", nameEn: "Deuterium", blurb: "高级资源，主要用于殖民舰与机器人。" },
+  { id: "metal", name: "金属", nameEn: "Metal", blurb: "结构材料。手动采集或金属矿产出。" },
+  { id: "crystal", name: "晶体", nameEn: "Crystal", blurb: "晶体矿抽出的光学矿。" },
+  { id: "deuterium", name: "重氢", nameEn: "Deuterium", blurb: "重氢合成器产出的推进剂。" },
 ];
 
-export const PRODUCERS: readonly ProducerDef[] = [
-  {
-    id: "metal_mine",
-    name: "金属矿",
-    nameEn: "Metal Mine",
-    description: "开采金属。",
-    rates: { metal: 1, crystal: 0, deuterium: 0 },
-    costs: { metal: 10, crystal: 0, deuterium: 0 },
-    ratio: 1.15,
-    energyCost: 1,
-    energySupply: 0,
-    note: "",
-    unlockText: "开局可用",
-    unlock: () => true,
-  },
-  {
-    id: "solar_plant",
-    name: "太阳能电站",
-    nameEn: "Solar Plant",
-    description: "提供能源。开局赠送 1 座，避免没有电。",
-    rates: { metal: 0, crystal: 0, deuterium: 0 },
-    costs: { metal: 30, crystal: 10, deuterium: 0 },
-    ratio: 1.17,
-    energyCost: 0,
-    energySupply: 5,
-    note: "",
-    unlockText: "拥有 3 座金属矿",
-    unlock: (state) => state.producers.metal_mine.gte(3),
-  },
-  {
-    id: "crystal_mine",
-    name: "晶体矿",
-    nameEn: "Crystal Mine",
-    description: "开采晶体。",
-    rates: { metal: 0, crystal: 0.4, deuterium: 0 },
-    costs: { metal: 60, crystal: 0, deuterium: 0 },
-    ratio: 1.18,
-    energyCost: 2,
-    energySupply: 0,
-    note: "",
-    unlockText: "本轮累计 100 金属",
-    unlock: (state) => state.lifetime.metal.gte(100),
-  },
-  {
-    id: "deuterium_synth",
-    name: "重氢合成器",
-    nameEn: "Deuterium Synthesizer",
-    description: "合成重氢。",
-    rates: { metal: 0, crystal: 0, deuterium: 0.1 },
-    costs: { metal: 300, crystal: 100, deuterium: 0 },
-    ratio: 1.22,
-    energyCost: 3,
-    energySupply: 0,
-    note: "",
-    unlockText: "本轮累计 500 晶体",
-    unlock: (state) => state.lifetime.crystal.gte(500),
-  },
-  {
-    id: "robotics_factory",
-    name: "机器人工厂",
-    nameEn: "Robotics Factory",
-    description: "放大全部资源产出。每 2 座 +1 协议卡槽。",
-    rates: { metal: 0, crystal: 0, deuterium: 0 },
-    costs: { crystal: 1000, metal: 0, deuterium: 200 },
-    ratio: 2,
-    energyCost: 0,
-    energySupply: 0,
-    note: "全部产出 ×1.25",
-    unlockText: "本轮累计 50 重氢",
-    unlock: (state) => state.lifetime.deuterium.gte(50),
-  },
-];
+const NAME_EN: Record<ProducerId, string> = {
+  metal_mine: "Metal Mine",
+  solar_plant: "Solar Plant",
+  crystal_mine: "Crystal Mine",
+  deuterium_synth: "Deuterium Synthesizer",
+  robotics_factory: "Robotics Factory",
+};
 
-/** Visual catalog only. The scaffold does not evaluate cards. */
-export const PROTOCOL_CARDS: readonly { name: string; unlock: string }[] = [
-  { name: "自动采集", unlock: "手动点击 100 次" },
-  { name: "自动建造", unlock: "拥有 10 座金属矿" },
-  { name: "资源 / 拥有条件", unlock: "首次能源不足" },
-  { name: "成本比例", unlock: "拥有 1 座机器人工厂" },
-  { name: "能源效率", unlock: "首次发射殖民舰后" },
-  { name: "自动发射", unlock: "累计 10 曲率核心" },
-];
+const BLURB: Record<ProducerId, string> = {
+  metal_mine: "开采金属，每座负载 1 能源。",
+  solar_plant: "供电。能源效率低于 1 时，矿产量按比例下降。",
+  crystal_mine: "开采晶体。",
+  deuterium_synth: "合成重氢。",
+  robotics_factory: "每座使全局资源产量 ×1.25。每 2 座额外开放 1 个协议槽。",
+};
+
+function emptyRates(): Record<ResourceId, number> {
+  return { metal: 0, crystal: 0, deuterium: 0 };
+}
+
+function readUnlock(raw: { kind: string; producer?: string; res?: string; value?: number | string }): ProducerUnlock {
+  if (raw.kind === "ownedGte" && raw.producer && typeof raw.value === "number") {
+    return { kind: "ownedGte", producer: raw.producer as ProducerId, value: raw.value };
+  }
+  if (raw.kind === "lifetimeGte" && raw.res && (typeof raw.value === "string" || typeof raw.value === "number")) {
+    return { kind: "lifetimeGte", res: raw.res as ResourceId, value: String(raw.value) };
+  }
+  return { kind: "start" };
+}
+
+export const PRODUCERS: readonly ProducerDef[] = balance.producers.map((raw) => {
+  const id = raw.id as ProducerId;
+  const rates = emptyRates();
+  if ("produces" in raw && raw.produces) {
+    for (const key of Object.keys(raw.produces) as ResourceId[]) {
+      const amount = raw.produces[key];
+      if (typeof amount === "number") rates[key] = amount;
+    }
+  }
+  const costs = emptyRates();
+  for (const key of Object.keys(raw.baseCost) as ResourceId[]) {
+    const amount = raw.baseCost[key];
+    if (typeof amount === "number") costs[key] = amount;
+  }
+  return {
+    id,
+    name: raw.labelZh,
+    nameEn: NAME_EN[id],
+    description: BLURB[id],
+    rates,
+    costs,
+    ratio: raw.growth,
+    consumesEnergy: raw.consumesEnergy ?? 0,
+    producesEnergy: "producesEnergy" in raw && typeof raw.producesEnergy === "number" ? raw.producesEnergy : 0,
+    globalProductionMult: "globalProductionMult" in raw && typeof raw.globalProductionMult === "number" ? raw.globalProductionMult : 1,
+    unlock: readUnlock(raw.unlock),
+  };
+});
 
 const PRODUCER_BY_ID = Object.fromEntries(PRODUCERS.map((producer) => [producer.id, producer])) as Record<
   ProducerId,
@@ -142,4 +122,8 @@ export function producerById(id: ProducerId): ProducerDef {
 
 export function isProducerId(value: string): value is ProducerId {
   return Object.prototype.hasOwnProperty.call(PRODUCER_BY_ID, value);
+}
+
+export function isResourceId(value: string): value is ResourceId {
+  return (["metal", "crystal", "deuterium"] as readonly string[]).includes(value);
 }

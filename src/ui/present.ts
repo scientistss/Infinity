@@ -1,21 +1,19 @@
-import { OFFLINE_CAP_LABEL, PRODUCERS, RESOURCES, producerById } from "../game/content";
+import { CARD_CATALOG, SLOT_RULES } from "../data/protocol-cards";
+import { protocolSentence, slotFields, slotUnlockHint, unlockProgress, unlockedSlotCount, type ParamField } from "../automation/engine";
+import { OFFLINE_CAP_LABEL, PRODUCERS, RESOURCES, producerById, type ProducerDef } from "../game/content";
 import { formatAmount, formatCount, formatMultiplier, formatPlayed, formatRate } from "../game/format";
 import {
-  energyDemand,
-  energyEfficiency,
-  energyShortage,
-  energySupply,
+  energyReport,
   expansionScore,
-  isUnlocked,
+  globalMultiplier,
+  isProducerUnlocked,
   maxBuyCount,
   nextUnitCost,
-  outputMultiplier,
   productionPerSecond,
-  protocolSlots,
-  scoreToNextCore,
+  resourceMultiplier,
   warpGain,
 } from "../game/logic";
-import { RESOURCE_IDS, type GameState, type ProducerId, type ResourceId } from "../game/types";
+import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type GameState, type ProducerId, type ResourceId } from "../game/types";
 
 export interface ResourceView {
   id: ResourceId;
@@ -26,88 +24,138 @@ export interface ResourceView {
 export interface ProducerView {
   id: ProducerId;
   owned: string;
-  effect: string;
+  rates: string;
   cost: string;
   maxLabel: string;
-  unlocked: boolean;
   canBuyOne: boolean;
-  canBuyTen: boolean;
   canBuyMax: boolean;
 }
 
+export interface CatalogView {
+  id: string;
+  label: string;
+  unlocked: boolean;
+  hint: string;
+}
+
+export interface SlotView {
+  index: number;
+  unlocked: boolean;
+  lockHint: string;
+  enabled: boolean;
+  sentence: string;
+  lamp: CardLamp;
+  reason: string;
+  fields: ParamField[];
+  fieldsKey: string;
+}
+
 export interface ViewModel {
-  warpCores: string;
+  telemetry: string;
   multiplier: string;
   played: string;
-  energy: string;
-  energyShort: boolean;
-  slots: string;
+  passive: string;
   resources: ResourceView[];
   producers: ProducerView[];
   score: string;
-  preview: string;
+  gain: string;
   canPrestige: boolean;
   status: string;
   banner: string | null;
   offlineCap: string;
+  protocolEnergy: string;
+  protocolMeta: string;
+  catalog: CatalogView[];
+  slots: SlotView[];
 }
 
 export function present(state: GameState, status: string, banner: string | null): ViewModel {
-  const shortage = energyShortage(state);
-  const gain = warpGain(state);
+  const scale = resourceMultiplier(state);
+  const open = unlockedSlotCount(state);
   return {
-    warpCores: formatCount(state.warpCores),
-    multiplier: formatMultiplier(outputMultiplier(state)),
+    telemetry: formatCount(state.warpCores),
+    multiplier: `全局 ${formatMultiplier(globalMultiplier(state))}`,
     played: formatPlayed(state.totalTime),
-    energy: `供给 ${formatAmount(energySupply(state))} / 需求 ${formatAmount(energyDemand(state))} · 效率 ${formatAmount(energyEfficiency(state).mul(100))}%`,
-    energyShort: shortage.gt(0),
-    slots: `卡槽 ${formatCount(protocolSlots(state))} / 6`,
+    passive: `手动采集 ${state.manualClicks} 次`,
     resources: RESOURCES.map((resource) => ({
       id: resource.id,
       amount: formatAmount(state.resources[resource.id]),
       rate: formatRate(productionPerSecond(state, resource.id)),
     })),
     producers: PRODUCERS.map((producer) => {
-      const max = maxBuyCount(state, producer.id);
-      const unlocked = isUnlocked(state, producer.id);
+      const owned = state.producers[producer.id];
+      const unlocked = isProducerUnlocked(state, producer.id);
+      const max = unlocked ? maxBuyCount(state, producer.id) : owned.mul(0);
       return {
         id: producer.id,
-        owned: formatCount(state.producers[producer.id]),
-        effect: effectLine(producer.id),
-        cost: unlocked ? describeCost(state, producer.id) : `未解锁：${producer.unlockText}`,
-        maxLabel: max.gte(1) ? `最大 ${formatCount(max)}` : "最大",
-        unlocked,
-        canBuyOne: max.gte(1),
-        canBuyTen: max.gte(1),
-        canBuyMax: max.gte(1),
+        owned: formatCount(owned),
+        rates: describeRates(producer.id, scale),
+        cost: describeCost(state, producer.id),
+        maxLabel: max.gte(1) ? `最大购买 ${formatCount(max)}` : "最大购买",
+        canBuyOne: unlocked && max.gte(1),
+        canBuyMax: unlocked && max.gte(1),
       };
     }),
     score: formatAmount(expansionScore(state)),
-    preview: `可得 ${formatCount(gain)} 核心，下一个还需 ${formatAmount(scoreToNextCore(state))}`,
-    canPrestige: gain.gte(1),
+    gain: formatCount(warpGain(state)),
+    canPrestige: warpGain(state).gte(1),
     status,
     banner,
     offlineCap: OFFLINE_CAP_LABEL,
+    protocolEnergy: describeEnergy(state),
+    protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 每 ${SLOT_RULES.roboticsPerLevels} 座机器人工厂 +1`,
+    catalog: CARD_CATALOG.map((entry) => ({
+      id: entry.id,
+      label: entry.labelZh,
+      unlocked: state.unlockedCards.includes(entry.id),
+      hint: unlockProgress(state, entry.id),
+    })),
+    slots: presentSlots(state, open),
   };
 }
 
-function effectLine(id: ProducerId): string {
+function presentSlots(state: GameState, open: number): SlotView[] {
+  return state.protocols.slots.slice(0, PROTOCOL_SLOT_COUNT).map((slot, index) => {
+    const unlocked = index < open;
+    const fields = unlocked && slot.card ? slotFields(state, slot.card) : [];
+    return {
+      index,
+      unlocked,
+      lockHint: unlocked ? "" : slotUnlockHint(index),
+      enabled: slot.card?.enabled ?? false,
+      sentence: unlocked && slot.card ? protocolSentence(slot.card) : "",
+      lamp: slot.lamp,
+      reason: slot.reason,
+      fields,
+      fieldsKey: fields.map((field) => `${field.path}=${field.value}:${field.options.map((option) => option.value).join(",")}`).join("|"),
+    };
+  });
+}
+
+function describeEnergy(state: GameState): string {
+  const energy = energyReport(state);
+  const lack = energy.shortage.gt(0) ? ` · 缺 ${formatAmount(energy.shortage)}` : "";
+  return `供给 ${formatAmount(energy.supply)}/s · 需求 ${formatAmount(energy.demand)}/s · 效率 ${energy.efficiency.mul(100).toFixed(0)}%${lack}`;
+}
+
+function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultiplier>): string {
   const def = producerById(id);
   const parts: string[] = [];
   for (const resourceId of RESOURCE_IDS) {
-    const rate = def.rates[resourceId];
-    if (rate <= 0) continue;
+    const base = def.rates[resourceId];
+    if (base <= 0) continue;
     const resource = RESOURCES.find((entry) => entry.id === resourceId);
-    parts.push(`+${rate} ${resource?.name ?? resourceId}/秒`);
+    parts.push(`${resource?.name ?? resourceId} ${formatRate(scale.mul(base))}`);
   }
-  if (def.energySupply > 0) parts.push(`+${def.energySupply} 能源`);
-  if (def.note) parts.push(def.note);
-  if (def.energyCost > 0) parts.push(`耗 ${def.energyCost} 能源`);
-  return parts.join(" · ");
+  if (def.producesEnergy > 0) parts.push(`能源 +${def.producesEnergy}/s`);
+  if (def.globalProductionMult !== 1) parts.push(`全局 ×${def.globalProductionMult}`);
+  if (def.consumesEnergy > 0) parts.push(`负载 ${def.consumesEnergy}`);
+  return parts.length > 0 ? `每台 ${parts.join(" · ")}` : "无产出";
 }
 
 function describeCost(state: GameState, id: ProducerId): string {
   const def = producerById(id);
+  if (!isProducerUnlocked(state, id)) return `未解锁 · ${unlockLine(def)}`;
   const costs = nextUnitCost(def, state.producers[id]);
   const parts: string[] = [];
   for (const resourceId of RESOURCE_IDS) {
@@ -115,5 +163,16 @@ function describeCost(state: GameState, id: ProducerId): string {
     const resource = RESOURCES.find((entry) => entry.id === resourceId);
     parts.push(`${resource?.name ?? resourceId} ${formatAmount(costs[resourceId])}`);
   }
-  return parts.length > 0 ? `下一座 ${parts.join(" · ")}` : "免费";
+  return parts.length > 0 ? `下一台 ${parts.join(" · ")}` : "免费";
+}
+
+function unlockLine(def: ProducerDef): string {
+  const unlock = def.unlock;
+  if (unlock.kind === "ownedGte") return `需要 ${unlock.value} 座${producerById(unlock.producer).name}`;
+  if (unlock.kind === "lifetimeGte") {
+    const resId = unlock.res;
+    const resource = RESOURCES.find((entry) => entry.id === resId);
+    return `本轮累计${resource?.name ?? resId}达到 ${unlock.value}`;
+  }
+  return "初始可用";
 }

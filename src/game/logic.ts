@@ -1,3 +1,14 @@
+import { evaluateLoadout, hasRunnableProtocol, refreshUnlocks } from "../automation/engine";
+import {
+  CORE_BONUS_PER_CORE,
+  MANUAL_METAL_PER_CLICK,
+  OFFLINE_PROTOCOL_SECONDS,
+  PRESTIGE_SCORE_UNIT,
+  PRODUCERS,
+  SCORE_WEIGHTS,
+  producerById,
+  type ProducerDef,
+} from "./content";
 import {
   affordableCount,
   big,
@@ -7,24 +18,55 @@ import {
   seriesCost,
   type BigNumber,
 } from "./decimal";
-import {
-  PRESTIGE_SCORE_UNIT,
-  PRODUCERS,
-  PROTOCOL_SLOT_CAP,
-  ROBOTICS_MULTIPLIER,
-  WARP_CORE_BONUS,
-  producerById,
-  type ProducerDef,
-} from "./content";
 import { createInitialState } from "./state";
 import { RESOURCE_IDS, type GameState, type ProducerId, type ResourceId } from "./types";
 
-export type BuyMode = "one" | "ten" | "max";
+export type BuyMode = 1 | 10 | "max";
+export type TickMode = "live" | "offline";
 
-/** Pure. Production is linear in dt, so one call can cover a frame or an offline gap. */
-export function tick(state: GameState, dtSeconds: number): GameState {
+const LIVE_PROTOCOL_SECONDS = 1;
+
+export interface EnergyReport {
+  supply: BigNumber;
+  demand: BigNumber;
+  efficiency: BigNumber;
+  shortage: BigNumber;
+}
+
+/**
+ * Advance the simulation by `dtSeconds`.
+ * Live play evaluates armed protocol cards about once per second.
+ * Offline catch-up evaluates them on the balance interval (60s).
+ * Pure: the input state is not mutated.
+ */
+export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live"): GameState {
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return state;
+  const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : LIVE_PROTOCOL_SECONDS;
+  if (!hasRunnableProtocol(state)) return refreshUnlocks(markEnergyShortage(produce(state, dtSeconds)));
 
+  let current = state;
+  let remaining = dtSeconds;
+  let guard = 0;
+  const limit = Math.ceil(dtSeconds / period) + 2;
+  while (remaining > 1e-6 && guard < limit) {
+    guard += 1;
+    const accrued = current.protocols.accumulator;
+    if (accrued >= period) {
+      current = evaluateLoadout(current, period);
+      current = setAccumulator(current, 0);
+      continue;
+    }
+    const step = Math.min(remaining, period - accrued);
+    current = produce(current, step);
+    const accruedNext = accrued + step;
+    remaining -= step;
+    if (accruedNext >= period - 1e-8) current = evaluateLoadout(setAccumulator(current, 0), period);
+    else current = setAccumulator(current, accruedNext);
+  }
+  return refreshUnlocks(markEnergyShortage(current));
+}
+
+function produce(state: GameState, dtSeconds: number): GameState {
   const resources = { ...state.resources };
   const lifetime = { ...state.lifetime };
   for (const id of RESOURCE_IDS) {
@@ -32,56 +74,45 @@ export function tick(state: GameState, dtSeconds: number): GameState {
     resources[id] = resources[id].add(gain);
     lifetime[id] = lifetime[id].add(gain);
   }
-
-  return {
-    ...state,
-    resources,
-    lifetime,
-    totalTime: state.totalTime.add(dtSeconds),
-  };
+  return { ...state, resources, lifetime, totalTime: state.totalTime.add(dtSeconds) };
 }
 
-export function isUnlocked(state: GameState, id: ProducerId): boolean {
-  return producerById(id).unlock(state);
+function setAccumulator(state: GameState, accumulator: number): GameState {
+  return { ...state, protocols: { ...state.protocols, accumulator } };
 }
 
-/** (1 + 2% per unspent core) × (1.25 ^ robotics factories). */
-export function outputMultiplier(state: GameState): BigNumber {
-  const cores = big(1).add(state.warpCores.mul(WARP_CORE_BONUS));
-  const robots = big(ROBOTICS_MULTIPLIER).pow(state.producers.robotics_factory);
-  return cores.mul(robots);
-}
-
-export function energySupply(state: GameState): BigNumber {
-  let supply = big(0);
+/** Unspent warp cores and robotics factories. Does not include energy efficiency. */
+export function globalMultiplier(state: GameState): BigNumber {
+  let mult = big(1).add(state.warpCores.mul(CORE_BONUS_PER_CORE));
   for (const producer of PRODUCERS) {
-    if (producer.energySupply <= 0) continue;
-    supply = supply.add(state.producers[producer.id].mul(producer.energySupply));
+    if (producer.globalProductionMult === 1) continue;
+    mult = mult.mul(big(producer.globalProductionMult).pow(state.producers[producer.id]));
   }
-  return supply;
+  return mult;
 }
 
-export function energyDemand(state: GameState): BigNumber {
+export function energyReport(state: GameState): EnergyReport {
+  let supply = big(0);
   let demand = big(0);
   for (const producer of PRODUCERS) {
-    if (producer.energyCost <= 0) continue;
-    demand = demand.add(state.producers[producer.id].mul(producer.energyCost));
+    const owned = state.producers[producer.id];
+    if (producer.producesEnergy > 0) supply = supply.add(owned.mul(producer.producesEnergy));
+    if (producer.consumesEnergy > 0) demand = demand.add(owned.mul(producer.consumesEnergy));
   }
-  return demand;
+  const efficiency = demand.gt(0) ? bigMin(big(1), supply.div(demand)) : big(1);
+  const shortage = demand.gt(supply) ? demand.sub(supply) : big(0);
+  return { supply, demand, efficiency, shortage };
 }
 
-/** min(1, supply/demand). No demand means full efficiency. */
-export function energyEfficiency(state: GameState): BigNumber {
-  const demand = energyDemand(state);
-  if (demand.lte(0)) return big(1);
-  const supply = energySupply(state);
-  if (supply.gte(demand)) return big(1);
-  return supply.div(demand);
+/** Resource output scale: global multiplier × energy efficiency. */
+export function resourceMultiplier(state: GameState): BigNumber {
+  return globalMultiplier(state).mul(energyReport(state).efficiency);
 }
 
-export function energyShortage(state: GameState): BigNumber {
-  const gap = energyDemand(state).sub(energySupply(state));
-  return gap.gt(0) ? gap : big(0);
+export function markEnergyShortage(state: GameState): GameState {
+  if (state.seenEnergyShortage) return state;
+  if (energyReport(state).efficiency.lt(1)) return { ...state, seenEnergyShortage: true };
+  return state;
 }
 
 export function productionPerSecond(state: GameState, id: ResourceId): BigNumber {
@@ -91,49 +122,64 @@ export function productionPerSecond(state: GameState, id: ResourceId): BigNumber
     if (each === 0) continue;
     rate = rate.add(state.producers[producer.id].mul(each));
   }
-  return rate.mul(outputMultiplier(state)).mul(energyEfficiency(state));
+  return rate.mul(resourceMultiplier(state));
 }
 
 export function expansionScore(state: GameState): BigNumber {
-  return state.lifetime.metal.add(state.lifetime.crystal.mul(3)).add(state.lifetime.deuterium.mul(10));
+  return state.lifetime.metal
+    .mul(SCORE_WEIGHTS.metal)
+    .add(state.lifetime.crystal.mul(SCORE_WEIGHTS.crystal))
+    .add(state.lifetime.deuterium.mul(SCORE_WEIGHTS.deuterium));
 }
 
+/** Warp cores granted by launching a colony ship from this run. */
 export function warpGain(state: GameState): BigNumber {
   const score = expansionScore(state);
   if (score.lt(PRESTIGE_SCORE_UNIT)) return big(0);
   return bigFloor(bigSqrt(score.div(PRESTIGE_SCORE_UNIT)));
 }
 
-/** Score still needed before the next curvature core. */
-export function scoreToNextCore(state: GameState): BigNumber {
-  const next = warpGain(state).add(1);
-  const target = next.pow(2).mul(PRESTIGE_SCORE_UNIT);
-  const gap = target.sub(expansionScore(state));
-  return gap.gt(0) ? gap : big(0);
-}
-
-/** Launch a colony ship. Keeps cores and play time, and grants the starting solar plant again. */
+/**
+ * Launch the colony ship. Resets the surface and banks warp cores.
+ * Protocol cards, unlocks, and manual-click progress stay.
+ * Returns the same state when the gain would be zero.
+ */
 export function prestige(state: GameState): GameState {
   const gain = warpGain(state);
   if (gain.lt(1)) return state;
   const next = createInitialState();
   next.warpCores = state.warpCores.add(gain);
   next.totalTime = state.totalTime;
-  return next;
-}
-
-/** Manual mining: +1 metal, counted toward this run. */
-export function scrape(state: GameState): GameState {
-  return {
-    ...state,
-    resources: { ...state.resources, metal: state.resources.metal.add(1) },
-    lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(1) },
+  next.manualClicks = state.manualClicks;
+  next.seenEnergyShortage = state.seenEnergyShortage;
+  next.hasPrestiged = true;
+  next.unlockedCards = state.unlockedCards.slice();
+  next.protocols = {
+    accumulator: 0,
+    slots: state.protocols.slots.map((slot) => ({
+      ...slot,
+      card: slot.card ? structuredClone(slot.card) : null,
+    })),
   };
+  return refreshUnlocks(next);
 }
 
-export function protocolSlots(state: GameState): BigNumber {
-  const slots = big(1).add(state.producers.robotics_factory.div(2).floor());
-  return slots.gt(PROTOCOL_SLOT_CAP) ? big(PROTOCOL_SLOT_CAP) : slots;
+/** Manual collect. Counts toward the auto-collect unlock. Auto-collect does not call this. */
+export function scrape(state: GameState): GameState {
+  const gain = big(MANUAL_METAL_PER_CLICK);
+  return refreshUnlocks({
+    ...state,
+    manualClicks: state.manualClicks + 1,
+    resources: { ...state.resources, metal: state.resources.metal.add(gain) },
+    lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) },
+  });
+}
+
+export function isProducerUnlocked(state: GameState, id: ProducerId): boolean {
+  const unlock = producerById(id).unlock;
+  if (unlock.kind === "start") return true;
+  if (unlock.kind === "ownedGte") return state.producers[unlock.producer].gte(unlock.value);
+  return state.lifetime[unlock.res].gte(unlock.value);
 }
 
 export function nextUnitCost(def: ProducerDef, owned: BigNumber): Record<ResourceId, BigNumber> {
@@ -160,7 +206,6 @@ export function canAfford(state: GameState, costs: Record<ResourceId, BigNumber>
 }
 
 export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
-  if (!isUnlocked(state, id)) return big(0);
   const def = producerById(id);
   const owned = state.producers[id];
   let cap: BigNumber | null = null;
@@ -183,9 +228,9 @@ export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
 }
 
 export function buy(state: GameState, id: ProducerId, mode: BuyMode): GameState {
+  if (!isProducerUnlocked(state, id)) return state;
   const affordable = maxBuyCount(state, id);
-  const requested = mode === "one" ? big(1) : mode === "ten" ? big(10) : affordable;
-  const qty = bigMin(requested, affordable);
+  const qty = mode === "max" ? affordable : affordable.gte(mode) ? big(mode) : big(0);
   if (qty.lt(1)) return state;
 
   const def = producerById(id);
@@ -199,11 +244,13 @@ export function buy(state: GameState, id: ProducerId, mode: BuyMode): GameState 
     resources[resourceId] = next.lt(0) ? big(0) : next;
   }
 
-  return {
-    ...state,
-    resources,
-    producers: { ...state.producers, [id]: owned.add(qty) },
-  };
+  return refreshUnlocks(
+    markEnergyShortage({
+      ...state,
+      resources,
+      producers: { ...state.producers, [id]: owned.add(qty) },
+    }),
+  );
 }
 
 function emptyCosts(): Record<ResourceId, BigNumber> {

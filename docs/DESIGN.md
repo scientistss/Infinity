@@ -1,6 +1,6 @@
 # Infinity — 游戏设计大纲 v0.1
 
-**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file is the design source of truth. The repository today is only the planet-surface scaffold described at the end.
+**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file is the design source of truth. The repository today is the planet-surface slice described at the end, including a running protocol-card engine.
 
 > 类型：网页放置/增量 · Vite + TypeScript + break_infinity.js（大数走 `src/game/decimal.ts`）
 > 核心卖点：**可视化协议卡** × **OGame 式星际扩张**
@@ -137,7 +137,7 @@ interface ProtocolCard {
 - `tick(state, dt)`、三种累积资源、能源供给/需求、上表五座生产者、×1 / ×10 / 最大
 - 手动采矿、开局 1 座太阳能电站、解锁条件
 - 发射殖民舰与曲率核心的 Sqrt 公式，以及 +2% 未花费核心
-- 协议板只展示卡槽数量和六种卡的解锁条件，**不执行规则**
-- localStorage 与 `{ version, savedAt, state }` JSON 导入导出；离线上限 2 小时
+- 协议卡引擎执行已装配的卡。在线大约每 1 秒，离线每 60 秒。目录在 `src/data/protocol-cards.ts`，求值在 `src/automation/`。说明见 [AUTOMATION.md](AUTOMATION.md)
+- localStorage 与 `{ version, savedAt, state }` JSON 导入导出；离线上限 2 小时。存档版本 3，版本 1 和 2 会迁入
 
-未做：协议卡引擎、曲率科技、成就、推荐卡组、base64、目录重构、星系及以上。
+未做：曲率科技、成就、推荐卡组、base64、目录重构、星系及以上。
