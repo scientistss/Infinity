@@ -1,6 +1,7 @@
 import { OFFLINE_CAP_LABEL, OFFLINE_CAP_SECONDS } from "./game/content";
 import { formatDuration } from "./game/format";
-import { buy, isUnlocked, prestige, scrape, tick } from "./game/logic";
+import { buy, prestige, scrape, tick } from "./game/logic";
+import { clearSlot, equipCard, equipFirstEmpty, moveSlot, patchSlot, toggleSlot } from "./automation/engine";
 import {
   clearSave,
   deserializeState,
@@ -16,31 +17,17 @@ import { present } from "./ui/present";
 import { mountView, type UiAction } from "./ui/view";
 import "./style.css";
 
-const AUTOSAVE_MS = 30_000;
+const AUTOSAVE_MS = 15_000;
 const BACKGROUND_NOTICE_SECONDS = 5;
 
 const app = document.querySelector("#app");
 if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 
 const store = localStorageSafe();
-const fresh = { state: createInitialState(), appliedSeconds: 0, rawSeconds: 0, capped: false };
-let loaded = fresh;
-let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
-if (store) {
-  try {
-    loaded = loadGame(store);
-  } catch {
-    loaded = fresh;
-    status = "存档无法读取，已重新开始";
-    try {
-      writeSave(store, loaded.state);
-    } catch {
-      status = "存档无法读取";
-    }
-  }
-}
+const loaded = store ? loadGame(store) : { state: createInitialState(), appliedSeconds: 0, rawSeconds: 0, capped: false };
 
 let state: GameState = loaded.state;
+let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
 let banner: string | null = offlineBanner(loaded.appliedSeconds, loaded.capped);
 
 const view = mountView(app, (action) => {
@@ -62,7 +49,7 @@ function frame(now: number): void {
   lastFrame = now;
   if (gap >= BACKGROUND_NOTICE_SECONDS) {
     const applied = Math.min(gap, OFFLINE_CAP_SECONDS);
-    state = tick(state, applied);
+    state = tick(state, applied, "offline");
     banner = offlineBanner(applied, gap > OFFLINE_CAP_SECONDS);
     persist("已追赶后台进度");
   } else if (gap > 0) {
@@ -75,23 +62,44 @@ function frame(now: number): void {
 async function handleAction(action: UiAction): Promise<void> {
   if (action.type === "scrape") {
     state = scrape(state);
-    status = "采到 1 金属";
+    status = "采集 +1 金属";
+  } else if (action.type === "protocol-palette") {
+    const result = equipFirstEmpty(state, action.cardId);
+    state = result.state;
+    status = result.status;
+    if (result.status.startsWith("已装配")) persist();
+  } else if (action.type === "protocol-equip") {
+    const result = equipCard(state, action.index, action.cardId);
+    state = result.state;
+    status = result.status;
+    if (result.status.startsWith("已装配")) persist();
+  } else if (action.type === "protocol-toggle") {
+    state = toggleSlot(state, action.index, action.enabled);
+    status = action.enabled ? "已启用协议卡" : "已关闭协议卡";
+    persist();
+  } else if (action.type === "protocol-clear") {
+    state = clearSlot(state, action.index);
+    status = "已卸下协议卡";
+    persist();
+  } else if (action.type === "protocol-move") {
+    state = moveSlot(state, action.from, action.to);
+    status = "已调整协议槽顺序";
+    persist();
+  } else if (action.type === "protocol-param") {
+    state = patchSlot(state, action.index, action.path, action.value);
+    status = "已调整协议参数";
+    persist();
   } else if (action.type === "buy") {
-    if (!isUnlocked(state, action.id)) {
-      status = "尚未解锁";
-      view.update(present(state, status, banner));
-      return;
-    }
     const before = state.producers[action.id];
-    state = buy(state, action.id, action.mode);
+    state = buy(state, action.id, action.mode === "max" ? "max" : 1);
     const gained = state.producers[action.id].sub(before);
     status = gained.gte(1) ? `已购买 ${gained.toFixed(0)} 台` : "资源不足";
     if (gained.gte(1)) persist();
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会清空地表资源和生产者，只保留曲率核心。继续？")) return;
+    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
-      status = "产出分还不够发射";
+      status = "扩张分还不够发射";
       return;
     }
     state = next;

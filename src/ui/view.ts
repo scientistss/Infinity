@@ -1,16 +1,23 @@
-import { isProducerId, OFFLINE_CAP_LABEL, PROTOCOL_CARDS, PRODUCERS, RESOURCES } from "../game/content";
-import type { ProducerId } from "../game/types";
+import { CARD_CATALOG } from "../data/protocol-cards";
+import { isProducerId, OFFLINE_CAP_LABEL, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
+import { PROTOCOL_SLOT_COUNT, type ProducerId } from "../game/types";
 import type { ViewModel } from "./present";
 
 export type UiAction =
   | { type: "scrape" }
-  | { type: "buy"; id: ProducerId; mode: "one" | "ten" | "max" }
+  | { type: "buy"; id: ProducerId; mode: "one" | "max" }
   | { type: "prestige" }
   | { type: "save" }
   | { type: "export" }
   | { type: "import-text"; text: string }
   | { type: "import-file"; file: File }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "protocol-equip"; index: number; cardId: string }
+  | { type: "protocol-palette"; cardId: string }
+  | { type: "protocol-toggle"; index: number; enabled: boolean }
+  | { type: "protocol-clear"; index: number }
+  | { type: "protocol-move"; from: number; to: number }
+  | { type: "protocol-param"; index: number; path: string; value: string };
 
 export interface GameView {
   update(model: ViewModel): void;
@@ -37,8 +44,21 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "reset") onAction({ type: "reset" });
     if (action === "buy") {
       const id = button.dataset.id ?? "";
-      const mode = button.dataset.mode === "max" ? "max" : button.dataset.mode === "ten" ? "ten" : "one";
+      const mode = button.dataset.mode === "max" ? "max" : "one";
       if (isProducerId(id)) onAction({ type: "buy", id, mode });
+    }
+    if (action === "equip-card") {
+      const cardId = button.dataset.card ?? "";
+      if (cardId) onAction({ type: "protocol-palette", cardId });
+    }
+    if (action === "slot-clear") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "protocol-clear", index });
+    }
+    if (action === "slot-move") {
+      const index = Number(button.dataset.index);
+      const dir = button.dataset.dir === "-1" ? -1 : 1;
+      if (Number.isInteger(index)) onAction({ type: "protocol-move", from: index, to: index + dir });
     }
   });
 
@@ -48,19 +68,70 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (file) onAction({ type: "import-file", file });
   });
 
+  root.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const slot = target.closest("[data-slot]");
+    if (!(slot instanceof HTMLElement)) return;
+    const index = Number(slot.dataset.slot);
+    if (!Number.isInteger(index)) return;
+    if (target instanceof HTMLInputElement && target.dataset.field === "enabled") {
+      onAction({ type: "protocol-toggle", index, enabled: target.checked });
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.dataset.path) {
+      onAction({ type: "protocol-param", index, path: target.dataset.path, value: target.value });
+    }
+  });
+
+  root.addEventListener("dragstart", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !event.dataTransfer) return;
+    const card = target.closest("[data-card]");
+    if (card instanceof HTMLElement && card.dataset.card) {
+      event.dataTransfer.setData("text/plain", `card:${card.dataset.card}`);
+      event.dataTransfer.effectAllowed = "copy";
+      return;
+    }
+    const handle = target.closest("[data-slot-drag]");
+    if (handle instanceof HTMLElement && handle.dataset.slotDrag) {
+      event.dataTransfer.setData("text/plain", `slot:${handle.dataset.slotDrag}`);
+      event.dataTransfer.effectAllowed = "move";
+    }
+  });
+
+  root.addEventListener("dragover", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.closest("[data-slot]")) event.preventDefault();
+  });
+
+  root.addEventListener("drop", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !event.dataTransfer) return;
+    const slot = target.closest("[data-slot]");
+    if (!(slot instanceof HTMLElement)) return;
+    event.preventDefault();
+    const index = Number(slot.dataset.slot);
+    if (!Number.isInteger(index)) return;
+    const text = event.dataTransfer.getData("text/plain");
+    if (text.startsWith("card:")) onAction({ type: "protocol-equip", index, cardId: text.slice(5) });
+    if (text.startsWith("slot:")) {
+      const from = Number(text.slice(5));
+      if (Number.isInteger(from)) onAction({ type: "protocol-move", from, to: index });
+    }
+  });
+
   return {
     update(model) {
-      setText(root, "warp-cores", model.warpCores);
+      setText(root, "telemetry", model.telemetry);
       setText(root, "multiplier", `产量 ${model.multiplier}`);
       setText(root, "played", `累计 ${model.played}`);
-      setText(root, "energy", model.energy);
-      setText(root, "slots", model.slots);
+      setText(root, "passive", model.passive);
       setText(root, "score", model.score);
-      setText(root, "preview", model.preview);
+      setText(root, "gain", model.gain);
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
-
-      requiredElement(root, "energy").classList.toggle("energy-short", model.energyShort);
 
       const banner = requiredElement(root, "banner");
       banner.hidden = model.banner === null;
@@ -71,18 +142,58 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         setText(root, `rate-${resource.id}`, resource.rate);
       }
 
-      requiredButton(root, "action-prestige").disabled = !model.canPrestige;
+      const prestige = requiredButton(root, "action-prestige");
+      prestige.disabled = !model.canPrestige;
 
       for (const producer of model.producers) {
         setText(root, `owned-${producer.id}`, producer.owned);
-        setText(root, `effect-${producer.id}`, producer.effect);
+        setText(root, `rates-${producer.id}`, producer.rates);
         setText(root, `cost-${producer.id}`, producer.cost);
-        requiredElement(root, `facility-${producer.id}`).classList.toggle("locked", !producer.unlocked);
-        requiredButton(root, `buy-one-${producer.id}`).disabled = !producer.canBuyOne;
-        requiredButton(root, `buy-ten-${producer.id}`).disabled = !producer.canBuyTen;
+        const one = requiredButton(root, `buy-one-${producer.id}`);
         const max = requiredButton(root, `buy-max-${producer.id}`);
+        one.disabled = !producer.canBuyOne;
         max.disabled = !producer.canBuyMax;
         max.textContent = producer.maxLabel;
+      }
+
+      setText(root, "protocol-energy", model.protocolEnergy);
+      setText(root, "protocol-meta", model.protocolMeta);
+      for (const card of model.catalog) {
+        const button = requiredButton(root, `catalog-${card.id}`);
+        button.disabled = !card.unlocked;
+        button.draggable = card.unlocked;
+        button.title = card.hint;
+      }
+      for (const slot of model.slots) {
+        const locked = requiredElement(root, `slot-lock-${slot.index}`);
+        const controls = requiredElement(root, `slot-controls-${slot.index}`);
+        locked.hidden = slot.unlocked;
+        controls.hidden = !slot.unlocked;
+        locked.textContent = slot.lockHint;
+        setText(root, `slot-sentence-${slot.index}`, slot.sentence);
+        const lamp = requiredElement(root, `lamp-${slot.index}`);
+        lamp.className = `lamp lamp-${slot.lamp}`;
+        lamp.title = slot.reason;
+        if (!slot.unlocked) continue;
+        const enabled = requiredInput(root, `slot-enabled-${slot.index}`);
+        enabled.disabled = slot.sentence === "";
+        enabled.checked = slot.enabled;
+        const params = requiredElement(root, `slot-params-${slot.index}`);
+        if (params.dataset.key !== slot.fieldsKey && !params.contains(document.activeElement)) {
+          params.dataset.key = slot.fieldsKey;
+          params.innerHTML = slot.fields
+            .map(
+              (field) =>
+                `<label class="param">${field.label}<select data-path="${field.path}">${field.options
+                  .map((option) => `<option value="${option.value}">${option.label}</option>`)
+                  .join("")}</select></label>`,
+            )
+            .join("");
+        }
+        for (const field of slot.fields) {
+          const select = params.querySelector(`select[data-path="${field.path}"]`);
+          if (select instanceof HTMLSelectElement && select.value !== field.value) select.value = field.value;
+        }
       }
     },
     setTransferText(text) {
@@ -108,7 +219,7 @@ function shellMarkup(): string {
   const producers = PRODUCERS.map((producer, index) => {
     const idx = String(index + 1).padStart(2, "0");
     return `
-      <article class="facility" data-bind="facility-${producer.id}">
+      <article class="facility">
         <div class="facility-head">
           <div>
             <h3><span class="idx">${idx}</span> ${producer.name} <small>${producer.nameEn}</small></h3>
@@ -119,21 +230,16 @@ function shellMarkup(): string {
             <strong data-bind="owned-${producer.id}">0</strong>
           </div>
         </div>
-        <p class="rates" data-bind="effect-${producer.id}"></p>
+        <p class="rates" data-bind="rates-${producer.id}"></p>
         <div class="facility-buy">
           <p class="cost" data-bind="cost-${producer.id}"></p>
           <div class="actions">
-            <button type="button" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">×1</button>
-            <button type="button" data-action="buy" data-mode="ten" data-id="${producer.id}" data-bind="buy-ten-${producer.id}">×10</button>
-            <button type="button" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大</button>
+            <button type="button" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">购买 1</button>
+            <button type="button" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大购买</button>
           </div>
         </div>
       </article>`;
   }).join("");
-
-  const cards = PROTOCOL_CARDS.map(
-    (card) => `<li><strong>${card.name}</strong> · 未实装 · ${card.unlock}</li>`,
-  ).join("");
 
   return `
     <div class="sky" aria-hidden="true"></div>
@@ -148,11 +254,11 @@ function shellMarkup(): string {
         <div>
           <p class="kicker">Planet surface · v0.1</p>
           <h1>Infinity <span>无限</span></h1>
-          <p class="lede">殖民一颗荒芜行星。先手动采矿，再用矿井和电站把产出转起来。</p>
+          <p class="lede">手动采集金属，把协议卡放进右侧槽位。句子是「当…若…则…」。</p>
         </div>
         <aside class="mast-stat">
           <span>曲率核心 Warp Core</span>
-          <strong data-bind="warp-cores">0</strong>
+          <strong data-bind="telemetry">0</strong>
           <span data-bind="multiplier">产量 ×1.00</span>
           <span data-bind="played">累计 0 秒</span>
         </aside>
@@ -160,45 +266,38 @@ function shellMarkup(): string {
 
       <p class="banner" data-bind="banner" role="status" hidden></p>
 
+      <div class="layout">
+      <div class="column">
       <section class="panel" aria-labelledby="stock-title">
         <div class="panel-head">
           <h2 id="stock-title">库存</h2>
-          <p data-bind="energy">能源</p>
-          <button type="button" data-action="scrape">手动采矿 +1</button>
+          <p data-bind="passive">风化拾取</p>
+          <button type="button" data-action="scrape">手动采集 +1</button>
         </div>
         <div class="resources">${resources}</div>
       </section>
 
       <section class="panel" aria-labelledby="facility-title">
         <div class="panel-head">
-          <h2 id="facility-title">地表生产者</h2>
-          <p>成本 = 基础 × 成长^已拥有。能源不足时，矿的效率按供给/需求下降。</p>
+          <h2 id="facility-title">地表设施</h2>
+          <p>价格按几何级数上涨。最大购买会在付得起的范围内一次买满。</p>
         </div>
         <div class="facilities">${producers}</div>
-      </section>
-
-      <section class="panel" aria-labelledby="protocol-title">
-        <div class="panel-head">
-          <h2 id="protocol-title">协议板</h2>
-          <p data-bind="slots">卡槽 1 / 6</p>
-        </div>
-        <p class="blurb">可视化协议卡，不写代码。一句可读的规则，例如：当 每 5 秒 若 能源 &lt; 100% 则 建造 太阳能电站 ×1。本脚手架只展示卡槽和卡种，不执行规则。</p>
-        <ul class="protocol-list">${cards}</ul>
       </section>
 
       <section class="panel prestige" aria-labelledby="prestige-title">
         <div class="panel-head">
           <h2 id="prestige-title">发射殖民舰</h2>
-          <p>产出分 = 金属累计 + 3×晶体累计 + 10×重氢累计。核心 = ⌊√(产出分 / 1e6)⌋。未花费核心每个 +2% 全局产出。发射清空资源和生产者，保留曲率核心，并重新获得 1 座太阳能电站。</p>
+          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心和协议卡。每颗核心使全局产量 +2%。</p>
         </div>
         <dl class="prestige-stats">
           <div>
-            <dt>本轮产出分</dt>
+            <dt>本轮扩张分</dt>
             <dd data-bind="score">0.00</dd>
           </div>
           <div>
-            <dt>预览</dt>
-            <dd data-bind="preview">可得 0 核心</dd>
+            <dt>预计核心</dt>
+            <dd data-bind="gain">0</dd>
           </div>
         </dl>
         <button type="button" data-action="prestige" data-bind="action-prestige" disabled>发射殖民舰</button>
@@ -207,7 +306,7 @@ function shellMarkup(): string {
       <section class="panel" aria-labelledby="save-title">
         <div class="panel-head">
           <h2 id="save-title">存档</h2>
-          <p>自动写入 localStorage。导出 JSON 为 { version, savedAt, state }。离线进度最多结算 <strong data-bind="offline-cap">${OFFLINE_CAP_LABEL}</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, state }。离线进度最多结算 <strong data-bind="offline-cap">${OFFLINE_CAP_LABEL}</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>
@@ -219,11 +318,47 @@ function shellMarkup(): string {
           <button type="button" data-action="reset" class="danger">重置</button>
         </div>
         <label class="transfer-label" for="transfer">导入文本</label>
-        <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON"></textarea>
+        <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON，或用导出填入此框"></textarea>
         <button type="button" data-action="import-text">从文本导入</button>
         <p class="status" data-bind="status" role="status">就绪</p>
       </section>
+      </div>
+      <aside class="panel protocol-board" aria-labelledby="protocol-title">
+        <div class="panel-head">
+          <h2 id="protocol-title">协议卡</h2>
+          <p data-bind="protocol-meta">槽位</p>
+        </div>
+        <p class="rates" data-bind="protocol-energy"></p>
+        <div class="catalog-row">${catalogButtons()}</div>
+        <div class="protocol-slots">${protocolSlots()}</div>
+      </aside>
+      </div>
     </main>`;
+}
+
+function catalogButtons(): string {
+  return CARD_CATALOG.map(
+    (entry) =>
+      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${entry.labelZh}</button>`,
+  ).join("");
+}
+
+function protocolSlots(): string {
+  return Array.from({ length: PROTOCOL_SLOT_COUNT }, (_, index) => `
+    <article class="protocol-slot" data-slot="${index}">
+      <p class="lock" data-bind="slot-lock-${index}"></p>
+      <div class="slot-controls" data-bind="slot-controls-${index}">
+        <span class="lamp lamp-gray" data-bind="lamp-${index}" title="空槽位"></span>
+        <span class="drag-handle" draggable="true" data-slot-drag="${index}" title="拖动排序">↕</span>
+        <span class="idx">${String(index + 1).padStart(2, "0")}</span>
+        <label class="check"><input type="checkbox" data-bind="slot-enabled-${index}" data-field="enabled" /> 启用</label>
+        <button type="button" data-action="slot-move" data-index="${index}" data-dir="-1">上移</button>
+        <button type="button" data-action="slot-move" data-index="${index}" data-dir="1">下移</button>
+        <button type="button" data-action="slot-clear" data-index="${index}">卸下</button>
+      </div>
+      <div class="slot-params" data-bind="slot-params-${index}"></div>
+      <p class="sentence" data-bind="slot-sentence-${index}"></p>
+    </article>`).join("");
 }
 
 function requiredElement(root: ParentNode, bind: string): HTMLElement {
