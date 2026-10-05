@@ -1,0 +1,88 @@
+# Deploy Infinity to Cloudflare Pages on every push to main.
+#
+# This repo is private. GitHub Pages for private repos usually needs a paid
+# plan, so production hosting is Cloudflare Pages (free for private Git).
+#
+# One-time setup after this workflow is on main:
+# 1. Create an API token at https://dash.cloudflare.com/profile/api-tokens
+#    Custom token → Permissions: Account / Cloudflare Pages / Edit
+#    → Account Resources: your account → Continue to summary → Create Token.
+# 2. In this repo: Settings → Secrets and variables → Actions → New repository secret
+#    CLOUDFLARE_API_TOKEN = the token from step 1
+#    CLOUDFLARE_ACCOUNT_ID = the id in the dashboard URL
+#    https://dash.cloudflare.com/<account_id>
+# 3. Actions → Deploy → Re-run the failed job (or push to main).
+#    The game is then at https://scientistss-infinity.pages.dev
+#    If that subdomain is already taken, change the project name in this file
+#    and in wrangler.toml, then re-run.
+
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build
+        run: npm ci && npm run build
+
+      - name: Require Cloudflare secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Missing secret CLOUDFLARE_API_TOKEN"
+            missing=1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Missing secret CLOUDFLARE_ACCOUNT_ID"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Add both secrets under Settings → Secrets and variables → Actions, then re-run this workflow. Steps are at the top of .github/workflows/deploy.yml."
+            exit 1
+          fi
+
+      # Non-interactive `pages deploy` does not create a missing project.
+      - name: Create Pages project if needed
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if npx --yes wrangler@4 pages project list --json | jq -e --arg name scientistss-infinity 'any(.[]; ."Project Name" == $name)' >/dev/null; then
+            echo "Pages project scientistss-infinity already exists"
+          else
+            npx --yes wrangler@4 pages project create scientistss-infinity --production-branch main
+          fi
+
+      - name: Publish dist to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=scientistss-infinity --branch=${{ github.ref_name }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}

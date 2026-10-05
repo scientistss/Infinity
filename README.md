@@ -4,6 +4,14 @@
 
 从一颗荒芜行星的地表开始。当前是可玩切片，不是完整游戏。设计见 [docs/DESIGN.md](docs/DESIGN.md)。
 
+## 在线
+
+推送到 `main` 后，GitHub Actions 执行 `npm ci && npm run build`，并把 `dist/` 发布到 Cloudflare Pages。
+
+https://scientistss-infinity.pages.dev
+
+这个仓库是私有的，首次上线需要在 Cloudflare 创建一个仅含 Pages 编辑权限的 API token，并把 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 加到仓库的 Actions secrets。步骤写在 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) 顶部。加上 secrets 之后重跑 Deploy workflow 即可。如果 `scientistss-infinity.pages.dev` 已被占用，改 workflow 和 `wrangler.toml` 里的项目名再重跑。
+
 ## 运行
 
 需要 Node.js 20+。

@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "./",
+  // Cloudflare Pages serves the project at the site root.
+  base: "/",
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // The live site is public; omit maps so this private repo's sources stay private.
+    sourcemap: false,
   },
 });

@@ -1,0 +1,4 @@
+# Direct-upload project for Cloudflare Pages. The GitHub Action publishes dist/.
+name = "scientistss-infinity"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-05"
