@@ -73,7 +73,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if npx --yes wrangler@4 pages project list --json | jq -e --arg name scientistss-infinity 'any(.[]; ."Project Name" == $name)' >/dev/null; then
+          # Wrangler may print a banner before the JSON array. Keep from the first '['.
+          list=$(npx --yes wrangler@4 pages project list --json | sed -n '/^\[/,$p')
+          if printf '%s\n' "$list" | jq -e --arg name scientistss-infinity 'any(.[]; ."Project Name" == $name)' >/dev/null; then
             echo "Pages project scientistss-infinity already exists"
           else
             npx --yes wrangler@4 pages project create scientistss-infinity --production-branch main
