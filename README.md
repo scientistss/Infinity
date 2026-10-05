@@ -6,14 +6,9 @@
 
 ## 在线
 
-在 [Vercel](https://vercel.com/new) 导入这个私有 GitHub 仓库后，推送到 `main` 会自动部署。
+https://scientistss.github.io/Infinity/
 
-1. Import GitHub repo：`scientistss/Infinity`（授权 Vercel 访问该私有仓库）。
-2. Framework Preset：Vite。
-3. Build Command：`npm run build`。Output Directory：`dist`。这两项也写在 `vercel.json` 里。
-4. Deploy。之后每次推送到 `main` 都会重新部署。
-
-项目页上的地址类似 `https://infinity-xxxx.vercel.app`。
+推送到 `main` 后，GitHub Actions 执行 `npm ci` 和 `npm run build`，并把 `dist/` 发布到 GitHub Pages。
 
 ## 运行
 
