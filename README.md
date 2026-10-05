@@ -1,1 +1,63 @@
 # Infinity
+
+**English.** Infinity is a sci-fi idle game about expanding from a barren planet toward the multiverse. Automation is visual protocol cards, not scripts. This repository is the planet-surface scaffold: mines tick, you can buy them, and launching a colony ship banks curvature cores.
+
+从一颗荒芜行星的地表开始。当前是可玩切片，不是完整游戏。设计见 [docs/DESIGN.md](docs/DESIGN.md)。
+
+## 运行
+
+需要 Node.js 20+。
+
+```bash
+npm install
+npm run dev
+```
+
+浏览器打开终端里提示的本地地址。生产构建：
+
+```bash
+npm run build
+npm run preview
+```
+
+| 脚本 | 作用 |
+| --- | --- |
+| `dev` | 启动 Vite 开发服务器 |
+| `build` | 类型检查并打包到 `dist/` |
+| `preview` | 预览生产构建 |
+
+## v0.1 里能玩什么
+
+- 金属、晶体、重氢，加上不累积的能源（供给/需求）。先点「手动采矿」，买下金属矿后资源会自己增长。
+- 五座生产者：金属矿、太阳能电站、晶体矿、重氢合成器、机器人工厂。购买 ×1 / ×10 / 最大。开局赠送 1 座太阳能电站。
+- 「发射殖民舰」：`floor(sqrt(产出分 / 1e6))` 个曲率核心。未花费核心每个 +2% 产出。
+- 协议板只展示卡槽和卡种，规则还不会执行。
+- 存档写入 `localStorage`。导出 JSON 为 `{ version, savedAt, state }`。离线上限 **2 小时**。
+
+界面是中文优先，设施名旁边有英文。代码和注释是英文。
+
+## 存档示例
+
+```json
+{
+  "version": 1,
+  "savedAt": 1710000000000,
+  "state": {
+    "resources": { "metal": "10", "crystal": "0", "deuterium": "0" },
+    "producers": { "metal_mine": "1", "solar_plant": "1", "crystal_mine": "0", "deuterium_synth": "0", "robotics_factory": "0" },
+    "lifetime": { "metal": "10", "crystal": "0", "deuterium": "0" },
+    "warpCores": "0",
+    "totalTime": "12"
+  }
+}
+```
+
+导入会按快照恢复状态，不会把存档里的 `savedAt` 再结算成离线收益。离线收益只在启动时根据本地存档的保存时间计算。
+
+## 设计
+
+完整设计、层级和自动化路线见 [docs/DESIGN.md](docs/DESIGN.md)。
+
+## 许可证
+
+[MIT](LICENSE)
