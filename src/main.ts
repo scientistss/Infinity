@@ -1,6 +1,8 @@
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
 import { buy, prestige, scrape, tick } from "./game/logic";
+import { curvatureById } from "./data/curvature-tech";
+import { buyCurvature, manualClickAmount } from "./prestige/tree";
 import { clearSlot, equipCard, equipFirstEmpty, moveSlot, patchSlot, toggleSlot } from "./automation/engine";
 import {
   clearSave,
@@ -79,8 +81,9 @@ async function handleAction(action: UiAction): Promise<void> {
   if (action.type === "dismiss-offline") {
     catchup = null;
   } else if (action.type === "scrape") {
+    const mined = manualClickAmount(state);
     state = scrape(state);
-    status = "采集 +1 金属";
+    status = `采集 +${mined} 金属`;
   } else if (action.type === "protocol-palette") {
     const result = equipFirstEmpty(state, action.cardId);
     state = result.state;
@@ -113,8 +116,18 @@ async function handleAction(action: UiAction): Promise<void> {
     const gained = state.producers[action.id].sub(before);
     status = gained.gte(1) ? `已购买 ${gained.toFixed(0)} 台` : "资源不足";
     if (gained.gte(1)) persist();
+  } else if (action.type === "buy-tech") {
+    const next = buyCurvature(state, action.id);
+    if (next === state) {
+      const node = curvatureById(action.id);
+      status = state.curvature[action.id] >= node.maxRank ? "已经买满" : "曲率核心不足";
+    } else {
+      state = next;
+      status = "已花费曲率核心";
+      persist();
+    }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";

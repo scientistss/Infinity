@@ -1,3 +1,4 @@
+import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
 import { FREE_SOLAR_PLANTS } from "./content";
 import {
@@ -45,6 +46,7 @@ export function createInitialState(): GameState {
     producers,
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
+    curvature: emptyCurvature(),
     totalTime: big(0),
     manualClicks: 0,
     seenEnergyShortage: false,

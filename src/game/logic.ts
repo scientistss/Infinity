@@ -1,8 +1,6 @@
 import { evaluateLoadout, hasRunnableProtocol, refreshUnlocks } from "../automation/engine";
 import { achievementFactor, ACHIEVEMENTS } from "../data/achievements";
 import {
-  CORE_BONUS_PER_CORE,
-  MANUAL_METAL_PER_CLICK,
   OFFLINE_PROTOCOL_SECONDS,
   PRESTIGE_SCORE_UNIT,
   PRODUCERS,
@@ -19,6 +17,14 @@ import {
   seriesCost,
   type BigNumber,
 } from "./decimal";
+import {
+  applySeedStock,
+  growthRatio,
+  manualClickAmount,
+  passiveCoreBonus,
+  producerOutputScale,
+  scoreMultiplier,
+} from "../prestige/tree";
 import { createInitialState } from "./state";
 import { RESOURCE_IDS, type GameState, type ProducerId, type ResourceId } from "./types";
 
@@ -106,7 +112,7 @@ function setAccumulator(state: GameState, accumulator: number): GameState {
 
 /** Unspent warp cores, robotics factories, and +1% per achievement. Does not include energy efficiency. */
 export function globalMultiplier(state: GameState): BigNumber {
-  let mult = big(1).add(state.warpCores.mul(CORE_BONUS_PER_CORE));
+  let mult = big(1).add(passiveCoreBonus(state));
   for (const producer of PRODUCERS) {
     if (producer.globalProductionMult === 1) continue;
     mult = mult.mul(big(producer.globalProductionMult).pow(state.producers[producer.id]));
@@ -119,7 +125,9 @@ export function energyReport(state: GameState): EnergyReport {
   let demand = big(0);
   for (const producer of PRODUCERS) {
     const owned = state.producers[producer.id];
-    if (producer.producesEnergy > 0) supply = supply.add(owned.mul(producer.producesEnergy));
+    if (producer.producesEnergy > 0) {
+      supply = supply.add(owned.mul(producer.producesEnergy).mul(producerOutputScale(state)));
+    }
     if (producer.consumesEnergy > 0) demand = demand.add(owned.mul(producer.consumesEnergy));
   }
   const efficiency = demand.gt(0) ? bigMin(big(1), supply.div(demand)) : big(1);
@@ -150,14 +158,15 @@ export function productionPerSecond(state: GameState, id: ResourceId): BigNumber
     if (each === 0) continue;
     rate = rate.add(state.producers[producer.id].mul(each));
   }
-  return rate.mul(resourceMultiplier(state));
+  return rate.mul(producerOutputScale(state)).mul(resourceMultiplier(state));
 }
 
 export function expansionScore(state: GameState): BigNumber {
-  return state.lifetime.metal
+  const raw = state.lifetime.metal
     .mul(SCORE_WEIGHTS.metal)
     .add(state.lifetime.crystal.mul(SCORE_WEIGHTS.crystal))
     .add(state.lifetime.deuterium.mul(SCORE_WEIGHTS.deuterium));
+  return raw.mul(scoreMultiplier(state));
 }
 
 /** Warp cores granted by launching a colony ship from this run. */
@@ -169,7 +178,7 @@ export function warpGain(state: GameState): BigNumber {
 
 /**
  * Launch the colony ship. Resets the surface and banks warp cores.
- * Protocol cards, unlocks, achievements, and manual-click progress stay.
+ * Protocol cards, unlocks, achievements, the tech tree, and manual-click progress stay.
  * Returns the same state when the gain would be zero.
  */
 export function prestige(state: GameState): GameState {
@@ -177,6 +186,7 @@ export function prestige(state: GameState): GameState {
   if (gain.lt(1)) return state;
   const next = createInitialState();
   next.warpCores = state.warpCores.add(gain);
+  next.curvature = { ...state.curvature };
   next.totalTime = state.totalTime;
   next.manualClicks = state.manualClicks;
   next.seenEnergyShortage = state.seenEnergyShortage;
@@ -198,12 +208,12 @@ export function prestige(state: GameState): GameState {
       card: slot.card ? structuredClone(slot.card) : null,
     })),
   };
-  return applyAchievementUnlocks(refreshUnlocks(next));
+  return applyAchievementUnlocks(refreshUnlocks(applySeedStock(next)));
 }
 
 /** Manual collect. Counts toward the auto-collect unlock. Auto-collect does not call this. */
 export function scrape(state: GameState): GameState {
-  const gain = big(MANUAL_METAL_PER_CLICK);
+  const gain = big(manualClickAmount(state));
   return applyAchievementUnlocks(
     refreshUnlocks({
       ...state,
@@ -226,21 +236,28 @@ export function isProducerUnlocked(state: GameState, id: ProducerId): boolean {
   return state.lifetime[unlock.res].gte(unlock.value);
 }
 
-export function nextUnitCost(def: ProducerDef, owned: BigNumber): Record<ResourceId, BigNumber> {
+export function nextUnitCost(state: GameState, def: ProducerDef, owned: BigNumber): Record<ResourceId, BigNumber> {
+  const ratio = growthRatio(state, def.ratio);
   const costs = emptyCosts();
   for (const id of RESOURCE_IDS) {
     const base = def.costs[id];
-    costs[id] = base > 0 ? big(base).mul(big(def.ratio).pow(owned)) : big(0);
+    costs[id] = base > 0 ? big(base).mul(big(ratio).pow(owned)) : big(0);
   }
   return costs;
 }
 
-export function bulkCost(def: ProducerDef, owned: BigNumber, count: BigNumber): Record<ResourceId, BigNumber> {
+export function bulkCost(
+  state: GameState,
+  def: ProducerDef,
+  owned: BigNumber,
+  count: BigNumber,
+): Record<ResourceId, BigNumber> {
+  const ratio = growthRatio(state, def.ratio);
   const costs = emptyCosts();
   if (count.lte(0)) return costs;
   for (const id of RESOURCE_IDS) {
     const base = def.costs[id];
-    costs[id] = base > 0 ? seriesCost(count, base, def.ratio, owned) : big(0);
+    costs[id] = base > 0 ? seriesCost(count, base, ratio, owned) : big(0);
   }
   return costs;
 }
@@ -257,7 +274,7 @@ export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
   for (const resourceId of RESOURCE_IDS) {
     const base = def.costs[resourceId];
     if (base <= 0) continue;
-    const affordable = affordableCount(state.resources[resourceId], base, def.ratio, owned);
+    const affordable = affordableCount(state.resources[resourceId], base, growthRatio(state, def.ratio), owned);
     cap = cap === null ? affordable : bigMin(cap, affordable);
   }
 
@@ -265,7 +282,7 @@ export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
   let count = bigFloor(cap);
   if (count.lt(0)) count = big(0);
 
-  const fits = (qty: BigNumber): boolean => canAfford(state, bulkCost(def, owned, qty));
+  const fits = (qty: BigNumber): boolean => canAfford(state, bulkCost(state, def, owned, qty));
   for (let step = 0; step < 6 && fits(count.add(1)); step += 1) count = count.add(1);
   for (let step = 0; step < 6 && count.gt(0) && !fits(count); step += 1) count = count.sub(1);
   return count;
@@ -279,7 +296,7 @@ export function buy(state: GameState, id: ProducerId, mode: BuyMode, manual = tr
 
   const def = producerById(id);
   const owned = state.producers[id];
-  const costs = bulkCost(def, owned, qty);
+  const costs = bulkCost(state, def, owned, qty);
   if (!canAfford(state, costs)) return state;
 
   const resources = { ...state.resources };

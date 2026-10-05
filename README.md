@@ -30,10 +30,10 @@ npm run preview
 
 - 金属、晶体、重氢，加上不累积的能源（供给/需求）。先点「手动采矿」，买下金属矿后资源会自己增长。
 - 五座生产者：金属矿、太阳能电站、晶体矿、重氢合成器、机器人工厂。购买 ×1 / ×10 / 最大。开局赠送 1 座太阳能电站。
-- 「发射殖民舰」：`floor(sqrt(产出分 / 1e6))` 个曲率核心。未花费核心每个 +2% 产出。
+- 「发射殖民舰」：`floor(sqrt(产出分 / 1e6))` 个曲率核心。未花费核心每个 +2% 产出。曲率科技用核心换永久效果。
 - 协议卡会执行：触发 + 条件 + 动作。在线大约每 1 秒求值一次，离线补算每 60 秒一次。规则见 [docs/AUTOMATION.md](docs/AUTOMATION.md)。
 - 10 个成就，每个 +1% 全局产出。离开后再打开会弹出离线结算。
-- 存档写入 `localStorage`。导出 JSON 为 `{ version, savedAt, lastTickAt, state }`（当前版本 4，更早的版本会迁入）。离线上限 **2 小时**。
+- 存档写入 `localStorage`。导出 JSON 为 `{ version, savedAt, lastTickAt, state }`（当前版本 5，更早的版本会迁入）。离线上限 **2 小时**，曲率科技最高 **8 小时**。
 
 界面是中文优先，设施名旁边有英文。代码和注释是英文。
 
@@ -41,7 +41,7 @@ npm run preview
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "savedAt": 1710000000000,
   "state": {
     "resources": { "metal": "10", "crystal": "0", "deuterium": "0" },

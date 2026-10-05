@@ -9,6 +9,7 @@ import {
   type ResId,
   type Trigger,
 } from "../data/protocol-cards";
+import { growthRatio, protocolSlotBonus, protocolsRelaxed, relaxedWarpCoreCount } from "../prestige/tree";
 import { MANUAL_METAL_PER_CLICK, PRODUCERS, isProducerId, producerById } from "../game/content";
 import { big, isValidAmount, type BigNumber } from "../game/decimal";
 import { buy, energyReport, isProducerUnlocked, markEnergyShortage, prestige, warpGain } from "../game/logic";
@@ -54,39 +55,40 @@ export function unlockedSlotCount(state: GameState): number {
   const robotics = state.producers.robotics_factory;
   const levels = robotics.gt(1000) ? 1000 : Math.max(0, Math.floor(robotics.toNumber()));
   const extra = Math.floor(levels / SLOT_RULES.roboticsPerLevels);
-  return Math.min(SLOT_RULES.hardCap, SLOT_RULES.initial + extra);
+  return Math.min(SLOT_RULES.hardCap, SLOT_RULES.initial + extra + protocolSlotBonus(state));
 }
 
-export function slotUnlockHint(index: number): string {
-  if (index <= 0) return "";
-  const need = index * SLOT_RULES.roboticsPerLevels;
+export function slotUnlockHint(state: GameState, index: number): string {
+  const fromRobotics = index - protocolSlotBonus(state);
+  if (fromRobotics <= 0) return `槽位 ${index + 1} 未开启`;
+  const need = fromRobotics * SLOT_RULES.roboticsPerLevels;
   return `槽位 ${index + 1} 未开启 · 需要 ${need} 座机器人工厂`;
 }
 
-export function unlockHint(id: CardCatalogId): string {
+export function unlockHint(state: GameState, id: CardCatalogId): string {
   const entry = catalogEntry(id);
   const unlock = entry.unlock;
   if (unlock.kind === "manualClicks") return `手动点击 ${unlock.count} 次`;
   if (unlock.kind === "ownedGte") return `拥有 ${unlock.value} 座${producerById(unlock.producer).name}`;
   if (unlock.kind === "firstEnergyShortage") return "首次能源不足";
-  if (unlock.kind === "firstPrestige") return "首次重置后";
-  return `累计 ${unlock.count} 曲率核心`;
+  if (unlock.kind === "firstPrestige") return protocolsRelaxed(state) ? "开局即可配置" : "首次重置后";
+  return `累计 ${relaxedWarpCoreCount(state, unlock.count)} 曲率核心`;
 }
 
 export function unlockProgress(state: GameState, id: CardCatalogId): string {
   if (state.unlockedCards.includes(id)) return "已解锁";
   const entry = catalogEntry(id);
   const unlock = entry.unlock;
-  if (unlock.kind === "manualClicks") return `${unlockHint(id)}（${state.manualClicks}/${unlock.count}）`;
+  if (unlock.kind === "manualClicks") return `${unlockHint(state, id)}（${state.manualClicks}/${unlock.count}）`;
   if (unlock.kind === "ownedGte") {
     const owned = state.producers[unlock.producer];
     const shown = owned.gt(100000) ? owned.toString() : String(Math.floor(owned.toNumber()));
-    return `${unlockHint(id)}（${shown}/${unlock.value}）`;
+    return `${unlockHint(state, id)}（${shown}/${unlock.value}）`;
   }
   if (unlock.kind === "warpCoreTotal") {
-    return `${unlockHint(id)}（${state.warpCores.toFixed(0)}/${unlock.count}）`;
+    return `${unlockHint(state, id)}（${state.warpCores.toFixed(0)}/${relaxedWarpCoreCount(state, unlock.count)}）`;
   }
-  return unlockHint(id);
+  return unlockHint(state, id);
 }
 
 export function refreshUnlocks(state: GameState): GameState {
@@ -128,8 +130,8 @@ export function evaluateLoadout(state: GameState, periodSeconds: number): GameSt
 
 export function equipCard(state: GameState, index: number, cardId: string): ProtocolResult {
   if (!isCatalogId(cardId)) return { state, status: "未知协议卡" };
-  if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(cardId)}` };
-  if (!isOpenSlot(state, index)) return { state, status: slotUnlockHint(index) || "槽位未开启" };
+  if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(state, cardId)}` };
+  if (!isOpenSlot(state, index)) return { state, status: slotUnlockHint(state, index) || "槽位未开启" };
   const card = instantiate(cardId);
   return {
     state: writeSlot(state, index, { card, elapsed: 0, lamp: "gray", reason: "已装配" }),
@@ -139,7 +141,7 @@ export function equipCard(state: GameState, index: number, cardId: string): Prot
 
 export function equipFirstEmpty(state: GameState, cardId: string): ProtocolResult {
   if (!isCatalogId(cardId)) return { state, status: "未知协议卡" };
-  if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(cardId)}` };
+  if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(state, cardId)}` };
   const open = unlockedSlotCount(state);
   const index = state.protocols.slots.findIndex((slot, slotIndex) => slotIndex < open && slot.card === null);
   if (index < 0) return { state, status: "槽位已满" };
@@ -424,7 +426,7 @@ function conditionFails(state: GameState, condition: Condition): string | null {
     return null;
   }
   if (condition.kind !== "costRatioLt") return null;
-  const costs = nextCost(condition.producer, state.producers[condition.producer]);
+  const costs = nextCost(state, condition.producer, state.producers[condition.producer]);
   for (const id of ["metal", "crystal", "deuterium"] as const) {
     if (costs[id].lte(0)) continue;
     const stock = state.resources[id];
@@ -435,11 +437,12 @@ function conditionFails(state: GameState, condition: Condition): string | null {
   return null;
 }
 
-function nextCost(id: ProducerId, owned: BigNumber): Record<"metal" | "crystal" | "deuterium", BigNumber> {
+function nextCost(state: GameState, id: ProducerId, owned: BigNumber): Record<"metal" | "crystal" | "deuterium", BigNumber> {
   const def = producerById(id);
+  const ratio = growthRatio(state, def.ratio);
   const costs = { metal: big(0), crystal: big(0), deuterium: big(0) };
   for (const res of ["metal", "crystal", "deuterium"] as const) {
-    if (def.costs[res] > 0) costs[res] = big(def.costs[res]).mul(big(def.ratio).pow(owned));
+    if (def.costs[res] > 0) costs[res] = big(def.costs[res]).mul(big(ratio).pow(owned));
   }
   return costs;
 }
@@ -457,8 +460,8 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
   if (unlock.kind === "manualClicks") return state.manualClicks >= unlock.count;
   if (unlock.kind === "ownedGte") return state.producers[unlock.producer].gte(unlock.value);
   if (unlock.kind === "firstEnergyShortage") return state.seenEnergyShortage;
-  if (unlock.kind === "firstPrestige") return state.hasPrestiged;
-  return state.warpCores.gte(unlock.count);
+  if (unlock.kind === "firstPrestige") return protocolsRelaxed(state) || state.hasPrestiged;
+  return state.warpCores.gte(relaxedWarpCoreCount(state, unlock.count));
 }
 
 function instantiate(id: CardCatalogId): ProtocolCard {

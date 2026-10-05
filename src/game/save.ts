@@ -14,12 +14,16 @@ import {
 } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
 import { markEnergyShortage, tick } from "./logic";
+import { curvatureById } from "../data/curvature-tech";
+import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
+  CURVATURE_IDS,
   PROTOCOL_SLOT_COUNT,
   PRODUCER_IDS,
   RESOURCE_IDS,
   type CardLamp,
+  type CurvatureId,
   type GameState,
   type PlayerStats,
   type ProducerId,
@@ -46,6 +50,7 @@ export interface SerializedState {
   producers: Record<ProducerId, string>;
   lifetime: Record<ResourceId, string>;
   warpCores: string;
+  curvature: Record<CurvatureId, number>;
   totalTime: string;
   manualClicks: number;
   seenEnergyShortage: boolean;
@@ -86,6 +91,7 @@ export function serializeState(state: GameState): SerializedState {
     producers: mapProducers(state.producers, bigToString),
     lifetime: mapResources(state.lifetime, bigToString),
     warpCores: bigToString(state.warpCores),
+    curvature: { ...state.curvature },
     totalTime: bigToString(state.totalTime),
     manualClicks: state.manualClicks,
     seenEnergyShortage: state.seenEnergyShortage,
@@ -105,6 +111,7 @@ export function deserializeState(raw: unknown): GameState {
   state.producers = readProducerMap(raw.producers, "设施");
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
   state.warpCores = readAmount(raw.warpCores ?? raw.telemetry, "曲率核心");
+  state.curvature = readCurvature(raw.curvature);
   state.totalTime = readAmount(raw.totalTime, "游玩时间");
   state.manualClicks = readCount(raw.manualClicks);
   state.seenEnergyShortage = raw.seenEnergyShortage === true;
@@ -117,7 +124,7 @@ export function deserializeState(raw: unknown): GameState {
     seenEnergyShort: state.seenEnergyShortage,
     launches: state.hasPrestiged ? 1 : 0,
   });
-  state.offlineBonusHours = readBonusHours(raw.offlineBonusHours);
+  state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
@@ -225,6 +232,26 @@ function readProducerMap(raw: unknown, label: string): Record<ProducerId, BigNum
   }
   if (!solarExplicit) out.solar_plant = big(FREE_SOLAR_PLANTS);
   return out;
+}
+
+function readCurvature(raw: unknown): Record<CurvatureId, number> {
+  const ranks = emptyCurvature();
+  if (raw === undefined) return ranks;
+  if (!isRecord(raw)) throw new Error("曲率科技格式不正确");
+  for (const id of CURVATURE_IDS) {
+    if (raw[id] === undefined) continue;
+    ranks[id] = readRank(raw[id], id);
+  }
+  return ranks;
+}
+
+function readRank(raw: unknown, id: CurvatureId): number {
+  const max = curvatureById(id).maxRank;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(value) || value < 0 || value > max) {
+    throw new Error(`曲率科技 ${id} 等级无效`);
+  }
+  return value;
 }
 
 function readAchievements(raw: unknown): string[] {
