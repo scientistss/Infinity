@@ -3,7 +3,7 @@
  * A greedy player keeps the 2-slot build queue full: power first, crystal ≤ metal−2, deuterium ≤ crystal−3,
  * robotics ≈ metal/3, storage when the next build would exceed 90% of a cap. No curvature, no manual clicks.
  *
- * Usage: npm run sim [-- minutes]
+ * Usage: npm run sim [-- minutes]   (runs through tsx; no browser needed)
  */
 import { buildingById, type BuildingId } from "../src/data/buildings";
 import { economy } from "../src/game/economy";

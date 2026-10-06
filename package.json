@@ -9,14 +9,15 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "sim": "vite-node scripts/balance-sim.ts"
+    "sim": "tsx scripts/balance-sim.ts"
   },
   "dependencies": {
     "break_infinity.js": "^2.2.0"
   },
   "devDependencies": {
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "vite": "^6.2.0",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }
