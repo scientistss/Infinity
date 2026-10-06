@@ -5,6 +5,9 @@
  * P2: a research lab once metal mine 10 stands (lab ≈ metal/4 while no research runs), and a 2-slot research
  * queue that always picks the cheapest useful research whose price is ≤ 25% of current stock.
  *
+ * Dark matter: at each snapshot it prices finishing the running build / research on the dark-matter clock
+ * (1 OGame hour = 1 game minute) next to the old S = 600 conversion, and what a 9,000 DM wallet buys.
+ *
  * Usage: npm run sim [-- minutes]   (runs through tsx; no browser needed)
  */
 import { buildingById, type BuildingId } from "../src/data/buildings";
@@ -16,6 +19,9 @@ import type { ResearchId } from "../src/data/research";
 import { metalEquivalent } from "../src/automation/engine";
 import { createArcade, revealAll } from "../src/game/arcade";
 import { createInitialState } from "../src/game/state";
+import { dailyProduction, packageQuote, speedupQuote } from "../src/game/dark-matter";
+import { DM_PRICES } from "../src/data/dark-matter";
+import { ECONOMY_SPEED } from "../src/game/formulas";
 import type { GameState } from "../src/game/types";
 
 declare const process: { argv: string[] };
@@ -78,6 +84,58 @@ function pickResearch(state: GameState): ResearchId | null {
 
 const marks: Record<string, number> = {};
 const snapshots: string[] = [];
+const dmLines: string[] = [];
+const WALLET = 9000;
+
+/** The pre-rebalance price: real seconds × S / 3600 OGame hours, 750 per started half hour, capped. */
+function oldFinishPrice(seconds: number, research: boolean): number {
+  const p = DM_PRICES.speedup;
+  const raw = p.dmPerHalfHour * Math.ceil(((seconds * ECONOMY_SPEED) / 3600) * 2 - 1e-9);
+  return Math.min(research ? p.maxResearch : p.maxBuilding, Math.max(p.min, raw));
+}
+
+/** Every order's build time as it starts, to price "finish" across the run. */
+const started: Array<{ research: boolean; minutes: number; seconds: number }> = [];
+const seenOrders = new Set<string>();
+function recordStarts(s: GameState, minutes: number): void {
+  const build = s.planet.buildQueue[0];
+  if (build && build.totalSeconds > 0 && !seenOrders.has(`b${build.building}${build.targetLevel}`)) {
+    seenOrders.add(`b${build.building}${build.targetLevel}`);
+    started.push({ research: false, minutes, seconds: build.totalSeconds });
+  }
+  const research = s.research.queue[0];
+  if (research && research.totalSeconds > 0 && !seenOrders.has(`r${research.tech}${research.targetLevel}`)) {
+    seenOrders.add(`r${research.tech}${research.targetLevel}`);
+    started.push({ research: true, minutes, seconds: research.totalSeconds });
+  }
+}
+
+function finishReport(): string[] {
+  const lines: string[] = [];
+  const windows: Array<[number, number]> = [[0, 30], [30, 60], [60, 120], [120, horizonMinutes]];
+  for (const [from, to] of windows) {
+    for (const research of [false, true]) {
+      const times = started.filter((o) => o.research === research && o.minutes >= from && o.minutes < to).map((o) => o.seconds).sort((x, y) => x - y);
+      if (times.length === 0) continue;
+      const median = times[Math.floor(times.length / 2)]!;
+      const max = times[times.length - 1]!;
+      const target = research ? "research" : "build";
+      const price = (t: number) => speedupQuote(t, target, "finish").dm;
+      const wallet = times.reduce((acc, t) => (acc.left >= price(t) ? { left: acc.left - price(t), n: acc.n + 1 } : acc), { left: WALLET, n: 0 });
+      lines.push(
+        `${from}–${to} 分钟 ${research ? "研究" : "建造"} ${times.length} 项：中位 ${median.toFixed(0)}s 完成 ${price(median).toLocaleString("en-US")}（旧 ${oldFinishPrice(median, research).toLocaleString("en-US")}），最长 ${max.toFixed(0)}s 完成 ${price(max).toLocaleString("en-US")}（旧 ${oldFinishPrice(max, research).toLocaleString("en-US")}）；${WALLET.toLocaleString("en-US")} 暗物质可完成中位项 ${Math.floor(WALLET / price(median))} 次，按顺序完成本段前 ${wallet.n} 项`,
+      );
+    }
+  }
+  return lines;
+}
+
+function dmReport(minutes: number, s: GameState): string {
+  const pack = packageQuote({ ...s, darkMatter: s.darkMatter.add(1e9) }, "metal", 0.1);
+  const eco = economy(s);
+  const boosterGain = eco.gross.metal * 0.1 * DM_PRICES.secondsPerOgameHour * 24 * 7;
+  return `t=${minutes}min 资源包 10% 金属 ${pack.amounts.metal.toNumber().toExponential(2)} / ${pack.dm.toLocaleString("en-US")} 暗物质（日产 ${dailyProduction(s, "metal").toExponential(2)}，受仓库限制） · 加成·铜 金属 ≈ +${boosterGain.toExponential(2)} / 2,500 暗物质`;
+}
 let state = createInitialState();
 state = { ...state, arcade: createArcade(20261006) };
 let arcadeRuns = 0;
@@ -100,6 +158,7 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
     state = enqueueResearch(state, id, "protocol").state;
   }
   state = tick(state, 1);
+  recordStarts(state, second / 60);
   // Ring machine: reveal every stored run right away, no bets (fixed seed, so the run is reproducible).
   if (state.arcade.runs.length > 0) {
     const before = state.darkMatter.toNumber();
@@ -137,6 +196,7 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
     snapshots.push(
       `t=${minutes}min ${fmtLv(state)} score=${score.toExponential(2)} rate/s=${eco.net.metal.toFixed(1)}/${eco.net.crystal.toFixed(1)}/${eco.net.deuterium.toFixed(1)} 能源 ${eco.supply.toFixed(0)}/${eco.demand.toFixed(0)}`,
     );
+    dmLines.push(dmReport(minutes, state));
   }
 }
 
@@ -145,6 +205,10 @@ console.log(
 );
 for (const [key, minutes] of Object.entries(marks)) console.log(`  ${key}: ${minutes.toFixed(1)} 分钟`);
 for (const line of snapshots) console.log(`  ${line}`);
+console.log("  暗物质「完成」价格（暗物质时钟：1 OGame 小时 = 1 分钟；旧 = 按 S = 600 换算）:");
+for (const line of finishReport()) console.log(`    ${line}`);
+console.log("  资源包 / 资源加成:");
+for (const line of dmLines) console.log(`    ${line}`);
 console.log(`  星环机：开奖 ${arcadeRuns} 次，暗物质 +${arcadeDm.toLocaleString("en-US")}（含 JACKPOT），累计暗物质 ${state.stats.darkMatterEarned.toLocaleString("en-US")}`);
 const next = buildingById("metal_mine");
 console.log(`  下一级金属矿 ${nextTargetLevel(state.planet, next.id)}`);

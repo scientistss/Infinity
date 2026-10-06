@@ -60,6 +60,7 @@ import {
   INVENTORY_IDS,
   INVENTORY_LABEL,
   PACKAGE_FRACTIONS,
+  dmClockSeconds,
   SHOP_ITEMS,
   type InventoryItemId,
   type ShopItemId,
@@ -444,7 +445,7 @@ function darkMatterView(state: GameState): DarkMatterView {
   const shop: ShopItemView[] = SHOP_ITEMS.map((def) => {
     const price = `${formatDm(def.dm)} 暗物质`;
     if (def.kind === "booster") {
-      const seconds = ((def.ogameDays ?? 7) * 86400) / ECONOMY_SPEED;
+      const seconds = dmClockSeconds((def.ogameDays ?? 7) * 24);
       return {
         id: def.id,
         name: def.nameZh,
@@ -456,12 +457,12 @@ function darkMatterView(state: GameState): DarkMatterView {
         }),
       };
     }
-    const seconds = ((def.ogameHours ?? 0) * 3600) / (def.kind === "kraken" ? ECONOMY_SPEED : RESEARCH_SPEED);
+    const seconds = dmClockSeconds(def.ogameHours ?? 0);
     const reason = shopItemReason(state, def.id);
     return {
       id: def.id,
       name: def.nameZh,
-      detail: `${def.kind === "kraken" ? "正在建造的建筑" : "正在进行的研究"}缩短 OGame ${def.ogameHours} 小时 = ${formatDuration(seconds)}，多余的时间顺延到下一项。`,
+      detail: `${def.kind === "kraken" ? "正在建造的建筑" : "正在进行的研究"}缩短 ${formatDuration(seconds)}（OGame ${def.ogameHours} 小时），多余的时间顺延到下一项，不受单次上限限制。`,
       price,
       buttons: [{ res: "", label: "购买并使用", enabled: reason === "", title: reason || "立即生效" }],
     };

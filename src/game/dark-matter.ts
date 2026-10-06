@@ -1,10 +1,13 @@
 /**
  * Dark matter (design doc §8.8). P2 uses: halve / finish the running build or research, the item shop
  * (KRAKEN, NEWTRON, resource boosters), resource packages and inventory items.
- * Every time-based price is converted back to OGame hours with the universe speed first.
+ * Every OGame duration (button price, item length, merchant day) runs on the dark-matter clock:
+ * one OGame hour = one game minute (balance.json → darkMatterPrices.secondsPerOgameHour).
  */
 import {
   DM_PRICES,
+  DM_SECONDS_PER_OGAME_HOUR,
+  dmClockSeconds,
   INVENTORY_LABEL,
   RESOURCE_PACKAGE,
   shopItemById,
@@ -15,7 +18,6 @@ import { resourceName } from "./content";
 import { big, type BigNumber } from "./decimal";
 import { economy } from "./economy";
 import { formatAmount, formatDm, formatDuration } from "./format";
-import { ECONOMY_SPEED, RESEARCH_SPEED } from "./formulas";
 import { completeActive } from "./queue";
 import { completeActiveResearch } from "./research";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "./types";
@@ -72,22 +74,21 @@ function lacksDm(state: GameState, dm: number): string {
 
 // ---------- halve / finish ----------
 
-/** Real seconds → OGame hours (time was divided by the speed, so multiply back). */
-export function toOgameHours(seconds: number, target: SpeedupTarget): number {
-  const speed = target === "research" ? RESEARCH_SPEED : ECONOMY_SPEED;
-  return (Math.max(0, seconds) * speed) / 3600;
+/** Game seconds → OGame hours on the dark-matter clock (60 s = 1 OGame hour). */
+export function toOgameHours(seconds: number): number {
+  return Math.max(0, seconds) / DM_SECONDS_PER_OGAME_HOUR;
 }
 
 /**
  * OGame: 750 DM per started half hour of the time taken off, min 750, max 72,000 (buildings) /
- * 108,000 (research) per click. Halving is always possible (price capped); finishing in one click only
+ * 108,000 (research) per click, on the dark-matter clock (750 DM per started 30 game seconds). Halving is always possible (price capped); finishing in one click only
  * while its price stays under the cap.
  */
 export function speedupQuote(remainingSeconds: number, target: SpeedupTarget, mode: SpeedupMode): SpeedupQuote {
   const prices = DM_PRICES.speedup;
   const max = target === "research" ? prices.maxResearch : prices.maxBuilding;
   const taken = mode === "finish" ? remainingSeconds : remainingSeconds / 2;
-  const raw = prices.dmPerHalfHour * Math.ceil(toOgameHours(taken, target) * 2 - 1e-9);
+  const raw = prices.dmPerHalfHour * Math.ceil(toOgameHours(taken) * 2 - 1e-9);
   const dm = Math.min(max, Math.max(prices.min, raw));
   if (mode === "finish" && raw > max) {
     return { dm, allowed: false, reason: `超过单次上限 ${formatDm(max)}，先减半` };
@@ -201,11 +202,11 @@ export function buyShopItem(state: GameState, id: ShopItemId, res: ResourceId = 
   if (reason) return fail(state, reason);
   const paid = spend(state, def.dm);
   if (def.kind === "kraken" || def.kind === "newtron") {
-    const seconds = ((def.ogameHours ?? 0) * 3600) / (def.kind === "kraken" ? ECONOMY_SPEED : RESEARCH_SPEED);
+    const seconds = dmClockSeconds(def.ogameHours ?? 0);
     const next = def.kind === "kraken" ? advanceBuild(paid, seconds, true) : advanceResearch(paid, seconds, true);
     return { state: next, ok: true, reason: `${def.nameZh}：缩短 ${formatDuration(seconds)}（OGame ${def.ogameHours} 小时）` };
   }
-  const seconds = ((def.ogameDays ?? 7) * 24 * 3600) / ECONOMY_SPEED;
+  const seconds = dmClockSeconds((def.ogameDays ?? 7) * 24);
   const boosted = applyBooster(paid, res, def.pct ?? 10, seconds);
   if (!boosted.ok) return fail(state, boosted.reason);
   return {
@@ -217,10 +218,16 @@ export function buyShopItem(state: GameState, id: ShopItemId, res: ResourceId = 
 
 // ---------- resource packages ----------
 
-/** One OGame day of gross production (all mines and base output), at least 10,000. */
+/** One OGame day of gross production (all mines and base output; 24 game minutes), at least 10,000. */
 export function dailyProduction(state: GameState, res: ResourceId): number {
   const perSecond = economy(state).gross[res];
-  const seconds = (RESOURCE_PACKAGE.ogameHours * 3600) / ECONOMY_SPEED;
+  return Math.max(RESOURCE_PACKAGE.minAmount, perSecond * dmClockSeconds(RESOURCE_PACKAGE.ogameHours));
+}
+
+/** Supply pack (ring machine supply box) = the merchant's 10% package: 2.4 game minutes, at least 10,000. */
+export function supplyPackAmount(state: GameState, res: ResourceId): number {
+  const perSecond = economy(state).gross[res];
+  const seconds = dmClockSeconds(RESOURCE_PACKAGE.ogameHours) * RESOURCE_PACKAGE.supplyPackFraction;
   return Math.max(RESOURCE_PACKAGE.minAmount, perSecond * seconds);
 }
 
@@ -230,8 +237,9 @@ export function freeStorage(state: GameState, res: ResourceId): number {
 }
 
 /**
- * OGame resource merchant: up to one day of production per resource for 120,000 DM (360,000 for all three),
- * price proportional to the amount, at least 500 DM, limited by free storage.
+ * Resource merchant: up to one OGame day (24 game minutes) of production per resource for 36,000 DM (108,000
+ * for all three), the same price as skipping 24 OGame hours on the button. Price proportional to the amount,
+ * at least 500 DM, limited by free storage.
  */
 export function packageQuote(state: GameState, kind: PackageKind, fraction: number): PackageQuote {
   const amounts = { metal: big(0), crystal: big(0), deuterium: big(0) } as Record<ResourceId, BigNumber>;
@@ -300,11 +308,11 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
     if (applied.length === 0) return fail(state, "三种资源都已有更高的加成");
     return { state: next, ok: true, reason: `资源 +10%：${applied.join("、")}，持续 1 小时` };
   }
-  // Supply pack = the merchant's unit: one OGame day of gross production per resource (min 10,000).
+  // Supply pack = the merchant's 10% package of each resource.
   const resources = { ...state.resources };
   const parts: string[] = [];
   for (const res of RESOURCE_IDS) {
-    const amount = Math.floor(Math.min(dailyProduction(state, res), freeStorage(state, res)));
+    const amount = Math.floor(Math.min(supplyPackAmount(state, res), freeStorage(state, res)));
     if (amount <= 0) continue;
     resources[res] = resources[res].add(amount);
     parts.push(`${resourceName(res)} ${formatAmount(big(amount))}`);
