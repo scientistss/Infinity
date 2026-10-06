@@ -70,11 +70,11 @@ const NAME_EN: Record<ProducerId, string> = {
 };
 
 const BLURB: Record<ProducerId, string> = {
-  metal_mine: "开采金属，每座负载 1 能源。",
+  metal_mine: "开采金属，每级负载 1 能源。",
   solar_plant: "供电。能源效率低于 1 时，矿产量按比例下降。",
   crystal_mine: "开采晶体。",
   deuterium_synth: "合成重氢。",
-  robotics_factory: "每座使全局资源产量 ×1.25。每 2 座额外开放 1 个协议槽。",
+  robotics_factory: "每级使全局资源产量 ×1.25。每 2 级额外开放 1 个协议槽。",
 };
 
 function emptyRates(): Record<ResourceId, number> {

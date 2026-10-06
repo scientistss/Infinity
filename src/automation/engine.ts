@@ -62,14 +62,14 @@ export function slotUnlockHint(state: GameState, index: number): string {
   const fromRobotics = index - protocolSlotBonus(state);
   if (fromRobotics <= 0) return `槽位 ${index + 1} 未开启`;
   const need = fromRobotics * SLOT_RULES.roboticsPerLevels;
-  return `槽位 ${index + 1} 未开启 · 需要 ${need} 座机器人工厂`;
+  return `槽位 ${index + 1} 未开启 · 需要机器人工厂等级 ${need}`;
 }
 
 export function unlockHint(state: GameState, id: CardCatalogId): string {
   const entry = catalogEntry(id);
   const unlock = entry.unlock;
   if (unlock.kind === "manualClicks") return `手动点击 ${unlock.count} 次`;
-  if (unlock.kind === "ownedGte") return `拥有 ${unlock.value} 座${producerById(unlock.producer).name}`;
+  if (unlock.kind === "ownedGte") return `${producerById(unlock.producer).name}达到 ${unlock.value} 级`;
   if (unlock.kind === "firstEnergyShortage") return "首次能源不足";
   if (unlock.kind === "firstPrestige") return protocolsRelaxed(state) ? "开局即可配置" : "首次重置后";
   return `累计 ${relaxedWarpCoreCount(state, unlock.count)} 曲率核心`;
@@ -259,7 +259,7 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       });
       fields.push({
         path: `condition.${index}.owned`,
-        label: "数量",
+        label: "等级",
         value: String(condition.value),
         options: withCurrent(
           [10, 25, 50, 99, 999].map((n) => ({ value: String(n), label: String(n) })),
@@ -293,7 +293,7 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       value: card.action.kind,
       options: actions.map((kind) => ({
         value: kind,
-        label: kind === "buy" ? "购买" : kind === "collect" ? "采集" : "重置",
+        label: kind === "buy" ? "升级" : kind === "collect" ? "采集" : "重置",
       })),
     });
   }
@@ -306,11 +306,11 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
     });
     fields.push({
       path: "action.amount",
-      label: "数量",
+      label: "级数",
       value: String(card.action.amount),
       options: [
-        { value: "1", label: "×1" },
-        { value: "10", label: "×10" },
+        { value: "1", label: "+1 级" },
+        { value: "10", label: "+10 级" },
         { value: "max", label: "最大" },
       ],
     });
@@ -393,9 +393,9 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
   const before = state.producers[action.producer];
   const next = buy(state, action.producer, action.amount === "max" ? "max" : action.amount, false);
   const gained = next.producers[action.producer].sub(before);
-  if (gained.lt(1)) return { state, ok: false, reason: `买不起${producerById(action.producer).name}` };
+  if (gained.lt(1)) return { state, ok: false, reason: `升级不起${producerById(action.producer).name}` };
   const qty = action.amount === "max" ? gained.toFixed(0) : String(action.amount);
-  return { state: next, ok: true, reason: `购买 ${qty} 座${producerById(action.producer).name}` };
+  return { state: next, ok: true, reason: `${producerById(action.producer).name}升级 ${qty} 级` };
 }
 
 function failedCondition(state: GameState, card: ProtocolCard): string | null {
@@ -421,7 +421,7 @@ function conditionFails(state: GameState, condition: Condition): string | null {
   }
   if (condition.kind === "ownedLt") {
     if (!state.producers[condition.producer].lt(condition.value)) {
-      return `${producerById(condition.producer).name}不少于 ${condition.value}`;
+      return `${producerById(condition.producer).name}等级不低于 ${condition.value}`;
     }
     return null;
   }
@@ -595,9 +595,9 @@ function conditionPhrase(condition: Condition): string {
   if (condition.kind === "resourceGte") return `${RES_LABEL[condition.res]} ≥ ${condition.value}`;
   if (condition.kind === "resourceLt") return `${RES_LABEL[condition.res]} < ${condition.value}`;
   if (condition.kind === "energyEffLt") return `能源效率 < ${condition.value}`;
-  if (condition.kind === "ownedLt") return `${producerById(condition.producer).name}少于 ${condition.value}`;
+  if (condition.kind === "ownedLt") return `${producerById(condition.producer).name}等级低于 ${condition.value}`;
   if (condition.kind === "costRatioLt") {
-    return `${producerById(condition.producer).name}下一台花费低于库存的 ${Math.round(condition.ratio * 100)}%`;
+    return `${producerById(condition.producer).name}下一级花费低于库存的 ${Math.round(condition.ratio * 100)}%`;
   }
   return "条件";
 }
@@ -605,8 +605,8 @@ function conditionPhrase(condition: Condition): string {
 function actionPhrase(action: Action): string {
   if (action.kind === "collect") return "采集";
   if (action.kind === "prestige") return `重置（至少 ${action.minGain} 曲率核心）`;
-  const qty = action.amount === "max" ? "最大数量" : String(action.amount);
-  return `购买 ${qty} 座${producerById(action.producer).name}`;
+  if (action.amount === "max") return `将${producerById(action.producer).name}升级到付得起的最高等级`;
+  return `将${producerById(action.producer).name}升级 ${action.amount} 级`;
 }
 
 function resOptions(): ParamOption[] {
