@@ -61,7 +61,9 @@
     "note": "Dark matter is only earned in game: achievements (P2), the deep-space ring machine (P2), ranking milestones (P4), alliance quests (P6), pirates (P5)."
   },
   "darkMatterPrices": {
-    "source": "OGame shop and halve/finish button (community formula 750 x ROUNDUP(OGame hours x 2); KRAKEN/NEWTRON 3000/10000/26000; boosters 2500/8500/25000; resource merchant 120000 DM per day of production, 360000 for all three, min 500). Times are converted back to OGame hours with S.",
+    "source": "OGame shop and halve/finish button (community formula 750 x ROUNDUP(OGame hours x 2), caps 72000 / 108000; OGame list prices KRAKEN/NEWTRON 3000/10000/26000, boosters 2500/8500/25000 for 7 days, merchant 120000 DM per day of production).",
+    "rule": "One OGame hour in any dark-matter price or duration = secondsPerOgameHour game seconds (60: one game minute). Converting with S = 600 instead would make one OGame hour 6 s, so the button would cost 1,500 DM per 10 game seconds and items would last seconds. Every time-skip (button, KRAKEN, NEWTRON) costs 750 DM per started half hour of that clock; resource packages cost the same as skipping the time it takes to produce them (1 OGame day = 24 game minutes = 36,000 DM per resource). Boosters keep the OGame price and 7-day length (168 game minutes).",
+    "secondsPerOgameHour": 60,
     "speedup": {
       "dmPerHalfHour": 750,
       "min": 750,
@@ -69,22 +71,23 @@
       "maxResearch": 108000
     },
     "items": {
-      "kraken_bronze": { "dm": 3000, "ogameHours": 0.5 },
-      "kraken_silver": { "dm": 10000, "ogameHours": 3 },
-      "kraken_gold": { "dm": 26000, "ogameHours": 6 },
-      "newtron_bronze": { "dm": 3000, "ogameHours": 0.5 },
-      "newtron_silver": { "dm": 10000, "ogameHours": 2 },
-      "newtron_gold": { "dm": 26000, "ogameHours": 6 },
+      "kraken_bronze": { "dm": 750, "ogameHours": 0.5 },
+      "kraken_silver": { "dm": 4500, "ogameHours": 3 },
+      "kraken_gold": { "dm": 9000, "ogameHours": 6 },
+      "newtron_bronze": { "dm": 750, "ogameHours": 0.5 },
+      "newtron_silver": { "dm": 3000, "ogameHours": 2 },
+      "newtron_gold": { "dm": 9000, "ogameHours": 6 },
       "booster_bronze": { "dm": 2500, "pct": 10, "ogameDays": 7 },
       "booster_silver": { "dm": 8500, "pct": 20, "ogameDays": 7 },
       "booster_gold": { "dm": 25000, "pct": 30, "ogameDays": 7 }
     },
     "resourcePackage": {
-      "dmPerResource": 120000,
-      "dmBundle": 360000,
+      "dmPerResource": 36000,
+      "dmBundle": 108000,
       "minDm": 500,
       "ogameHours": 24,
-      "minAmount": 10000
+      "minAmount": 10000,
+      "supplyPackFraction": 0.1
     }
   },
   "arcade": {
