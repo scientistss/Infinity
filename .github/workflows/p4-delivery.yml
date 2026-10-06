@@ -3,7 +3,7 @@ name: Restore verified P4 source
 on:
   push:
     branches: [feat/p4-playable-core]
-    paths: [.p4-delivery/bundle.b64]
+    paths: [.p4-delivery/ready.json]
 
 permissions:
   contents: write
@@ -33,7 +33,8 @@ jobs:
           const crypto = require('node:crypto');
           const zlib = require('node:zlib');
           const sha = text => crypto.createHash('sha256').update(text).digest('hex');
-          const payload = zlib.brotliDecompressSync(Buffer.from(fs.readFileSync('.p4-delivery/bundle.b64', 'utf8').trim(), 'base64'));
+          const encoded = [0, 1, 2].map(i => fs.readFileSync('.p4-delivery/bundle.' + i + '.b64', 'utf8').trim()).join('');
+          const payload = zlib.brotliDecompressSync(Buffer.from(encoded, 'base64'));
           if (sha(payload) !== 'eb78b180ff5bc0934257f6c06e1000f44a93a106583636ccd7c76faa3e95d5f7') throw Error('Bundle checksum mismatch');
           const files = JSON.parse(payload.toString('utf8'));
           if (!Array.isArray(files) || files.length !== 48) throw Error('Incomplete bundle');
@@ -62,7 +63,7 @@ jobs:
           git diff --check
           git config user.name 'scientistss'
           git config user.email 'scientistss@users.noreply.github.com'
-          git rm .p4-delivery/bundle.b64
+          git rm -r .p4-delivery
           git add src tests scripts docs README.md index.html package.json package-lock.json
           git commit -m 'P4 核心：多星球、银河、舰队殖民与消息（存档 v9，190 项测试）'
           git push origin HEAD:refs/heads/feat/p4-playable-core
