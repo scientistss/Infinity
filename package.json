@@ -1,13 +1,15 @@
 {
   "name": "infinity",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Sci-fi idle game scaffold: expand from a planet surface toward the multiverse.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "sim": "vite-node scripts/balance-sim.ts"
   },
   "dependencies": {
     "break_infinity.js": "^2.2.0"

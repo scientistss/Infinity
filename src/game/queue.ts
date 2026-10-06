@@ -7,6 +7,7 @@ import { CURRENT_PHASE, buildingById, isBuildingId, type BuildingDef, type Build
 import { growthCut } from "../prestige/tree";
 import { QUEUE_BASE_CAPACITY, resourceName } from "./content";
 import { big } from "./decimal";
+import { storageCaps } from "./economy";
 import { formatAmount } from "./format";
 import { buildSeconds, buildingCost, type ResourceCost } from "./formulas";
 import { clonePlanet, usedFields, type BuildOrder, type OrderSource, type PlanetState } from "./planet";
@@ -64,13 +65,21 @@ export function missingRequirements(planet: PlanetState, def: BuildingDef): stri
   return missing;
 }
 
+const STORAGE_FOR = { metal: "metal_storage", crystal: "crystal_storage", deuterium: "deuterium_tank" } as const;
+
 export function shortfall(state: GameState, cost: ResourceCost): string {
   const parts: string[] = [];
+  const blocked: string[] = [];
+  const caps = storageCaps(state);
   for (const id of RESOURCE_IDS) {
     const lack = cost[id].sub(state.resources[id]);
-    if (lack.gt(0)) parts.push(`${resourceName(id)} ${formatAmount(lack)}`);
+    if (!lack.gt(0)) continue;
+    parts.push(`${resourceName(id)} ${formatAmount(lack)}`);
+    if (cost[id].gt(caps[id])) blocked.push(buildingById(STORAGE_FOR[id]).nameZh);
   }
-  return parts.length > 0 ? `缺 ${parts.join("、")}` : "";
+  if (parts.length === 0) return "";
+  const hint = blocked.length > 0 ? `（超过仓库上限，先升级${blocked.join("、")}）` : "";
+  return `缺 ${parts.join("、")}${hint}`;
 }
 
 export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {

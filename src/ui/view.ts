@@ -1,13 +1,26 @@
 import { ACHIEVEMENTS } from "../data/achievements";
 import { CURVATURE_TECH, isCurvatureId } from "../data/curvature-tech";
 import { CARD_CATALOG } from "../data/protocol-cards";
-import { isProducerId, PRESTIGE_SCORE_UNIT, PRODUCERS, RESOURCES } from "../game/content";
-import { PROTOCOL_SLOT_COUNT, type CurvatureId, type ProducerId } from "../game/types";
-import type { ViewModel } from "./present";
+import {
+  PRESTIGE_SCORE_UNIT,
+  PRODUCTION_IDS,
+  RESOURCES,
+  activeBuildings,
+  buildingById,
+  isBuildingId,
+  isProductionId,
+  type BuildingDef,
+  type BuildingId,
+  type ProductionBuildingId,
+} from "../game/content";
+import { PROTOCOL_SLOT_COUNT, type CurvatureId } from "../game/types";
+import type { TableRowView, ViewModel } from "./present";
 
 export type UiAction =
   | { type: "scrape" }
-  | { type: "buy"; id: ProducerId; mode: "one" | "max" }
+  | { type: "enqueue"; id: BuildingId }
+  | { type: "cancelQueue"; index: number }
+  | { type: "setProduction"; id: ProductionBuildingId; pct: number }
   | { type: "prestige" }
   | { type: "save" }
   | { type: "export" }
@@ -15,6 +28,7 @@ export type UiAction =
   | { type: "import-file"; file: File }
   | { type: "reset" }
   | { type: "dismiss-offline" }
+  | { type: "dismiss-notice" }
   | { type: "buy-tech"; id: CurvatureId }
   | { type: "protocol-equip"; index: number; cardId: string }
   | { type: "protocol-palette"; cardId: string }
@@ -52,14 +66,18 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "import-text") onAction({ type: "import-text", text: transfer.value });
     if (action === "reset") onAction({ type: "reset" });
     if (action === "dismiss-offline") onAction({ type: "dismiss-offline" });
+    if (action === "dismiss-notice") onAction({ type: "dismiss-notice" });
     if (action === "buy-tech") {
       const id = button.dataset.id ?? "";
       if (isCurvatureId(id)) onAction({ type: "buy-tech", id });
     }
-    if (action === "buy") {
+    if (action === "enqueue") {
       const id = button.dataset.id ?? "";
-      const mode = button.dataset.mode === "max" ? "max" : "one";
-      if (isProducerId(id)) onAction({ type: "buy", id, mode });
+      if (isBuildingId(id)) onAction({ type: "enqueue", id });
+    }
+    if (action === "cancel-queue") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancelQueue", index });
     }
     if (action === "equip-card") {
       const cardId = button.dataset.card ?? "";
@@ -85,6 +103,12 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   root.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (target instanceof HTMLSelectElement && target.dataset.prod) {
+      const id = target.dataset.prod;
+      const pct = Number(target.value);
+      if (isProductionId(id) && Number.isInteger(pct)) onAction({ type: "setProduction", id, pct });
+      return;
+    }
     const slot = target.closest("[data-slot]");
     if (!(slot instanceof HTMLElement)) return;
     const index = Number(slot.dataset.slot);
@@ -141,16 +165,62 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "telemetry", model.telemetry);
       setText(root, "multiplier", `产量 ${model.multiplier}`);
       setText(root, "played", `累计 ${model.played}`);
-      setText(root, "passive", model.passive);
       setText(root, "score", model.score);
       setText(root, "gain", model.gain);
       setText(root, "gain-detail", model.gain);
-      setText(root, "energy-top", model.protocolEnergy);
+      setText(root, "energy-top", model.energy);
+      requiredElement(root, "energy-chip").classList.toggle("short", model.energyShort);
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
       setText(root, "unspent-line", model.unspentLine);
-      setText(root, "action-scrape", model.scrapeLabel);
+      for (const bind of ["action-scrape", "action-scrape-ov"]) setText(root, bind, model.scrapeLabel);
+      for (const bind of ["passive", "passive-ov"]) setText(root, bind, model.passive);
+
+      for (const resource of model.resources) {
+        setText(root, `amount-${resource.id}`, resource.amount);
+        setText(root, `cap-${resource.id}`, resource.cap);
+        setText(root, `rate-${resource.id}`, resource.rate);
+        setText(root, `eta-${resource.id}`, resource.eta);
+        const card = requiredElement(root, `res-${resource.id}`);
+        card.classList.toggle("warn", resource.fill === "warn");
+        card.classList.toggle("full", resource.fill === "full");
+        requiredElement(root, `fill-${resource.id}`).style.width = `${resource.fillPct.toFixed(1)}%`;
+      }
+
+      updateQueue(root, model);
+
+      for (const building of model.buildings) {
+        setText(root, `level-${building.id}`, building.level);
+        setText(root, `cost-${building.id}`, building.cost);
+        setText(root, `time-${building.id}`, building.time);
+        setText(root, `effect-${building.id}`, building.effect);
+        setText(root, `payback-${building.id}`, building.payback);
+        setText(root, `requires-${building.id}`, building.requires);
+        setText(root, `upgrade-${building.id}`, building.button);
+        setText(root, `reason-${building.id}`, building.reason);
+        requiredElement(root, `bld-${building.id}`).classList.toggle("locked", building.locked);
+        const button = requiredButton(root, `enqueue-${building.id}`);
+        button.disabled = !building.canEnqueue;
+        button.title = building.reason;
+      }
+
+      for (const setting of model.production) {
+        const select = requiredElement(root, `prod-${setting.id}`);
+        if (select instanceof HTMLSelectElement && select.value !== setting.value && document.activeElement !== select) {
+          select.value = setting.value;
+        }
+        setText(root, `prod-note-${setting.id}`, setting.note);
+      }
+
+      const overview = model.overview;
+      setText(root, "ov-planet", overview.planet);
+      setText(root, "ov-temp", overview.temperature);
+      setText(root, "ov-fields", overview.fields);
+      setText(root, "ov-global", overview.global);
+      setText(root, "ov-energy-summary", overview.energySummary);
+      updateRows(root, "ov-prod", overview.production);
+      updateRows(root, "ov-energy", overview.energy);
 
       for (const tech of model.techs) {
         setText(root, `tech-owned-${tech.id}`, tech.owned);
@@ -172,42 +242,22 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         setText(root, "offline-applied", model.offline.applied);
         setText(root, "offline-detail", model.offline.detail);
         setText(root, "offline-protocol", model.offline.protocol);
-        const gains = requiredElement(root, "offline-gains");
-        const signature = model.offline.gains.map((gain) => `${gain.id}:${gain.amount}`).join("|");
-        if (gains.dataset.sig !== signature) {
-          gains.dataset.sig = signature;
-          gains.replaceChildren();
-          for (const gain of model.offline.gains) {
-            const item = document.createElement("li");
-            item.textContent = `${gain.name} ${gain.amount}`;
-            gains.append(item);
-          }
-        }
+        fillList(
+          requiredElement(root, "offline-gains"),
+          model.offline.gains.map((gain) => `${gain.name} ${gain.amount}`),
+        );
+        fillList(requiredElement(root, "offline-builds"), model.offline.builds);
       }
 
       const banner = requiredElement(root, "banner");
       banner.hidden = model.banner === null;
       banner.textContent = model.banner ?? "";
-
-      for (const resource of model.resources) {
-        setText(root, `amount-${resource.id}`, resource.amount);
-        setText(root, `rate-${resource.id}`, resource.rate);
-      }
+      const notice = requiredElement(root, "notice");
+      notice.hidden = model.notice === null;
+      setText(root, "notice-text", model.notice ?? "");
 
       const prestige = requiredButton(root, "action-prestige");
       prestige.disabled = !model.canPrestige;
-
-      for (const producer of model.producers) {
-        setText(root, `owned-${producer.id}`, producer.owned);
-        setText(root, `rates-${producer.id}`, producer.rates);
-        setText(root, `cost-${producer.id}`, producer.cost);
-        setText(root, `upgrade-${producer.id}`, producer.upgradeLabel);
-        const one = requiredButton(root, `buy-one-${producer.id}`);
-        const max = requiredButton(root, `buy-max-${producer.id}`);
-        one.disabled = !producer.canBuyOne;
-        max.disabled = !producer.canBuyMax;
-        max.textContent = producer.maxLabel;
-      }
 
       setText(root, "protocol-energy", model.protocolEnergy);
       setText(root, "protocol-meta", model.protocolMeta);
@@ -224,6 +274,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         controls.hidden = !slot.unlocked;
         locked.textContent = slot.lockHint;
         setText(root, `slot-sentence-${slot.index}`, slot.sentence);
+        setText(root, `slot-reason-${slot.index}`, slot.unlocked && slot.sentence ? slot.reason : "");
         const lamp = requiredElement(root, `lamp-${slot.index}`);
         lamp.className = `lamp lamp-${slot.lamp}`;
         lamp.title = slot.reason;
@@ -255,10 +306,70 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   };
 }
 
+function updateQueue(root: ParentNode, model: ViewModel): void {
+  const queue = model.queue;
+  for (const bind of ["queue-summary", "queue-summary-ov"]) setText(root, bind, queue.summary);
+  for (const bind of ["queue-idle", "queue-idle-ov"]) {
+    const idle = requiredElement(root, bind);
+    idle.hidden = queue.idleHint === "";
+    if (idle.textContent !== queue.idleHint) idle.textContent = queue.idleHint;
+  }
+  for (const list of [requiredElement(root, "queue-list"), requiredElement(root, "queue-list-ov")]) {
+    if (list.dataset.sig !== queue.signature) {
+      list.dataset.sig = queue.signature;
+      list.innerHTML = queue.items
+        .map(
+          (item) => `
+          <li class="queue-item${item.active ? " active" : ""}">
+            <div class="queue-text">
+              <strong data-q="label"></strong>
+              <span class="muted" data-q="detail"></span>
+            </div>
+            <div class="queue-bar"><span data-q="fill"></span></div>
+            <button type="button" class="danger queue-cancel" data-action="cancel-queue" data-index="${item.index}">取消</button>
+          </li>`,
+        )
+        .join("");
+    }
+    const rows = list.querySelectorAll<HTMLElement>(".queue-item");
+    queue.items.forEach((item, index) => {
+      const row = rows[index];
+      if (!row) return;
+      const label = row.querySelector<HTMLElement>('[data-q="label"]');
+      const detail = row.querySelector<HTMLElement>('[data-q="detail"]');
+      const fill = row.querySelector<HTMLElement>('[data-q="fill"]');
+      if (label && label.textContent !== item.label) label.textContent = item.label;
+      if (detail && detail.textContent !== item.detail) detail.textContent = item.detail;
+      if (fill) fill.style.width = `${item.progressPct.toFixed(1)}%`;
+    });
+  }
+}
+
+function updateRows(root: ParentNode, prefix: string, rows: readonly TableRowView[]): void {
+  for (const row of rows) {
+    row.cells.forEach((cell, index) => setText(root, `${prefix}-${row.key}-${index}`, cell));
+  }
+}
+
+function fillList(list: HTMLElement, items: readonly string[]): void {
+  const signature = items.join("|");
+  if (list.dataset.sig === signature) return;
+  list.dataset.sig = signature;
+  list.replaceChildren(
+    ...items.map((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      return item;
+    }),
+  );
+}
+
 const ICON_BASE = `${import.meta.env.BASE_URL}icons/`;
 const TAB_KEY = "infinity.ui.tab";
+const DEFAULT_TAB = "facilities";
 const TABS = [
-  { id: "facilities", label: "设施", icon: "robotics_factory" },
+  { id: "overview", label: "概览", icon: "logo" },
+  { id: "facilities", label: "建筑", icon: "robotics_factory" },
   { id: "protocol", label: "协议卡", icon: "protocol_card" },
   { id: "curvature", label: "曲率", icon: "warp_core" },
   { id: "achievements", label: "成就", icon: "achievement" },
@@ -283,6 +394,25 @@ const ICON_ALT: Record<string, string> = {
   protocol_card: "协议卡",
   save: "存档",
   logo: "Infinity 行星标志",
+};
+
+/**
+ * Painted icon per building. P1 adds buildings without their own art yet; they reuse the closest
+ * existing OGame-style WebP (no original OGame art is used).
+ */
+const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
+  metal_mine: "metal_mine",
+  crystal_mine: "crystal_mine",
+  deuterium_synth: "deuterium_synth",
+  solar_plant: "solar_plant",
+  fusion_reactor: "energy",
+  metal_storage: "metal",
+  crystal_storage: "crystal",
+  deuterium_tank: "deuterium",
+  robotics_factory: "robotics_factory",
+  nanite_factory: "robotics_factory",
+  shipyard: "launch",
+  research_lab: "tech",
 };
 
 /** Icons that also ship a 256px variant for large or high-DPI rendering. */
@@ -311,14 +441,14 @@ function cardIcon(cardId: string, label: string): string {
 
 function readSavedTab(): string {
   try {
-    return localStorage.getItem(TAB_KEY) ?? TABS[0].id;
+    return localStorage.getItem(TAB_KEY) ?? DEFAULT_TAB;
   } catch {
-    return TABS[0].id;
+    return DEFAULT_TAB;
   }
 }
 
 function selectTab(root: ParentNode, id: string): void {
-  const tab = TABS.some((entry) => entry.id === id) ? id : TABS[0].id;
+  const tab = TABS.some((entry) => entry.id === id) ? id : DEFAULT_TAB;
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
     const active = button.dataset.tab === tab;
     button.classList.toggle("active", active);
@@ -334,15 +464,65 @@ function selectTab(root: ParentNode, id: string): void {
   }
 }
 
+function buildingCard(def: BuildingDef): string {
+  const art = BUILDING_ICON[def.id] ?? "robotics_factory";
+  return `
+      <article class="bld" data-bind="bld-${def.id}">
+        <div class="bld-head">
+          ${icon(art, "icon-row", { size: 56, alt: def.nameZh })}
+          <div class="bld-title">
+            <h3>${def.nameZh} <small>${def.nameEn}</small></h3>
+            <p class="bld-level">等级 <strong data-bind="level-${def.id}">0</strong></p>
+          </div>
+        </div>
+        <p class="bld-blurb">${def.blurb}</p>
+        <p class="bld-effect" data-bind="effect-${def.id}"></p>
+        <p class="bld-payback" data-bind="payback-${def.id}"></p>
+        <p class="bld-requires" data-bind="requires-${def.id}"></p>
+        <dl class="bld-facts">
+          <div><dt>下一级成本</dt><dd data-bind="cost-${def.id}"></dd></div>
+          <div><dt>耗时</dt><dd data-bind="time-${def.id}"></dd></div>
+        </dl>
+        <button type="button" class="buy-btn" data-action="enqueue" data-id="${def.id}" data-bind="enqueue-${def.id}">
+          <span class="buy-label" data-bind="upgrade-${def.id}">升级到 等级 1</span>
+          <span class="btn-cost" data-bind="reason-${def.id}"></span>
+        </button>
+      </article>`;
+}
+
+function queuePanel(suffix: string): string {
+  return `
+      <div class="queue-panel">
+        <div class="queue-head">
+          <h3>建造队列</h3>
+          <span class="muted" data-bind="queue-summary${suffix}">建造队列 0/2</span>
+        </div>
+        <p class="muted queue-idle" data-bind="queue-idle${suffix}"></p>
+        <ol class="queue-list" data-bind="queue-list${suffix}"></ol>
+      </div>`;
+}
+
+function tableRows(prefix: string, keys: readonly string[], columns: number): string {
+  return keys
+    .map(
+      (key) =>
+        `<tr class="row-${key}">${Array.from({ length: columns }, (_, index) =>
+          index === 0 ? `<th scope="row" data-bind="${prefix}-${key}-0"></th>` : `<td data-bind="${prefix}-${key}-${index}"></td>`,
+        ).join("")}</tr>`,
+    )
+    .join("");
+}
+
 function shellMarkup(): string {
   // Metal, crystal and deuterium share equal status: three identical blocks in the top bar.
   const resourceCards = RESOURCES.map(
     (resource) => `
-        <div class="res-card res-${resource.id}" title="${resource.blurb}">
+        <div class="res-card res-${resource.id}" data-bind="res-${resource.id}" title="${resource.blurb}">
           ${icon(resource.id, "icon-res", { lazy: false })}
-          <span class="res-name">${resource.name}</span>
+          <span class="res-name">${resource.name} <span class="res-cap" data-bind="cap-${resource.id}">/ 10k</span></span>
           <strong class="res-amount" data-bind="amount-${resource.id}">0.00</strong>
-          <span class="res-rate" data-bind="rate-${resource.id}">+0.00/s</span>
+          <span class="res-rate"><span data-bind="rate-${resource.id}">+0.00/s</span> <span class="res-eta" data-bind="eta-${resource.id}"></span></span>
+          <span class="res-bar" aria-hidden="true"><span data-bind="fill-${resource.id}"></span></span>
         </div>`,
   ).join("");
 
@@ -361,28 +541,14 @@ function shellMarkup(): string {
       </li>`,
   ).join("");
 
-  const producers = PRODUCERS.map((producer, index) => {
-    const idx = String(index + 1).padStart(2, "0");
-    return `
-      <article class="dim-row">
-        <div class="dim-name">
-          ${icon(producer.id, "icon-row", { size: 56 })}
-          <div>
-            <h3><span class="idx">${idx}</span>${producer.name} <small>${producer.nameEn}</small></h3>
-            <p class="dim-desc">${producer.description}</p>
-            <p class="rates" data-bind="rates-${producer.id}"></p>
-          </div>
-        </div>
-        <div class="dim-owned">
-          <span>等级</span>
-          <strong data-bind="owned-${producer.id}">0</strong>
-        </div>
-        <button type="button" class="buy-btn" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">
-          <span class="buy-label" data-bind="upgrade-${producer.id}">升级到 等级 1</span>
-          <span class="btn-cost" data-bind="cost-${producer.id}"></span>
-        </button>
-        <button type="button" class="buy-btn buy-max" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大升级</button>
-      </article>`;
+  const active = activeBuildings();
+  const resourceBuildings = active.filter((def) => def.category === "resource").map(buildingCard).join("");
+  const facilities = active.filter((def) => def.category === "facility").map(buildingCard).join("");
+  const productionSelects = PRODUCTION_IDS.map((id) => {
+    const options = Array.from({ length: 11 }, (_, index) => 100 - index * 10)
+      .map((pct) => `<option value="${pct}">${pct}%</option>`)
+      .join("");
+    return `<label class="prod-row"><span>${buildingById(id).nameZh} <small data-bind="prod-note-${id}"></small></span><select data-prod="${id}" data-bind="prod-${id}">${options}</select></label>`;
   }).join("");
 
   return `
@@ -392,8 +558,10 @@ function shellMarkup(): string {
         <h2 id="offline-title">欢迎回来</h2>
         <p class="offline-applied">结算离线 <strong data-bind="offline-applied">0 秒</strong></p>
         <ul class="offline-gains" data-bind="offline-gains"></ul>
-        <p data-bind="offline-detail"></p>
-        <p data-bind="offline-protocol"></p>
+        <h3 class="offline-sub">离线期间完成的建造</h3>
+        <ul class="offline-gains offline-builds" data-bind="offline-builds"></ul>
+        <p class="muted" data-bind="offline-detail"></p>
+        <p class="muted" data-bind="offline-protocol"></p>
         <button type="button" data-action="dismiss-offline">知道了</button>
       </div>
     </div>
@@ -403,7 +571,7 @@ function shellMarkup(): string {
           <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
           <div>
             <h1>Infinity <span>无限</span></h1>
-            <p class="kicker">Planet surface · v0.1</p>
+            <p class="kicker">Planet surface · v0.2</p>
           </div>
         </div>
         <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
@@ -416,7 +584,7 @@ function shellMarkup(): string {
         </div>
       </div>
       <div class="res-strip">
-        <div class="chip chip-energy" title="能量供需与效率">
+        <div class="chip chip-energy" data-bind="energy-chip" title="能量供给 / 需求 · 效率">
           ${icon("energy", "", { lazy: false })}
           <span class="chip-name">能量</span>
           <span class="chip-rate" data-bind="energy-top"></span>
@@ -433,18 +601,61 @@ function shellMarkup(): string {
     </header>
 
     <main class="wrap">
+      <div class="notice" data-bind="notice" role="status" hidden>
+        <span data-bind="notice-text"></span>
+        <button type="button" data-action="dismiss-notice">知道了</button>
+      </div>
       <p class="banner" data-bind="banner" role="status" hidden></p>
+
+      <section class="tab-panel" data-tab-panel="overview" aria-labelledby="overview-title" hidden>
+        <div class="panel-head">
+          <h2 id="overview-title">${icon("logo", "icon-h2", { alt: "" })} <span data-bind="ov-planet">母星</span></h2>
+          <p><span data-bind="ov-temp"></span> · 格子 <strong data-bind="ov-fields">0 / 163</strong></p>
+        </div>
+        <p class="blurb" data-bind="ov-global"></p>
+        <div class="scrape-row">
+          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape-ov">手动采集</button>
+          <span class="muted" data-bind="passive-ov"></span>
+        </div>
+        ${queuePanel("-ov")}
+        <div class="ov-grid">
+          <div class="ov-card">
+            <h3>产量（每秒）</h3>
+            <table class="ov-table">
+              <thead><tr><th scope="col">来源</th><th scope="col">金属</th><th scope="col">晶体</th><th scope="col">重氢</th></tr></thead>
+              <tbody>${tableRows("ov-prod", ["base", "metal_mine", "crystal_mine", "deuterium_synth", "fusion", "net", "caps"], 4)}</tbody>
+            </table>
+          </div>
+          <div class="ov-card">
+            <h3>能源明细</h3>
+            <p class="muted" data-bind="ov-energy-summary"></p>
+            <table class="ov-table">
+              <thead><tr><th scope="col">建筑</th><th scope="col">能源</th></tr></thead>
+              <tbody>${tableRows("ov-energy", ["solar", "fusion", "metal_mine", "crystal_mine", "deuterium_synth"], 2)}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
       <section class="tab-panel" data-tab-panel="facilities" aria-labelledby="facility-title">
         <div class="panel-head">
-          <h2 id="facility-title">地表设施</h2>
-          <p>每升一级价格按几何级数上涨。最大升级会在付得起的范围内连续升级。</p>
+          <h2 id="facility-title">建筑</h2>
+          <p>入队时按目标等级扣费，同时只建 1 项，其余排队；取消全额退还。资源到达仓库上限后对应矿停产。</p>
         </div>
+        ${queuePanel("")}
         <div class="scrape-row">
-          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape">手动采集 +1</button>
-          <span class="muted" data-bind="passive">风化拾取</span>
+          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape">手动采集</button>
+          <span class="muted" data-bind="passive"></span>
         </div>
-        <div class="dim-table">${producers}</div>
+        <details class="prod-settings">
+          <summary>资源设置（产量百分比）</summary>
+          <p class="blurb">设为 0% 时该建筑不产出也不耗电（核聚变不烧重氢）。步长 10%。</p>
+          <div class="prod-grid">${productionSelects}</div>
+        </details>
+        <h3 class="group-title">资源建筑</h3>
+        <div class="bld-grid">${resourceBuildings}</div>
+        <h3 class="group-title">设施</h3>
+        <div class="bld-grid">${facilities}</div>
       </section>
 
       <section class="tab-panel protocol-board" data-tab-panel="protocol" aria-labelledby="protocol-title" hidden>
@@ -452,7 +663,7 @@ function shellMarkup(): string {
           <h2 id="protocol-title">协议卡</h2>
           <p data-bind="protocol-meta">槽位</p>
         </div>
-        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。</p>
+        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
         <p class="rates">${icon("energy")} <span data-bind="protocol-energy"></span></p>
         <div class="catalog-row">${catalogButtons()}</div>
         <div class="protocol-slots">${protocolSlots()}</div>
@@ -462,7 +673,7 @@ function shellMarkup(): string {
         <div class="prestige-panel">
           <div class="panel-head">
             <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
-            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
           </div>
           <dl class="prestige-stats">
             <div>
@@ -486,16 +697,16 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="achievements" aria-labelledby="ach-title" hidden>
         <div class="panel-head">
           <h2 id="ach-title">成就</h2>
-          <p data-bind="ach-summary">已解锁 0 / 10 · 全局产出 +0%</p>
+          <p data-bind="ach-summary">已解锁 0 / 13 · 全局产出 +0%</p>
         </div>
-        <p class="blurb">每个已解锁成就 +1% 全局产出，互相加算，再与曲率核心和机器人工厂相乘。发射殖民舰不会清空成就。</p>
+        <p class="blurb">每个已解锁成就 +1% 全局产出，互相加算，再与曲率核心相乘。发射殖民舰不会清空成就。</p>
         <ul class="ach-list">${achievements}</ul>
       </section>
 
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–4 会补上成就和曲率科技。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 6, savedAt, lastTickAt, state }。测试期只接受 v6：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>
@@ -557,6 +768,7 @@ function protocolSlots(): string {
       </div>
       <div class="slot-params" data-bind="slot-params-${index}"></div>
       <p class="sentence" data-bind="slot-sentence-${index}"></p>
+      <p class="slot-reason" data-bind="slot-reason-${index}"></p>
     </article>`).join("");
 }
 

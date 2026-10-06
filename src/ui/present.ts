@@ -9,42 +9,100 @@ import {
   OFFLINE_MAX_HOURS,
   OFFLINE_TECH_STEP_HOURS,
   PROTOCOL_OFFLINE_EVAL_SECONDS,
-  PRODUCERS,
+  PRODUCTION_IDS,
   RESOURCES,
-  producerById,
-  type ProducerDef,
+  activeBuildings,
+  buildingById,
+  resourceName,
+  type BuildingDef,
+  type BuildingId,
+  type ProductionBuildingId,
 } from "../game/content";
+import { big } from "../game/decimal";
+import { economy, pctOf, type EconomySnapshot } from "../game/economy";
 import { formatAmount, formatCount, formatDuration, formatMultiplier, formatPlayed, formatRate } from "../game/format";
 import {
-  energyReport,
-  expansionScore,
-  globalMultiplier,
-  isProducerUnlocked,
-  maxBuyCount,
-  nextUnitCost,
-  productionPerSecond,
-  resourceMultiplier,
-  warpGain,
-} from "../game/logic";
-import { manualClickAmount, producerOutputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
-import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ProducerId, type ResourceId } from "../game/types";
+  BASE_PRODUCTION,
+  ECONOMY_SPEED,
+  energyUsePerHour,
+  fusionOutputPerHour,
+  mineOutputPerHour,
+  perSecond,
+  solarOutputPerHour,
+  storageCapacity,
+} from "../game/formulas";
+import { expansionScore, scrapeAmount, warpGain } from "../game/logic";
+import { usedFields } from "../game/planet";
+import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../game/queue";
+import type { CompletedBuild } from "../game/queue";
+import { outputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
+import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ResourceId } from "../game/types";
+
+/** Metal-equivalent weights for payback time (OGame trade ratio 3 : 2 : 1). */
+const METAL_EQUIV: Record<ResourceId, number> = { metal: 1, crystal: 1.5, deuterium: 3 };
+const WARN_RATIO = 0.9;
+
+export type FillLevel = "ok" | "warn" | "full";
 
 export interface ResourceView {
   id: ResourceId;
   amount: string;
+  cap: string;
+  fillPct: number;
+  fill: FillLevel;
   rate: string;
+  eta: string;
 }
 
-export interface ProducerView {
-  id: ProducerId;
-  owned: string;
-  rates: string;
+export interface QueueItemView {
+  index: number;
+  key: string;
+  label: string;
+  detail: string;
+  progressPct: number;
+  active: boolean;
+}
+
+export interface QueueView {
+  summary: string;
+  items: QueueItemView[];
+  signature: string;
+  idleHint: string;
+}
+
+export interface BuildingView {
+  id: BuildingId;
+  level: string;
   cost: string;
-  /** "升级到 等级 N+1" — buildings are displayed by level. */
-  upgradeLabel: string;
-  maxLabel: string;
-  canBuyOne: boolean;
-  canBuyMax: boolean;
+  time: string;
+  effect: string;
+  payback: string;
+  requires: string;
+  locked: boolean;
+  button: string;
+  canEnqueue: boolean;
+  reason: string;
+}
+
+export interface ProductionSettingView {
+  id: ProductionBuildingId;
+  value: string;
+  note: string;
+}
+
+export interface TableRowView {
+  key: string;
+  cells: string[];
+}
+
+export interface OverviewView {
+  planet: string;
+  temperature: string;
+  fields: string;
+  global: string;
+  production: TableRowView[];
+  energy: TableRowView[];
+  energySummary: string;
 }
 
 export interface CatalogView {
@@ -82,6 +140,7 @@ export interface OfflineView {
   applied: string;
   detail: string;
   gains: OfflineGainView[];
+  builds: string[];
   protocol: string;
 }
 
@@ -100,12 +159,18 @@ export interface ViewModel {
   played: string;
   passive: string;
   resources: ResourceView[];
-  producers: ProducerView[];
+  energy: string;
+  energyShort: boolean;
+  queue: QueueView;
+  buildings: BuildingView[];
+  production: ProductionSettingView[];
+  overview: OverviewView;
   score: string;
   gain: string;
   canPrestige: boolean;
   status: string;
   banner: string | null;
+  notice: string | null;
   offlineCap: string;
   protocolEnergy: string;
   protocolMeta: string;
@@ -119,49 +184,37 @@ export interface ViewModel {
   scrapeLabel: string;
 }
 
-export function present(
-  state: GameState,
-  status: string,
-  banner: string | null,
-  catchup: OfflineCatchup | null,
-): ViewModel {
-  const outputScale = producerOutputScale(state);
-  const scale = resourceMultiplier(state).mul(outputScale);
+export interface PresentInput {
+  status: string;
+  banner: string | null;
+  notice: string | null;
+  catchup: OfflineCatchup | null;
+}
+
+export function present(state: GameState, input: PresentInput): ViewModel {
+  const eco = economy(state);
   const open = unlockedSlotCount(state);
   const unspent = unspentCores(state);
   return {
     telemetry: formatCount(state.warpCores),
-    multiplier: `全局 ${formatMultiplier(globalMultiplier(state))}`,
+    multiplier: `全局 ${formatMultiplier(big(eco.global))}`,
     played: formatPlayed(state.totalTime),
-    passive: `手动采集 ${state.manualClicks} 次`,
-    resources: RESOURCES.map((resource) => ({
-      id: resource.id,
-      amount: formatAmount(state.resources[resource.id]),
-      rate: formatRate(productionPerSecond(state, resource.id)),
-    })),
-    producers: PRODUCERS.map((producer) => {
-      const owned = state.producers[producer.id];
-      const unlocked = isProducerUnlocked(state, producer.id);
-      const max = unlocked ? maxBuyCount(state, producer.id) : owned.mul(0);
-      return {
-        id: producer.id,
-        owned: formatCount(owned),
-        // Buildings are shown by level (OGame style); level == owned count in state.
-        upgradeLabel: `升级到 等级 ${formatCount(owned.add(1))}`,
-        rates: describeRates(producer.id, scale, outputScale),
-        cost: describeCost(state, producer.id),
-        maxLabel: max.gte(1) ? `最大升级 +${formatCount(max)} 级` : "最大升级",
-        canBuyOne: unlocked && max.gte(1),
-        canBuyMax: unlocked && max.gte(1),
-      };
-    }),
+    passive: `手动操作 ${state.stats.manualActions} 次 · 已完成建造 ${state.stats.buildsCompleted} 次`,
+    resources: RESOURCES.map((resource) => resourceView(state, eco, resource.id)),
+    energy: energyLine(eco),
+    energyShort: eco.efficiency < 1,
+    queue: queueView(state),
+    buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
+    production: PRODUCTION_IDS.map((id) => productionSetting(state, id)),
+    overview: overviewView(state, eco),
     score: formatAmount(expansionScore(state)),
     gain: formatCount(warpGain(state)),
     canPrestige: warpGain(state).gte(1),
-    status,
-    banner,
+    status: input.status,
+    banner: input.banner,
+    notice: input.notice,
     offlineCap: `${formatDuration(offlineCapSeconds(state))}（基础 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时）`,
-    protocolEnergy: describeEnergy(state),
+    protocolEnergy: energyLine(eco),
     protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 机器人工厂每 ${SLOT_RULES.roboticsPerLevels} 级 +1`,
     catalog: CARD_CATALOG.map((entry) => ({
       id: entry.id,
@@ -175,19 +228,221 @@ export function present(
       const progress = def.progress(state);
       const current = progress.amount ? formatAmount(progress.current) : formatCount(progress.current);
       const goal = progress.amount ? formatAmount(progress.goal) : formatCount(progress.goal);
-      return {
-        id: def.id,
-        unlocked,
-        progress: unlocked ? "已达成 · +1%" : `${current} / ${goal}`,
-      };
+      return { id: def.id, unlocked, progress: unlocked ? "已达成 · +1%" : `${current} / ${goal}` };
     }),
     achievementSummary: achievementSummary(state),
-    offline: presentOffline(catchup),
+    offline: presentOffline(input.catchup),
     techs: CURVATURE_TECH.map((node) => techView(state, node.id)),
     unspentLine: `未花费 ${formatCount(unspent)} / 已花费 ${formatCount(spentCores(state))} · 被动 ${passiveLabel(unspent)}`,
-    scrapeLabel: `手动采集 +${manualClickAmount(state)}`,
+    scrapeLabel: `手动采集 +${formatAmount(big(scrapeAmount(state)))} 金属`,
   };
 }
+
+// ---------- top bar ----------
+
+function resourceView(state: GameState, eco: EconomySnapshot, id: ResourceId): ResourceView {
+  const stock = state.resources[id].toNumber();
+  const cap = eco.caps[id];
+  const ratio = cap > 0 ? stock / cap : 0;
+  const net = eco.net[id];
+  let eta = "";
+  if (ratio >= 1 && eco.stopped[id]) eta = "已满 · 产出已停止";
+  else if (ratio >= 1) eta = "已满";
+  else if (net > 0) eta = `约 ${formatDuration((cap - stock) / net)} 后满`;
+  else if (net < 0 && stock > 0) eta = `约 ${formatDuration(stock / -net)} 后耗尽`;
+  return {
+    id,
+    amount: formatAmount(state.resources[id]),
+    cap: `/ ${formatAmount(big(cap))}`,
+    fillPct: Math.max(0, Math.min(100, ratio * 100)),
+    fill: ratio >= 1 ? "full" : ratio >= WARN_RATIO ? "warn" : "ok",
+    rate: formatRate(big(net)),
+    eta,
+  };
+}
+
+function energyLine(eco: EconomySnapshot): string {
+  const lack = eco.demand > eco.supply ? ` · 缺 ${formatAmount(big(eco.demand - eco.supply))}` : "";
+  return `供给 ${formatAmount(big(eco.supply))} / 需求 ${formatAmount(big(eco.demand))} · 效率 ${(eco.efficiency * 100).toFixed(0)}%${lack}`;
+}
+
+// ---------- queue ----------
+
+function queueView(state: GameState): QueueView {
+  const planet = state.planet;
+  const capacity = queueCapacity(state);
+  const items = planet.buildQueue.map((order, index): QueueItemView => {
+    const def = buildingById(order.building);
+    const active = index === 0 && order.totalSeconds > 0;
+    const progress = active ? (1 - order.remainingSeconds / order.totalSeconds) * 100 : 0;
+    const estimate = secondsFor(state, def, order.targetLevel, order.paid);
+    return {
+      index,
+      key: `${order.building}:${order.targetLevel}:${index}`,
+      label: `${def.nameZh} → 等级 ${order.targetLevel}`,
+      detail: active
+        ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
+        : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
+      progressPct: Math.max(0, Math.min(100, progress)),
+      active,
+    };
+  });
+  return {
+    summary: `建造队列 ${planet.buildQueue.length}/${capacity} · 格子 ${usedFields(planet)}/${planet.fieldsMax}`,
+    items,
+    signature: items.map((item) => item.key).join("|"),
+    idleHint: items.length === 0 ? "队列空闲。选择下方建筑入队，入队时扣费，取消全额退还。" : "",
+  };
+}
+
+// ---------- building cards ----------
+
+function withLevel(state: GameState, id: BuildingId, level: number): GameState {
+  return { ...state, planet: { ...state.planet, buildings: { ...state.planet.buildings, [id]: level } } };
+}
+
+function costLine(cost: ReturnType<typeof canEnqueue>["cost"]): string {
+  const parts: string[] = [];
+  for (const id of RESOURCE_IDS) {
+    if (cost[id].gt(0)) parts.push(`${resourceName(id)} ${formatAmount(cost[id])}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "免费";
+}
+
+function signed(value: number, unit: string): string {
+  const sign = value >= 0 ? "+" : "−";
+  return `${sign}${formatAmount(big(Math.abs(value)))} ${unit}`;
+}
+
+function buildingView(state: GameState, eco: EconomySnapshot, def: BuildingDef): BuildingView {
+  const planet = state.planet;
+  const check = canEnqueue(state, def.id);
+  const target = check.targetLevel;
+  const missing = missingRequirements(planet, def);
+  const seconds = secondsFor(state, def, target, check.cost);
+  const { effect, gainPerSecond } = effectOf(state, eco, def, target);
+  const costEquiv = RESOURCE_IDS.reduce((sum, id) => sum + check.cost[id].toNumber() * METAL_EQUIV[id], 0);
+  const payback = gainPerSecond > 0 ? `回本约 ${formatDuration(costEquiv / gainPerSecond)}（按 3:2:1 折算金属）` : "";
+  const queued = target - 1 - planet.buildings[def.id];
+  return {
+    id: def.id,
+    level: queued > 0 ? `${planet.buildings[def.id]}（队列中 +${queued}）` : String(planet.buildings[def.id]),
+    cost: costLine(check.cost),
+    time: `建造时间 ${formatDuration(Math.ceil(seconds))}`,
+    effect,
+    payback,
+    requires: missing.length > 0 ? `前置未满足：${missing.join("、")}` : "",
+    locked: missing.length > 0,
+    button: `升级到 等级 ${target}`,
+    canEnqueue: check.ok,
+    reason: check.ok ? "可以入队" : check.reason,
+  };
+}
+
+/** Next-level change in production and energy, from the real economy with the level raised by one. */
+function effectOf(
+  state: GameState,
+  eco: EconomySnapshot,
+  def: BuildingDef,
+  target: number,
+): { effect: string; gainPerSecond: number } {
+  const id = def.id;
+  const b = state.planet.buildings;
+  if (id === "metal_storage" || id === "crystal_storage" || id === "deuterium_tank") {
+    return { effect: `容量 ${formatAmount(big(storageCapacity(target - 1)))} → ${formatAmount(big(storageCapacity(target)))}`, gainPerSecond: 0 };
+  }
+  if (id === "robotics_factory") {
+    const slot = target % SLOT_RULES.roboticsPerLevels === 0 ? " · 多开 1 个协议卡槽" : "";
+    return { effect: `建造速度 ×${target} → ×${target + 1}${slot}`, gainPerSecond: 0 };
+  }
+  if (id === "nanite_factory") {
+    return { effect: `建造速度 ×${2 ** (target - 1)} → ×${2 ** target}`, gainPerSecond: 0 };
+  }
+  if (id === "shipyard") return { effect: "第 3 阶段起建造舰船与防御；现在可以先建", gainPerSecond: 0 };
+  if (id === "research_lab") return { effect: "第 2 阶段起进行研究；现在可以先建", gainPerSecond: 0 };
+
+  const before = economy(withLevel(state, id, target - 1));
+  const after = economy(withLevel(state, id, target));
+  const parts: string[] = [];
+  let gain = 0;
+  for (const res of RESOURCE_IDS) {
+    const delta = after.gross[res] - after.consumption[res] - (before.gross[res] - before.consumption[res]);
+    if (Math.abs(delta) > 1e-9) parts.push(signed(delta, `${resourceName(res)}/秒`));
+    gain += delta * METAL_EQUIV[res];
+  }
+  const supply = after.supply - before.supply;
+  const demand = after.demand - before.demand;
+  if (Math.abs(supply) > 1e-9) parts.push(signed(supply, "供电"));
+  if (Math.abs(demand) > 1e-9) parts.push(signed(-demand, "能源"));
+  if (parts.length === 0) parts.push(b[id] === 0 && eco.efficiency === 0 ? "无电时不产出" : "无变化");
+  return { effect: `下一级：${parts.join("，")}`, gainPerSecond: gain };
+}
+
+function productionSetting(state: GameState, id: ProductionBuildingId): ProductionSettingView {
+  const level = state.planet.buildings[id];
+  return {
+    id,
+    value: String(Math.round(pctOf(state.planet, id) * 100)),
+    note: `等级 ${level}`,
+  };
+}
+
+// ---------- overview ----------
+
+function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
+  const planet = state.planet;
+  const b = planet.buildings;
+  const g = eco.global;
+  const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
+  const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
+    perSecond(mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * eco.efficiency, ECONOMY_SPEED) * g;
+  const production: TableRowView[] = [
+    { key: "base", cells: ["星球基础产出", fmt(perSecond(BASE_PRODUCTION.metal) * g), fmt(perSecond(BASE_PRODUCTION.crystal) * g), "—"] },
+    { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, fmt(mine("metal_mine")), "—", "—"] },
+    { key: "crystal_mine", cells: [`晶体矿（${b.crystal_mine} 级）`, "—", fmt(mine("crystal_mine")), "—"] },
+    { key: "deuterium_synth", cells: [`重氢合成器（${b.deuterium_synth} 级）`, "—", "—", fmt(mine("deuterium_synth"))] },
+    { key: "fusion", cells: [`核聚变消耗（${b.fusion_reactor} 级）`, "—", "—", fmt(-eco.consumption.deuterium)] },
+    {
+      key: "net",
+      cells: ["净变化（含满仓停产）", fmt(eco.net.metal), fmt(eco.net.crystal), fmt(eco.net.deuterium)],
+    },
+    {
+      key: "caps",
+      cells: [
+        "库存 / 上限",
+        ...RESOURCE_IDS.map((id) => `${formatAmount(state.resources[id])} / ${formatAmount(big(eco.caps[id]))}`),
+      ],
+    },
+  ];
+  const doubled = outputScale(state);
+  const solar = solarOutputPerHour(b.solar_plant) * pctOf(planet, "solar_plant") * doubled;
+  const fusion = fusionOutputPerHour(b.fusion_reactor) * pctOf(planet, "fusion_reactor") * eco.fusionFactor * doubled;
+  const use = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") => energyUsePerHour(id, b[id]) * pctOf(planet, id);
+  const energy: TableRowView[] = [
+    { key: "solar", cells: [`太阳能电站（${b.solar_plant} 级）`, `+${formatAmount(big(solar))}`] },
+    {
+      key: "fusion",
+      cells: [
+        `核聚变反应堆（${b.fusion_reactor} 级）${eco.fusionFactor < 1 ? ` · 缺重氢降额 ${(eco.fusionFactor * 100).toFixed(0)}%` : ""}`,
+        `+${formatAmount(big(fusion))}`,
+      ],
+    },
+    { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, `−${formatAmount(big(use("metal_mine")))}`] },
+    { key: "crystal_mine", cells: [`晶体矿（${b.crystal_mine} 级）`, `−${formatAmount(big(use("crystal_mine")))}`] },
+    { key: "deuterium_synth", cells: [`重氢合成器（${b.deuterium_synth} 级）`, `−${formatAmount(big(use("deuterium_synth")))}`] },
+  ];
+  return {
+    planet: planet.name,
+    temperature: `最高温度 ${planet.tempMax}°C`,
+    fields: `${usedFields(planet)} / ${planet.fieldsMax}`,
+    global: `全局倍率 ${formatMultiplier(big(g))}（未花费曲率核心、成就、产线翻倍）· 宇宙速度 ×${ECONOMY_SPEED}`,
+    production,
+    energy,
+    energySummary: energyLine(eco),
+  };
+}
+
+// ---------- other tabs ----------
 
 function techView(state: GameState, id: CurvatureId): TechView {
   const node = curvatureById(id);
@@ -222,21 +477,42 @@ function achievementSummary(state: GameState): string {
   return `已解锁 ${unlocked} / ${ACHIEVEMENTS.length} · 全局产出 +${bonus}%`;
 }
 
+/** Group consecutive levels: "金属矿 等级 10 → 13（4 次）". */
+export function summarizeBuilds(builds: readonly CompletedBuild[]): string[] {
+  const groups = new Map<BuildingId, { min: number; max: number; count: number }>();
+  for (const build of builds) {
+    const group = groups.get(build.building);
+    if (group) {
+      group.min = Math.min(group.min, build.level);
+      group.max = Math.max(group.max, build.level);
+      group.count += 1;
+    } else {
+      groups.set(build.building, { min: build.level, max: build.level, count: 1 });
+    }
+  }
+  return [...groups.entries()].map(([id, group]) => {
+    const name = buildingById(id).nameZh;
+    return group.count === 1 ? `${name} → 等级 ${group.max}` : `${name} 等级 ${group.min} → ${group.max}（${group.count} 次）`;
+  });
+}
+
 function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
   if (!catchup || catchup.appliedSeconds < 1) return null;
   const cap = formatDuration(catchup.capSeconds);
   const applied = formatDuration(catchup.appliedSeconds);
   const raw = formatDuration(catchup.rawSeconds);
   const limit = catchup.capped ? `已触顶，超出 ${cap} 的部分不结算。` : "未触顶。";
+  const builds = summarizeBuilds(catchup.completedBuilds);
   return {
     applied,
-    detail: `离开 ${raw}，结算 ${applied}。当前上限 ${cap}。${limit} 基础上限 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时。`,
+    detail: `离开 ${raw}，结算 ${applied}。当前上限 ${cap}。${limit}`,
     gains: RESOURCES.map((resource) => ({
       id: resource.id,
       name: resource.name,
       amount: `+${formatAmount(catchup.gains[resource.id])}`,
     })),
-    protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次。`,
+    builds: builds.length > 0 ? builds : ["离线期间没有完成的建造"],
+    protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次（建造完成、满仓时也会触发）。`,
   };
 }
 
@@ -256,49 +532,4 @@ function presentSlots(state: GameState, open: number): SlotView[] {
       fieldsKey: fields.map((field) => `${field.path}=${field.value}:${field.options.map((option) => option.value).join(",")}`).join("|"),
     };
   });
-}
-
-function describeEnergy(state: GameState): string {
-  const energy = energyReport(state);
-  const lack = energy.shortage.gt(0) ? ` · 缺 ${formatAmount(energy.shortage)}` : "";
-  return `供给 ${formatAmount(energy.supply)}/s · 需求 ${formatAmount(energy.demand)}/s · 效率 ${energy.efficiency.mul(100).toFixed(0)}%${lack}`;
-}
-
-function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultiplier>, outputScale: number): string {
-  const def = producerById(id);
-  const parts: string[] = [];
-  for (const resourceId of RESOURCE_IDS) {
-    const base = def.rates[resourceId];
-    if (base <= 0) continue;
-    const resource = RESOURCES.find((entry) => entry.id === resourceId);
-    parts.push(`${resource?.name ?? resourceId} ${formatRate(scale.mul(base))}`);
-  }
-  if (def.producesEnergy > 0) parts.push(`能源 +${def.producesEnergy * outputScale}/s`);
-  if (def.globalProductionMult !== 1) parts.push(`全局 ×${def.globalProductionMult}`);
-  if (def.consumesEnergy > 0) parts.push(`负载 ${def.consumesEnergy}`);
-  return parts.length > 0 ? `每级 ${parts.join(" · ")}` : "无产出";
-}
-
-function describeCost(state: GameState, id: ProducerId): string {
-  const def = producerById(id);
-  if (!isProducerUnlocked(state, id)) return `未解锁 · ${unlockLine(def)}`;
-  const costs = nextUnitCost(state, def, state.producers[id]);
-  const parts: string[] = [];
-  for (const resourceId of RESOURCE_IDS) {
-    if (costs[resourceId].lte(0)) continue;
-    const resource = RESOURCES.find((entry) => entry.id === resourceId);
-    parts.push(`${resource?.name ?? resourceId} ${formatAmount(costs[resourceId])}`);
-  }
-  return parts.length > 0 ? `花费 ${parts.join(" · ")}` : "免费";
-}
-
-function unlockLine(def: ProducerDef): string {
-  const unlock = def.unlock;
-  if (unlock.kind === "ownedGte") return `需要${producerById(unlock.producer).name}等级 ${unlock.value}`;
-  if (unlock.kind === "lifetimeGte") {
-    const resId = unlock.res;
-    const resource = RESOURCES.find((entry) => entry.id === resId);
-    return `本轮累计${resource?.name ?? resId}达到 ${unlock.value}`;
-  }
-  return "初始可用";
 }

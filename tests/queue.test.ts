@@ -117,3 +117,18 @@ describe("build queue", () => {
     expect(enqueue(state, "metal_mine", "protocol").state.stats.manualActions).toBe(0);
   });
 });
+
+describe("enqueue reasons", () => {
+  it("points at the storage when the next level costs more than the cap", () => {
+    const state = stateWith({ metal_mine: 19 }, { metal: 9000, crystal: 9000 });
+    const check = canEnqueue(state, "metal_mine");
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain("缺 金属");
+    expect(check.reason).toContain("先升级金属仓库");
+  });
+
+  it("does not mention storage when the cost fits", () => {
+    const state = stateWith({ metal_mine: 3 }, { metal: 10, crystal: 10 });
+    expect(canEnqueue(state, "metal_mine").reason).not.toContain("仓库");
+  });
+});
