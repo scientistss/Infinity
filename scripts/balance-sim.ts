@@ -14,6 +14,7 @@ import { canEnqueue, costFor, enqueue, nextTargetLevel } from "../src/game/queue
 import { canEnqueueResearch, enqueueResearch } from "../src/game/research";
 import type { ResearchId } from "../src/data/research";
 import { metalEquivalent } from "../src/automation/engine";
+import { createArcade, revealAll } from "../src/game/arcade";
 import { createInitialState } from "../src/game/state";
 import type { GameState } from "../src/game/types";
 
@@ -78,6 +79,9 @@ function pickResearch(state: GameState): ResearchId | null {
 const marks: Record<string, number> = {};
 const snapshots: string[] = [];
 let state = createInitialState();
+state = { ...state, arcade: createArcade(20261006) };
+let arcadeRuns = 0;
+let arcadeDm = 0;
 const fmtLv = (s: GameState) => {
   const b = s.planet.buildings;
   const r = s.research.levels;
@@ -96,6 +100,14 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
     state = enqueueResearch(state, id, "protocol").state;
   }
   state = tick(state, 1);
+  // Ring machine: reveal every stored run right away, no bets (fixed seed, so the run is reproducible).
+  if (state.arcade.runs.length > 0) {
+    const before = state.darkMatter.toNumber();
+    const all = revealAll(state, "manual");
+    state = all.state;
+    arcadeRuns += all.results.length;
+    arcadeDm += state.darkMatter.toNumber() - before;
+  }
   const score = expansionScore(state).toNumber();
   const minutes = second / 60;
   const mark = (key: string, hit: boolean) => {
@@ -103,6 +115,8 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   };
   mark("首个暗物质（成就）", state.stats.darkMatterEarned > 0);
   mark("暗物质 ≥ 5,000", state.stats.darkMatterEarned >= 5000);
+  mark("首次星环机开奖", state.arcade.stats.runs >= 1);
+  mark("星环机首个暗物质", state.arcade.stats.darkMatter > 0);
   mark("金属矿 10 级", state.planet.buildings.metal_mine >= 10);
   mark("首次仓库满", state.stats.seenStorageFull);
   mark("机器人工厂 1 级", state.planet.buildings.robotics_factory >= 1);
@@ -131,5 +145,6 @@ console.log(
 );
 for (const [key, minutes] of Object.entries(marks)) console.log(`  ${key}: ${minutes.toFixed(1)} 分钟`);
 for (const line of snapshots) console.log(`  ${line}`);
+console.log(`  星环机：开奖 ${arcadeRuns} 次，暗物质 +${arcadeDm.toLocaleString("en-US")}（含 JACKPOT），累计暗物质 ${state.stats.darkMatterEarned.toLocaleString("en-US")}`);
 const next = buildingById("metal_mine");
 console.log(`  下一级金属矿 ${nextTargetLevel(state.planet, next.id)}`);

@@ -34,6 +34,8 @@ import {
   researchSecondsFor,
 } from "../game/research";
 import { emptyProtocolSlot } from "../game/state";
+import { revealAll, revealRun, setBet, maxBetUnits } from "../game/arcade";
+import { BET_SYMBOLS, arcadeSymbolDef, isBetSymbol } from "../data/arcade";
 import type { GameState, ProtocolSlotState } from "../game/types";
 
 export interface ProtocolResult {
@@ -58,6 +60,8 @@ export interface ProtocolEvents {
   queueIdle: boolean;
   researchIdle: boolean;
   storageFull: StoredResId[];
+  /** A ring machine run was just granted (beacon). */
+  runsReady?: boolean;
 }
 
 const RES_LABEL: Record<ResId, string> = {
@@ -77,6 +81,7 @@ const TRIGGER_LABEL: Record<Trigger["kind"], string> = {
   queueIdle: "队列空闲",
   storageFull: "仓库满",
   researchIdle: "研究空闲",
+  runsReady: "有开奖次数",
 };
 
 const ACTION_LABEL: Record<Action["kind"], string> = {
@@ -86,6 +91,8 @@ const ACTION_LABEL: Record<Action["kind"], string> = {
   prestige: "重置",
   enqueueResearch: "研究",
   enqueueCheapest: "最便宜优先",
+  runLights: "跑灯开奖",
+  setBet: "改押注",
 };
 
 const CHEAPEST_LABEL: Record<CheapestGroup, string> = {
@@ -135,6 +142,7 @@ export function unlockHint(state: GameState, id: CardCatalogId): string {
   if (unlock.kind === "firstQueueIdle") return `建造队列首次跑空，且机器人工厂达到 ${unlock.roboticsLevel} 级`;
   if (unlock.kind === "firstStorageFull") return "首次有资源到达仓库上限";
   if (unlock.kind === "researchGte") return `${researchById(unlock.tech).nameZh}达到 ${unlock.value} 级`;
+  if (unlock.kind === "arcadeManualRuns") return `星环机手动开奖 ${unlock.count} 次`;
   return `累计 ${relaxedWarpCoreCount(state, unlock.count)} 曲率核心`;
 }
 
@@ -147,6 +155,9 @@ export function unlockProgress(state: GameState, id: CardCatalogId): string {
   }
   if (unlock.kind === "researchGte") {
     return `${unlockHint(state, id)}（${state.research.levels[unlock.tech]}/${unlock.value}）`;
+  }
+  if (unlock.kind === "arcadeManualRuns") {
+    return `${unlockHint(state, id)}（${state.arcade.stats.manualRuns}/${unlock.count}）`;
   }
   if (unlock.kind === "warpCoreTotal") {
     return `${unlockHint(state, id)}（${state.warpCores.toFixed(0)}/${relaxedWarpCoreCount(state, unlock.count)}）`;
@@ -200,7 +211,7 @@ export function evaluateLoadout(state: GameState, periodSeconds: number): GameSt
  * Interval timers do not advance. Used online and offline so a finished build is refilled at once.
  */
 export function evaluateEvents(state: GameState, events: ProtocolEvents): GameState {
-  if (!events.queueIdle && !events.researchIdle && events.storageFull.length === 0) return state;
+  if (!events.queueIdle && !events.researchIdle && !events.runsReady && events.storageFull.length === 0) return state;
   let next = refreshUnlocks(state);
   const open = unlockedSlotCount(next);
   for (let index = 0; index < open; index += 1) {
@@ -210,6 +221,7 @@ export function evaluateEvents(state: GameState, events: ProtocolEvents): GameSt
     const hit =
       (trigger.kind === "queueIdle" && events.queueIdle) ||
       (trigger.kind === "researchIdle" && events.researchIdle) ||
+      (trigger.kind === "runsReady" && events.runsReady === true) ||
       (trigger.kind === "storageFull" && events.storageFull.includes(trigger.res));
     if (hit) next = runSlot(next, index, 0);
   }
@@ -375,6 +387,41 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
           String(condition.seconds),
         ),
       });
+    } else if (condition.kind === "runsGte" || condition.kind === "pityGte") {
+      fields.push({
+        path: at("kind"),
+        label: "条件",
+        value: condition.kind,
+        options: [
+          { value: "runsGte", label: "开奖次数≥" },
+          { value: "pityGte", label: "保底计数≥" },
+        ],
+      });
+    }
+    if (condition.kind === "runsGte") {
+      fields.push({
+        path: at("value"),
+        label: "开奖次数≥",
+        value: String(condition.value),
+        options: withCurrent([1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) })), String(condition.value)),
+      });
+    } else if (condition.kind === "pityGte") {
+      fields.push({
+        path: at("pity"),
+        label: "保底",
+        value: condition.pity,
+        options: [
+          { value: "empty", label: "空灯保底" },
+          { value: "jackpot", label: "大奖保底" },
+        ],
+      });
+      const steps = condition.pity === "empty" ? [1, 2, 3, 4, 5] : [10, 20, 30, 40, 45, 49];
+      fields.push({
+        path: at("value"),
+        label: "计数≥",
+        value: String(condition.value),
+        options: withCurrent(steps.map((n) => ({ value: String(n), label: String(n) })), String(condition.value)),
+      });
     } else if (condition.kind === "buildTimeLt") {
       fields.push({ path: at("building"), label: "建筑", value: condition.building, options: buildingOptions() });
       fields.push({
@@ -418,6 +465,29 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       value: action.group,
       options: CHEAPEST_GROUPS.map((group) => ({ value: group, label: CHEAPEST_LABEL[group] })),
     });
+  } else if (action.kind === "runLights") {
+    fields.push({
+      path: "action.count",
+      label: "开奖",
+      value: String(action.count),
+      options: [
+        { value: "1", label: "1 次" },
+        { value: "all", label: "全部" },
+      ],
+    });
+  } else if (action.kind === "setBet") {
+    fields.push({
+      path: "action.symbol",
+      label: "押注符号",
+      value: action.symbol,
+      options: BET_SYMBOLS.map((symbol) => ({ value: symbol, label: arcadeSymbolDef(symbol).nameZh })),
+    });
+    fields.push({
+      path: "action.units",
+      label: "注数",
+      value: String(action.units),
+      options: Array.from({ length: maxBetUnits() + 1 }, (_, n) => ({ value: String(n), label: `${n} 注` })),
+    });
   } else if (action.kind === "prestige") {
     fields.push({
       path: "action.minGain",
@@ -439,6 +509,9 @@ function triggerReady(state: GameState, trigger: Trigger): string | null {
     const capacity = researchCapacity(state);
     const length = state.research.queue.length;
     return length >= capacity ? `研究队列已满（${length}/${capacity}）` : null;
+  }
+  if (trigger.kind === "runsReady") {
+    return state.arcade.runs.length > 0 ? null : "没有可用开奖次数";
   }
   if (trigger.kind === "storageFull") {
     const cap = storageCaps(state)[trigger.res];
@@ -522,6 +595,20 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
     return { state: result.state, ok: result.ok, reason: result.reason };
   }
   if (action.kind === "enqueueCheapest") return enqueueCheapest(state, action.group);
+  if (action.kind === "runLights") {
+    if (action.count === 1) {
+      const result = revealRun(state, "auto");
+      return { state: result.state, ok: result.ok, reason: result.ok ? `自动开奖：${result.reason}` : result.reason };
+    }
+    const result = revealAll(state, "auto");
+    return { state: result.state, ok: result.ok, reason: result.ok ? `自动${result.reason}` : result.reason };
+  }
+  if (action.kind === "setBet") {
+    if (state.arcade.bets[action.symbol] === action.units) {
+      return { state, ok: true, reason: `${arcadeSymbolDef(action.symbol).nameZh}已押 ${action.units} 注` };
+    }
+    return setBet(state, action.symbol, action.units);
+  }
   const result = enqueue(state, action.building, "protocol");
   return { state: result.state, ok: result.ok, reason: result.reason };
 }
@@ -638,6 +725,13 @@ function conditionFails(state: GameState, condition: Condition): string | null {
       const seconds = secondsFor(state, def, nextTargetLevel(state.planet, def.id));
       return seconds < condition.seconds ? null : `${def.nameZh}建造时间 ${formatDuration(seconds)} 不低于 ${formatDuration(condition.seconds)}`;
     }
+    case "runsGte":
+      return state.arcade.runs.length >= condition.value ? null : `开奖次数 ${state.arcade.runs.length} < ${condition.value}`;
+    case "pityGte": {
+      const count = state.arcade.pity[condition.pity];
+      const name = condition.pity === "empty" ? "空灯保底" : "大奖保底";
+      return count >= condition.value ? null : `${name} ${count} < ${condition.value}`;
+    }
     case "costRatioLt": {
       const name = buildingById(condition.building).nameZh;
       const costs = costFor(state, condition.building, nextTargetLevel(state.planet, condition.building));
@@ -680,6 +774,8 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
       return state.research.levels[unlock.tech] >= unlock.value;
     case "warpCoreTotal":
       return state.warpCores.gte(relaxedWarpCoreCount(state, unlock.count));
+    case "arcadeManualRuns":
+      return state.arcade.stats.manualRuns >= unlock.count;
   }
 }
 
@@ -729,6 +825,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     else if (value === "onResource") card.trigger = { kind: "onResource", res: "metal", gte: "100" };
     else if (value === "queueIdle") card.trigger = { kind: "queueIdle" };
     else if (value === "researchIdle") card.trigger = { kind: "researchIdle" };
+    else if (value === "runsReady") card.trigger = { kind: "runsReady" };
     else card.trigger = { kind: "storageFull", res: "metal" };
     return true;
   }
@@ -757,6 +854,8 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     else if (value === "setProduction") card.action = { kind: "setProduction", building: "metal_mine", pct: 100 };
     else if (value === "enqueueResearch") card.action = { kind: "enqueueResearch", tech: "energy_tech" };
     else if (value === "enqueueCheapest") card.action = { kind: "enqueueCheapest", group: "mines" };
+    else if (value === "runLights") card.action = { kind: "runLights", count: "all" };
+    else if (value === "setBet") card.action = { kind: "setBet", symbol: "metal", units: 1 };
     else card.action = { kind: "enqueue", building: "metal_mine", levels: 1 };
     return true;
   }
@@ -776,6 +875,20 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     card.action = { kind: "enqueueCheapest", group: value };
     return true;
   }
+  if (path === "action.count" && card.action.kind === "runLights" && (value === "1" || value === "all")) {
+    card.action = { kind: "runLights", count: value === "1" ? 1 : "all" };
+    return true;
+  }
+  if (path === "action.symbol" && card.action.kind === "setBet" && isBetSymbol(value)) {
+    card.action = { ...card.action, symbol: value };
+    return true;
+  }
+  if (path === "action.units" && card.action.kind === "setBet") {
+    const units = Number(value);
+    if (!Number.isInteger(units) || units < 0 || units > maxBetUnits()) return false;
+    card.action = { ...card.action, units };
+    return true;
+  }
   if (path === "action.pct" && card.action.kind === "setProduction") {
     const pct = Number(value);
     if (!Number.isInteger(pct) || pct < 0 || pct > 100 || pct % 10 !== 0) return false;
@@ -788,7 +901,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     card.action = { ...card.action, minGain };
     return true;
   }
-  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds|tech)$/.exec(path);
+  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds|tech|pity|kind)$/.exec(path);
   if (!match) return false;
   const index = Number(match[1]);
   const field = match[2];
@@ -836,6 +949,16 @@ function patchCondition(condition: Condition, field: string, value: string): Con
       if (field === "tech" && isResearchId(value)) return { ...condition, tech: value };
       if (field === "seconds" && Number.isFinite(num) && num > 0) return { ...condition, seconds: num };
       return null;
+    case "runsGte":
+      if (field === "kind" && value === "pityGte") return { kind: "pityGte", pity: "empty", value: 4 };
+      return field === "value" && Number.isInteger(num) && num >= 1 && num <= 10 ? { ...condition, value: num } : null;
+    case "pityGte":
+      if (field === "kind" && value === "runsGte") return { kind: "runsGte", value: 1 };
+      if (field === "pity" && (value === "empty" || value === "jackpot")) {
+        return { ...condition, pity: value, value: value === "empty" ? Math.min(condition.value, 5) : condition.value };
+      }
+      if (field === "value" && Number.isInteger(num) && num >= 1 && num <= 1000) return { ...condition, value: num };
+      return null;
   }
 }
 
@@ -853,6 +976,7 @@ function triggerPhrase(trigger: Trigger): string {
   if (trigger.kind === "queueIdle") return "建造队列有空位";
   if (trigger.kind === "storageFull") return `${RES_LABEL[trigger.res]}达到仓库上限`;
   if (trigger.kind === "researchIdle") return "研究队列有空位";
+  if (trigger.kind === "runsReady") return "星环机有开奖次数";
   return `${RES_LABEL[trigger.res]} ≥ ${trigger.gte}`;
 }
 
@@ -878,6 +1002,10 @@ function conditionPhrase(condition: Condition): string {
       return `${researchById(condition.tech).nameZh}等级低于 ${condition.value}`;
     case "researchTimeLt":
       return `${researchById(condition.tech).nameZh}研究时间 < ${formatDuration(condition.seconds)}`;
+    case "runsGte":
+      return `开奖次数 ≥ ${condition.value}`;
+    case "pityGte":
+      return `${condition.pity === "empty" ? "空灯保底" : "大奖保底"}计数 ≥ ${condition.value}`;
   }
 }
 
@@ -887,6 +1015,8 @@ function actionPhrase(action: Action): string {
   if (action.kind === "setProduction") return `将${buildingById(action.building).nameZh}产量设为 ${action.pct}%`;
   if (action.kind === "enqueueResearch") return `研究 ${researchById(action.tech).nameZh} +1 级`;
   if (action.kind === "enqueueCheapest") return `入队${CHEAPEST_LABEL[action.group]}中最便宜的下一级`;
+  if (action.kind === "runLights") return action.count === 1 ? "按常驻押注开奖 1 次" : "按常驻押注开完全部开奖";
+  if (action.kind === "setBet") return `把${arcadeSymbolDef(action.symbol).nameZh}的常驻押注改为 ${action.units} 注`;
   return `入队 ${buildingById(action.building).nameZh} +1 级`;
 }
 

@@ -86,5 +86,32 @@
       "ogameHours": 24,
       "minAmount": 10000
     }
+  },
+  "arcade": {
+    "note": "Deep-space ring machine, beacon version (Infinity-ogame-port.md section 8.6, P2). Probabilities are the public odds table; pity only changes where a run lands, never the table.",
+    "beaconSeconds": 1800,
+    "beaconMax": 3,
+    "storedMax": 5,
+    "prizeWindowSeconds": 600,
+    "jackpotWindowSeconds": 1200,
+    "fleetFactor": 5,
+    "capLadder": [[10000, 40000], [100000, 500000], [1000000, 1200000], [5000000, 1800000], [25000000, 2400000], [50000000, 3000000], [75000000, 3600000], [100000000, 4200000], [0, 5000000]],
+    "tiers": { "normal": [0.2, 0.5], "big": [0.5, 1.0], "jackpot": [1.0, 2.0] },
+    "bigChance": 0.1,
+    "darkMatter": { "normal": [300, 400], "big": [500, 700], "jackpot": [1000, 1800] },
+    "jackpotKinds": { "metal": 68, "crystal": 24, "deuterium": 8 },
+    "betUnitSeconds": 300,
+    "betMaxSeconds": 3600,
+    "betUnitMin": 1000,
+    "betReturn": 0.9,
+    "topUpHourSeconds": 3600,
+    "topUpMinDeut": 5000,
+    "topUpWindowSeconds": 86400,
+    "emptyPity": 5,
+    "jackpotPity": 50,
+    "historySize": 50,
+    "turbulencePct": 50,
+    "tailwindPct": 50,
+    "autoCardManualRuns": 10
   }
 }

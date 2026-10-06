@@ -21,6 +21,7 @@ import {
 import { applySeedStock, manualClickMultiplier, scoreMultiplier } from "../prestige/tree";
 import { createInitialState } from "./state";
 import { nextBoosterExpiry, pruneBoosters } from "./boosters";
+import { accrueBeacons, cloneArcade, grantRun, nextBeaconIn } from "./arcade";
 import { DM_ACHIEVEMENT_REWARD } from "../data/dark-matter";
 import { RESOURCE_IDS, type GameState } from "./types";
 
@@ -70,7 +71,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
     step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
-    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current));
+    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current), nextBeaconIn(current));
 
     const moved = integrate(current, step, eco);
     current = pruneBoosters(moved.state);
@@ -105,7 +106,11 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
       }
     }
 
-    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled };
+    // Ring machine: beacons accrue on game time (offline too, within the offline cap).
+    const beacon = accrueBeacons(current, step);
+    current = beacon.state;
+
+    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled, runsReady: beacon.granted > 0 };
     if (moved.filled.length > 0 && !current.stats.seenStorageFull) {
       current = { ...current, stats: { ...current.stats, seenStorageFull: true } };
     }
@@ -200,13 +205,20 @@ export function applyAchievementUnlocks(state: GameState): GameState {
   }
   if (added === 0) return marked;
   const reward = added * DM_ACHIEVEMENT_REWARD;
-  return {
+  const next: GameState = {
     ...marked,
     unlocked: ACHIEVEMENTS.filter((def) => owned.has(def.id)).map((def) => def.id),
     darkMatter: marked.darkMatter.add(reward),
     stats: { ...marked.stats, darkMatterEarned: marked.stats.darkMatterEarned + reward },
   };
+  // Opening the ring machine comes with one bonus run of at least the big tier (design doc §8.6.7).
+  if (owned.has(BONUS_RUN_ACHIEVEMENT) && !marked.unlocked.includes(BONUS_RUN_ACHIEVEMENT)) {
+    return grantRun(next, "bonus", true).state;
+  }
+  return next;
 }
+
+const BONUS_RUN_ACHIEVEMENT = "astrophysics_1";
 
 export function markEnergyShortage(state: GameState): GameState {
   if (state.seenEnergyShortage && state.stats.seenEnergyShort) return state;
@@ -236,7 +248,7 @@ export function warpGain(state: GameState): BigNumber {
 
 /**
  * Launch the colony ship. Resets buildings, queue, production settings and resources to the 500/500 start.
- * Protocol cards, unlocks, achievements, the tech tree, research levels, dark matter, and manual-click
+ * Protocol cards, unlocks, achievements, the tech tree, research levels, dark matter, items, the ring machine and manual-click
  * progress stay (design doc §14.3). Research still in the queue is dropped with the rest of the run.
  * Returns the same state when the gain would be zero.
  */
@@ -250,6 +262,7 @@ export function prestige(state: GameState): GameState {
   next.darkMatter = state.darkMatter;
   next.items = { ...state.items };
   next.boosters = state.boosters.map((booster) => ({ ...booster }));
+  next.arcade = cloneArcade(state.arcade);
   next.totalTime = state.totalTime;
   next.manualClicks = state.manualClicks;
   next.seenEnergyShortage = state.seenEnergyShortage;

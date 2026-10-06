@@ -13,6 +13,8 @@ import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
 import { createResearch, type ResearchOrder, type ResearchState } from "./research";
 import { INVENTORY_IDS, type InventoryItemId } from "../data/dark-matter";
 import type { Booster } from "./boosters";
+import { cloneArcade, createArcade, emptyHits, type ArcadeState, type LightRoll, type PendingRun } from "./arcade";
+import { ARCADE, ARCADE_SYMBOLS, BET_SYMBOLS, BOARD, LUCKY_TABLE, isArcadeSymbol, isBetSymbol } from "../data/arcade";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
   CURVATURE_IDS,
@@ -75,6 +77,7 @@ export interface SerializedState {
   /** Optional within v7 (added after the first v7 release); missing means empty. */
   items?: Record<InventoryItemId, number>;
   boosters?: Booster[];
+  arcade?: ArcadeState;
   lifetime: Record<ResourceId, string>;
   warpCores: string;
   curvature: Record<CurvatureId, number>;
@@ -134,6 +137,7 @@ export function serializeState(state: GameState): SerializedState {
     darkMatter: bigToString(state.darkMatter),
     items: { ...state.items },
     boosters: state.boosters.map((booster) => ({ ...booster })),
+    arcade: cloneArcade(state.arcade),
     lifetime: mapResources(state.lifetime),
     warpCores: bigToString(state.warpCores),
     curvature: { ...state.curvature },
@@ -158,6 +162,7 @@ export function deserializeState(raw: unknown): GameState {
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
   state.items = readItems(raw.items);
   state.boosters = readBoosters(raw.boosters);
+  state.arcade = readArcade(raw.arcade);
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
   state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.curvature = readCurvature(raw.curvature);
@@ -338,6 +343,122 @@ function readBoosters(raw: unknown): Booster[] {
     out.push({ res: entry.res as ResourceId, pct, until });
   }
   return out;
+}
+
+function readUnit(raw: unknown, label: string): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 1) throw new Error(`${label}无效`);
+  return raw;
+}
+
+function readLight(raw: unknown, label: string): LightRoll {
+  if (!isRecord(raw) || typeof raw.big !== "boolean") throw new Error(`${label}格式不正确`);
+  return {
+    tile: readInteger(raw.tile, `${label}图块`, 0, BOARD.length - 1),
+    big: raw.big,
+    u: readUnit(raw.u, label),
+    v: readUnit(raw.v, label),
+  };
+}
+
+function readPendingRun(raw: unknown, index: number): PendingRun {
+  const label = `星环机开奖第 ${index + 1} 次`;
+  if (!isRecord(raw) || !isRecord(raw.outcome)) throw new Error(`${label}格式不正确`);
+  const source = raw.source;
+  if (source !== "beacon" && source !== "topup" && source !== "bonus") throw new Error(`${label}来源无效`);
+  const outcome = raw.outcome;
+  const forced = outcome.forced === "empty" || outcome.forced === "jackpot" ? outcome.forced : null;
+  let lucky: PendingRun["outcome"]["lucky"] = null;
+  if (outcome.lucky !== null && outcome.lucky !== undefined) {
+    const rawLucky = outcome.lucky;
+    if (!isRecord(rawLucky) || !LUCKY_TABLE.some((row) => row.kind === rawLucky.kind) || !Array.isArray(rawLucky.lights)) {
+      throw new Error(`${label}送灯无效`);
+    }
+    if (rawLucky.lights.length > 6) throw new Error(`${label}送灯过多`);
+    lucky = {
+      kind: rawLucky.kind as NonNullable<PendingRun["outcome"]["lucky"]>["kind"],
+      lights: rawLucky.lights.map((light, i) => readLight(light, `${label}送灯 ${i + 1}`)),
+    };
+  }
+  return { source, outcome: { main: readLight(outcome.main, label), lucky, forced } };
+}
+
+function readFinite(raw: unknown, label: string, fallback: number): number {
+  if (raw === undefined) return fallback;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) throw new Error(`${label}无效`);
+  return raw;
+}
+
+/** Ring machine state; optional inside v7 (absent = fresh machine). */
+function readArcade(raw: unknown): ArcadeState {
+  if (raw === undefined) return createArcade();
+  if (!isRecord(raw)) throw new Error("星环机数据格式不正确");
+  const arcade = createArcade(readInteger(raw.seed, "星环机随机数状态", 0, 0xffffffff));
+  if (raw.runs !== undefined) {
+    if (!Array.isArray(raw.runs) || raw.runs.length > ARCADE.storedMax) throw new Error("星环机开奖次数无效");
+    arcade.runs = raw.runs.map(readPendingRun);
+  }
+  arcade.beaconRequired = Math.min(
+    ARCADE.beaconSeconds * 3,
+    Math.max(1, readFinite(raw.beaconRequired, "信标冷却", ARCADE.beaconSeconds)),
+  );
+  arcade.beaconProgress = Math.min(arcade.beaconRequired, readFinite(raw.beaconProgress, "信标进度", 0));
+  if (raw.topUps !== undefined) {
+    if (!Array.isArray(raw.topUps) || raw.topUps.length > 64) throw new Error("重氢加注记录无效");
+    arcade.topUps = raw.topUps.map((at) => readFinite(at, "重氢加注时间", 0));
+  }
+  if (raw.bets !== undefined) {
+    if (!isRecord(raw.bets)) throw new Error("押注格式不正确");
+    let total = 0;
+    for (const symbol of BET_SYMBOLS) {
+      const units = raw.bets[symbol] === undefined ? 0 : readInteger(raw.bets[symbol], `押注 ${symbol}`, 0, 1000);
+      arcade.bets[symbol] = units;
+      total += units;
+    }
+    if (total > Math.floor(ARCADE.betMaxSeconds / ARCADE.betUnitSeconds)) throw new Error("押注超过上限");
+  }
+  for (const key of ["rollPity", "pity"] as const) {
+    const pity = raw[key];
+    if (pity === undefined) continue;
+    if (!isRecord(pity)) throw new Error("保底计数格式不正确");
+    arcade[key] = {
+      empty: readInteger(pity.empty ?? 0, "空灯保底", 0, 1_000_000),
+      jackpot: readInteger(pity.jackpot ?? 0, "大奖保底", 0, 1_000_000),
+    };
+  }
+  if (raw.position !== undefined) arcade.position = readInteger(raw.position, "星环机灯位", 0, BOARD.length - 1);
+  if (raw.history !== undefined) {
+    if (!Array.isArray(raw.history)) throw new Error("星环机历史格式不正确");
+    arcade.history = raw.history.slice(-ARCADE.historySize).map((entry) => {
+      if (!isRecord(entry) || !isArcadeSymbol(entry.symbol) || typeof entry.summary !== "string") {
+        throw new Error("星环机历史无效");
+      }
+      return {
+        symbol: entry.symbol,
+        big: entry.big === true,
+        at: readFinite(entry.at, "星环机历史时间", 0),
+        auto: entry.auto === true,
+        summary: entry.summary.slice(0, 600),
+      };
+    });
+  }
+  if (raw.stats !== undefined) {
+    const stats = raw.stats;
+    if (!isRecord(stats)) throw new Error("星环机统计格式不正确");
+    const hits = emptyHits();
+    if (isRecord(stats.hits)) {
+      for (const symbol of ARCADE_SYMBOLS) hits[symbol] = readFinite(stats.hits[symbol], "星环机命中", 0);
+    }
+    arcade.stats = {
+      runs: readFinite(stats.runs, "星环机次数", 0),
+      manualRuns: readFinite(stats.manualRuns, "手动开奖次数", 0),
+      autoRuns: readFinite(stats.autoRuns, "自动开奖次数", 0),
+      hits,
+      darkMatter: readFinite(stats.darkMatter, "星环机暗物质", 0),
+      betSpent: readFinite(stats.betSpent, "押注花费", 0),
+      betWon: readFinite(stats.betWon, "押注赢得", 0),
+    };
+  }
+  return arcade;
 }
 
 function serializeResearch(research: ResearchState): SerializedState["research"] {
@@ -542,6 +663,7 @@ function readTrigger(raw: unknown): Trigger | null {
     return { kind: "storageFull", res: raw.res };
   }
   if (raw.kind === "researchIdle") return { kind: "researchIdle" };
+  if (raw.kind === "runsReady") return { kind: "runsReady" };
   return null;
 }
 
@@ -572,6 +694,18 @@ function readCondition(raw: unknown): Condition | null {
   if (raw.kind === "researchTimeLt" && tech && typeof raw.seconds === "number") {
     return { kind: "researchTimeLt", tech, seconds: raw.seconds };
   }
+  if (raw.kind === "runsGte" && typeof raw.value === "number" && Number.isInteger(raw.value) && raw.value >= 1) {
+    return { kind: "runsGte", value: raw.value };
+  }
+  if (
+    raw.kind === "pityGte" &&
+    (raw.pity === "empty" || raw.pity === "jackpot") &&
+    typeof raw.value === "number" &&
+    Number.isInteger(raw.value) &&
+    raw.value >= 1
+  ) {
+    return { kind: "pityGte", pity: raw.pity, value: raw.value };
+  }
   return null;
 }
 
@@ -592,6 +726,17 @@ function readAction(raw: unknown): Action | null {
   }
   if (raw.kind === "enqueueCheapest" && (raw.group === "mines" || raw.group === "storage" || raw.group === "research")) {
     return { kind: "enqueueCheapest", group: raw.group };
+  }
+  if (raw.kind === "runLights" && (raw.count === 1 || raw.count === "all")) return { kind: "runLights", count: raw.count };
+  if (
+    raw.kind === "setBet" &&
+    isBetSymbol(raw.symbol) &&
+    typeof raw.units === "number" &&
+    Number.isInteger(raw.units) &&
+    raw.units >= 0 &&
+    raw.units <= Math.floor(ARCADE.betMaxSeconds / ARCADE.betUnitSeconds)
+  ) {
+    return { kind: "setBet", symbol: raw.symbol, units: raw.units };
   }
   return null;
 }

@@ -3,6 +3,7 @@ import { big } from "./decimal";
 import { STARTING_RESOURCES } from "./content";
 import { createPlanet } from "./planet";
 import { createResearch } from "./research";
+import { createArcade } from "./arcade";
 import {
   PROTOCOL_SLOT_COUNT,
   RESOURCE_IDS,
@@ -63,6 +64,7 @@ export function createInitialState(): GameState {
     darkMatter: big(0),
     items: { kraken_box: 0, newtron_box: 0, booster_box: 0, supply_pack: 0 },
     boosters: [],
+    arcade: createArcade(),
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
     curvature: emptyCurvature(),

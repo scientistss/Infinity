@@ -4,6 +4,7 @@
  */
 import type { BuildingId, ProductionBuildingId } from './buildings';
 import type { ResearchId } from './research';
+import type { BetSymbol } from './arcade';
 
 export type ResId = 'metal' | 'crystal' | 'deuterium' | 'energy' | 'warp_core';
 /** Resources with a storage cap. */
@@ -17,7 +18,9 @@ export type Trigger =
   /** Fires when the resource sits at its storage cap (and right when it reaches it). */
   | { kind: 'storageFull'; res: StoredResId }
   /** Fires when the research queue has a free slot (checked on every pass and right after a research completes). */
-  | { kind: 'researchIdle' };
+  | { kind: 'researchIdle' }
+  /** Fires when the ring machine has a stored run (checked on every pass and right when a beacon run arrives). */
+  | { kind: 'runsReady' };
 
 /** Groups for "cheapest first". */
 export type CheapestGroup = 'mines' | 'storage' | 'research';
@@ -31,7 +34,9 @@ export type Condition =
   | { kind: 'queueLenLt'; value: number }
   | { kind: 'buildTimeLt'; building: BuildingId; seconds: number }
   | { kind: 'researchLevelLt'; tech: ResearchId; value: number }
-  | { kind: 'researchTimeLt'; tech: ResearchId; seconds: number };
+  | { kind: 'researchTimeLt'; tech: ResearchId; seconds: number }
+  | { kind: 'runsGte'; value: number }
+  | { kind: 'pityGte'; pity: 'empty' | 'jackpot'; value: number };
 
 export type Action =
   | { kind: 'enqueue'; building: BuildingId; levels: 1 }
@@ -39,7 +44,11 @@ export type Action =
   | { kind: 'collect' }
   | { kind: 'prestige'; minGain: number }
   | { kind: 'enqueueResearch'; tech: ResearchId }
-  | { kind: 'enqueueCheapest'; group: CheapestGroup };
+  | { kind: 'enqueueCheapest'; group: CheapestGroup }
+  /** Reveal stored ring machine runs with the standing bets. */
+  | { kind: 'runLights'; count: 1 | 'all' }
+  /** Change a standing bet. */
+  | { kind: 'setBet'; symbol: BetSymbol; units: number };
 
 export interface ProtocolCard {
   id: string;
@@ -59,7 +68,8 @@ export type CardCatalogId =
   | 'queue_scheduler'
   | 'production_tuner'
   | 'research_scheduler'
-  | 'cheapest_first';
+  | 'cheapest_first'
+  | 'auto_runner';
 
 export type UnlockCondition =
   | { kind: 'manualClicks'; count: number }
@@ -69,7 +79,8 @@ export type UnlockCondition =
   | { kind: 'warpCoreTotal'; count: number }
   | { kind: 'firstQueueIdle'; roboticsLevel: number }
   | { kind: 'firstStorageFull' }
-  | { kind: 'researchGte'; tech: ResearchId; value: number };
+  | { kind: 'researchGte'; tech: ResearchId; value: number }
+  | { kind: 'arcadeManualRuns'; count: number };
 
 export interface CardCatalogEntry {
   id: CardCatalogId;
@@ -217,6 +228,22 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
       action: { kind: 'enqueueCheapest', group: 'mines' },
     },
     unlocks: { actions: ['enqueueCheapest'] },
+  },
+  {
+    id: 'auto_runner',
+    labelZh: '自动跑灯',
+    order: 11,
+    unlock: { kind: 'arcadeManualRuns', count: 10 },
+    template: {
+      trigger: { kind: 'runsReady' },
+      conditions: [{ kind: 'runsGte', value: 1 }],
+      action: { kind: 'runLights', count: 'all' },
+    },
+    unlocks: {
+      triggers: ['runsReady'],
+      conditions: ['runsGte', 'pityGte'],
+      actions: ['runLights', 'setBet'],
+    },
   },
 ] as const;
 
