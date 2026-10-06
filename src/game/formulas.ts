@@ -4,6 +4,7 @@
  */
 import balance from "../data/balance.json";
 import type { BuildingDef } from "../data/buildings";
+import type { ResearchDef } from "../data/research";
 import { big, type BigNumber } from "./decimal";
 
 export interface ResourceCost {
@@ -15,6 +16,8 @@ export interface ResourceCost {
 export const ECONOMY_SPEED = balance.universe.economySpeed;
 export const MIN_BUILD_SECONDS = balance.universe.minBuildSeconds;
 export const BASE_PRODUCTION = balance.universe.baseProduction;
+/** Research speed (design doc §3.1); equal to S by default, kept separate for tuning. */
+export const RESEARCH_SPEED = balance.universe.researchSpeed;
 /** Lowest cost factor after curvature "growth cut". */
 export const MIN_COST_FACTOR = 1.01;
 
@@ -23,9 +26,10 @@ export function effectiveFactor(def: BuildingDef, growthCut = 0): number {
   return Math.max(MIN_COST_FACTOR, def.factor - growthCut);
 }
 
-function scaledFloor(base: number, factor: number, power: number): BigNumber {
+function scaledFloor(base: number, factor: number, power: number, roundTo = 0): BigNumber {
   if (base <= 0) return big(0);
   const plain = base * Math.pow(factor, power);
+  if (roundTo > 0 && Number.isFinite(plain) && plain < 1e15) return big(Math.round(plain / roundTo) * roundTo);
   if (Number.isFinite(plain) && plain < 1e15) {
     // Tiny relative nudge so exact products such as 1000·2^n never floor to n−1 on a rounding error.
     return big(Math.floor(plain * (1 + 1e-12)));
@@ -75,6 +79,38 @@ export function buildSeconds(
 ): number {
   const seconds = (buildHours(cost, level, def, robotics, nanite) * 3600) / speed;
   return Math.max(minSeconds, seconds);
+}
+
+/** Research cost at the target level: ⌊base × factor^(L−1)⌋ (astrophysics rounds to 100, as in OGame). */
+export function researchCost(def: ResearchDef, level: number): ResourceCost {
+  const power = Math.max(0, level - 1);
+  const round = def.roundTo ?? 0;
+  return {
+    metal: scaledFloor(def.baseCost.metal, def.factor, power, round),
+    crystal: scaledFloor(def.baseCost.crystal, def.factor, power, round),
+    deuterium: scaledFloor(def.baseCost.deuterium, def.factor, power, round),
+  };
+}
+
+/** Energy supply a research level requires (graviton). Not consumed. */
+export function researchEnergyRequirement(def: ResearchDef, level: number): number {
+  if (def.baseCost.energy <= 0) return 0;
+  return Math.floor(def.baseCost.energy * Math.pow(def.factor, Math.max(0, level - 1)));
+}
+
+/** Research hours at speed 1: (M + C) / (1000 × (1 + lab level)). */
+export function researchHours(cost: ResourceCost, labLevel: number): number {
+  const spend = cost.metal.add(cost.crystal).toNumber();
+  return spend / (1000 * (1 + Math.max(0, labLevel)));
+}
+
+export function researchSeconds(
+  cost: ResourceCost,
+  labLevel: number,
+  speed: number = RESEARCH_SPEED,
+  minSeconds: number = MIN_BUILD_SECONDS,
+): number {
+  return Math.max(minSeconds, (researchHours(cost, labLevel) * 3600) / speed);
 }
 
 const growth = (level: number): number => level * Math.pow(1.1, level);

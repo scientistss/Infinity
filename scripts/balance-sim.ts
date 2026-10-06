@@ -2,6 +2,8 @@
  * Pacing check (design doc §3.4 / appendix B) driven by the real game code: formulas.ts, queue.ts and tick().
  * A greedy player keeps the 2-slot build queue full: power first, crystal ≤ metal−2, deuterium ≤ crystal−3,
  * robotics ≈ metal/3, storage when the next build would exceed 90% of a cap. No curvature, no manual clicks.
+ * P2: a research lab once metal mine 10 stands (lab ≈ metal/4 while no research runs), and a 2-slot research
+ * queue that always picks the cheapest useful research whose price is ≤ 25% of current stock.
  *
  * Usage: npm run sim [-- minutes]   (runs through tsx; no browser needed)
  */
@@ -9,6 +11,9 @@ import { buildingById, type BuildingId } from "../src/data/buildings";
 import { economy } from "../src/game/economy";
 import { expansionScore, tick } from "../src/game/logic";
 import { canEnqueue, costFor, enqueue, nextTargetLevel } from "../src/game/queue";
+import { canEnqueueResearch, enqueueResearch } from "../src/game/research";
+import type { ResearchId } from "../src/data/research";
+import { metalEquivalent } from "../src/automation/engine";
 import { createInitialState } from "../src/game/state";
 import type { GameState } from "../src/game/types";
 
@@ -24,6 +29,9 @@ function want(state: GameState): BuildingId {
   else if (lv("crystal_mine") < lv("metal_mine") - 2) pick = "crystal_mine";
   else if (lv("metal_mine") >= 4 && lv("deuterium_synth") < Math.max(1, lv("crystal_mine") - 3)) pick = "deuterium_synth";
   else if (lv("deuterium_synth") >= 1 && lv("robotics_factory") < Math.min(10, Math.floor(lv("metal_mine") / 3))) pick = "robotics_factory";
+  else if (lv("metal_mine") >= 10 && state.research.queue.length === 0 && lv("research_lab") < Math.min(10, Math.floor(lv("metal_mine") / 4))) pick = "research_lab";
+  else if (lv("metal_mine") >= 10 && lv("research_lab") < 1) pick = "research_lab";
+  else if (state.research.levels.energy_tech >= 3 && lv("deuterium_synth") >= 5 && lv("fusion_reactor") < Math.floor(lv("deuterium_synth") / 2) - 2) pick = "fusion_reactor";
   else pick = "metal_mine";
   const cost = costFor(state, pick, nextTargetLevel(p, pick));
   const storages: Array<[BuildingId, "metal" | "crystal" | "deuterium"]> = [
@@ -37,12 +45,43 @@ function want(state: GameState): BuildingId {
   return pick;
 }
 
+/** Research the player cares about early, with level caps. */
+const RESEARCH_PLAN: Array<[ResearchId, number]> = [
+  ["energy_tech", 8],
+  ["computer_tech", 20],
+  ["laser_tech", 10],
+  ["espionage_tech", 4],
+  ["impulse_drive", 3],
+  ["combustion_drive", 2],
+  ["astrophysics", 3],
+  ["ion_tech", 5],
+  ["plasma_tech", 10],
+];
+
+function pickResearch(state: GameState): ResearchId | null {
+  let best: ResearchId | null = null;
+  let bestValue = Number.POSITIVE_INFINITY;
+  const stock = state.resources.metal.add(state.resources.crystal.mul(2)).add(state.resources.deuterium.mul(3)).toNumber();
+  for (const [id, cap] of RESEARCH_PLAN) {
+    const check = canEnqueueResearch(state, id);
+    if (!check.ok || check.targetLevel > cap) continue;
+    const value = metalEquivalent(check.cost).toNumber();
+    if (value > 0.25 * stock) continue;
+    if (value < bestValue) {
+      best = id;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
 const marks: Record<string, number> = {};
 const snapshots: string[] = [];
 let state = createInitialState();
 const fmtLv = (s: GameState) => {
   const b = s.planet.buildings;
-  return `金${b.metal_mine} 晶${b.crystal_mine} 氘${b.deuterium_synth} 电${b.solar_plant} 聚${b.fusion_reactor} 机${b.robotics_factory} 仓${b.metal_storage}/${b.crystal_storage}/${b.deuterium_tank}`;
+  const r = s.research.levels;
+  return `金${b.metal_mine} 晶${b.crystal_mine} 氘${b.deuterium_synth} 电${b.solar_plant} 聚${b.fusion_reactor} 机${b.robotics_factory} 研${b.research_lab} 仓${b.metal_storage}/${b.crystal_storage}/${b.deuterium_tank} 能${r.energy_tech} 计${r.computer_tech} 天${r.astrophysics}`;
 };
 
 for (let second = 1; second <= horizonMinutes * 60; second += 1) {
@@ -50,6 +89,11 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
     const id = want(state);
     if (!canEnqueue(state, id).ok) break;
     state = enqueue(state, id, "protocol").state;
+  }
+  for (let tries = 0; tries < 2 && state.research.queue.length < 2; tries += 1) {
+    const id = pickResearch(state);
+    if (!id) break;
+    state = enqueueResearch(state, id, "protocol").state;
   }
   state = tick(state, 1);
   const score = expansionScore(state).toNumber();
@@ -62,6 +106,13 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   mark("机器人工厂 1 级", state.planet.buildings.robotics_factory >= 1);
   mark("首个仓库", Math.max(state.planet.buildings.metal_storage, state.planet.buildings.crystal_storage) >= 1);
   mark("首次能源不足", state.stats.seenEnergyShort);
+  mark("研究实验室 1 级", state.planet.buildings.research_lab >= 1);
+  mark("首项研究完成", state.stats.researchCompleted >= 1);
+  mark("计算机技术 1 级", state.research.levels.computer_tech >= 1);
+  mark("计算机技术 4 级（+2 槽）", state.research.levels.computer_tech >= 4);
+  mark("能源技术 3 级", state.research.levels.energy_tech >= 3);
+  mark("核聚变 1 级", state.planet.buildings.fusion_reactor >= 1);
+  mark("天体物理学 1 级", state.research.levels.astrophysics >= 1);
   mark("重置分 1e6（1 核心）", score >= 1e6);
   mark("重置分 4e6（2 核心）", score >= 4e6);
   mark("重置分 1e7", score >= 1e7);
@@ -73,7 +124,9 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   }
 }
 
-console.log(`S=600, greedy 2-slot queue, ${horizonMinutes} min, builds ${state.stats.buildsCompleted}`);
+console.log(
+  `S=600, greedy 2-slot queues, ${horizonMinutes} min, builds ${state.stats.buildsCompleted}, research ${state.stats.researchCompleted}`,
+);
 for (const [key, minutes] of Object.entries(marks)) console.log(`  ${key}: ${minutes.toFixed(1)} 分钟`);
 for (const line of snapshots) console.log(`  ${line}`);
 const next = buildingById("metal_mine");

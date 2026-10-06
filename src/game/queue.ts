@@ -3,7 +3,7 @@
  * Cost is charged on enqueue at the order's target level and refunded in full on cancel.
  * Duration is computed when an order starts, from the robotics/nanite levels at that moment.
  */
-import { CURRENT_PHASE, buildingById, isBuildingId, type BuildingDef, type BuildingId } from "../data/buildings";
+import { CURRENT_PHASE, buildingById, type BuildingDef, type BuildingId } from "../data/buildings";
 import { growthCut } from "../prestige/tree";
 import { QUEUE_BASE_CAPACITY, resourceName } from "./content";
 import { big } from "./decimal";
@@ -11,6 +11,7 @@ import { storageCaps } from "./economy";
 import { formatAmount } from "./format";
 import { buildSeconds, buildingCost, type ResourceCost } from "./formulas";
 import { clonePlanet, usedFields, type BuildOrder, type OrderSource, type PlanetState } from "./planet";
+import { missingRequirements as missingFrom } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export interface EnqueueCheck {
@@ -19,6 +20,8 @@ export interface EnqueueCheck {
   reason: string;
   targetLevel: number;
   cost: ResourceCost;
+  /** True when the only blocker is missing resources (everything else would allow it). */
+  onlyResources?: boolean;
 }
 
 export interface QueueResult {
@@ -55,14 +58,12 @@ export function secondsFor(state: GameState, def: BuildingDef, level: number, co
   return buildSeconds(cost ?? costFor(state, def.id, level), level, def, b.robotics_factory, b.nanite_factory);
 }
 
-/** Unmet building prerequisites (checked against built levels; queued ones do not count). Research waits for P2. */
-export function missingRequirements(planet: PlanetState, def: BuildingDef): string[] {
-  const missing: string[] = [];
-  for (const req of def.requires) {
-    if (req.kind !== "building" || !isBuildingId(req.id)) continue;
-    if (planet.buildings[req.id] < req.level) missing.push(`${buildingById(req.id).nameZh} 等级 ${req.level}`);
-  }
-  return missing;
+/**
+ * Unmet prerequisites, buildings and research (checked against finished levels; queued ones do not count).
+ * Levels already built stay even if a prerequisite would no longer hold.
+ */
+export function missingRequirements(state: GameState, def: BuildingDef): string[] {
+  return missingFrom(state, def.requires);
 }
 
 const STORAGE_FOR = { metal: "metal_storage", crystal: "crystal_storage", deuterium: "deuterium_tank" } as const;
@@ -89,15 +90,16 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
   const cost = costFor(state, id, targetLevel);
   const fail = (reason: string): EnqueueCheck => ({ ok: false, reason, targetLevel, cost });
   if (def.phase > CURRENT_PHASE) return fail(`第 ${def.phase} 阶段开放`);
-  const missing = missingRequirements(planet, def);
+  const missing = missingRequirements(state, def);
   if (missing.length > 0) return fail(`需要 ${missing.join("、")}`);
+  if (id === "research_lab" && state.research.queue.length > 0) return fail("研究进行中，研究实验室不能升级");
   const capacity = queueCapacity(state);
   if (planet.buildQueue.length >= capacity) return fail(`建造队列已满（${planet.buildQueue.length}/${capacity}）`);
   if (usedFields(planet) + planet.buildQueue.length >= planet.fieldsMax) {
     return fail(`星球格子已满（${usedFields(planet)}/${planet.fieldsMax}）`);
   }
   const lack = shortfall(state, cost);
-  if (lack) return fail(lack);
+  if (lack) return { ok: false, reason: lack, targetLevel, cost, onlyResources: true };
   return { ok: true, reason: "", targetLevel, cost };
 }
 

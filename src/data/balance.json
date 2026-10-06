@@ -1,5 +1,5 @@
 {
-  "version": "0.2-p1",
+  "version": "0.3-p2",
   "resources": {
     "metal": { "id": "metal", "labelZh": "金属", "accumulating": true },
     "crystal": { "id": "crystal", "labelZh": "晶体", "accumulating": true },
@@ -16,6 +16,7 @@
     "homeworld": { "name": "母星", "tempMax": 40, "fields": 163 },
     "baseProduction": { "metal": 30, "crystal": 15 },
     "minBuildSeconds": 1,
+    "researchSpeed": 600,
     "note": "OGame formulas are per hour at speed 1. per-second = perHour × S / 3600; build seconds = hours × 3600 / S."
   },
   "storage": {
@@ -25,7 +26,8 @@
     "formula": "base × floor(k × e^(20·L/33))"
   },
   "queue": {
-    "baseCapacity": 2
+    "baseCapacity": 2,
+    "note": "The research queue has the same length as the build queue (design doc §6.1)."
   },
   "starting": {
     "metal": 500,
@@ -41,7 +43,7 @@
     "gainFormula": "floor(sqrt(score / divisor))",
     "divisor": 1e6,
     "resets": ["metal", "crystal", "deuterium", "planet"],
-    "keeps": ["warp_core", "curvature_tech", "achievements", "protocol_cards"],
+    "keeps": ["warp_core", "curvature_tech", "achievements", "protocol_cards", "research_levels", "dark_matter"],
     "unspentCoreBonusPerCore": 0.02,
     "targetFirstGain": [1, 3]
   },

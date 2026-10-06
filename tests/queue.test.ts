@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canEnqueue, cancel, completeActive, enqueue, nextTargetLevel } from "../src/game/queue";
 import { usedFields } from "../src/game/planet";
-import { stateWith, rich } from "./helpers";
+import { stateWith, rich, withResearch } from "./helpers";
 
 describe("build queue", () => {
   it("charges on enqueue and refunds in full on cancel", () => {
@@ -84,8 +84,9 @@ describe("build queue", () => {
     expect(canEnqueue(state, "shipyard").reason).toBe("需要 机器人工厂 等级 2");
     state = enqueue(state, "robotics_factory", "manual").state;
     expect(canEnqueue(state, "shipyard").ok).toBe(false);
-    expect(canEnqueue(state, "fusion_reactor").reason).toBe("需要 重氢合成器 等级 5");
-    expect(canEnqueue(rich(stateWith({ deuterium_synth: 5 })), "fusion_reactor").ok).toBe(true);
+    expect(canEnqueue(state, "fusion_reactor").reason).toBe("需要 重氢合成器 等级 5、能源技术 等级 3");
+    expect(canEnqueue(rich(stateWith({ deuterium_synth: 5 })), "fusion_reactor").reason).toBe("需要 能源技术 等级 3");
+    expect(canEnqueue(rich(withResearch(stateWith({ deuterium_synth: 5 }), { energy_tech: 3 })), "fusion_reactor").ok).toBe(true);
   });
 
   it("refuses buildings from later phases", () => {

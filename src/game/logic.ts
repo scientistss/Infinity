@@ -11,6 +11,13 @@ import { big, bigFloor, bigSqrt, type BigNumber } from "./decimal";
 import { baseCollectAmount, economy, type EconomySnapshot } from "./economy";
 import { MIN_BUILD_SECONDS } from "./formulas";
 import { completeActive, startNext, queueCapacity, type CompletedBuild } from "./queue";
+import {
+  completeActiveResearch,
+  researchCapacity,
+  startNextResearch,
+  withResearchRemaining,
+  type CompletedResearch,
+} from "./research";
 import { applySeedStock, manualClickMultiplier, scoreMultiplier } from "../prestige/tree";
 import { createInitialState } from "./state";
 import { RESOURCE_IDS, type GameState } from "./types";
@@ -22,6 +29,11 @@ export type TickMode = "live" | "offline";
 /** Optional sink for things that happened inside one tick (offline summary). */
 export interface TickLog {
   completedBuilds: CompletedBuild[];
+  completedResearch: CompletedResearch[];
+}
+
+export function emptyTickLog(): TickLog {
+  return { completedBuilds: [], completedResearch: [] };
 }
 
 const EPS = 1e-9;
@@ -34,7 +46,7 @@ const EPS = 1e-9;
  * Pure: the input state is not mutated.
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
-  let current = applyAchievementUnlocks(startNext(state));
+  let current = applyAchievementUnlocks(startNextResearch(startNext(state)));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
   const limit = Math.ceil(dtSeconds / period) + 4 * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 64;
@@ -53,6 +65,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     let step = left;
     const head = current.planet.buildQueue[0];
     if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
+    const lab = current.research.queue[0];
+    if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
     step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
     step = Math.min(step, nextBoundary(current, eco));
 
@@ -74,7 +88,22 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
       }
     }
 
-    const events: ProtocolEvents = { queueIdle, storageFull: moved.filled };
+    // Research: same countdown on the empire research queue.
+    let researchIdle = false;
+    const studying = current.research.queue[0];
+    if (studying && studying.totalSeconds > 0) {
+      const remaining = studying.remainingSeconds - step;
+      if (remaining <= EPS) {
+        const done = completeActiveResearch(current);
+        current = done.state;
+        if (done.completed) log?.completedResearch.push(done.completed);
+        researchIdle = current.research.queue.length < researchCapacity(current);
+      } else {
+        current = withResearchRemaining(current, remaining);
+      }
+    }
+
+    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled };
     if (moved.filled.length > 0 && !current.stats.seenStorageFull) {
       current = { ...current, stats: { ...current.stats, seenStorageFull: true } };
     }
@@ -199,7 +228,8 @@ export function warpGain(state: GameState): BigNumber {
 
 /**
  * Launch the colony ship. Resets buildings, queue, production settings and resources to the 500/500 start.
- * Protocol cards, unlocks, achievements, the tech tree, and manual-click progress stay.
+ * Protocol cards, unlocks, achievements, the tech tree, research levels, dark matter, and manual-click
+ * progress stay (design doc §14.3). Research still in the queue is dropped with the rest of the run.
  * Returns the same state when the gain would be zero.
  */
 export function prestige(state: GameState): GameState {
@@ -208,6 +238,8 @@ export function prestige(state: GameState): GameState {
   const next = createInitialState();
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };
+  next.research = { levels: { ...state.research.levels }, queue: [] };
+  next.darkMatter = state.darkMatter;
   next.totalTime = state.totalTime;
   next.manualClicks = state.manualClicks;
   next.seenEnergyShortage = state.seenEnergyShortage;

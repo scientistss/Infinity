@@ -24,9 +24,10 @@ export interface ResourceDef {
 
 /**
  * v6 (P1): OGame buildings by level, build queue, storage caps, planet fields.
+ * v7 (P2): research levels + research queue, dark matter, 12 protocol slots (design doc §4).
  * Test-phase policy: no migration. Older saves start a fresh game with a one-time notice.
  */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.save.v1";
 

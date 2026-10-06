@@ -60,11 +60,11 @@ function busyState() {
   return state;
 }
 
-describe("save v6", () => {
+describe("save v7", () => {
   it("a v5 save in localStorage starts a fresh game with a one-time notice", () => {
     const store = memoryStore({ [STORAGE_KEY]: V5_SAVE });
     const loaded = loadGame(store, 1_710_000_100_000);
-    expect(loaded.notice).toBe("测试版存档格式已更新（v5 → v6），旧进度已重置。");
+    expect(loaded.notice).toBe("测试版存档格式已更新（v5 → v7），旧进度已重置。");
     expect(loaded.state.resources.metal.toNumber()).toBe(500);
     expect(loaded.state.warpCores.toNumber()).toBe(0);
     expect(loaded.state.planet.buildings.metal_mine).toBe(0);
@@ -77,7 +77,7 @@ describe("save v6", () => {
 
   it("older versions also reset (v1)", () => {
     const store = memoryStore({ [STORAGE_KEY]: JSON.stringify({ version: 1, savedAt: 1, state: {} }) });
-    expect(loadGame(store).notice).toContain("v1 → v6");
+    expect(loadGame(store).notice).toContain("v1 → v7");
   });
 
   it("importing a v5 file is refused and leaves the current game alone", () => {
@@ -90,7 +90,7 @@ describe("save v6", () => {
 
   it("importing a newer version is refused too", () => {
     const file = JSON.parse(exportSave(createInitialState(), 1)) as { version: number };
-    file.version = 7;
+    file.version = 8;
     expect(() => importSave(JSON.stringify(file))).toThrow("比游戏更新");
   });
 
@@ -107,7 +107,7 @@ describe("save v6", () => {
     expect(restored.protocols.slots[0]?.card?.id).toBe("queue_scheduler");
   });
 
-  it("loadGame applies offline time to a v6 save", () => {
+  it("loadGame applies offline time to a v7 save", () => {
     const store = memoryStore();
     writeSave(store, busyState(), 1_000_000);
     const loaded = loadGame(store, 1_000_000 + 600_000);
