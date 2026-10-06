@@ -2,7 +2,7 @@
 
 从荒芜行星开始的单机网页科幻放置游戏。升级矿场和研究、组装可视化协议卡、制造舰船，逐步建立多星球帝国。
 
-**当前版本：v0.5.0-alpha.1 / 存档 v9 / P4 可玩核心。** 这是可玩的开发版本，不是所有规划内容已经完成。完整交付范围、规则取舍和待办见 [P4 实现说明](docs/P4_IMPLEMENTATION.md)，设计愿景见 [DESIGN](docs/DESIGN.md)，自动化见 [AUTOMATION](docs/AUTOMATION.md)。
+**当前版本：v0.5.0-alpha.2 / 存档 v9 / P4 可玩核心。** 这是可玩的开发版本，不是所有规划内容已经完成。完整交付范围、规则取舍和待办见 [P4 实现说明](docs/P4_IMPLEMENTATION.md)，设计愿景见 [DESIGN](docs/DESIGN.md)，自动化见 [AUTOMATION](docs/AUTOMATION.md)。
 
 ## 运行
 
@@ -36,11 +36,11 @@ P4 核心新增 **帝国、银河、舰队、消息** 四页。银河有 5×100�
 
 ## 尚未完成
 
-回收/深空充能、NPC 经济和贸易、军官、跨星球协议卡、星图与更高层重置、战斗均未开放。大数库存已存在，但产率、能源、舰船计数和空间规模仍有工程上限；不能把当前版本理解为真正无边界的数值系统。本次没有替换为新的 Imagen 素材，仍使用原有美术和 CSS 星球。
+回收/深空充能、NPC 经济和贸易、军官、跨星球协议卡、星图与更高层重置、战斗均未开放。大数库存已存在，但产率、能源、舰船计数和空间规模仍有工程上限；不能把当前版本理解为真正无边界的数值系统。已接入本对话生成素材的 50 个 WebP 切片。来源是 ChatGPT 图像生成工具，不是 Google Imagen；详情见 [视觉发布说明](docs/VISUAL_RELEASE.md)。
 
 ## 存档与测试存档
 
-**先备份旧进度。** 测试期不迁移：本地 v8 会重置并提示；导入 v8 会拒绝且不覆盖当前 v9。仍运行旧版本的在线站点不接受 v9。
+**升级不再自动清空 v8 进度。** 有效 v8 单星球存档会转换为 v9，保留库存、建筑、科技、三条队列、单位、协议卡和跨轮系统。本地升级须先写入并验证原文件备份；备份失败、损坏文件、v1–v7 或未来版本会暂停自动保存，原件不变。存档页可「导出保留的原存档」。手动导入有效 v8/v9 前也备份当前进度。备份仅在本浏览器，仍建议自行导出离线备份。旧站点不接受 v9。
 
 存档键为 `infinity.save.v1`，信封 `{ version: 9, savedAt, lastTickAt, state }`。状态使用 `planets[]`、`activePlanetId`、帝国共享 `research`、`fleets[]`、`universe` 和消息；Decimal 资源以字符串保存。导入按快照恢复，不再次结算保存时间。
 
@@ -60,9 +60,24 @@ npm test
 npm run sim -- 60
 ```
 
-本次核心验收为 190 项单元测试通过；原贪心策略首次达到 1e6 扩张分为 23.8 分钟。更多测试范围、隔离 DOM 检查命令、验证限制及具体数值见 [P4 实现说明](docs/P4_IMPLEMENTATION.md#6-复现验证)。
+P4 核心加本次视觉/迁移共 209 项单元测试通过；原贪心策略首次达到 1e6 扩张分为 23.8 分钟。更多测试范围、隔离 DOM 检查命令、验证限制及具体数值见 [P4 实现说明](docs/P4_IMPLEMENTATION.md#6-复现验证)。
 
 `.github/workflows/verify.yml` 验证分支和 PR；`pages.yml` 在合并到 main 后构建、测试并部署。开发必须经主题分支和 PR，不直接推送 main。
+
+## 视觉与发布验收
+
+50 个内容哈希 WebP 约 129 KiB，涵盖场景、资源、建筑、舰船、导航及徽章。全部走 BASE_URL，每次 build 校验 SHA-256。文字、数字、按钮和表单依然是原生 HTML；同族舰种共享部分图，协议卡保留 13 个语义 SVG 徽记。不是每项一张独立高清原画。
+
+```bash
+python -m pip install -r scripts/browser-requirements.txt
+npx tsx scripts/p4-fixture.ts > p4-review-save.json
+npm run preview -- --host 127.0.0.1 &
+python scripts/browser-smoke.py --verify-dist
+# 在不接触用户真实浏览器档案的隔离上下文中测试线上站点：
+python scripts/browser-smoke.py --url https://scientistss.github.io/Infinity/ --verify-dist
+```
+
+需要 Chrome/Chromium。CI 执行真实 HTTP/localStorage、全部图像哈希和存档迁移验收；Pages 发布前后各执行一次。release.json 提供实际源码 SHA 和版本。受限环境中的 browser-dom-smoke.py 只作隔离 DOM 辅助测试，不冒充原生网络验收。
 
 ## 许可证
 

@@ -62,21 +62,23 @@ function busyState() {
 }
 
 describe("save v9", () => {
-  it("a v5 save in localStorage starts a fresh game with a one-time notice", () => {
+  it("a v5 save stays intact and suspends autosave", () => {
     const store = memoryStore({ [STORAGE_KEY]: V5_SAVE });
     const loaded = loadGame(store, 1_710_000_100_000);
-    expect(loaded.notice).toBe("测试版存档格式已更新（v5 → v9），旧进度已重置。");
+    expect(loaded.notice).toContain("v5 → v9");
+    expect(loaded.saveBlocked).toBe(true);
+    expect(store.getItem(STORAGE_KEY)).toBe(V5_SAVE);
     expect(activePlanet(loaded.state).resources.metal.toNumber()).toBe(500);
     expect(loaded.state.warpCores.toNumber()).toBe(0);
     expect(activePlanet(loaded.state).buildings.metal_mine).toBe(0);
     expect(loaded.appliedSeconds).toBe(0);
 
-    // After the fresh game is written, the notice does not come back.
+    // A deliberately saved new game replaces it; loadGame never writes it.
     writeSave(store, loaded.state, 1_710_000_100_000);
     expect(loadGame(store, 1_710_000_100_000).notice).toBeNull();
   });
 
-  it("older versions also reset (v1)", () => {
+  it("older versions remain protected (v1)", () => {
     const store = memoryStore({ [STORAGE_KEY]: JSON.stringify({ version: 1, savedAt: 1, state: {} }) });
     expect(loadGame(store).notice).toContain("v1 → v9");
   });
@@ -89,7 +91,7 @@ describe("save v9", () => {
     expect(exportSave(current, 42)).toBe(snapshot);
   });
 
-  it("a v7 (P2) save resets too", () => {
+  it("a v7 (P2) save is also protected", () => {
     const file = JSON.parse(exportSave(createInitialState(), 1)) as { version: number };
     file.version = 7;
     expect(() => importSave(JSON.stringify(file))).toThrow("存档版本 v7 已过时");

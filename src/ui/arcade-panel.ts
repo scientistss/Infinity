@@ -1,3 +1,4 @@
+import { icon, type ArtId } from "./art";
 /**
  * DOM for the deep-space ring machine tab: 7×7 board, centre screen, bet panel, odds table, history.
  * The light animation is cosmetic: the state already holds the result when it starts.
@@ -57,11 +58,13 @@ const ODDS_KEYS = ARCADE_SYMBOL_DEFS.map((def) => ({ key: def.id, dark: def.open
 const LUCKY_KEYS = LUCKY_TABLE.map((row) => ({ key: row.kind, dark: false }));
 const STAT_KEYS = ARCADE_SYMBOL_DEFS.filter((def) => def.opensIn <= ARCADE_PHASE).map((def) => ({ key: def.id, dark: false }));
 
+const SYMBOL_ART: Record<string, ArtId> = { metal: "metal", crystal: "crystal", deuterium: "deuterium", dark_matter: "dark-matter", drifter: "cruiser", supply: "dark-matter", lucky: "badge-galaxy", jackpot: "badge-infinity" };
+
 export function arcadePanelHtml(headIcon: string): string {
   const tiles = BOARD.map((symbol, index) => {
     const def = arcadeSymbolDef(symbol);
     const cell = boardCell(index);
-    return `<div class="arcade-tile sym-${symbol}" data-tile="${index}" data-bind="arcade-tile-${index}" style="grid-row:${cell.row};grid-column:${cell.col}"><span class="arcade-glyph">${def.glyph}</span><small>${def.nameZh}</small></div>`;
+    return `<div class="arcade-tile sym-${symbol}" data-tile="${index}" data-bind="arcade-tile-${index}" style="grid-row:${cell.row};grid-column:${cell.col}"><span class="arcade-glyph">${SYMBOL_ART[symbol] ? icon(SYMBOL_ART[symbol]!, "", { alt: "", size: 30 }) : def.glyph}</span><small>${def.nameZh}</small></div>`;
   }).join("");
   const bets = BET_SYMBOLS.map((symbol) => {
     const def = arcadeSymbolDef(symbol);

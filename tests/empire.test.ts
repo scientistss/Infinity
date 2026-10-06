@@ -8,7 +8,7 @@ import { applyAchievementUnlocks, tick } from "../src/game/logic";
 import { enqueue } from "../src/game/queue";
 import { cancelResearch, effectiveLabLevel, enqueueResearch, researchSecondsFor } from "../src/game/research";
 import { researchById } from "../src/data/research";
-import { deserializeState, exportSave, importSave, serializeState, loadGame, SaveVersionError } from "../src/game/save";
+import { deserializeState, exportSave, importSave, serializeState, loadGame } from "../src/game/save";
 import { STORAGE_KEY } from "../src/game/content";
 import { rich, stateWith, withResearch } from "./helpers";
 import { presentEmpire } from "../src/ui/empire-present";
@@ -137,11 +137,12 @@ describe("P4 canonical empire state", () => {
     if(kind === "bad-coordinate") file.state.planets[1].coordinates.galaxy = 6;
     expect(() => importSave(JSON.stringify(file))).toThrow();
   });
-  it("explicitly rejects v8 imports while a local v8 save resets with a notice", () => {
+  it("rejects malformed v8 data and protects the stored original", () => {
     const json = JSON.stringify({ version: 8, state: { planet: {} }, savedAt: 0 });
-    expect(() => importSave(json)).toThrow(SaveVersionError);
+    expect(() => importSave(json)).toThrow("v8 单星球存档结构不完整");
     const result = loadGame({ getItem: (key) => key === STORAGE_KEY ? json : null, setItem: () => {}, removeItem: () => {} }, 1);
-    expect(result.notice).toContain("v8 → v9");
+    expect(result.saveBlocked).toBe(true);
+    expect(result.notice).toContain("原存档未覆盖");
     expect(result.state.planets).toHaveLength(1);
   });
   it("keeps the presenter pure and exposes all planets", () => {

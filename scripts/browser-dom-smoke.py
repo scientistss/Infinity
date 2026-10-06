@@ -10,6 +10,7 @@ import argparse
 import base64
 import json
 import mimetypes
+import re
 from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser()
@@ -24,6 +25,14 @@ output.mkdir(parents=True, exist_ok=True)
 fixture = json.loads(Path(args.fixture).read_text())
 js = next(dist.glob('assets/*.js')).read_text()
 css = next(dist.glob('assets/*.css')).read_text()
+# Inline exact committed asset bytes only for this explicitly isolated DOM harness.
+manifest = json.loads((root / 'src/data/art-manifest.json').read_text())
+for a in manifest['assets'].values():
+    data = base64.b64encode((dist / a['file']).read_bytes()).decode()
+    js = js.replace('"' + a['file'] + '"', '"data:image/webp;base64,' + data + '"')
+js, art_helpers = re.subn(r'return`/Infinity/\$\{([^`]+\.file)\}`', r'return \1', js)
+if art_helpers != 1:
+    raise RuntimeError('Compiled artUrl changed; update isolated harness')
 assets = {f.name: 'data:' + (mimetypes.guess_type(f.name)[0] or 'application/octet-stream') + ';base64,' + base64.b64encode(f.read_bytes()).decode()
           for f in (dist / 'icons').iterdir() if f.is_file()}
 checks = []
@@ -112,7 +121,7 @@ with sync_playwright() as pw:
     page.locator('[data-bind="transfer"]').fill('{"version":8,"savedAt":1,"state":{}}')
     page.locator('[data-action="import-text"]').click()
     after = page.evaluate("JSON.parse(localStorage.getItem('infinity.save.v1')).state")
-    check('v8 import cannot overwrite the current game', before == after)
+    check('malformed v8 import cannot overwrite the current game', before == after)
     check('no uncaught JavaScript exceptions', not errors)
     browser.close()
 

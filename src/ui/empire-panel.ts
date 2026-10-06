@@ -1,3 +1,4 @@
+import { artUrl } from "./art";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
 import { MISSIONS, MISSION_LABEL, type FleetRequest, type Mission } from "../game/fleet";
@@ -65,6 +66,7 @@ export function updateEmpirePanel(root: HTMLElement, m: EmpireView, status: stri
   const select = root.querySelector("#active-planet") as HTMLSelectElement;
   if (select.value !== m.activeId) select.value = m.activeId;
   text(root,"active-coordinate",`[${m.activeCoordinate}]`);
+  text(root,"hero-location",`${m.activeName} · [${m.activeCoordinate}]`);
   text(root,"expansion-guide",m.guide);
   text(root,"colony-status",m.colonyStatus); text(root,"fleet-status",m.fleetStatus);
   text(root,"fleet-panel-status",`${m.activeName} · ${m.fleetStatus} · ${m.colonyStatus}`);
@@ -93,7 +95,7 @@ export function updateEmpirePanel(root: HTMLElement, m: EmpireView, status: stri
     }
   }
   for (const ship of m.ships) text(root,`available-${ship.id}`,`可用 ${ship.available.toLocaleString("zh-CN")}`);
-  html(root,"galaxy-rows",m.rows.map((r) => `<article class="galaxy-row ${r.kind}"><div class="orbit-index">${String(r.position).padStart(2,"0")}</div><div class="orbit-planet planet-${r.position % 4}" aria-hidden="true"></div><div class="orbit-name"><strong>${esc(r.name)}</strong><span>[${r.coordinate}] · ${esc(r.faction)}</span></div><div class="orbit-actions">${r.planetId ? `<button type="button" data-action="select-planet" data-planet="${esc(r.planetId)}" ${r.selected ? "disabled" : ""}>${r.selected ? "当前" : "切换"}</button>${r.selected ? "" : `<button type="button" data-route="${r.coordinate}" data-mission="transport">运输</button>`}` : `<button type="button" data-route="${r.coordinate}" data-mission="scout">侦察</button>${r.kind === "empty" ? `<button type="button" data-route="${r.coordinate}" data-mission="colonize" ${r.reserved ? "disabled" : ""}>殖民</button>` : ""}`}</div></article>`).join(""));
+  html(root,"galaxy-rows",m.rows.map((r) => `<article class="galaxy-row ${r.kind}"><div class="orbit-index">${String(r.position).padStart(2,"0")}</div><img class="orbit-preview" src="${artUrl(r.kind === "own" ? "colony" : r.kind === "npc" ? "homeworld" : "deep-space")}" alt="" aria-hidden="true" width="42" height="42" loading="lazy" decoding="async" /><div class="orbit-name"><strong>${esc(r.name)}</strong><span>[${r.coordinate}] · ${esc(r.faction)}</span></div><div class="orbit-actions">${r.planetId ? `<button type="button" data-action="select-planet" data-planet="${esc(r.planetId)}" ${r.selected ? "disabled" : ""}>${r.selected ? "当前" : "切换"}</button>${r.selected ? "" : `<button type="button" data-route="${r.coordinate}" data-mission="transport">运输</button>`}` : `<button type="button" data-route="${r.coordinate}" data-mission="scout">侦察</button>${r.kind === "empty" ? `<button type="button" data-route="${r.coordinate}" data-mission="colonize" ${r.reserved ? "disabled" : ""}>殖民</button>` : ""}`}</div></article>`).join(""));
   const list = root.querySelector("#fleets-list") as HTMLElement;
   const fleetKey = m.fleets.map((f) => f.id).join("|");
   if (list.dataset.ids !== fleetKey) {

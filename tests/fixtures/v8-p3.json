@@ -1,0 +1,328 @@
+{
+  "version": 8,
+  "savedAt": 1720000000000,
+  "lastTickAt": 1720000000000,
+  "state": {
+    "resources": {
+      "metal": "99944216.00000001",
+      "crystal": "19948454",
+      "deuterium": "2997600"
+    },
+    "planet": {
+      "name": "升级前母星",
+      "tempMax": 40,
+      "fieldsMax": 163,
+      "buildings": {
+        "metal_mine": 12,
+        "crystal_mine": 9,
+        "deuterium_synth": 6,
+        "solar_plant": 14,
+        "fusion_reactor": 0,
+        "metal_storage": 0,
+        "crystal_storage": 0,
+        "deuterium_tank": 0,
+        "robotics_factory": 3,
+        "nanite_factory": 0,
+        "shipyard": 4,
+        "research_lab": 3,
+        "missile_silo": 0,
+        "alliance_depot": 0,
+        "terraformer": 0,
+        "space_dock": 0,
+        "lunar_base": 0,
+        "sensor_phalanx": 0,
+        "jump_gate": 0
+      },
+      "productionPct": {
+        "metal_mine": 100,
+        "crystal_mine": 70,
+        "deuterium_synth": 100,
+        "solar_plant": 100,
+        "fusion_reactor": 100
+      },
+      "buildQueue": [
+        {
+          "building": "metal_mine",
+          "targetLevel": 13,
+          "paid": {
+            "metal": "7784",
+            "crystal": "1946",
+            "deuterium": "0"
+          },
+          "totalSeconds": 5.837999999999999,
+          "remainingSeconds": 5.7379999999999995,
+          "source": "manual"
+        }
+      ],
+      "units": {
+        "small_cargo": 12,
+        "large_cargo": 0,
+        "light_fighter": 0,
+        "heavy_fighter": 0,
+        "cruiser": 0,
+        "battleship": 0,
+        "battlecruiser": 0,
+        "bomber": 0,
+        "destroyer": 0,
+        "deathstar": 0,
+        "recycler": 0,
+        "espionage_probe": 0,
+        "solar_satellite": 0,
+        "colony_ship": 0,
+        "rocket_launcher": 0,
+        "light_laser": 0,
+        "heavy_laser": 0,
+        "gauss_cannon": 0,
+        "ion_cannon": 0,
+        "plasma_turret": 0,
+        "small_shield_dome": 0,
+        "large_shield_dome": 0,
+        "anti_ballistic_missile": 0,
+        "interplanetary_missile": 0
+      },
+      "shipyardQueue": [
+        {
+          "unit": "small_cargo",
+          "count": 24,
+          "progress": 0.052083333333333336,
+          "source": "manual"
+        }
+      ]
+    },
+    "research": {
+      "levels": {
+        "energy_tech": 3,
+        "laser_tech": 0,
+        "ion_tech": 0,
+        "hyperspace_tech": 0,
+        "plasma_tech": 0,
+        "combustion_drive": 2,
+        "impulse_drive": 0,
+        "hyperspace_drive": 0,
+        "espionage_tech": 0,
+        "computer_tech": 2,
+        "astrophysics": 0,
+        "intergalactic_research_network": 0,
+        "graviton_tech": 0,
+        "weapons_tech": 0,
+        "shielding_tech": 0,
+        "armour_tech": 0
+      },
+      "queue": [
+        {
+          "tech": "computer_tech",
+          "targetLevel": 3,
+          "paid": {
+            "metal": "0",
+            "crystal": "1600",
+            "deuterium": "2400"
+          },
+          "totalSeconds": 2.4,
+          "remainingSeconds": 2.3,
+          "source": "manual"
+        }
+      ]
+    },
+    "darkMatter": "16845",
+    "items": {
+      "kraken_box": 0,
+      "newtron_box": 0,
+      "detroit_box": 0,
+      "booster_box": 0,
+      "supply_pack": 0
+    },
+    "boosters": [],
+    "arcade": {
+      "seed": 3505627223,
+      "runs": [],
+      "beaconProgress": 0,
+      "beaconRequired": 1800,
+      "topUps": [],
+      "bets": {
+        "metal": 0,
+        "crystal": 0,
+        "deuterium": 0,
+        "drifter": 0
+      },
+      "rollPity": {
+        "empty": 0,
+        "jackpot": 0
+      },
+      "pity": {
+        "empty": 0,
+        "jackpot": 0
+      },
+      "position": 0,
+      "history": [],
+      "stats": {
+        "runs": 0,
+        "manualRuns": 0,
+        "autoRuns": 0,
+        "hits": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0,
+          "drifter": 0,
+          "dark_matter": 0,
+          "supply": 0,
+          "empty": 0,
+          "turbulence": 0,
+          "tailwind": 0,
+          "pirate": 0,
+          "alien": 0,
+          "merchant": 0,
+          "blackhole": 0,
+          "lucky": 0,
+          "jackpot": 0
+        },
+        "darkMatter": 0,
+        "betSpent": 0,
+        "betWon": 0
+      }
+    },
+    "lifetime": {
+      "metal": "10000000",
+      "crystal": "1000000",
+      "deuterium": "100000"
+    },
+    "warpCores": "21",
+    "curvature": {
+      "seed_stock": 1,
+      "output_double": 0,
+      "growth_cut": 0,
+      "offline_extend": 0,
+      "slot_plus": 0,
+      "manual_ten": 0,
+      "early_protocols": 0,
+      "score_boost": 0
+    },
+    "totalTime": "0.1",
+    "manualClicks": 0,
+    "seenEnergyShortage": false,
+    "hasPrestiged": false,
+    "unlockedCards": [
+      "auto_collect",
+      "auto_build",
+      "cost_ratio_guard",
+      "auto_prestige",
+      "production_tuner",
+      "research_scheduler",
+      "cheapest_first"
+    ],
+    "protocols": {
+      "accumulator": 0.1,
+      "slots": [
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "已装配",
+          "card": {
+            "id": "auto_build",
+            "enabled": true,
+            "trigger": {
+              "kind": "interval",
+              "seconds": 5
+            },
+            "conditions": [],
+            "action": {
+              "kind": "enqueue",
+              "building": "metal_mine",
+              "levels": 1
+            }
+          }
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        },
+        {
+          "elapsed": 0,
+          "lamp": "gray",
+          "reason": "空槽位",
+          "card": null
+        }
+      ]
+    },
+    "unlocked": [
+      "first_metal_mine",
+      "mines_10",
+      "first_crystal",
+      "first_deuterium",
+      "first_robotics",
+      "first_lab",
+      "first_research",
+      "first_shipyard",
+      "first_ship"
+    ],
+    "stats": {
+      "scrapes": 0,
+      "launches": 0,
+      "seenEnergyShort": false,
+      "manualActions": 3,
+      "automatedLaunches": 0,
+      "buildsCompleted": 0,
+      "seenStorageFull": true,
+      "seenQueueIdle": false,
+      "researchCompleted": 0,
+      "darkMatterEarned": 4500,
+      "unitsBuilt": 0
+    },
+    "offlineBonusHours": 0
+  }
+}

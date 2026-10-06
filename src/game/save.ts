@@ -125,12 +125,12 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Thrown when a file's version is not {@link SAVE_VERSION}. Test phase: no migration. */
+/** Unsupported versions never replace a game. v8 has an explicit migration. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
       version < SAVE_VERSION
-        ? `存档版本 v${version} 已过时（当前 v${SAVE_VERSION}）。测试期不迁移旧存档，未导入，当前进度保持不变。`
+        ? `存档版本 v${version} 已过时（当前 v${SAVE_VERSION}）。仅支持 v8 → v9 迁移，未导入，当前进度保持不变。`
         : `存档版本 v${version} 比游戏更新（当前 v${SAVE_VERSION}），未导入，当前进度保持不变。`,
     );
     this.name = "SaveVersionError";
@@ -138,12 +138,13 @@ export class SaveVersionError extends Error {
 }
 
 export interface LoadResult extends OfflineCatchup {
-  /** One-time notice, e.g. an outdated save was replaced by a fresh game. */
   notice: string | null;
+  /** Callers must suspend all writes while an original is protected. */
+  saveBlocked?: boolean;
 }
 
 export function outdatedSaveNotice(version: number): string {
-  return `测试版存档格式已更新（v${version} → v${SAVE_VERSION}），旧进度已重置。`;
+  return `存档格式需要更新（v${version} → v${SAVE_VERSION}），此版本无法自动迁移。原存档未覆盖，自动保存已暂停；请在存档页导出原件，或明确选择重新开始。`;
 }
 
 export function serializeState(state: GameState): SerializedState {
@@ -228,7 +229,27 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only the current version (v9) is accepted; anything else throws without touching the current game. */
+/** Pure v8 conversion. All mapped data must pass the normal v9 validator. */
+function migrateV8State(raw: unknown): unknown {
+  if (!isRecord(raw) || !isRecord(raw.planet) || !isRecord(raw.resources) ||
+      !isRecord(raw.research) || !Array.isArray(raw.research.queue) || raw.planets !== undefined) {
+    throw new Error("v8 单星球存档结构不完整，未迁移");
+  }
+  const { planet, resources, ...account } = raw;
+  const home = createPlanet();
+  return {
+    ...account,
+    planets: [{ ...planet, id: home.id, coordinates: home.coordinates, homeworld: true, resources }],
+    activePlanetId: home.id, universe: createInitialState().universe,
+    fleets: [], messages: [], nextFleetId: 1,
+    research: { ...raw.research, queue: raw.research.queue.map((order) => {
+      if (!isRecord(order)) throw new Error("v8 研究订单格式不正确");
+      return { ...order, planetId: home.id };
+    }) },
+  };
+}
+
+/** Validate v9 or migrate v8 without mutating the supplied file. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -239,7 +260,7 @@ export function importSave(json: string): SaveFile {
   if (!isRecord(parsed)) throw new Error("存档必须是 JSON 对象");
   const version = parsed.version;
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
-  if (version !== SAVE_VERSION) throw new SaveVersionError(version);
+  if (version !== SAVE_VERSION && version !== 8) throw new SaveVersionError(version);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -249,7 +270,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(deserializeState(parsed.state)),
+    state: serializeState(deserializeState(version === 8 ? migrateV8State(parsed.state) : parsed.state)),
   };
 }
 
@@ -278,21 +299,42 @@ function storedVersion(raw: string): number | null {
   return null;
 }
 
-/**
- * Load the local save and apply elapsed real time (capped at the offline limit).
- * A save older than the current version is discarded: fresh game plus a one-time notice (design doc §5.9).
- * Newer or corrupt saves throw so the caller can report it.
- */
+/** Keep the first original forever and one more recent replacement snapshot. */
+export const BACKUP_KEY = "infinity.save.backup.original";
+export const LATEST_BACKUP_KEY = "infinity.save.backup.latest";
+
+export function preserveSave(store: KeyValueStore, raw: string): void {
+  const first = store.getItem(BACKUP_KEY);
+  if (first === raw || store.getItem(LATEST_BACKUP_KEY) === raw) return;
+  const key = first === null ? BACKUP_KEY : LATEST_BACKUP_KEY;
+  store.setItem(key, raw);
+  if (store.getItem(key) !== raw) throw new Error("原存档备份写入失败，升级已暂停");
+}
+
+export function readBackup(store: KeyValueStore): string | null {
+  return store.getItem(LATEST_BACKUP_KEY) ?? store.getItem(BACKUP_KEY);
+}
+
+/** No corrupt/unsupported file is overwritten. A caller must honor saveBlocked. */
 export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
   const raw = store.getItem(STORAGE_KEY);
   if (!raw) return { ...emptyCatchup(createInitialState()), notice: null };
   const version = storedVersion(raw);
-  if (version !== null && version < SAVE_VERSION) {
-    return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
+  try {
+    if (version !== null && version < 8) {
+      return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version), saveBlocked: true };
+    }
+    const file = importSave(raw);
+    // Exact backup must succeed before advancing the old save or writing v9.
+    if (version === 8) preserveSave(store, raw);
+    const elapsed = Math.max(0, (now - file.lastTickAt) / 1000);
+    return { ...catchUp(deserializeState(file.state), elapsed),
+      notice: version === 8 ? "存档已迁移（v8 → v9）：母星、资源、科技、队列和协议卡已保留；原文件已备份，可在存档页导出。" : null };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "未知读取错误";
+    return { ...emptyCatchup(createInitialState()), saveBlocked: true,
+      notice: `原存档未覆盖，自动保存已暂停。${detail}。请先在存档页导出原件，再决定导入或重新开始。` };
   }
-  const file = importSave(raw);
-  const elapsed = (now - file.lastTickAt) / 1000;
-  return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
 }
 
 function serializePlanet(planet: PlanetState): SerializedPlanet {
