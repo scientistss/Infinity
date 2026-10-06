@@ -5,6 +5,7 @@
 import type { BuildingId, ProductionBuildingId } from './buildings';
 import type { ResearchId } from './research';
 import type { BetSymbol } from './arcade';
+import type { UnitId } from './units';
 
 export type ResId = 'metal' | 'crystal' | 'deuterium' | 'energy' | 'warp_core';
 /** Resources with a storage cap. */
@@ -20,7 +21,9 @@ export type Trigger =
   /** Fires when the research queue has a free slot (checked on every pass and right after a research completes). */
   | { kind: 'researchIdle' }
   /** Fires when the ring machine has a stored run (checked on every pass and right when a beacon run arrives). */
-  | { kind: 'runsReady' };
+  | { kind: 'runsReady' }
+  /** Fires when the shipyard queue is empty (checked on every pass and right when the last batch finishes). P3. */
+  | { kind: 'shipyardIdle' };
 
 /** Groups for "cheapest first". */
 export type CheapestGroup = 'mines' | 'storage' | 'research';
@@ -36,7 +39,17 @@ export type Condition =
   | { kind: 'researchLevelLt'; tech: ResearchId; value: number }
   | { kind: 'researchTimeLt'; tech: ResearchId; seconds: number }
   | { kind: 'runsGte'; value: number }
-  | { kind: 'pityGte'; pity: 'empty' | 'jackpot'; value: number };
+  | { kind: 'pityGte'; pity: 'empty' | 'jackpot'; value: number }
+  /** Owned + queued units of one kind below N (P3). */
+  | { kind: 'unitCountLt'; unit: UnitId; value: number }
+  /** Energy demand − supply ≥ N, counting solar satellites already queued as supply (P3). */
+  | { kind: 'energyDeficitGte'; value: number };
+
+/**
+ * How many units a buildUnits action orders: a fixed count, as many as the stock pays for, enough solar
+ * satellites to close the energy deficit, or up to N owned + queued.
+ */
+export type BuildUnitsCount = number | 'max' | 'deficit' | { fillTo: number };
 
 export type Action =
   | { kind: 'enqueue'; building: BuildingId; levels: 1 }
@@ -48,7 +61,9 @@ export type Action =
   /** Reveal stored ring machine runs with the standing bets. */
   | { kind: 'runLights'; count: 1 | 'all' }
   /** Change a standing bet. */
-  | { kind: 'setBet'; symbol: BetSymbol; units: number };
+  | { kind: 'setBet'; symbol: BetSymbol; units: number }
+  /** Order a shipyard batch (P3). */
+  | { kind: 'buildUnits'; unit: UnitId; count: BuildUnitsCount };
 
 export interface ProtocolCard {
   id: string;
@@ -69,7 +84,9 @@ export type CardCatalogId =
   | 'production_tuner'
   | 'research_scheduler'
   | 'cheapest_first'
-  | 'auto_runner';
+  | 'auto_runner'
+  | 'satellite_power'
+  | 'defense_keeper';
 
 export type UnlockCondition =
   | { kind: 'manualClicks'; count: number }
@@ -80,7 +97,9 @@ export type UnlockCondition =
   | { kind: 'firstQueueIdle'; roboticsLevel: number }
   | { kind: 'firstStorageFull' }
   | { kind: 'researchGte'; tech: ResearchId; value: number }
-  | { kind: 'arcadeManualRuns'; count: number };
+  | { kind: 'arcadeManualRuns'; count: number }
+  | { kind: 'unitGte'; unit: UnitId; value: number }
+  | { kind: 'firstDefense' };
 
 export interface CardCatalogEntry {
   id: CardCatalogId;
@@ -243,6 +262,38 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
       triggers: ['runsReady'],
       conditions: ['runsGte', 'pityGte'],
       actions: ['runLights', 'setBet'],
+    },
+  },
+  {
+    id: 'satellite_power',
+    labelZh: '卫星供电',
+    order: 12,
+    unlock: { kind: 'unitGte', unit: 'solar_satellite', value: 1 },
+    template: {
+      trigger: { kind: 'shipyardIdle' },
+      conditions: [{ kind: 'energyDeficitGte', value: 1 }],
+      action: { kind: 'buildUnits', unit: 'solar_satellite', count: 'deficit' },
+    },
+    unlocks: {
+      triggers: ['shipyardIdle'],
+      conditions: ['energyDeficitGte', 'unitCountLt'],
+      actions: ['buildUnits'],
+    },
+  },
+  {
+    id: 'defense_keeper',
+    labelZh: '防御维护',
+    order: 13,
+    unlock: { kind: 'firstDefense' },
+    template: {
+      trigger: { kind: 'shipyardIdle' },
+      conditions: [{ kind: 'unitCountLt', unit: 'rocket_launcher', value: 50 }],
+      action: { kind: 'buildUnits', unit: 'rocket_launcher', count: { fillTo: 50 } },
+    },
+    unlocks: {
+      triggers: ['shipyardIdle'],
+      conditions: ['unitCountLt'],
+      actions: ['buildUnits'],
     },
   },
 ] as const;

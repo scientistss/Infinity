@@ -79,7 +79,7 @@ export function arcadePanelHtml(headIcon: string): string {
           <h2 id="arcade-title">${headIcon} 深空星环机</h2>
           <p data-bind="arcade-beacon"></p>
         </div>
-        <p class="blurb">信标版（第 2 阶段）：每 ${ARCADE.beaconSeconds / 60} 分钟游戏时间自动攒 1 次信标开奖（离线也攒，最多存 ${ARCADE.beaconMax} 次；加注和奖励开奖最多存到 ${ARCADE.storedMax} 次）。结果在获得开奖次数时就已掷定，跑灯只负责揭晓。信标开奖不会损失任何东西（押注除外）。</p>
+        <p class="blurb">信标版（第 3 阶段起有漂流舰）：每 ${ARCADE.beaconSeconds / 60} 分钟游戏时间自动攒 1 次信标开奖（离线也攒，最多存 ${ARCADE.beaconMax} 次；加注和奖励开奖最多存到 ${ARCADE.storedMax} 次）。结果在获得开奖次数时就已掷定，跑灯只负责揭晓。信标开奖不会损失任何东西（押注除外）。</p>
         <div class="arcade-layout">
           <div class="arcade-board" data-bind="arcade-board">
             ${tiles}
@@ -101,7 +101,7 @@ export function arcadePanelHtml(headIcon: string): string {
             <div class="arcade-bets">${bets}</div>
             <p class="muted arcade-betline" data-bind="arcade-betline"></p>
             <button type="button" class="arcade-clear" data-action="arcade-bet-clear">清空押注</button>
-            <p class="muted">押中时额外得到 注数 × 1 注重氢的金属当量 × 赔率，以该资源发放；没押中，押注的重氢没收。赔率 = 0.9 / 该符号概率，期望回报是押注的 90%。暗物质、LUCKY、JACKPOT 不能押；JACKPOT 按押注最多的符号发奖。</p>
+            <p class="muted">押中时额外得到 注数 × 1 注重氢的金属当量 × 赔率，以该资源发放（漂流舰发同等价值的舰船）；没押中，押注的重氢没收。赔率 = 0.9 / 该符号概率，期望回报是押注的 90%。暗物质、LUCKY、JACKPOT 不能押；JACKPOT 按押注最多的符号发奖。</p>
             <p class="muted" data-bind="arcade-prize"></p>
             <p class="muted" data-bind="arcade-auto"></p>
           </div>

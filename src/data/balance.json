@@ -83,6 +83,9 @@
       "newtron_bronze": { "dm": 750, "ogameHours": 0.5 },
       "newtron_silver": { "dm": 3000, "ogameHours": 2 },
       "newtron_gold": { "dm": 9000, "ogameHours": 6 },
+      "detroit_bronze": { "dm": 750, "ogameHours": 0.5 },
+      "detroit_silver": { "dm": 4500, "ogameHours": 3 },
+      "detroit_gold": { "dm": 9000, "ogameHours": 6 },
       "booster_bronze": { "dm": 2500, "pct": 10, "ogameDays": 7 },
       "booster_silver": { "dm": 8500, "pct": 20, "ogameDays": 7 },
       "booster_gold": { "dm": 25000, "pct": 30, "ogameDays": 7 }

@@ -186,7 +186,7 @@ async function handleAction(action: UiAction): Promise<void> {
     status = result.reason;
     persist();
   } else if (action.type === "arcade-bet-clear") {
-    state = { ...state, arcade: { ...state.arcade, bets: { metal: 0, crystal: 0, deuterium: 0 } } };
+    state = { ...state, arcade: { ...state.arcade, bets: { metal: 0, crystal: 0, deuterium: 0, drifter: 0 } } };
     status = "已清空押注";
     persist();
   } else if (action.type === "setProduction") {

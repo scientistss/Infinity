@@ -1,5 +1,5 @@
 /**
- * Deep-space ring machine (深空星环机), beacon version (design doc §8.6, P2).
+ * Deep-space ring machine (深空星环机), beacon version (design doc §8.6, P2; drifting ships open in P3).
  * A 7×7 arcade board: 24 tiles around the edge, one light runs clockwise and stops on the pre-rolled tile.
  * Pure data: symbols, the public odds table, the board layout, LUCKY extras and balance numbers.
  */
@@ -26,8 +26,8 @@ export const ARCADE_SYMBOLS = [
 ] as const;
 
 export type ArcadeSymbol = (typeof ARCADE_SYMBOLS)[number];
-export type BetSymbol = "metal" | "crystal" | "deuterium";
-export const BET_SYMBOLS: readonly BetSymbol[] = ["metal", "crystal", "deuterium"];
+export type BetSymbol = "metal" | "crystal" | "deuterium" | "drifter";
+export const BET_SYMBOLS: readonly BetSymbol[] = ["metal", "crystal", "deuterium", "drifter"];
 
 export interface ArcadeSymbolDef {
   id: ArcadeSymbol;
@@ -43,16 +43,16 @@ export interface ArcadeSymbolDef {
   effectZh: string;
 }
 
-/** Current port phase for the ring machine (P2). */
-export const ARCADE_PHASE = 2;
+/** Current port phase for the ring machine (P3: drifting ships open). */
+export const ARCADE_PHASE = 3;
 
 export const ARCADE_SYMBOL_DEFS: readonly ArcadeSymbolDef[] = [
-  { id: "metal", nameZh: "金属陨石", glyph: "◆", tiles: 3, beaconPct: 26, opensIn: 2, effectZh: "金属：奖池 × 档位，最多帝国 10 分钟产量" },
+  { id: "metal", nameZh: "金属陨石", glyph: "◆", tiles: 3, beaconPct: 16, opensIn: 2, effectZh: "金属：奖池 × 档位，最多帝国 10 分钟产量" },
   { id: "crystal", nameZh: "晶簇", glyph: "✦", tiles: 2, beaconPct: 13, opensIn: 2, effectZh: "晶体（金属当量 ÷ 2）" },
   { id: "deuterium", nameZh: "重氢云", glyph: "●", tiles: 2, beaconPct: 6, opensIn: 2, effectZh: "重氢（金属当量 ÷ 3）" },
-  { id: "drifter", nameZh: "漂流舰", glyph: "▲", tiles: 3, beaconPct: 0, opensIn: 3, mergeInto: "metal", effectZh: "舰船（P3 开放；信标开奖并入金属陨石）" },
+  { id: "drifter", nameZh: "漂流舰", glyph: "▲", tiles: 3, beaconPct: 10, opensIn: 3, mergeInto: "metal", effectZh: "舰船：价值为资源奖品的一半（最多帝国 10 分钟产量），只出已解锁及高一档的舰船，不出死星" },
   { id: "dark_matter", nameZh: "暗物质", glyph: "◎", tiles: 2, beaconPct: 9, opensIn: 2, effectZh: "暗物质 300–400，大档 500–700" },
-  { id: "supply", nameZh: "补给箱", glyph: "▣", tiles: 1, beaconPct: 3, opensIn: 2, effectZh: "道具进背包：克拉肯 / 纽特隆 / 资源 +10% / 补给包；大档 2 个" },
+  { id: "supply", nameZh: "补给箱", glyph: "▣", tiles: 1, beaconPct: 3, opensIn: 2, effectZh: "道具进背包：克拉肯 / 纽特隆 / 底特律 / 资源 +10% / 补给包；大档 2 个" },
   { id: "empty", nameZh: "空域", glyph: "·", tiles: 3, beaconPct: 27, opensIn: 2, effectZh: "什么也没找到" },
   { id: "turbulence", nameZh: "引力乱流", glyph: "≈", tiles: 1, beaconPct: 5, opensIn: 2, effectZh: "下次信标冷却 +50%" },
   { id: "tailwind", nameZh: "曲速顺流", glyph: "»", tiles: 1, beaconPct: 5, opensIn: 2, effectZh: "信标冷却退回 50%" },

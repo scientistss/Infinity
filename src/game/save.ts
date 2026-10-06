@@ -695,6 +695,7 @@ function readTrigger(raw: unknown): Trigger | null {
   }
   if (raw.kind === "researchIdle") return { kind: "researchIdle" };
   if (raw.kind === "runsReady") return { kind: "runsReady" };
+  if (raw.kind === "shipyardIdle") return { kind: "shipyardIdle" };
   return null;
 }
 
@@ -737,6 +738,12 @@ function readCondition(raw: unknown): Condition | null {
   ) {
     return { kind: "pityGte", pity: raw.pity, value: raw.value };
   }
+  if (raw.kind === "unitCountLt" && isUnitId(raw.unit) && isWholeCount(raw.value)) {
+    return { kind: "unitCountLt", unit: raw.unit, value: raw.value };
+  }
+  if (raw.kind === "energyDeficitGte" && typeof raw.value === "number" && Number.isFinite(raw.value) && raw.value > 0) {
+    return { kind: "energyDeficitGte", value: raw.value };
+  }
   return null;
 }
 
@@ -769,7 +776,16 @@ function readAction(raw: unknown): Action | null {
   ) {
     return { kind: "setBet", symbol: raw.symbol, units: raw.units };
   }
+  if (raw.kind === "buildUnits" && isUnitId(raw.unit)) {
+    const count = raw.count;
+    if (count === "max" || count === "deficit" || isWholeCount(count)) return { kind: "buildUnits", unit: raw.unit, count };
+    if (isRecord(count) && isWholeCount(count.fillTo)) return { kind: "buildUnits", unit: raw.unit, count: { fillTo: count.fillTo } };
+  }
   return null;
+}
+
+function isWholeCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1_000_000;
 }
 
 function mapResources(values: Record<ResourceId, BigNumber>): Record<ResourceId, string> {

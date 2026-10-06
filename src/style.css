@@ -744,6 +744,7 @@ textarea {
 .arcade-tile.sym-deuterium .arcade-glyph, .arcade-chip.sym-deuterium { color: #c38bff; }
 .arcade-tile.sym-dark_matter .arcade-glyph, .arcade-chip.sym-dark_matter { color: #b998ff; }
 .arcade-tile.sym-supply .arcade-glyph, .arcade-chip.sym-supply { color: #ffb15c; }
+.arcade-tile.sym-drifter .arcade-glyph, .arcade-chip.sym-drifter { color: #8fb8ff; }
 .arcade-tile.sym-turbulence .arcade-glyph, .arcade-chip.sym-turbulence { color: #ff7a7a; }
 .arcade-tile.sym-tailwind .arcade-glyph, .arcade-chip.sym-tailwind { color: #7affc1; }
 .arcade-tile.sym-lucky .arcade-glyph, .arcade-chip.sym-lucky { color: #ffe066; }

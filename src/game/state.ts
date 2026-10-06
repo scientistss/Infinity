@@ -63,7 +63,7 @@ export function createInitialState(): GameState {
     planet: createPlanet(),
     research: createResearch(),
     darkMatter: big(0),
-    items: { kraken_box: 0, newtron_box: 0, booster_box: 0, supply_pack: 0 },
+    items: { kraken_box: 0, newtron_box: 0, detroit_box: 0, booster_box: 0, supply_pack: 0 },
     boosters: [],
     arcade: createArcade(),
     lifetime: zeros(RESOURCE_IDS),

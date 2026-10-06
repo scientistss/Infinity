@@ -468,7 +468,7 @@ function darkMatterView(state: GameState): DarkMatterView {
     return {
       id: def.id,
       name: def.nameZh,
-      detail: `${def.kind === "kraken" ? "正在建造的建筑" : "正在进行的研究"}缩短 ${formatDuration(seconds)}（OGame ${def.ogameHours} 小时），多余的时间顺延到下一项，不受单次上限限制。`,
+      detail: `${def.kind === "kraken" ? "正在建造的建筑" : def.kind === "detroit" ? "造船厂的批次" : "正在进行的研究"}缩短 ${formatDuration(seconds)}（OGame ${def.ogameHours} 小时），多余的时间顺延到下一项，不受单次上限限制。`,
       price,
       buttons: [{ res: "", label: "购买并使用", enabled: reason === "", title: reason || "立即生效" }],
     };
