@@ -3,19 +3,36 @@ import {
   SLOT_RULES,
   type Action,
   type CardCatalogId,
+  type CheapestGroup,
   type Condition,
   type ProtocolCard,
   type ResId,
   type StoredResId,
   type Trigger,
 } from "../data/protocol-cards";
-import { PRODUCTION_IDS, activeBuildings, buildingById, isBuildingId, isProductionId } from "../data/buildings";
+import {
+  PRODUCTION_IDS,
+  activeBuildings,
+  buildingById,
+  isBuildingId,
+  isProductionId,
+  type BuildingId,
+} from "../data/buildings";
+import { RESEARCH, RESEARCH_IDS, isResearchId, researchById, type ResearchId } from "../data/research";
 import { protocolSlotBonus, protocolsRelaxed, relaxedWarpCoreCount } from "../prestige/tree";
 import { big, isValidAmount, type BigNumber } from "../game/decimal";
 import { formatAmount, formatDuration } from "../game/format";
 import { baseCollectAmount, economy, energyReport, storageCaps } from "../game/economy";
 import { markEnergyShortage, prestige, warpGain } from "../game/logic";
-import { costFor, enqueue, nextTargetLevel, queueCapacity, secondsFor } from "../game/queue";
+import type { ResourceCost } from "../game/formulas";
+import { canEnqueue, costFor, enqueue, nextTargetLevel, queueCapacity, secondsFor } from "../game/queue";
+import {
+  canEnqueueResearch,
+  enqueueResearch,
+  nextResearchLevel,
+  researchCapacity,
+  researchSecondsFor,
+} from "../game/research";
 import { emptyProtocolSlot } from "../game/state";
 import type { GameState, ProtocolSlotState } from "../game/types";
 
@@ -39,6 +56,7 @@ export interface ParamField {
 /** Event-driven triggers raised inside tick() between the regular passes. */
 export interface ProtocolEvents {
   queueIdle: boolean;
+  researchIdle: boolean;
   storageFull: StoredResId[];
 }
 
@@ -58,6 +76,7 @@ const TRIGGER_LABEL: Record<Trigger["kind"], string> = {
   onResource: "资源达到",
   queueIdle: "队列空闲",
   storageFull: "仓库满",
+  researchIdle: "研究空闲",
 };
 
 const ACTION_LABEL: Record<Action["kind"], string> = {
@@ -65,7 +84,19 @@ const ACTION_LABEL: Record<Action["kind"], string> = {
   setProduction: "设产量",
   collect: "采集",
   prestige: "重置",
+  enqueueResearch: "研究",
+  enqueueCheapest: "最便宜优先",
 };
+
+const CHEAPEST_LABEL: Record<CheapestGroup, string> = {
+  mines: "三矿",
+  storage: "三仓",
+  research: "研究",
+};
+
+const CHEAPEST_GROUPS: readonly CheapestGroup[] = ["mines", "storage", "research"];
+const MINE_IDS: readonly BuildingId[] = ["metal_mine", "crystal_mine", "deuterium_synth"];
+const STORAGE_IDS: readonly BuildingId[] = ["metal_storage", "crystal_storage", "deuterium_tank"];
 
 export function isCatalogId(value: string): value is CardCatalogId {
   return CARD_CATALOG.some((entry) => entry.id === value);
@@ -79,17 +110,20 @@ export function isStoredResId(value: string): value is StoredResId {
   return (STORED_IDS as readonly string[]).includes(value);
 }
 
+/** 1 + ⌊robotics/2⌋ + ⌊computer technology/2⌋ + curvature bonus, hard cap 12 (design doc §8.6). */
 export function unlockedSlotCount(state: GameState): number {
-  const levels = Math.max(0, Math.min(1000, state.planet.buildings.robotics_factory));
-  const extra = Math.floor(levels / SLOT_RULES.roboticsPerLevels);
+  const robotics = Math.max(0, Math.min(1000, state.planet.buildings.robotics_factory));
+  const computer = Math.max(0, Math.min(1000, state.research.levels.computer_tech));
+  const extra =
+    Math.floor(robotics / SLOT_RULES.roboticsPerLevels) + Math.floor(computer / SLOT_RULES.computerPerLevels);
   return Math.min(SLOT_RULES.hardCap, SLOT_RULES.initial + extra + protocolSlotBonus(state));
 }
 
 export function slotUnlockHint(state: GameState, index: number): string {
-  const fromRobotics = index - protocolSlotBonus(state);
-  if (fromRobotics <= 0) return `槽位 ${index + 1} 未开启`;
-  const need = fromRobotics * SLOT_RULES.roboticsPerLevels;
-  return `槽位 ${index + 1} 未开启 · 需要机器人工厂等级 ${need}`;
+  if (index >= SLOT_RULES.hardCap) return `槽位上限 ${SLOT_RULES.hardCap}`;
+  const missing = index + 1 - unlockedSlotCount(state);
+  if (missing <= 0) return `槽位 ${index + 1} 未开启`;
+  return `槽位 ${index + 1} 未开启 · 还差 ${missing} 个：机器人工厂、计算机技术每 2 级各 +1`;
 }
 
 export function unlockHint(state: GameState, id: CardCatalogId): string {
@@ -100,6 +134,7 @@ export function unlockHint(state: GameState, id: CardCatalogId): string {
   if (unlock.kind === "firstPrestige") return protocolsRelaxed(state) ? "开局即可配置" : "首次重置后";
   if (unlock.kind === "firstQueueIdle") return `建造队列首次跑空，且机器人工厂达到 ${unlock.roboticsLevel} 级`;
   if (unlock.kind === "firstStorageFull") return "首次有资源到达仓库上限";
+  if (unlock.kind === "researchGte") return `${researchById(unlock.tech).nameZh}达到 ${unlock.value} 级`;
   return `累计 ${relaxedWarpCoreCount(state, unlock.count)} 曲率核心`;
 }
 
@@ -109,6 +144,9 @@ export function unlockProgress(state: GameState, id: CardCatalogId): string {
   if (unlock.kind === "manualClicks") return `${unlockHint(state, id)}（${state.manualClicks}/${unlock.count}）`;
   if (unlock.kind === "levelGte") {
     return `${unlockHint(state, id)}（${state.planet.buildings[unlock.building]}/${unlock.value}）`;
+  }
+  if (unlock.kind === "researchGte") {
+    return `${unlockHint(state, id)}（${state.research.levels[unlock.tech]}/${unlock.value}）`;
   }
   if (unlock.kind === "warpCoreTotal") {
     return `${unlockHint(state, id)}（${state.warpCores.toFixed(0)}/${relaxedWarpCoreCount(state, unlock.count)}）`;
@@ -158,11 +196,11 @@ export function evaluateLoadout(state: GameState, periodSeconds: number): GameSt
 }
 
 /**
- * Event pass (design doc §13): only `queueIdle` / `storageFull` cards whose event just happened run.
+ * Event pass (design doc §13): only `queueIdle` / `researchIdle` / `storageFull` cards whose event just happened run.
  * Interval timers do not advance. Used online and offline so a finished build is refilled at once.
  */
 export function evaluateEvents(state: GameState, events: ProtocolEvents): GameState {
-  if (!events.queueIdle && events.storageFull.length === 0) return state;
+  if (!events.queueIdle && !events.researchIdle && events.storageFull.length === 0) return state;
   let next = refreshUnlocks(state);
   const open = unlockedSlotCount(next);
   for (let index = 0; index < open; index += 1) {
@@ -171,6 +209,7 @@ export function evaluateEvents(state: GameState, events: ProtocolEvents): GameSt
     const trigger = card.trigger;
     const hit =
       (trigger.kind === "queueIdle" && events.queueIdle) ||
+      (trigger.kind === "researchIdle" && events.researchIdle) ||
       (trigger.kind === "storageFull" && events.storageFull.includes(trigger.res));
     if (hit) next = runSlot(next, index, 0);
   }
@@ -317,6 +356,25 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
         value: String(condition.value),
         options: withCurrent([1, 2].map((n) => ({ value: String(n), label: String(n) })), String(condition.value)),
       });
+    } else if (condition.kind === "researchLevelLt") {
+      fields.push({ path: at("tech"), label: "研究", value: condition.tech, options: researchOptions() });
+      fields.push({
+        path: at("level"),
+        label: "等级<",
+        value: String(condition.value),
+        options: withCurrent([1, 2, 3, 5, 8, 10, 12, 15, 20].map((n) => ({ value: String(n), label: String(n) })), String(condition.value)),
+      });
+    } else if (condition.kind === "researchTimeLt") {
+      fields.push({ path: at("tech"), label: "研究", value: condition.tech, options: researchOptions() });
+      fields.push({
+        path: at("seconds"),
+        label: "研究时间<",
+        value: String(condition.seconds),
+        options: withCurrent(
+          [10, 30, 60, 120, 300, 600, 1800, 3600].map((n) => ({ value: String(n), label: formatDuration(n) })),
+          String(condition.seconds),
+        ),
+      });
     } else if (condition.kind === "buildTimeLt") {
       fields.push({ path: at("building"), label: "建筑", value: condition.building, options: buildingOptions() });
       fields.push({
@@ -351,6 +409,15 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       value: String(action.pct),
       options: Array.from({ length: 11 }, (_, i) => ({ value: String(i * 10), label: `${i * 10}%` })),
     });
+  } else if (action.kind === "enqueueResearch") {
+    fields.push({ path: "action.tech", label: "研究", value: action.tech, options: researchOptions() });
+  } else if (action.kind === "enqueueCheapest") {
+    fields.push({
+      path: "action.group",
+      label: "范围",
+      value: action.group,
+      options: CHEAPEST_GROUPS.map((group) => ({ value: group, label: CHEAPEST_LABEL[group] })),
+    });
   } else if (action.kind === "prestige") {
     fields.push({
       path: "action.minGain",
@@ -367,6 +434,11 @@ function triggerReady(state: GameState, trigger: Trigger): string | null {
   if (trigger.kind === "queueIdle") {
     const capacity = queueCapacity(state);
     return state.planet.buildQueue.length >= capacity ? `队列已满（${state.planet.buildQueue.length}/${capacity}）` : null;
+  }
+  if (trigger.kind === "researchIdle") {
+    const capacity = researchCapacity(state);
+    const length = state.research.queue.length;
+    return length >= capacity ? `研究队列已满（${length}/${capacity}）` : null;
   }
   if (trigger.kind === "storageFull") {
     const cap = storageCaps(state)[trigger.res];
@@ -445,8 +517,72 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
       reason: `${name}产量设为 ${action.pct}%`,
     };
   }
+  if (action.kind === "enqueueResearch") {
+    const result = enqueueResearch(state, action.tech, "protocol");
+    return { state: result.state, ok: result.ok, reason: result.reason };
+  }
+  if (action.kind === "enqueueCheapest") return enqueueCheapest(state, action.group);
   const result = enqueue(state, action.building, "protocol");
   return { state: result.state, ok: result.ok, reason: result.reason };
+}
+
+/** Metal-equivalent value used to compare prices: 1 crystal = 2 metal, 1 deuterium = 3 metal. */
+export function metalEquivalent(cost: ResourceCost): BigNumber {
+  return cost.metal.add(cost.crystal.mul(2)).add(cost.deuterium.mul(3));
+}
+
+interface CheapestPick {
+  label: string;
+  cost: ResourceCost;
+  run: (state: GameState) => { state: GameState; ok: boolean; reason: string };
+}
+
+/**
+ * Enqueue the cheapest next level in a group (by metal equivalent). Candidates that are blocked by anything
+ * other than resources (prerequisites, full queue, fields, lab busy) are skipped; if the cheapest candidate
+ * cannot be afforded yet, the card waits and says what is missing rather than buying something pricier.
+ */
+export function enqueueCheapest(state: GameState, group: CheapestGroup): { state: GameState; ok: boolean; reason: string } {
+  const picks: CheapestPick[] = [];
+  const blockers: string[] = [];
+  if (group === "research") {
+    for (const def of RESEARCH) {
+      const check = canEnqueueResearch(state, def.id);
+      if (check.ok || check.onlyResources) {
+        picks.push({
+          label: `${def.nameZh} → 等级 ${check.targetLevel}`,
+          cost: check.cost,
+          run: (s) => enqueueResearch(s, def.id, "protocol"),
+        });
+      } else if (blockers.length === 0) blockers.push(check.reason);
+    }
+  } else {
+    for (const id of group === "mines" ? MINE_IDS : STORAGE_IDS) {
+      const check = canEnqueue(state, id);
+      if (check.ok || check.onlyResources) {
+        picks.push({
+          label: `${buildingById(id).nameZh} → 等级 ${check.targetLevel}`,
+          cost: check.cost,
+          run: (s) => enqueue(s, id, "protocol"),
+        });
+      } else if (blockers.length === 0) blockers.push(check.reason);
+    }
+  }
+  if (picks.length === 0) {
+    return { state, ok: false, reason: `${CHEAPEST_LABEL[group]}没有可排的项目：${blockers[0] ?? "无候选"}` };
+  }
+  let best = picks[0]!;
+  let bestValue = metalEquivalent(best.cost);
+  for (const pick of picks.slice(1)) {
+    const value = metalEquivalent(pick.cost);
+    if (value.lt(bestValue)) {
+      best = pick;
+      bestValue = value;
+    }
+  }
+  const result = best.run(state);
+  if (!result.ok) return { state, ok: false, reason: `最便宜的是 ${best.label}：${result.reason}` };
+  return result;
 }
 
 /** Production setting 0–100 in steps of 10. Invalid values are ignored. */
@@ -486,6 +622,17 @@ function conditionFails(state: GameState, condition: Condition): string | null {
     }
     case "queueLenLt":
       return state.planet.buildQueue.length < condition.value ? null : `队列项数不少于 ${condition.value}`;
+    case "researchLevelLt": {
+      const level = state.research.levels[condition.tech];
+      return level < condition.value ? null : `${researchById(condition.tech).nameZh}等级不低于 ${condition.value}`;
+    }
+    case "researchTimeLt": {
+      const def = researchById(condition.tech);
+      const seconds = researchSecondsFor(state, def, nextResearchLevel(state.research, def.id));
+      return seconds < condition.seconds
+        ? null
+        : `${def.nameZh}研究时间 ${formatDuration(seconds)} 不低于 ${formatDuration(condition.seconds)}`;
+    }
     case "buildTimeLt": {
       const def = buildingById(condition.building);
       const seconds = secondsFor(state, def, nextTargetLevel(state.planet, def.id));
@@ -529,6 +676,8 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
       return state.stats.seenQueueIdle && state.planet.buildings.robotics_factory >= unlock.roboticsLevel;
     case "firstStorageFull":
       return state.stats.seenStorageFull;
+    case "researchGte":
+      return state.research.levels[unlock.tech] >= unlock.value;
     case "warpCoreTotal":
       return state.warpCores.gte(relaxedWarpCoreCount(state, unlock.count));
   }
@@ -562,11 +711,15 @@ function writeSlot(state: GameState, index: number, slot: ProtocolSlotState): Ga
 }
 
 function isTriggerKind(value: string): value is Trigger["kind"] {
-  return value === "interval" || value === "onResource" || value === "queueIdle" || value === "storageFull";
+  return Object.prototype.hasOwnProperty.call(TRIGGER_LABEL, value);
 }
 
 function isActionKind(value: string): value is Action["kind"] {
-  return value === "enqueue" || value === "setProduction" || value === "collect" || value === "prestige";
+  return Object.prototype.hasOwnProperty.call(ACTION_LABEL, value);
+}
+
+function isCheapestGroup(value: string): value is CheapestGroup {
+  return (CHEAPEST_GROUPS as readonly string[]).includes(value);
 }
 
 function applyPatch(state: GameState, card: ProtocolCard, path: string, value: string): boolean {
@@ -575,6 +728,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     if (value === "interval") card.trigger = { kind: "interval", seconds: card.trigger.kind === "interval" ? card.trigger.seconds : 5 };
     else if (value === "onResource") card.trigger = { kind: "onResource", res: "metal", gte: "100" };
     else if (value === "queueIdle") card.trigger = { kind: "queueIdle" };
+    else if (value === "researchIdle") card.trigger = { kind: "researchIdle" };
     else card.trigger = { kind: "storageFull", res: "metal" };
     return true;
   }
@@ -601,6 +755,8 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     if (value === "collect") card.action = { kind: "collect" };
     else if (value === "prestige") card.action = { kind: "prestige", minGain: 2 };
     else if (value === "setProduction") card.action = { kind: "setProduction", building: "metal_mine", pct: 100 };
+    else if (value === "enqueueResearch") card.action = { kind: "enqueueResearch", tech: "energy_tech" };
+    else if (value === "enqueueCheapest") card.action = { kind: "enqueueCheapest", group: "mines" };
     else card.action = { kind: "enqueue", building: "metal_mine", levels: 1 };
     return true;
   }
@@ -610,6 +766,14 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
   }
   if (path === "action.building" && card.action.kind === "setProduction" && isProductionId(value)) {
     card.action = { ...card.action, building: value };
+    return true;
+  }
+  if (path === "action.tech" && card.action.kind === "enqueueResearch" && isResearchId(value)) {
+    card.action = { kind: "enqueueResearch", tech: value };
+    return true;
+  }
+  if (path === "action.group" && card.action.kind === "enqueueCheapest" && isCheapestGroup(value)) {
+    card.action = { kind: "enqueueCheapest", group: value };
     return true;
   }
   if (path === "action.pct" && card.action.kind === "setProduction") {
@@ -624,7 +788,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     card.action = { ...card.action, minGain };
     return true;
   }
-  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds)$/.exec(path);
+  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds|tech)$/.exec(path);
   if (!match) return false;
   const index = Number(match[1]);
   const field = match[2];
@@ -664,6 +828,14 @@ function patchCondition(condition: Condition, field: string, value: string): Con
       if (field === "building" && isActiveBuilding(value)) return { ...condition, building: value };
       if (field === "seconds" && Number.isFinite(num) && num > 0) return { ...condition, seconds: num };
       return null;
+    case "researchLevelLt":
+      if (field === "tech" && isResearchId(value)) return { ...condition, tech: value };
+      if (field === "level" && Number.isInteger(num) && num >= 1) return { ...condition, value: num };
+      return null;
+    case "researchTimeLt":
+      if (field === "tech" && isResearchId(value)) return { ...condition, tech: value };
+      if (field === "seconds" && Number.isFinite(num) && num > 0) return { ...condition, seconds: num };
+      return null;
   }
 }
 
@@ -680,6 +852,7 @@ function triggerPhrase(trigger: Trigger): string {
   if (trigger.kind === "interval") return `每 ${trigger.seconds} 秒`;
   if (trigger.kind === "queueIdle") return "建造队列有空位";
   if (trigger.kind === "storageFull") return `${RES_LABEL[trigger.res]}达到仓库上限`;
+  if (trigger.kind === "researchIdle") return "研究队列有空位";
   return `${RES_LABEL[trigger.res]} ≥ ${trigger.gte}`;
 }
 
@@ -701,6 +874,10 @@ function conditionPhrase(condition: Condition): string {
       return `队列项数 < ${condition.value}`;
     case "buildTimeLt":
       return `${buildingById(condition.building).nameZh}建造时间 < ${formatDuration(condition.seconds)}`;
+    case "researchLevelLt":
+      return `${researchById(condition.tech).nameZh}等级低于 ${condition.value}`;
+    case "researchTimeLt":
+      return `${researchById(condition.tech).nameZh}研究时间 < ${formatDuration(condition.seconds)}`;
   }
 }
 
@@ -708,6 +885,8 @@ function actionPhrase(action: Action): string {
   if (action.kind === "collect") return "采集";
   if (action.kind === "prestige") return `重置（至少 ${action.minGain} 曲率核心）`;
   if (action.kind === "setProduction") return `将${buildingById(action.building).nameZh}产量设为 ${action.pct}%`;
+  if (action.kind === "enqueueResearch") return `研究 ${researchById(action.tech).nameZh} +1 级`;
+  if (action.kind === "enqueueCheapest") return `入队${CHEAPEST_LABEL[action.group]}中最便宜的下一级`;
   return `入队 ${buildingById(action.building).nameZh} +1 级`;
 }
 
@@ -725,6 +904,10 @@ function storedOptions(): ParamOption[] {
 
 function buildingOptions(): ParamOption[] {
   return activeBuildings().map((def) => ({ value: def.id, label: def.nameZh }));
+}
+
+function researchOptions(): ParamOption[] {
+  return RESEARCH_IDS.map((id: ResearchId) => ({ value: id, label: researchById(id).nameZh }));
 }
 
 function productionOptions(): ParamOption[] {

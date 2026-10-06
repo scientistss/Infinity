@@ -2,6 +2,7 @@ import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
 import { STARTING_RESOURCES } from "./content";
 import { createPlanet } from "./planet";
+import { createResearch } from "./research";
 import {
   PROTOCOL_SLOT_COUNT,
   RESOURCE_IDS,
@@ -23,6 +24,7 @@ export function emptyStats(): PlayerStats {
     buildsCompleted: 0,
     seenStorageFull: false,
     seenQueueIdle: false,
+    researchCompleted: 0,
   };
 }
 
@@ -56,6 +58,8 @@ export function createInitialState(): GameState {
   return {
     resources: startingResources(),
     planet: createPlanet(),
+    research: createResearch(),
+    darkMatter: big(0),
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
     curvature: emptyCurvature(),

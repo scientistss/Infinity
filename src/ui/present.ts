@@ -35,6 +35,24 @@ import { expansionScore, scrapeAmount, warpGain } from "../game/logic";
 import { usedFields } from "../game/planet";
 import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../game/queue";
 import type { CompletedBuild } from "../game/queue";
+import {
+  canEnqueueResearch,
+  effectiveLabLevel,
+  labBusyReason,
+  researchCapacity,
+  researchSecondsFor,
+  type CompletedResearch,
+} from "../game/research";
+import { requirementLevel, requirementName } from "../game/requirements";
+import {
+  PLASMA_BONUS,
+  RESEARCH,
+  researchById,
+  type ResearchDef,
+  type ResearchGroup,
+  type ResearchId,
+} from "../data/research";
+import { RESEARCH_SPEED, researchEnergyRequirement } from "../game/formulas";
 import { outputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
 import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ResourceId } from "../game/types";
 
@@ -82,6 +100,34 @@ export interface BuildingView {
   button: string;
   canEnqueue: boolean;
   reason: string;
+}
+
+export interface RequirementChip {
+  label: string;
+  met: boolean;
+}
+
+export interface ResearchView {
+  id: ResearchId;
+  group: ResearchGroup;
+  level: string;
+  cost: string;
+  time: string;
+  effect: string;
+  later: string;
+  chain: RequirementChip[];
+  chainKey: string;
+  locked: boolean;
+  button: string;
+  canEnqueue: boolean;
+  reason: string;
+}
+
+export interface ResearchPanelView {
+  visible: boolean;
+  queue: QueueView;
+  summary: string;
+  items: ResearchView[];
 }
 
 export interface ProductionSettingView {
@@ -141,6 +187,7 @@ export interface OfflineView {
   detail: string;
   gains: OfflineGainView[];
   builds: string[];
+  research: string[];
   protocol: string;
 }
 
@@ -162,6 +209,7 @@ export interface ViewModel {
   energy: string;
   energyShort: boolean;
   queue: QueueView;
+  research: ResearchPanelView;
   buildings: BuildingView[];
   production: ProductionSettingView[];
   overview: OverviewView;
@@ -204,6 +252,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     energy: energyLine(eco),
     energyShort: eco.efficiency < 1,
     queue: queueView(state),
+    research: researchPanel(state),
     buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
     production: PRODUCTION_IDS.map((id) => productionSetting(state, id)),
     overview: overviewView(state, eco),
@@ -215,7 +264,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     notice: input.notice,
     offlineCap: `${formatDuration(offlineCapSeconds(state))}（基础 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时）`,
     protocolEnergy: energyLine(eco),
-    protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 机器人工厂每 ${SLOT_RULES.roboticsPerLevels} 级 +1`,
+    protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 机器人工厂每 ${SLOT_RULES.roboticsPerLevels} 级 +1 · 计算机技术每 ${SLOT_RULES.computerPerLevels} 级 +1`,
     catalog: CARD_CATALOG.map((entry) => ({
       id: entry.id,
       label: entry.labelZh,
@@ -295,6 +344,105 @@ function queueView(state: GameState): QueueView {
   };
 }
 
+// ---------- research ----------
+
+/** The research tab appears once a research lab stands (or any research exists, e.g. after a launch). */
+export function researchVisible(state: GameState): boolean {
+  if (state.planet.buildings.research_lab >= 1 || state.research.queue.length > 0) return true;
+  return Object.values(state.research.levels).some((level) => level > 0);
+}
+
+function researchQueueView(state: GameState): QueueView {
+  const capacity = researchCapacity(state);
+  const items = state.research.queue.map((order, index): QueueItemView => {
+    const def = researchById(order.tech);
+    const active = index === 0 && order.totalSeconds > 0;
+    const progress = active ? (1 - order.remainingSeconds / order.totalSeconds) * 100 : 0;
+    const estimate = researchSecondsFor(state, def, order.targetLevel, order.paid);
+    return {
+      index,
+      key: `${order.tech}:${order.targetLevel}:${index}`,
+      label: `${def.nameZh} → 等级 ${order.targetLevel}`,
+      detail: active
+        ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
+        : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
+      progressPct: Math.max(0, Math.min(100, progress)),
+      active,
+    };
+  });
+  const lab = effectiveLabLevel(state);
+  const busy = labBusyReason(state);
+  let idleHint = "";
+  if (items.length === 0) {
+    idleHint = lab < 1 ? "先建造研究实验室（建筑页）。" : busy ? `${busy}。` : "研究队列空闲。研究同一时间只进行 1 项，入队时扣费，取消全额退还。";
+  }
+  return {
+    summary: `研究队列 ${state.research.queue.length}/${capacity} · 研究实验室 ${lab} 级`,
+    items,
+    signature: items.map((item) => item.key).join("|"),
+    idleHint,
+  };
+}
+
+function researchPanel(state: GameState): ResearchPanelView {
+  const total = Object.values(state.research.levels).reduce((sum, level) => sum + level, 0);
+  return {
+    visible: researchVisible(state),
+    queue: researchQueueView(state),
+    summary: `研究总等级 ${total} · 研究速度 ×${RESEARCH_SPEED} · 研究等级在发射殖民舰后保留`,
+    items: RESEARCH.map((def) => researchView(state, def)),
+  };
+}
+
+function researchView(state: GameState, def: ResearchDef): ResearchView {
+  const check = canEnqueueResearch(state, def.id);
+  const target = check.targetLevel;
+  const level = state.research.levels[def.id];
+  const queued = target - 1 - level;
+  const energy = researchEnergyRequirement(def, target);
+  const seconds = researchSecondsFor(state, def, target, check.cost);
+  const chain: RequirementChip[] = def.requires.map((req) => {
+    const have = requirementLevel(state, req);
+    return { label: `${requirementName(req)} ${Math.min(have, req.level)}/${req.level}`, met: have >= req.level };
+  });
+  const cost = energy > 0 ? `需能源供给 ${formatAmount(big(energy))}（不消耗）` : costLine(check.cost);
+  return {
+    id: def.id,
+    group: def.group,
+    level: queued > 0 ? `${level}（队列中 +${queued}）` : String(level),
+    cost,
+    time: `研究时间 ${formatDuration(Math.ceil(seconds))}`,
+    effect: researchEffect(state, def, target),
+    later: def.later ? `后续：${def.later}` : "",
+    chain,
+    chainKey: chain.map((chip) => `${chip.label}:${chip.met ? 1 : 0}`).join("|"),
+    locked: chain.some((chip) => !chip.met),
+    button: `研究 等级 ${target}`,
+    canEnqueue: check.ok,
+    reason: check.ok ? "可以研究" : check.reason,
+  };
+}
+
+function researchEffect(state: GameState, def: ResearchDef, target: number): string {
+  const levels = state.research.levels;
+  if (def.id === "energy_tech") {
+    const b = state.planet.buildings.fusion_reactor;
+    const now = fusionOutputPerHour(b, target - 1);
+    const next = fusionOutputPerHour(b, target);
+    return `${def.effect}。下一级：核聚变供电 ${formatAmount(big(now))} → ${formatAmount(big(next))}`;
+  }
+  if (def.id === "computer_tech") {
+    const slot = target % SLOT_RULES.computerPerLevels === 0 ? "，多开 1 个协议卡槽" : "";
+    return `${def.effect}。下一级：等级 ${target}${slot}`;
+  }
+  if (def.id === "plasma_tech") {
+    const pct = (rate: number) => `${(rate * target * 100).toFixed(2)}%`;
+    return `${def.effect}。下一级合计：金属 +${pct(PLASMA_BONUS.metal)}、晶体 +${pct(PLASMA_BONUS.crystal)}、重氢 +${pct(PLASMA_BONUS.deuterium)}`;
+  }
+  if (def.id === "astrophysics" && levels.astrophysics < 1) return `${def.effect}（第 2 阶段后续版本开放）`;
+  return def.effect;
+}
+
 // ---------- building cards ----------
 
 function withLevel(state: GameState, id: BuildingId, level: number): GameState {
@@ -318,7 +466,7 @@ function buildingView(state: GameState, eco: EconomySnapshot, def: BuildingDef):
   const planet = state.planet;
   const check = canEnqueue(state, def.id);
   const target = check.targetLevel;
-  const missing = missingRequirements(planet, def);
+  const missing = missingRequirements(state, def);
   const seconds = secondsFor(state, def, target, check.cost);
   const { effect, gainPerSecond } = effectOf(state, eco, def, target);
   const costEquiv = RESOURCE_IDS.reduce((sum, id) => sum + check.cost[id].toNumber() * METAL_EQUIV[id], 0);
@@ -359,7 +507,9 @@ function effectOf(
     return { effect: `建造速度 ×${2 ** (target - 1)} → ×${2 ** target}`, gainPerSecond: 0 };
   }
   if (id === "shipyard") return { effect: "第 3 阶段起建造舰船与防御；现在可以先建", gainPerSecond: 0 };
-  if (id === "research_lab") return { effect: "第 2 阶段起进行研究；现在可以先建", gainPerSecond: 0 };
+  if (id === "research_lab") {
+    return { effect: `研究速度 ×${target} → ×${target + 1}（研究时间 ÷(1+等级)）`, gainPerSecond: 0 };
+  }
 
   const before = economy(withLevel(state, id, target - 1));
   const after = economy(withLevel(state, id, target));
@@ -394,8 +544,17 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
   const b = planet.buildings;
   const g = eco.global;
   const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
+  const plasma = state.research.levels.plasma_tech;
+  const plasmaFactor = {
+    metal_mine: 1 + PLASMA_BONUS.metal * plasma,
+    crystal_mine: 1 + PLASMA_BONUS.crystal * plasma,
+    deuterium_synth: 1 + PLASMA_BONUS.deuterium * plasma,
+  };
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
-    perSecond(mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * eco.efficiency, ECONOMY_SPEED) * g;
+    perSecond(
+      mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * eco.efficiency * plasmaFactor[id],
+      ECONOMY_SPEED,
+    ) * g;
   const production: TableRowView[] = [
     { key: "base", cells: ["星球基础产出", fmt(perSecond(BASE_PRODUCTION.metal) * g), fmt(perSecond(BASE_PRODUCTION.crystal) * g), "—"] },
     { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, fmt(mine("metal_mine")), "—", "—"] },
@@ -416,7 +575,7 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
   ];
   const doubled = outputScale(state);
   const solar = solarOutputPerHour(b.solar_plant) * pctOf(planet, "solar_plant") * doubled;
-  const fusion = fusionOutputPerHour(b.fusion_reactor) * pctOf(planet, "fusion_reactor") * eco.fusionFactor * doubled;
+  const fusion = fusionOutputPerHour(b.fusion_reactor, state.research.levels.energy_tech) * pctOf(planet, "fusion_reactor") * eco.fusionFactor * doubled;
   const use = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") => energyUsePerHour(id, b[id]) * pctOf(planet, id);
   const energy: TableRowView[] = [
     { key: "solar", cells: [`太阳能电站（${b.solar_plant} 级）`, `+${formatAmount(big(solar))}`] },
@@ -435,7 +594,9 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
     planet: planet.name,
     temperature: `最高温度 ${planet.tempMax}°C`,
     fields: `${usedFields(planet)} / ${planet.fieldsMax}`,
-    global: `全局倍率 ${formatMultiplier(big(g))}（未花费曲率核心、成就、产线翻倍）· 宇宙速度 ×${ECONOMY_SPEED}`,
+    global: `全局倍率 ${formatMultiplier(big(g))}（未花费曲率核心、成就、产线翻倍）· 宇宙速度 ×${ECONOMY_SPEED}${
+      plasma > 0 ? ` · 等离子技术 ${plasma} 级：矿产 +${(PLASMA_BONUS.metal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.crystal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.deuterium * plasma * 100).toFixed(2)}%` : ""
+    }`,
     production,
     energy,
     energySummary: energyLine(eco),
@@ -496,6 +657,25 @@ export function summarizeBuilds(builds: readonly CompletedBuild[]): string[] {
   });
 }
 
+/** Group consecutive research levels: "能源技术 等级 1 → 3（3 次）". */
+export function summarizeResearch(done: readonly CompletedResearch[]): string[] {
+  const groups = new Map<ResearchId, { min: number; max: number; count: number }>();
+  for (const item of done) {
+    const group = groups.get(item.tech);
+    if (group) {
+      group.min = Math.min(group.min, item.level);
+      group.max = Math.max(group.max, item.level);
+      group.count += 1;
+    } else {
+      groups.set(item.tech, { min: item.level, max: item.level, count: 1 });
+    }
+  }
+  return [...groups.entries()].map(([id, group]) => {
+    const name = researchById(id).nameZh;
+    return group.count === 1 ? `${name} → 等级 ${group.max}` : `${name} 等级 ${group.min} → ${group.max}（${group.count} 次）`;
+  });
+}
+
 function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
   if (!catchup || catchup.appliedSeconds < 1) return null;
   const cap = formatDuration(catchup.capSeconds);
@@ -512,6 +692,7 @@ function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
       amount: `+${formatAmount(catchup.gains[resource.id])}`,
     })),
     builds: builds.length > 0 ? builds : ["离线期间没有完成的建造"],
+    research: summarizeResearch(catchup.completedResearch),
     protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次（建造完成、满仓时也会触发）。`,
   };
 }

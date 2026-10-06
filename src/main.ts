@@ -16,6 +16,8 @@ import { buildingById } from "./data/buildings";
 import { big } from "./game/decimal";
 import { formatAmount } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
+import { cancelResearch, enqueueResearch } from "./game/research";
+import { researchById } from "./data/research";
 import {
   clearSave,
   deserializeState,
@@ -60,7 +62,7 @@ let banner: string | null = unlockBanner(loaded.newAchievementIds);
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
-// Write the fresh v6 game right away so the "save format updated" notice only shows once.
+// Write the fresh game right away so the "save format updated" notice only shows once.
 if (notice) persist();
 render();
 
@@ -117,6 +119,16 @@ async function handleAction(action: UiAction): Promise<void> {
     state = result.state;
     status = result.reason;
     if (result.ok) persist();
+  } else if (action.type === "enqueueResearch") {
+    const result = enqueueResearch(state, action.id, "manual");
+    state = result.state;
+    status = result.ok ? result.reason : `${researchById(action.id).nameZh}：${result.reason}`;
+    if (result.ok) persist();
+  } else if (action.type === "cancelResearch") {
+    const result = cancelResearch(state, action.index);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
   } else if (action.type === "setProduction") {
     state = setProductionPct(state, action.id, action.pct);
     status = `${buildingById(action.id).nameZh}产量设为 ${state.planet.productionPct[action.id]}%`;
@@ -159,7 +171,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源、建筑、建造队列和产量设置，保留曲率核心、曲率科技、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会重置资源、建筑、建造队列和产量设置，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";
@@ -190,7 +202,12 @@ async function handleAction(action: UiAction): Promise<void> {
     status = "已重置";
     view.setTransferText("");
   }
-  if (action.type === "scrape" || action.type === "enqueue" || action.type === "prestige") {
+  if (
+    action.type === "scrape" ||
+    action.type === "enqueue" ||
+    action.type === "enqueueResearch" ||
+    action.type === "prestige"
+  ) {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (note) banner = note;
   }

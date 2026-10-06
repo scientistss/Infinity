@@ -4,8 +4,9 @@ import {
   OFFLINE_MAX_SECONDS,
   PROTOCOL_OFFLINE_EVAL_SECONDS,
 } from "../game/content";
-import { applyAchievementUnlocks, tick, type TickLog } from "../game/logic";
+import { applyAchievementUnlocks, emptyTickLog, tick } from "../game/logic";
 import type { CompletedBuild } from "../game/queue";
+import type { CompletedResearch } from "../game/research";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "../game/types";
 import type { BigNumber } from "../game/decimal";
 
@@ -22,6 +23,8 @@ export interface OfflineCatchup {
   protocolEvaluations: number;
   /** Build orders finished while away, in completion order. */
   completedBuilds: CompletedBuild[];
+  /** Research levels finished while away, in completion order. */
+  completedResearch: CompletedResearch[];
   newAchievementIds: string[];
 }
 
@@ -49,7 +52,7 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
   const appliedSeconds = Math.min(rawSeconds, capSeconds);
   const before = new Set(state.unlocked);
   const beforeResources = state.resources;
-  const log: TickLog = { completedBuilds: [] };
+  const log = emptyTickLog();
   const next = tick(state, appliedSeconds, "offline", log);
   // Production while away. Builds spend resources, so prefer this-run lifetime output unless a launch reset it.
   const sameRun = next.stats.launches === state.stats.launches;
@@ -67,6 +70,7 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
     gains,
     protocolEvaluations: offlineProtocolEvaluations(appliedSeconds),
     completedBuilds: log.completedBuilds,
+    completedResearch: log.completedResearch,
     newAchievementIds: next.unlocked.filter((id) => !before.has(id)),
   };
 }
@@ -81,6 +85,7 @@ export function emptyCatchup(state: GameState): OfflineCatchup {
     gains: emptyGains(),
     protocolEvaluations: 0,
     completedBuilds: [],
+    completedResearch: [],
     newAchievementIds: [],
   };
 }

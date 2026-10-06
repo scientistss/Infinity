@@ -1,6 +1,7 @@
 import { big } from "../src/game/decimal";
 import { createInitialState } from "../src/game/state";
 import type { BuildingId, GameState } from "../src/game/types";
+import type { ResearchId } from "../src/data/research";
 
 export function stateWith(
   buildings: Partial<Record<BuildingId, number>> = {},
@@ -23,4 +24,8 @@ export function rich(state: GameState, amount = 1e12): GameState {
 export function relErr(a: number, b: number): number {
   if (a === b) return 0;
   return Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b));
+}
+
+export function withResearch(state: GameState, levels: Partial<Record<ResearchId, number>>): GameState {
+  return { ...state, research: { ...state.research, levels: { ...state.research.levels, ...levels } } };
 }

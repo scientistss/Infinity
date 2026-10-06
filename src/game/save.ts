@@ -9,6 +9,8 @@ import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
 import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
 import { createPlanet, type BuildOrder, type PlanetState } from "./planet";
+import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
+import { createResearch, type ResearchOrder, type ResearchState } from "./research";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
   CURVATURE_IDS,
@@ -54,9 +56,20 @@ export interface SerializedPlanet {
   buildQueue: SerializedOrder[];
 }
 
+export interface SerializedResearchOrder {
+  tech: ResearchId;
+  targetLevel: number;
+  paid: Record<ResourceId, string>;
+  totalSeconds: number;
+  remainingSeconds: number;
+  source: "manual" | "protocol";
+}
+
 export interface SerializedState {
   resources: Record<ResourceId, string>;
   planet: SerializedPlanet;
+  research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
+  darkMatter: string;
   lifetime: Record<ResourceId, string>;
   warpCores: string;
   curvature: Record<CurvatureId, number>;
@@ -112,6 +125,8 @@ export function serializeState(state: GameState): SerializedState {
   return {
     resources: mapResources(state.resources),
     planet: serializePlanet(state.planet),
+    research: serializeResearch(state.research),
+    darkMatter: bigToString(state.darkMatter),
     lifetime: mapResources(state.lifetime),
     warpCores: bigToString(state.warpCores),
     curvature: { ...state.curvature },
@@ -132,6 +147,8 @@ export function deserializeState(raw: unknown): GameState {
   const state = createInitialState();
   state.resources = readResourceMap(raw.resources, "资源");
   state.planet = readPlanet(raw.planet);
+  state.research = readResearch(raw.research);
+  state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
   state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.curvature = readCurvature(raw.curvature);
@@ -158,7 +175,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only v6 is accepted; anything else throws without touching the current game. */
+/** Validate a file. Only the current version (v7) is accepted; anything else throws without touching the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -210,7 +227,7 @@ function storedVersion(raw: string): number | null {
 
 /**
  * Load the local save and apply elapsed real time (capped at the offline limit).
- * A save older than v6 is discarded: fresh game plus a one-time notice (design doc §5.9).
+ * A save older than the current version is discarded: fresh game plus a one-time notice (design doc §5.9).
  * Newer or corrupt saves throw so the caller can report it.
  */
 export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
@@ -285,6 +302,51 @@ function readOrder(raw: unknown, index: number): BuildOrder {
   if (!source) throw new Error(`${label}来源无效`);
   const paid = readResourceMap(raw.paid, `${label}已付`);
   return { building: raw.building, targetLevel, paid, totalSeconds, remainingSeconds, source };
+}
+
+function serializeResearch(research: ResearchState): SerializedState["research"] {
+  return {
+    levels: { ...research.levels },
+    queue: research.queue.map((order) => ({
+      tech: order.tech,
+      targetLevel: order.targetLevel,
+      paid: mapResources(order.paid),
+      totalSeconds: order.totalSeconds,
+      remainingSeconds: order.remainingSeconds,
+      source: order.source,
+    })),
+  };
+}
+
+function readResearch(raw: unknown): ResearchState {
+  const research = createResearch();
+  if (raw === undefined) return research;
+  if (!isRecord(raw)) throw new Error("研究数据格式不正确");
+  if (raw.levels !== undefined) {
+    if (!isRecord(raw.levels)) throw new Error("研究等级格式不正确");
+    for (const id of RESEARCH_IDS) {
+      const value = raw.levels[id];
+      research.levels[id] = value === undefined ? 0 : readInteger(value, `研究 ${id} 等级`, 0, MAX_LEVEL);
+    }
+  }
+  if (raw.queue !== undefined) {
+    if (!Array.isArray(raw.queue)) throw new Error("研究队列格式不正确");
+    if (raw.queue.length > MAX_QUEUE) throw new Error("研究队列过长");
+    research.queue = raw.queue.map((entry, index) => readResearchOrder(entry, index));
+  }
+  return research;
+}
+
+function readResearchOrder(raw: unknown, index: number): ResearchOrder {
+  const label = `研究队列第 ${index + 1} 项`;
+  if (!isRecord(raw) || typeof raw.tech !== "string" || !isResearchId(raw.tech)) throw new Error(`${label}研究无效`);
+  const targetLevel = readInteger(raw.targetLevel, `${label}目标等级`, 1, MAX_LEVEL);
+  const totalSeconds = readSeconds(raw.totalSeconds, `${label}总时长`);
+  const remainingSeconds = Math.min(readSeconds(raw.remainingSeconds, `${label}剩余时间`), totalSeconds);
+  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  if (!source) throw new Error(`${label}来源无效`);
+  const paid = readResourceMap(raw.paid, `${label}已付`);
+  return { tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
 }
 
 function readInteger(raw: unknown, label: string, min: number, max: number): number {
@@ -362,6 +424,7 @@ function readStats(raw: unknown): PlayerStats {
     buildsCompleted: readCount(raw.buildsCompleted),
     seenStorageFull: raw.seenStorageFull === true,
     seenQueueIdle: raw.seenQueueIdle === true,
+    researchCompleted: readCount(raw.researchCompleted),
   };
 }
 
@@ -441,6 +504,7 @@ function readTrigger(raw: unknown): Trigger | null {
   if (raw.kind === "storageFull" && typeof raw.res === "string" && isStoredResId(raw.res)) {
     return { kind: "storageFull", res: raw.res };
   }
+  if (raw.kind === "researchIdle") return { kind: "researchIdle" };
   return null;
 }
 
@@ -464,6 +528,13 @@ function readCondition(raw: unknown): Condition | null {
   if (raw.kind === "buildTimeLt" && building && typeof raw.seconds === "number") {
     return { kind: "buildTimeLt", building, seconds: raw.seconds };
   }
+  const tech = typeof raw.tech === "string" && isResearchId(raw.tech) ? raw.tech : null;
+  if (raw.kind === "researchLevelLt" && tech && typeof raw.value === "number") {
+    return { kind: "researchLevelLt", tech, value: raw.value };
+  }
+  if (raw.kind === "researchTimeLt" && tech && typeof raw.seconds === "number") {
+    return { kind: "researchTimeLt", tech, seconds: raw.seconds };
+  }
   return null;
 }
 
@@ -478,6 +549,12 @@ function readAction(raw: unknown): Action | null {
     const pct = raw.pct;
     if (typeof pct !== "number" || !Number.isInteger(pct) || pct < 0 || pct > 100 || pct % 10 !== 0) return null;
     return { kind: "setProduction", building: raw.building, pct };
+  }
+  if (raw.kind === "enqueueResearch" && typeof raw.tech === "string" && isResearchId(raw.tech)) {
+    return { kind: "enqueueResearch", tech: raw.tech };
+  }
+  if (raw.kind === "enqueueCheapest" && (raw.group === "mines" || raw.group === "storage" || raw.group === "research")) {
+    return { kind: "enqueueCheapest", group: raw.group };
   }
   return null;
 }

@@ -14,12 +14,15 @@ import {
   type ProductionBuildingId,
 } from "../game/content";
 import { PROTOCOL_SLOT_COUNT, type CurvatureId } from "../game/types";
-import type { TableRowView, ViewModel } from "./present";
+import { RESEARCH, RESEARCH_GROUP_LABEL, isResearchId, type ResearchDef, type ResearchGroup, type ResearchId } from "../data/research";
+import type { QueueView, TableRowView, ViewModel } from "./present";
 
 export type UiAction =
   | { type: "scrape" }
   | { type: "enqueue"; id: BuildingId }
   | { type: "cancelQueue"; index: number }
+  | { type: "enqueueResearch"; id: ResearchId }
+  | { type: "cancelResearch"; index: number }
   | { type: "setProduction"; id: ProductionBuildingId; pct: number }
   | { type: "prestige" }
   | { type: "save" }
@@ -78,6 +81,14 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "cancel-queue") {
       const index = Number(button.dataset.index);
       if (Number.isInteger(index)) onAction({ type: "cancelQueue", index });
+    }
+    if (action === "research") {
+      const id = button.dataset.id ?? "";
+      if (isResearchId(id)) onAction({ type: "enqueueResearch", id });
+    }
+    if (action === "cancel-research") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancelResearch", index });
     }
     if (action === "equip-card") {
       const cardId = button.dataset.card ?? "";
@@ -188,7 +199,8 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         requiredElement(root, `fill-${resource.id}`).style.width = `${resource.fillPct.toFixed(1)}%`;
       }
 
-      updateQueue(root, model);
+      updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue");
+      updateResearch(root, model);
 
       for (const building of model.buildings) {
         setText(root, `level-${building.id}`, building.level);
@@ -247,6 +259,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
           model.offline.gains.map((gain) => `${gain.name} ${gain.amount}`),
         );
         fillList(requiredElement(root, "offline-builds"), model.offline.builds);
+        fillList(requiredElement(root, "offline-research"), model.offline.research);
       }
 
       const banner = requiredElement(root, "banner");
@@ -306,15 +319,57 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   };
 }
 
-function updateQueue(root: ParentNode, model: ViewModel): void {
-  const queue = model.queue;
-  for (const bind of ["queue-summary", "queue-summary-ov"]) setText(root, bind, queue.summary);
-  for (const bind of ["queue-idle", "queue-idle-ov"]) {
-    const idle = requiredElement(root, bind);
+function updateResearch(root: HTMLElement, model: ViewModel): void {
+  const research = model.research;
+  const tab = requiredElement(root, "tab-research");
+  if (tab.hidden === research.visible) {
+    tab.hidden = !research.visible;
+    if (!research.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
+  }
+  requiredElement(root, "rqueue-wrap-ov").hidden = !research.visible;
+  updateQueue(root, "rqueue", ["", "-ov"], research.queue, "cancel-research");
+  setText(root, "research-summary", research.summary);
+  for (const item of research.items) {
+    setText(root, `rlevel-${item.id}`, item.level);
+    setText(root, `rcost-${item.id}`, item.cost);
+    setText(root, `rtime-${item.id}`, item.time);
+    setText(root, `reffect-${item.id}`, item.effect);
+    setText(root, `rlater-${item.id}`, item.later);
+    setText(root, `rbutton-${item.id}`, item.button);
+    setText(root, `rreason-${item.id}`, item.reason);
+    requiredElement(root, `rcard-${item.id}`).classList.toggle("locked", item.locked);
+    const chain = requiredElement(root, `rchain-${item.id}`);
+    if (chain.dataset.key !== item.chainKey) {
+      chain.dataset.key = item.chainKey;
+      chain.replaceChildren(
+        ...item.chain.map((chip) => {
+          const node = document.createElement("li");
+          node.className = chip.met ? "chip-req met" : "chip-req";
+          node.textContent = `${chip.met ? "✓" : "✗"} ${chip.label}`;
+          return node;
+        }),
+      );
+    }
+    const button = requiredButton(root, `research-${item.id}`);
+    button.disabled = !item.canEnqueue;
+    button.title = item.reason;
+  }
+}
+
+function updateQueue(
+  root: ParentNode,
+  prefix: string,
+  suffixes: readonly string[],
+  queue: QueueView,
+  cancelAction: string,
+): void {
+  for (const suffix of suffixes) setText(root, `${prefix}-summary${suffix}`, queue.summary);
+  for (const suffix of suffixes) {
+    const idle = requiredElement(root, `${prefix}-idle${suffix}`);
     idle.hidden = queue.idleHint === "";
     if (idle.textContent !== queue.idleHint) idle.textContent = queue.idleHint;
   }
-  for (const list of [requiredElement(root, "queue-list"), requiredElement(root, "queue-list-ov")]) {
+  for (const list of suffixes.map((suffix) => requiredElement(root, `${prefix}-list${suffix}`))) {
     if (list.dataset.sig !== queue.signature) {
       list.dataset.sig = queue.signature;
       list.innerHTML = queue.items
@@ -326,7 +381,7 @@ function updateQueue(root: ParentNode, model: ViewModel): void {
               <span class="muted" data-q="detail"></span>
             </div>
             <div class="queue-bar"><span data-q="fill"></span></div>
-            <button type="button" class="danger queue-cancel" data-action="cancel-queue" data-index="${item.index}">取消</button>
+            <button type="button" class="danger queue-cancel" data-action="${cancelAction}" data-index="${item.index}">取消</button>
           </li>`,
         )
         .join("");
@@ -370,6 +425,7 @@ const DEFAULT_TAB = "facilities";
 const TABS = [
   { id: "overview", label: "概览", icon: "logo" },
   { id: "facilities", label: "建筑", icon: "robotics_factory" },
+  { id: "research", label: "研究", icon: "tech" },
   { id: "protocol", label: "协议卡", icon: "protocol_card" },
   { id: "curvature", label: "曲率", icon: "warp_core" },
   { id: "achievements", label: "成就", icon: "achievement" },
@@ -464,6 +520,61 @@ function selectTab(root: ParentNode, id: string): void {
   }
 }
 
+/** Research art reuses the existing WebP set (no original OGame art). */
+const RESEARCH_ICON: Record<ResearchId, string> = {
+  energy_tech: "energy",
+  laser_tech: "tech",
+  ion_tech: "tech",
+  hyperspace_tech: "warp_core",
+  plasma_tech: "tech",
+  combustion_drive: "launch",
+  impulse_drive: "launch",
+  hyperspace_drive: "launch",
+  espionage_tech: "tech",
+  computer_tech: "protocol_card",
+  astrophysics: "logo",
+  intergalactic_research_network: "tech",
+  graviton_tech: "warp_core",
+  weapons_tech: "launch",
+  shielding_tech: "launch",
+  armour_tech: "launch",
+};
+
+function researchCard(def: ResearchDef): string {
+  return `
+      <article class="bld rcard" data-bind="rcard-${def.id}">
+        <div class="bld-head">
+          ${icon(RESEARCH_ICON[def.id], "icon-row", { size: 56, alt: def.nameZh })}
+          <div class="bld-title">
+            <h3>${def.nameZh} <small>${def.nameEn}</small></h3>
+            <p class="bld-level">等级 <strong data-bind="rlevel-${def.id}">0</strong></p>
+          </div>
+        </div>
+        <p class="bld-effect" data-bind="reffect-${def.id}"></p>
+        <p class="bld-blurb" data-bind="rlater-${def.id}"></p>
+        <ul class="req-chain" data-bind="rchain-${def.id}" aria-label="前置条件"></ul>
+        <dl class="bld-facts">
+          <div><dt>下一级成本</dt><dd data-bind="rcost-${def.id}"></dd></div>
+          <div><dt>耗时</dt><dd data-bind="rtime-${def.id}"></dd></div>
+        </dl>
+        <button type="button" class="buy-btn" data-action="research" data-id="${def.id}" data-bind="research-${def.id}">
+          <span class="buy-label" data-bind="rbutton-${def.id}">研究 等级 1</span>
+          <span class="btn-cost" data-bind="rreason-${def.id}"></span>
+        </button>
+      </article>`;
+}
+
+function researchGroups(): string {
+  const groups: ResearchGroup[] = ["basic", "drive", "advanced", "combat"];
+  return groups
+    .map(
+      (group) => `
+        <h3 class="group-title">${RESEARCH_GROUP_LABEL[group]}</h3>
+        <div class="bld-grid">${RESEARCH.filter((def) => def.group === group).map(researchCard).join("")}</div>`,
+    )
+    .join("");
+}
+
 function buildingCard(def: BuildingDef): string {
   const art = BUILDING_ICON[def.id] ?? "robotics_factory";
   return `
@@ -490,15 +601,15 @@ function buildingCard(def: BuildingDef): string {
       </article>`;
 }
 
-function queuePanel(suffix: string): string {
+function queuePanel(suffix: string, prefix = "queue", title = "建造队列"): string {
   return `
       <div class="queue-panel">
         <div class="queue-head">
-          <h3>建造队列</h3>
-          <span class="muted" data-bind="queue-summary${suffix}">建造队列 0/2</span>
+          <h3>${title}</h3>
+          <span class="muted" data-bind="${prefix}-summary${suffix}">${title} 0/2</span>
         </div>
-        <p class="muted queue-idle" data-bind="queue-idle${suffix}"></p>
-        <ol class="queue-list" data-bind="queue-list${suffix}"></ol>
+        <p class="muted queue-idle" data-bind="${prefix}-idle${suffix}"></p>
+        <ol class="queue-list" data-bind="${prefix}-list${suffix}"></ol>
       </div>`;
 }
 
@@ -528,7 +639,7 @@ function shellMarkup(): string {
 
   const tabs = TABS.map(
     (tab) =>
-      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
@@ -560,6 +671,8 @@ function shellMarkup(): string {
         <ul class="offline-gains" data-bind="offline-gains"></ul>
         <h3 class="offline-sub">离线期间完成的建造</h3>
         <ul class="offline-gains offline-builds" data-bind="offline-builds"></ul>
+        <h3 class="offline-sub">离线期间完成的研究</h3>
+        <ul class="offline-gains offline-builds" data-bind="offline-research"></ul>
         <p class="muted" data-bind="offline-detail"></p>
         <p class="muted" data-bind="offline-protocol"></p>
         <button type="button" data-action="dismiss-offline">知道了</button>
@@ -571,7 +684,7 @@ function shellMarkup(): string {
           <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
           <div>
             <h1>Infinity <span>无限</span></h1>
-            <p class="kicker">Planet surface · v0.2</p>
+            <p class="kicker">Planet surface · v0.3</p>
           </div>
         </div>
         <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
@@ -618,6 +731,7 @@ function shellMarkup(): string {
           <span class="muted" data-bind="passive-ov"></span>
         </div>
         ${queuePanel("-ov")}
+        <div data-bind="rqueue-wrap-ov" hidden>${queuePanel("-ov", "rqueue", "研究队列")}</div>
         <div class="ov-grid">
           <div class="ov-card">
             <h3>产量（每秒）</h3>
@@ -658,6 +772,16 @@ function shellMarkup(): string {
         <div class="bld-grid">${facilities}</div>
       </section>
 
+      <section class="tab-panel" data-tab-panel="research" aria-labelledby="research-title" hidden>
+        <div class="panel-head">
+          <h2 id="research-title">${icon("tech", "icon-h2", { alt: "" })} 研究</h2>
+          <p data-bind="research-summary">研究</p>
+        </div>
+        <p class="blurb">整个帝国同一时间只研究 1 项，研究队列长度与建造队列相同。成本 ⌊基础×2^(L−1)⌋（天体物理学 ×1.75 并取整到百位），研究时间 = (金属+晶体)/(1000·(1+研究实验室等级)) 小时 ÷ 研究速度。研究进行中不能升级研究实验室，研究实验室升级中也不能开始研究。前置只看已完成的等级。</p>
+        ${queuePanel("", "rqueue", "研究队列")}
+        ${researchGroups()}
+      </section>
+
       <section class="tab-panel protocol-board" data-tab-panel="protocol" aria-labelledby="protocol-title" hidden>
         <div class="panel-head">
           <h2 id="protocol-title">协议卡</h2>
@@ -673,7 +797,7 @@ function shellMarkup(): string {
         <div class="prestige-panel">
           <div class="panel-head">
             <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
-            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
           </div>
           <dl class="prestige-stats">
             <div>
@@ -706,7 +830,7 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version: 6, savedAt, lastTickAt, state }。测试期只接受 v6：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 7, savedAt, lastTickAt, state }。测试期只接受 v7：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>

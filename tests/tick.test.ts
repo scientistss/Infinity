@@ -4,7 +4,7 @@ import { catchUp } from "../src/core/offline";
 import { big } from "../src/game/decimal";
 import { economy } from "../src/game/economy";
 import { storageCapacity } from "../src/game/formulas";
-import { prestige, tick, type TickLog } from "../src/game/logic";
+import { emptyTickLog, prestige, tick, type TickLog } from "../src/game/logic";
 import { cancel, enqueue } from "../src/game/queue";
 import type { GameState } from "../src/game/types";
 import { relErr, rich, stateWith } from "./helpers";
@@ -95,9 +95,9 @@ describe("tick", () => {
     start = enqueue(start, "crystal_mine", "manual").state;
     start = withCard(start, "queue_scheduler");
 
-    const longLog: TickLog = { completedBuilds: [] };
+    const longLog: TickLog = emptyTickLog();
     const long = tick(start, 3600, "live", longLog);
-    const shortLog: TickLog = { completedBuilds: [] };
+    const shortLog: TickLog = emptyTickLog();
     let short = start;
     for (let i = 0; i < 3600; i += 1) short = tick(short, 1, "live", shortLog);
 

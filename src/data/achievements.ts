@@ -115,7 +115,48 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     met: (state) => state.planet.buildings.nanite_factory >= 1,
     progress: (state) => count(state.planet.buildings.nanite_factory, 1),
   },
+  {
+    id: "first_lab",
+    name: "研究实验室落成",
+    detail: "研究实验室达到 1 级",
+    met: (state) => state.planet.buildings.research_lab >= 1,
+    progress: (state) => count(state.planet.buildings.research_lab, 1),
+  },
+  {
+    id: "first_research",
+    name: "第一项研究",
+    detail: "完成任意一级研究",
+    met: (state) => researchTotal(state) >= 1,
+    progress: (state) => count(researchTotal(state), 1),
+  },
+  {
+    id: "computer_4",
+    name: "协议扩容",
+    detail: "计算机技术达到 4 级（多 2 个协议卡槽）",
+    met: (state) => state.research.levels.computer_tech >= 4,
+    progress: (state) => count(state.research.levels.computer_tech, 4),
+  },
+  {
+    id: "astrophysics_1",
+    name: "仰望深空",
+    detail: "天体物理学达到 1 级",
+    met: (state) => state.research.levels.astrophysics >= 1,
+    progress: (state) => count(state.research.levels.astrophysics, 1),
+  },
+  {
+    id: "plasma_1",
+    name: "等离子时代",
+    detail: "等离子技术达到 1 级",
+    met: (state) => state.research.levels.plasma_tech >= 1,
+    progress: (state) => count(state.research.levels.plasma_tech, 1),
+  },
 ];
+
+function researchTotal(state: GameState): number {
+  let total = 0;
+  for (const level of Object.values(state.research.levels)) total += level;
+  return total;
+}
 
 function storageLevel(state: GameState): number {
   const b = state.planet.buildings;

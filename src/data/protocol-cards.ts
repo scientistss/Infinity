@@ -3,6 +3,7 @@
  * Pure data/types only (no DOM). Numbers as strings where they become Decimal.
  */
 import type { BuildingId, ProductionBuildingId } from './buildings';
+import type { ResearchId } from './research';
 
 export type ResId = 'metal' | 'crystal' | 'deuterium' | 'energy' | 'warp_core';
 /** Resources with a storage cap. */
@@ -14,7 +15,12 @@ export type Trigger =
   /** Fires when the build queue has a free slot (checked on every pass and right after a build completes). */
   | { kind: 'queueIdle' }
   /** Fires when the resource sits at its storage cap (and right when it reaches it). */
-  | { kind: 'storageFull'; res: StoredResId };
+  | { kind: 'storageFull'; res: StoredResId }
+  /** Fires when the research queue has a free slot (checked on every pass and right after a research completes). */
+  | { kind: 'researchIdle' };
+
+/** Groups for "cheapest first". */
+export type CheapestGroup = 'mines' | 'storage' | 'research';
 
 export type Condition =
   | { kind: 'resourceGte' | 'resourceLt'; res: ResId; value: string }
@@ -23,13 +29,17 @@ export type Condition =
   | { kind: 'costRatioLt'; building: BuildingId; ratio: number }
   | { kind: 'storageGte'; res: StoredResId; ratio: number }
   | { kind: 'queueLenLt'; value: number }
-  | { kind: 'buildTimeLt'; building: BuildingId; seconds: number };
+  | { kind: 'buildTimeLt'; building: BuildingId; seconds: number }
+  | { kind: 'researchLevelLt'; tech: ResearchId; value: number }
+  | { kind: 'researchTimeLt'; tech: ResearchId; seconds: number };
 
 export type Action =
   | { kind: 'enqueue'; building: BuildingId; levels: 1 }
   | { kind: 'setProduction'; building: ProductionBuildingId; pct: number }
   | { kind: 'collect' }
-  | { kind: 'prestige'; minGain: number };
+  | { kind: 'prestige'; minGain: number }
+  | { kind: 'enqueueResearch'; tech: ResearchId }
+  | { kind: 'enqueueCheapest'; group: CheapestGroup };
 
 export interface ProtocolCard {
   id: string;
@@ -47,7 +57,9 @@ export type CardCatalogId =
   | 'energy_eff_gate'
   | 'auto_prestige'
   | 'queue_scheduler'
-  | 'production_tuner';
+  | 'production_tuner'
+  | 'research_scheduler'
+  | 'cheapest_first';
 
 export type UnlockCondition =
   | { kind: 'manualClicks'; count: number }
@@ -56,12 +68,13 @@ export type UnlockCondition =
   | { kind: 'firstPrestige' }
   | { kind: 'warpCoreTotal'; count: number }
   | { kind: 'firstQueueIdle'; roboticsLevel: number }
-  | { kind: 'firstStorageFull' };
+  | { kind: 'firstStorageFull' }
+  | { kind: 'researchGte'; tech: ResearchId; value: number };
 
 export interface CardCatalogEntry {
   id: CardCatalogId;
   labelZh: string;
-  order: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  order: number;
   unlock: UnlockCondition;
   /** Default template the player gets when unlocked (editable). */
   template: Omit<ProtocolCard, 'id' | 'enabled'>;
@@ -73,7 +86,7 @@ export interface CardCatalogEntry {
   };
 }
 
-/** Unlock order. Slots stay capped at 6 in P1; 8 catalog cards compete for them. */
+/** Unlock order. From P2 the rack holds up to 12 slots (robotics and computer technology each give +1 per 2 levels). */
 export const CARD_CATALOG: readonly CardCatalogEntry[] = [
   {
     id: 'auto_collect',
@@ -177,11 +190,43 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
     },
     unlocks: { triggers: ['storageFull'], conditions: ['storageGte'], actions: ['setProduction'] },
   },
+  {
+    id: 'research_scheduler',
+    labelZh: '研究调度',
+    order: 9,
+    unlock: { kind: 'levelGte', building: 'research_lab', value: 1 },
+    template: {
+      trigger: { kind: 'researchIdle' },
+      conditions: [{ kind: 'researchLevelLt', tech: 'computer_tech', value: 10 }],
+      action: { kind: 'enqueueResearch', tech: 'computer_tech' },
+    },
+    unlocks: {
+      triggers: ['researchIdle'],
+      conditions: ['researchLevelLt', 'researchTimeLt'],
+      actions: ['enqueueResearch'],
+    },
+  },
+  {
+    id: 'cheapest_first',
+    labelZh: '最便宜优先',
+    order: 10,
+    unlock: { kind: 'researchGte', tech: 'computer_tech', value: 2 },
+    template: {
+      trigger: { kind: 'queueIdle' },
+      conditions: [],
+      action: { kind: 'enqueueCheapest', group: 'mines' },
+    },
+    unlocks: { actions: ['enqueueCheapest'] },
+  },
 ] as const;
 
-/** Slot rules: start 1; robotics_factory every 2 levels +1; curvature tech can +1 permanent; hard cap 6. */
+/**
+ * Slot rules (design doc §8.6): start 1; robotics factory every 2 levels +1; computer technology every
+ * 2 levels +1; curvature tech can +1 permanent; hard cap 12 from P2.
+ */
 export const SLOT_RULES = {
   initial: 1,
   roboticsPerLevels: 2,
-  hardCap: 6,
+  computerPerLevels: 2,
+  hardCap: 12,
 } as const;

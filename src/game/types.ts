@@ -2,8 +2,18 @@ import type { BigNumber } from "./decimal";
 import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
 import type { BuildingId, ProductionBuildingId } from "../data/buildings";
 import type { BuildOrder, PlanetState } from "./planet";
+import type { ResearchOrder, ResearchState } from "./research";
 
-export type { BuildingId, BuildOrder, CardCatalogId, PlanetState, ProductionBuildingId, ProtocolCard };
+export type {
+  BuildingId,
+  BuildOrder,
+  CardCatalogId,
+  PlanetState,
+  ProductionBuildingId,
+  ProtocolCard,
+  ResearchOrder,
+  ResearchState,
+};
 
 export const RESOURCE_IDS = ["metal", "crystal", "deuterium"] as const;
 export type ResourceId = (typeof RESOURCE_IDS)[number];
@@ -20,7 +30,8 @@ export const CURVATURE_IDS = [
 ] as const;
 export type CurvatureId = (typeof CURVATURE_IDS)[number];
 
-export const PROTOCOL_SLOT_COUNT = 6;
+/** Rack length in the save. Hard cap from P2 (design doc §8.6): 12. */
+export const PROTOCOL_SLOT_COUNT = 12;
 
 export type CardLamp = "green" | "gray" | "red";
 
@@ -58,12 +69,18 @@ export interface PlayerStats {
   seenStorageFull: boolean;
   /** Sticky once the build queue has run empty after a completion. Unlocks card 7 (with robotics ≥ 1). */
   seenQueueIdle: boolean;
+  /** Research levels finished, all runs. */
+  researchCompleted: number;
 }
 
 export interface GameState {
   resources: Record<ResourceId, BigNumber>;
   /** Buildings, build queue, production settings. Resources move into the planet in P4. */
   planet: PlanetState;
+  /** Empire research levels and research queue (design doc §6). Levels are kept on launch. */
+  research: ResearchState;
+  /** Dark matter (design doc §8.8). Empire resource, kept on launch, not affected by production multipliers. */
+  darkMatter: BigNumber;
   /** Resources gained this run. Prestige clears this. */
   lifetime: Record<ResourceId, BigNumber>;
   /** Curvature cores earned. Spent ranks live in `curvature`, not in this total. */

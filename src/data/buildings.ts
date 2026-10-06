@@ -4,8 +4,11 @@
  * in the UI and cannot be queued.
  */
 
-/** Gameplay phase currently shipped. P1 = buildings, storage, build times and the build queue. */
-export const CURRENT_PHASE = 1;
+/**
+ * Gameplay phase currently shipped. P1 = buildings, storage, build times and the build queue;
+ * P2 = research (research queue, prerequisites, research effects).
+ */
+export const CURRENT_PHASE = 2;
 
 export const BUILDING_IDS = [
   "metal_mine",
@@ -60,7 +63,7 @@ export interface BuildingDef {
   /** Cost of level 1. Level L costs ⌊base × factor^(L−1)⌋. Energy is a requirement, not spent (P4+). */
   baseCost: { metal: number; crystal: number; deuterium: number; energy: number };
   factor: number;
-  /** Research requirements are listed for later phases but not checked until P2. */
+  /** Building and research requirements. Checked from P2 on (finished levels only). */
   requires: readonly BuildingRequirement[];
   /** OGame's MAX(4 − L/2, 1) low-level speed-up. Nanite factory and moon buildings do not get it. */
   earlyLevelSpeedup: boolean;
@@ -131,7 +134,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
       { kind: "research", id: "energy_tech", level: 3 },
     ],
     earlyLevelSpeedup: true,
-    blurb: "燃烧重氢供电 30·L·1.05^L，耗重氢 10·L·1.1^L /小时。",
+    blurb: "燃烧重氢供电 30·L·(1.05+0.01·能源技术)^L，耗重氢 10·L·1.1^L /小时。",
   },
   {
     id: "metal_storage",
@@ -179,7 +182,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
     factor: 2,
     requires: [],
     earlyLevelSpeedup: true,
-    blurb: "建造时间 ÷(1+等级)。每 2 级额外开放 1 个协议卡槽。",
+    blurb: "建造时间 ÷(1+等级)。每 2 级额外开放 1 个协议卡槽（与计算机技术合计最多 12 个）。",
   },
   {
     id: "nanite_factory",
@@ -218,7 +221,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
     factor: 2,
     requires: [],
     earlyLevelSpeedup: true,
-    blurb: "进行研究。可以先建，第 2 阶段生效。",
+    blurb: "进行研究。研究时间 = (金属+晶体)/(1000·(1+等级)) 小时 ÷ 研究速度。研究进行中不能升级。",
   },
   {
     id: "missile_silo",
