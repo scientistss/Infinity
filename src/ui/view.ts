@@ -602,10 +602,10 @@ const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
 };
 
 /** Simple self-drawn SVG icons (no painted WebP yet). */
-const SVG_ICONS = new Set(["dark_matter", "ring_machine"]);
+const SVG_ICONS = new Set(["dark_matter"]);
 
 /** Icons that also ship a 256px variant for large or high-DPI rendering. */
-const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core"]);
+const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core", "ring_machine"]);
 
 interface IconOptions {
   /** Defer loading until the image is near the viewport (default true; header icons pass false). */
