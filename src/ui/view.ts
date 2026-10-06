@@ -30,6 +30,7 @@ export interface GameView {
 
 export function mountView(root: HTMLElement, onAction: (action: UiAction) => void): GameView {
   root.innerHTML = shellMarkup();
+  selectTab(root, readSavedTab());
 
   const transfer = requiredTextArea(root, "transfer");
   const fileInput = requiredInput(root, "import-file");
@@ -39,6 +40,10 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (!(target instanceof HTMLElement)) return;
     const button = target.closest("button");
     if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+    if (button.dataset.tab) {
+      selectTab(root, button.dataset.tab);
+      return;
+    }
     const action = button.dataset.action;
     if (action === "scrape") onAction({ type: "scrape" });
     if (action === "prestige") onAction({ type: "prestige" });
@@ -139,6 +144,8 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "passive", model.passive);
       setText(root, "score", model.score);
       setText(root, "gain", model.gain);
+      setText(root, "gain-detail", model.gain);
+      setText(root, "energy-top", model.protocolEnergy);
       setText(root, "status", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
@@ -247,53 +254,96 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   };
 }
 
+const ICON_BASE = `${import.meta.env.BASE_URL}icons/`;
+const TAB_KEY = "infinity.ui.tab";
+const TABS = [
+  { id: "facilities", label: "设施", icon: "robotics_factory" },
+  { id: "protocol", label: "协议卡", icon: "protocol_card" },
+  { id: "curvature", label: "曲率", icon: "warp_core" },
+  { id: "achievements", label: "成就", icon: "achievement" },
+  { id: "save", label: "存档", icon: "save" },
+] as const;
+
+/** Single-color glyph drawn with a CSS mask so it inherits the surrounding accent color. */
+function icon(name: string, extra = ""): string {
+  return `<span class="icon icon-${name}${extra ? ` ${extra}` : ""}" style="--icon:url('${ICON_BASE}${name}.svg')" aria-hidden="true"></span>`;
+}
+
+function readSavedTab(): string {
+  try {
+    return localStorage.getItem(TAB_KEY) ?? TABS[0].id;
+  } catch {
+    return TABS[0].id;
+  }
+}
+
+function selectTab(root: ParentNode, id: string): void {
+  const tab = TABS.some((entry) => entry.id === id) ? id : TABS[0].id;
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  for (const panel of root.querySelectorAll<HTMLElement>("[data-tab-panel]")) {
+    panel.hidden = panel.dataset.tabPanel !== tab;
+  }
+  try {
+    localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    // Storage can be unavailable (private mode); the tab still switches.
+  }
+}
+
 function shellMarkup(): string {
-  const resources = RESOURCES.map(
-    (resource) => `
-      <article class="resource resource-${resource.id}">
-        <header>
-          <h2>${resource.name}</h2>
-          <span>${resource.nameEn}</span>
-        </header>
-        <p class="amount" data-bind="amount-${resource.id}">0.00</p>
-        <p class="rate" data-bind="rate-${resource.id}">+0.00/s</p>
-        <p class="blurb">${resource.blurb}</p>
-      </article>`,
+  const [mainResource, ...otherResources] = RESOURCES;
+  const chips = otherResources
+    .map(
+      (resource) => `
+        <div class="chip chip-${resource.id}" title="${resource.blurb}">
+          ${icon(resource.id)}
+          <span class="chip-name">${resource.name}</span>
+          <strong data-bind="amount-${resource.id}">0.00</strong>
+          <span class="chip-rate" data-bind="rate-${resource.id}">+0.00/s</span>
+        </div>`,
+    )
+    .join("");
+
+  const tabs = TABS.map(
+    (tab) =>
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" aria-selected="false">${icon(tab.icon)}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
     (achievement) => `
-      <li class="ach" data-bind="ach-${achievement.id}">
-        <div class="ach-top">
-          <strong>${achievement.name}</strong>
-          <span data-bind="ach-progress-${achievement.id}">0 / 1</span>
-        </div>
+      <li class="ach" data-bind="ach-${achievement.id}" title="${achievement.detail}">
+        ${icon("achievement", "ach-icon")}
+        <strong>${achievement.name}</strong>
         <p>${achievement.detail}</p>
+        <span class="ach-progress" data-bind="ach-progress-${achievement.id}">0 / 1</span>
       </li>`,
   ).join("");
 
   const producers = PRODUCERS.map((producer, index) => {
     const idx = String(index + 1).padStart(2, "0");
     return `
-      <article class="facility">
-        <div class="facility-head">
+      <article class="dim-row">
+        <div class="dim-name">
+          ${icon(producer.id, "icon-row")}
           <div>
-            <h3><span class="idx">${idx}</span> ${producer.name} <small>${producer.nameEn}</small></h3>
-            <p>${producer.description}</p>
-          </div>
-          <div class="owned">
-            <span>拥有</span>
-            <strong data-bind="owned-${producer.id}">0</strong>
+            <h3><span class="idx">${idx}</span>${producer.name} <small>${producer.nameEn}</small></h3>
+            <p class="dim-desc">${producer.description}</p>
+            <p class="rates" data-bind="rates-${producer.id}"></p>
           </div>
         </div>
-        <p class="rates" data-bind="rates-${producer.id}"></p>
-        <div class="facility-buy">
-          <p class="cost" data-bind="cost-${producer.id}"></p>
-          <div class="actions">
-            <button type="button" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">购买 1</button>
-            <button type="button" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大购买</button>
-          </div>
+        <div class="dim-owned">
+          <span>拥有</span>
+          <strong data-bind="owned-${producer.id}">0</strong>
         </div>
+        <button type="button" class="buy-btn" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">
+          <span class="buy-label">购买 1</span>
+          <span class="btn-cost" data-bind="cost-${producer.id}"></span>
+        </button>
+        <button type="button" class="buy-btn buy-max" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大购买</button>
       </article>`;
   }).join("");
 
@@ -309,50 +359,97 @@ function shellMarkup(): string {
         <button type="button" data-action="dismiss-offline">知道了</button>
       </div>
     </div>
-    <div class="sky" aria-hidden="true"></div>
-    <svg class="horizon" viewBox="0 0 960 88" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 58 C 140 18 250 22 380 46 C 520 72 640 20 780 40 C 860 50 920 48 960 42 V 88 H 0 Z" fill="#2c241c"/>
-      <path d="M0 68 C 180 46 320 70 520 58 C 700 48 820 66 960 60 V 88 H 0 Z" fill="#1a1612"/>
-      <circle cx="742" cy="26" r="16" fill="#f0c27a"/>
-      <circle cx="742" cy="26" r="22" fill="rgba(240,194,122,0.18)"/>
-    </svg>
-    <main class="wrap">
-      <header class="mast">
-        <div>
-          <p class="kicker">Planet surface · v0.1</p>
-          <h1>Infinity <span>无限</span></h1>
-          <p class="lede">手动采集金属，把协议卡放进右侧槽位。句子是「当…若…则…」。</p>
+    <header class="topbar">
+      <div class="topbar-main">
+        <div class="brand">
+          <img class="logo" src="${import.meta.env.BASE_URL}favicon.svg" alt="" width="32" height="32" />
+          <div>
+            <h1>Infinity <span>无限</span></h1>
+            <p class="kicker">Planet surface · v0.1</p>
+          </div>
         </div>
-        <aside class="mast-stat">
-          <span>曲率核心 Warp Core</span>
+        <div class="headline" title="${mainResource.blurb}">
+          <p class="have">你拥有 ${icon(mainResource.id, "icon-head")}<strong class="big-amount" data-bind="amount-${mainResource.id}">0.00</strong> ${mainResource.name}</p>
+          <p class="per-sec"><span data-bind="rate-${mainResource.id}">+0.00/s</span></p>
+        </div>
+        <div class="launch-box">
+          <button type="button" class="btn-prestige" data-action="prestige" data-bind="action-prestige" disabled>
+            ${icon("launch")}
+            <span class="prestige-title">发射殖民舰</span>
+            <span class="prestige-gain">+<span data-bind="gain">0</span> 曲率核心</span>
+          </button>
+        </div>
+      </div>
+      <div class="res-strip">
+        ${chips}
+        <div class="chip chip-energy" title="能量供需与效率">
+          ${icon("energy")}
+          <span class="chip-name">能量</span>
+          <span class="chip-rate" data-bind="energy-top"></span>
+        </div>
+        <div class="chip chip-warp" title="曲率核心 Warp Core">
+          ${icon("warp_core")}
+          <span class="chip-name">曲率核心</span>
           <strong data-bind="telemetry">0</strong>
-          <span data-bind="multiplier">产量 ×1.00</span>
-          <span data-bind="played">累计 0 秒</span>
-        </aside>
-      </header>
+          <span class="chip-rate" data-bind="multiplier">产量 ×1.00</span>
+          <span class="chip-rate" data-bind="played">累计 0 秒</span>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="主菜单">${tabs}</nav>
+    </header>
 
+    <main class="wrap">
       <p class="banner" data-bind="banner" role="status" hidden></p>
 
-      <div class="layout">
-      <div class="column">
-      <section class="panel" aria-labelledby="stock-title">
-        <div class="panel-head">
-          <h2 id="stock-title">库存</h2>
-          <p data-bind="passive">风化拾取</p>
-          <button type="button" data-action="scrape" data-bind="action-scrape">手动采集 +1</button>
-        </div>
-        <div class="resources">${resources}</div>
-      </section>
-
-      <section class="panel" aria-labelledby="facility-title">
+      <section class="tab-panel" data-tab-panel="facilities" aria-labelledby="facility-title">
         <div class="panel-head">
           <h2 id="facility-title">地表设施</h2>
           <p>价格按几何级数上涨。最大购买会在付得起的范围内一次买满。</p>
         </div>
-        <div class="facilities">${producers}</div>
+        <div class="scrape-row">
+          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape">手动采集 +1</button>
+          <span class="muted" data-bind="passive">风化拾取</span>
+        </div>
+        <div class="dim-table">${producers}</div>
       </section>
 
-      <section class="panel" aria-labelledby="ach-title">
+      <section class="tab-panel protocol-board" data-tab-panel="protocol" aria-labelledby="protocol-title" hidden>
+        <div class="panel-head">
+          <h2 id="protocol-title">协议卡</h2>
+          <p data-bind="protocol-meta">槽位</p>
+        </div>
+        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。</p>
+        <p class="rates">${icon("energy")} <span data-bind="protocol-energy"></span></p>
+        <div class="catalog-row">${catalogButtons()}</div>
+        <div class="protocol-slots">${protocolSlots()}</div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="curvature" aria-labelledby="prestige-title" hidden>
+        <div class="prestige-panel">
+          <div class="panel-head">
+            <h2 id="prestige-title">${icon("launch")} 发射殖民舰</h2>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+          </div>
+          <dl class="prestige-stats">
+            <div>
+              <dt>本轮扩张分</dt>
+              <dd data-bind="score">0.00</dd>
+            </div>
+            <div>
+              <dt>预计核心</dt>
+              <dd>${icon("warp_core")} <span data-bind="gain-detail">0</span></dd>
+            </div>
+          </dl>
+        </div>
+        <div class="panel-head">
+          <h2 id="tech-title">${icon("tech")} 曲率科技</h2>
+          <p data-bind="unspent-line">未花费 0 / 已花费 0 · 被动 +0%</p>
+        </div>
+        <p class="blurb">花费曲率核心购买永久效果。买下后该核心不再提供 +2% 被动。无需确认。</p>
+        <div class="tech-grid">${techCards()}</div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="achievements" aria-labelledby="ach-title" hidden>
         <div class="panel-head">
           <h2 id="ach-title">成就</h2>
           <p data-bind="ach-summary">已解锁 0 / 10 · 全局产出 +0%</p>
@@ -361,34 +458,7 @@ function shellMarkup(): string {
         <ul class="ach-list">${achievements}</ul>
       </section>
 
-      <section class="panel prestige" aria-labelledby="prestige-title">
-        <div class="panel-head">
-          <h2 id="prestige-title">发射殖民舰</h2>
-          <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
-        </div>
-        <dl class="prestige-stats">
-          <div>
-            <dt>本轮扩张分</dt>
-            <dd data-bind="score">0.00</dd>
-          </div>
-          <div>
-            <dt>预计核心</dt>
-            <dd data-bind="gain">0</dd>
-          </div>
-        </dl>
-        <button type="button" data-action="prestige" data-bind="action-prestige" disabled>发射殖民舰</button>
-      </section>
-
-      <section class="panel" aria-labelledby="tech-title">
-        <div class="panel-head">
-          <h2 id="tech-title">曲率科技</h2>
-          <p data-bind="unspent-line">未花费 0 / 已花费 0 · 被动 +0%</p>
-        </div>
-        <p class="blurb">花费曲率核心购买永久效果。买下后该核心不再提供 +2% 被动。无需确认。</p>
-        <div class="facilities">${techCards()}</div>
-      </section>
-
-      <section class="panel" aria-labelledby="save-title">
+      <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">存档</h2>
           <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–4 会补上成就和曲率科技。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
@@ -407,17 +477,6 @@ function shellMarkup(): string {
         <button type="button" data-action="import-text">从文本导入</button>
         <p class="status" data-bind="status" role="status">就绪</p>
       </section>
-      </div>
-      <aside class="panel protocol-board" aria-labelledby="protocol-title">
-        <div class="panel-head">
-          <h2 id="protocol-title">协议卡</h2>
-          <p data-bind="protocol-meta">槽位</p>
-        </div>
-        <p class="rates" data-bind="protocol-energy"></p>
-        <div class="catalog-row">${catalogButtons()}</div>
-        <div class="protocol-slots">${protocolSlots()}</div>
-      </aside>
-      </div>
     </main>`;
 }
 
@@ -425,22 +484,17 @@ function techCards(): string {
   return CURVATURE_TECH.map((node, index) => {
     const idx = String(index + 1).padStart(2, "0");
     return `
-      <article class="facility">
-        <div class="facility-head">
-          <div>
-            <h3><span class="idx">${idx}</span> ${node.name} <small>${node.nameEn}</small></h3>
-            <p data-bind="tech-detail-${node.id}">${node.effect}</p>
-          </div>
-          <div class="owned">
-            <span>状态</span>
-            <strong data-bind="tech-owned-${node.id}">未购</strong>
-          </div>
+      <article class="tech-card">
+        <div class="tech-head">
+          ${icon("tech", "icon-row")}
+          <h3><span class="idx">${idx}</span>${node.name} <small>${node.nameEn}</small></h3>
+          <strong class="tech-owned" data-bind="tech-owned-${node.id}">未购</strong>
         </div>
-        <div class="facility-buy">
-          <p class="cost" data-bind="tech-preview-${node.id}">花费 ${node.cost} 核心</p>
-          <div class="actions">
-            <button type="button" data-action="buy-tech" data-id="${node.id}" data-bind="tech-buy-${node.id}">花费 ${node.cost}</button>
-          </div>
+        <p data-bind="tech-detail-${node.id}">${node.effect}</p>
+        <p class="cost" data-bind="tech-preview-${node.id}">花费 ${node.cost} 核心</p>
+        <div class="tech-buy">
+          ${icon("warp_core")}
+          <button type="button" class="buy-btn" data-action="buy-tech" data-id="${node.id}" data-bind="tech-buy-${node.id}">花费 ${node.cost}</button>
         </div>
       </article>`;
   }).join("");
@@ -449,7 +503,7 @@ function techCards(): string {
 function catalogButtons(): string {
   return CARD_CATALOG.map(
     (entry) =>
-      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${entry.labelZh}</button>`,
+      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${icon(`card_${entry.id}`)}<span>${entry.labelZh}</span></button>`,
   ).join("");
 }
 
@@ -460,6 +514,7 @@ function protocolSlots(): string {
       <div class="slot-controls" data-bind="slot-controls-${index}">
         <span class="lamp lamp-gray" data-bind="lamp-${index}" title="空槽位"></span>
         <span class="drag-handle" draggable="true" data-slot-drag="${index}" title="拖动排序">↕</span>
+        ${icon("protocol_card")}
         <span class="idx">${String(index + 1).padStart(2, "0")}</span>
         <label class="check"><input type="checkbox" data-bind="slot-enabled-${index}" data-field="enabled" /> 启用</label>
         <button type="button" data-action="slot-move" data-index="${index}" data-dir="-1">上移</button>
