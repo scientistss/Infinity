@@ -40,6 +40,8 @@ export interface ProducerView {
   owned: string;
   rates: string;
   cost: string;
+  /** "升级到 等级 N+1" — buildings are displayed by level. */
+  upgradeLabel: string;
   maxLabel: string;
   canBuyOne: boolean;
   canBuyMax: boolean;
@@ -144,9 +146,11 @@ export function present(
       return {
         id: producer.id,
         owned: formatCount(owned),
+        // Buildings are shown by level (OGame style); level == owned count in state.
+        upgradeLabel: `升级到 等级 ${formatCount(owned.add(1))}`,
         rates: describeRates(producer.id, scale, outputScale),
         cost: describeCost(state, producer.id),
-        maxLabel: max.gte(1) ? `最大购买 ${formatCount(max)}` : "最大购买",
+        maxLabel: max.gte(1) ? `最大升级 +${formatCount(max)} 级` : "最大升级",
         canBuyOne: unlocked && max.gte(1),
         canBuyMax: unlocked && max.gte(1),
       };
@@ -158,7 +162,7 @@ export function present(
     banner,
     offlineCap: `${formatDuration(offlineCapSeconds(state))}（基础 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时）`,
     protocolEnergy: describeEnergy(state),
-    protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 每 ${SLOT_RULES.roboticsPerLevels} 座机器人工厂 +1`,
+    protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 机器人工厂每 ${SLOT_RULES.roboticsPerLevels} 级 +1`,
     catalog: CARD_CATALOG.map((entry) => ({
       id: entry.id,
       label: entry.labelZh,
@@ -272,7 +276,7 @@ function describeRates(id: ProducerId, scale: ReturnType<typeof resourceMultipli
   if (def.producesEnergy > 0) parts.push(`能源 +${def.producesEnergy * outputScale}/s`);
   if (def.globalProductionMult !== 1) parts.push(`全局 ×${def.globalProductionMult}`);
   if (def.consumesEnergy > 0) parts.push(`负载 ${def.consumesEnergy}`);
-  return parts.length > 0 ? `每台 ${parts.join(" · ")}` : "无产出";
+  return parts.length > 0 ? `每级 ${parts.join(" · ")}` : "无产出";
 }
 
 function describeCost(state: GameState, id: ProducerId): string {
@@ -285,12 +289,12 @@ function describeCost(state: GameState, id: ProducerId): string {
     const resource = RESOURCES.find((entry) => entry.id === resourceId);
     parts.push(`${resource?.name ?? resourceId} ${formatAmount(costs[resourceId])}`);
   }
-  return parts.length > 0 ? `下一台 ${parts.join(" · ")}` : "免费";
+  return parts.length > 0 ? `花费 ${parts.join(" · ")}` : "免费";
 }
 
 function unlockLine(def: ProducerDef): string {
   const unlock = def.unlock;
-  if (unlock.kind === "ownedGte") return `需要 ${unlock.value} 座${producerById(unlock.producer).name}`;
+  if (unlock.kind === "ownedGte") return `需要${producerById(unlock.producer).name}等级 ${unlock.value}`;
   if (unlock.kind === "lifetimeGte") {
     const resId = unlock.res;
     const resource = RESOURCES.find((entry) => entry.id === resId);

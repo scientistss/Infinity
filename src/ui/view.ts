@@ -201,6 +201,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         setText(root, `owned-${producer.id}`, producer.owned);
         setText(root, `rates-${producer.id}`, producer.rates);
         setText(root, `cost-${producer.id}`, producer.cost);
+        setText(root, `upgrade-${producer.id}`, producer.upgradeLabel);
         const one = requiredButton(root, `buy-one-${producer.id}`);
         const max = requiredButton(root, `buy-max-${producer.id}`);
         one.disabled = !producer.canBuyOne;
@@ -264,9 +265,48 @@ const TABS = [
   { id: "save", label: "存档", icon: "save" },
 ] as const;
 
-/** Single-color glyph drawn with a CSS mask so it inherits the surrounding accent color. */
-function icon(name: string, extra = ""): string {
-  return `<span class="icon icon-${name}${extra ? ` ${extra}` : ""}" style="--icon:url('${ICON_BASE}${name}.svg')" aria-hidden="true"></span>`;
+/** Chinese alt text for each painted icon. */
+const ICON_ALT: Record<string, string> = {
+  metal: "金属",
+  crystal: "晶体",
+  deuterium: "重氢",
+  energy: "能量",
+  metal_mine: "金属矿",
+  crystal_mine: "晶体矿",
+  deuterium_synth: "重氢合成器",
+  solar_plant: "太阳能电站",
+  robotics_factory: "机器人工厂",
+  launch: "殖民舰",
+  warp_core: "曲率核心",
+  tech: "曲率科技",
+  achievement: "成就勋章",
+  protocol_card: "协议卡",
+  save: "存档",
+  logo: "Infinity 行星标志",
+};
+
+/** Icons that also ship a 256px variant for large or high-DPI rendering. */
+const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core"]);
+
+interface IconOptions {
+  /** Defer loading until the image is near the viewport (default true; header icons pass false). */
+  lazy?: boolean;
+  /** Rendered CSS size in px, used for the srcset `sizes` hint on icons with a 256px variant. */
+  size?: number;
+  alt?: string;
+}
+
+/** Painted OGame-style icon (WebP) with a steel-grey rounded frame applied in CSS. */
+function icon(name: string, extra = "", options: IconOptions = {}): string {
+  const { lazy = true, size = 48, alt = ICON_ALT[name] ?? "" } = options;
+  const src = `${ICON_BASE}${name}.webp`;
+  const srcset = HI_RES_ICONS.has(name) ? ` srcset="${src} 128w, ${ICON_BASE}${name}-256.webp 256w" sizes="${size}px"` : "";
+  return `<img class="icon icon-${name}${extra ? ` ${extra}` : ""}" src="${src}"${srcset} alt="${alt}" width="128" height="128"${lazy ? ' loading="lazy"' : ""} decoding="async" draggable="false" />`;
+}
+
+/** Protocol card art plus the card's own single-color glyph as a small violet badge (CSS mask). */
+function cardIcon(cardId: string, label: string): string {
+  return `<span class="card-art">${icon("protocol_card", "", { alt: `协议卡：${label}` })}<span class="card-badge" style="--glyph:url('${ICON_BASE}card_${cardId}.svg')" aria-hidden="true"></span></span>`;
 }
 
 function readSavedTab(): string {
@@ -295,22 +335,20 @@ function selectTab(root: ParentNode, id: string): void {
 }
 
 function shellMarkup(): string {
-  const [mainResource, ...otherResources] = RESOURCES;
-  const chips = otherResources
-    .map(
-      (resource) => `
-        <div class="chip chip-${resource.id}" title="${resource.blurb}">
-          ${icon(resource.id)}
-          <span class="chip-name">${resource.name}</span>
-          <strong data-bind="amount-${resource.id}">0.00</strong>
-          <span class="chip-rate" data-bind="rate-${resource.id}">+0.00/s</span>
+  // Metal, crystal and deuterium share equal status: three identical blocks in the top bar.
+  const resourceCards = RESOURCES.map(
+    (resource) => `
+        <div class="res-card res-${resource.id}" title="${resource.blurb}">
+          ${icon(resource.id, "icon-res", { lazy: false })}
+          <span class="res-name">${resource.name}</span>
+          <strong class="res-amount" data-bind="amount-${resource.id}">0.00</strong>
+          <span class="res-rate" data-bind="rate-${resource.id}">+0.00/s</span>
         </div>`,
-    )
-    .join("");
+  ).join("");
 
   const tabs = TABS.map(
     (tab) =>
-      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" aria-selected="false">${icon(tab.icon)}<span>${tab.label}</span></button>`,
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
@@ -328,7 +366,7 @@ function shellMarkup(): string {
     return `
       <article class="dim-row">
         <div class="dim-name">
-          ${icon(producer.id, "icon-row")}
+          ${icon(producer.id, "icon-row", { size: 56 })}
           <div>
             <h3><span class="idx">${idx}</span>${producer.name} <small>${producer.nameEn}</small></h3>
             <p class="dim-desc">${producer.description}</p>
@@ -336,14 +374,14 @@ function shellMarkup(): string {
           </div>
         </div>
         <div class="dim-owned">
-          <span>拥有</span>
+          <span>等级</span>
           <strong data-bind="owned-${producer.id}">0</strong>
         </div>
         <button type="button" class="buy-btn" data-action="buy" data-mode="one" data-id="${producer.id}" data-bind="buy-one-${producer.id}">
-          <span class="buy-label">购买 1</span>
+          <span class="buy-label" data-bind="upgrade-${producer.id}">升级到 等级 1</span>
           <span class="btn-cost" data-bind="cost-${producer.id}"></span>
         </button>
-        <button type="button" class="buy-btn buy-max" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大购买</button>
+        <button type="button" class="buy-btn buy-max" data-action="buy" data-mode="max" data-id="${producer.id}" data-bind="buy-max-${producer.id}">最大升级</button>
       </article>`;
   }).join("");
 
@@ -362,33 +400,29 @@ function shellMarkup(): string {
     <header class="topbar">
       <div class="topbar-main">
         <div class="brand">
-          <img class="logo" src="${import.meta.env.BASE_URL}favicon.svg" alt="" width="32" height="32" />
+          <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
           <div>
             <h1>Infinity <span>无限</span></h1>
             <p class="kicker">Planet surface · v0.1</p>
           </div>
         </div>
-        <div class="headline" title="${mainResource.blurb}">
-          <p class="have">你拥有 ${icon(mainResource.id, "icon-head")}<strong class="big-amount" data-bind="amount-${mainResource.id}">0.00</strong> ${mainResource.name}</p>
-          <p class="per-sec"><span data-bind="rate-${mainResource.id}">+0.00/s</span></p>
-        </div>
+        <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
         <div class="launch-box">
           <button type="button" class="btn-prestige" data-action="prestige" data-bind="action-prestige" disabled>
-            ${icon("launch")}
+            ${icon("launch", "", { lazy: false, size: 34 })}
             <span class="prestige-title">发射殖民舰</span>
             <span class="prestige-gain">+<span data-bind="gain">0</span> 曲率核心</span>
           </button>
         </div>
       </div>
       <div class="res-strip">
-        ${chips}
         <div class="chip chip-energy" title="能量供需与效率">
-          ${icon("energy")}
+          ${icon("energy", "", { lazy: false })}
           <span class="chip-name">能量</span>
           <span class="chip-rate" data-bind="energy-top"></span>
         </div>
         <div class="chip chip-warp" title="曲率核心 Warp Core">
-          ${icon("warp_core")}
+          ${icon("warp_core", "", { lazy: false, size: 22 })}
           <span class="chip-name">曲率核心</span>
           <strong data-bind="telemetry">0</strong>
           <span class="chip-rate" data-bind="multiplier">产量 ×1.00</span>
@@ -404,7 +438,7 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="facilities" aria-labelledby="facility-title">
         <div class="panel-head">
           <h2 id="facility-title">地表设施</h2>
-          <p>价格按几何级数上涨。最大购买会在付得起的范围内一次买满。</p>
+          <p>每升一级价格按几何级数上涨。最大升级会在付得起的范围内连续升级。</p>
         </div>
         <div class="scrape-row">
           <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape">手动采集 +1</button>
@@ -427,7 +461,7 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="curvature" aria-labelledby="prestige-title" hidden>
         <div class="prestige-panel">
           <div class="panel-head">
-            <h2 id="prestige-title">${icon("launch")} 发射殖民舰</h2>
+            <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
             <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 金属 + 3×晶体 + 10×重氢。重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
           </div>
           <dl class="prestige-stats">
@@ -437,12 +471,12 @@ function shellMarkup(): string {
             </div>
             <div>
               <dt>预计核心</dt>
-              <dd>${icon("warp_core")} <span data-bind="gain-detail">0</span></dd>
+              <dd>${icon("warp_core", "", { size: 28 })} <span data-bind="gain-detail">0</span></dd>
             </div>
           </dl>
         </div>
         <div class="panel-head">
-          <h2 id="tech-title">${icon("tech")} 曲率科技</h2>
+          <h2 id="tech-title">${icon("tech", "icon-h2")} 曲率科技</h2>
           <p data-bind="unspent-line">未花费 0 / 已花费 0 · 被动 +0%</p>
         </div>
         <p class="blurb">花费曲率核心购买永久效果。买下后该核心不再提供 +2% 被动。无需确认。</p>
@@ -460,7 +494,7 @@ function shellMarkup(): string {
 
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
-          <h2 id="save-title">存档</h2>
+          <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
           <p>自动写入 localStorage。导出的 JSON 形如 { version, savedAt, lastTickAt, state }。版本 1–4 会补上成就和曲率科技。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
@@ -493,7 +527,7 @@ function techCards(): string {
         <p data-bind="tech-detail-${node.id}">${node.effect}</p>
         <p class="cost" data-bind="tech-preview-${node.id}">花费 ${node.cost} 核心</p>
         <div class="tech-buy">
-          ${icon("warp_core")}
+          ${icon("warp_core", "", { size: 22 })}
           <button type="button" class="buy-btn" data-action="buy-tech" data-id="${node.id}" data-bind="tech-buy-${node.id}">花费 ${node.cost}</button>
         </div>
       </article>`;
@@ -503,7 +537,7 @@ function techCards(): string {
 function catalogButtons(): string {
   return CARD_CATALOG.map(
     (entry) =>
-      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${icon(`card_${entry.id}`)}<span>${entry.labelZh}</span></button>`,
+      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${cardIcon(entry.id, entry.labelZh)}<span>${entry.labelZh}</span></button>`,
   ).join("");
 }
 

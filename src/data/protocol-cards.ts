@@ -92,7 +92,7 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
   },
   {
     id: 'resource_gate',
-    labelZh: '资源阈值 / 拥有数量',
+    labelZh: '资源阈值 / 设施等级',
     order: 3,
     unlock: { kind: 'firstEnergyShortage' },
     template: {

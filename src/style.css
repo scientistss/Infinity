@@ -68,28 +68,49 @@ p { margin: 0; }
 }
 
 /* ---------- icons ---------- */
+/* Painted OGame-style WebP icons. The steel bevel frame is drawn here (thin
+   lit-from-above grey border, rounded corners, soft drop shadow) instead of
+   being baked into the bitmaps. */
 .icon {
   display: inline-block;
   flex: 0 0 auto;
-  width: 1.25em;
-  height: 1.25em;
-  vertical-align: -0.25em;
-  background-color: currentColor;
-  -webkit-mask: var(--icon) center / contain no-repeat;
-  mask: var(--icon) center / contain no-repeat;
+  width: 22px;
+  height: 22px;
+  vertical-align: middle;
+  object-fit: cover;
+  border: 1px solid #6c707a;
+  border-color: #9a9ea8 #5d616b #44474f #6c707a;
+  border-radius: 4px;
+  background: #0d0f14;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  user-select: none;
 }
-.icon-row { width: 40px; height: 40px; }
-.icon-head { width: 1.6rem; height: 1.6rem; vertical-align: -0.3rem; }
+.icon-row { width: 56px; height: 56px; border-radius: 6px; border-width: 2px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.icon-h2 { width: 30px; height: 30px; border-radius: 5px; }
+.icon-tab { width: 28px; height: 28px; border-radius: 5px; }
 
-.icon-metal, .icon-metal_mine { color: var(--metal); }
-.icon-crystal, .icon-crystal_mine { color: var(--crystal); }
-.icon-deuterium, .icon-deuterium_synth { color: var(--deuterium); }
-.icon-energy, .icon-solar_plant { color: var(--energy); }
-.icon-robotics_factory, .icon-save { color: #cfcfd4; }
-.icon-warp_core, .icon-launch, .icon-tech { color: var(--gold); }
-.icon-achievement { color: #f2c94c; }
-.icon-protocol_card,
-[class*="icon-card_"] { color: var(--violet); }
+/* Protocol card art + per-card glyph badge (the glyph keeps the old CSS-mask SVG). */
+.card-art { position: relative; display: inline-block; flex: 0 0 auto; width: 34px; height: 34px; }
+.card-art .icon { width: 34px; height: 34px; border-radius: 5px; }
+.card-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  border: 1px solid var(--violet);
+  background: #17121f;
+  box-shadow: 0 0 5px rgba(167, 139, 250, 0.55);
+}
+.card-badge::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  background-color: #c4b2ff;
+  -webkit-mask: var(--glyph) center / contain no-repeat;
+  mask: var(--glyph) center / contain no-repeat;
+}
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -106,29 +127,49 @@ p { margin: 0; }
   margin: 0 auto;
   padding: 0.7rem 0 0.4rem;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(12rem, 1fr) minmax(0, 44rem) minmax(12rem, 1fr);
   align-items: center;
   gap: 1rem;
 }
 
 .brand { display: flex; align-items: center; gap: 0.6rem; }
-.brand .logo { display: block; width: 32px; height: 32px; }
+.brand .logo { display: block; width: 36px; height: 36px; border-radius: 6px; border: 1px solid #6c707a; border-color: #9a9ea8 #5d616b #44474f #6c707a; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); }
 h1 { font-size: 1.15rem; letter-spacing: 0.02em; }
 h1 span { color: var(--gold); font-size: 0.8em; margin-left: 0.25rem; }
 
-.headline { text-align: center; }
-.have { font-size: 1.05rem; white-space: nowrap; }
-.big-amount {
-  display: inline-block;
-  margin: 0 0.35rem;
-  font-size: 2.3rem;
-  line-height: 1.1;
-  font-weight: 700;
-  color: var(--metal);
-  text-shadow: 0 0 10px var(--good-glow);
-  font-variant-numeric: tabular-nums;
+/* Three main resources with equal status: identical blocks side by side. */
+.res-main {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  width: 100%;
 }
-.per-sec { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.res-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  column-gap: 0.6rem;
+  align-items: center;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  min-width: 0;
+}
+.res-card .icon-res { grid-row: 1 / span 3; width: 40px; height: 40px; border-radius: 6px; }
+.res-name { color: var(--muted); font-size: 0.78rem; line-height: 1.2; }
+.res-amount {
+  font-size: 1.45rem;
+  line-height: 1.15;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.res-rate { color: var(--muted); font-size: 0.78rem; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.res-metal .res-amount { color: var(--metal); text-shadow: 0 0 8px rgba(59, 227, 122, 0.35); }
+.res-crystal .res-amount { color: var(--crystal); text-shadow: 0 0 8px rgba(95, 200, 240, 0.35); }
+.res-deuterium .res-amount { color: var(--deuterium); text-shadow: 0 0 8px rgba(192, 132, 252, 0.35); }
 
 .launch-box { display: flex; justify-content: flex-end; }
 
@@ -145,11 +186,11 @@ h1 span { color: var(--gold); font-size: 0.8em; margin-left: 0.25rem; }
   box-shadow: 0 0 10px var(--gold-glow), inset 0 0 8px rgba(232, 163, 58, 0.12);
   text-align: left;
 }
-.btn-prestige .icon { grid-row: 1 / span 2; width: 1.8rem; height: 1.8rem; }
+.btn-prestige .icon { grid-row: 1 / span 2; width: 34px; height: 34px; border-radius: 5px; }
 .prestige-title { font-weight: 700; }
 .prestige-gain { font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .btn-prestige:hover:not(:disabled) { background: rgba(232, 163, 58, 0.22); box-shadow: 0 0 16px var(--gold-glow); color: var(--gold); border-color: var(--gold); }
-.btn-prestige:disabled .icon { color: var(--dim); }
+.btn-prestige:disabled .icon { filter: grayscale(0.85) brightness(0.6); }
 
 .res-strip {
   width: min(1100px, calc(100% - 1.5rem));
@@ -157,9 +198,9 @@ h1 span { color: var(--gold); font-size: 0.8em; margin-left: 0.25rem; }
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 0.4rem 1.2rem;
-  padding: 0.2rem 0 0.5rem;
-  font-size: 0.85rem;
+  gap: 0.3rem 1.2rem;
+  padding: 0.1rem 0 0.5rem;
+  font-size: 0.8rem;
 }
 
 .chip { display: inline-flex; align-items: baseline; gap: 0.4rem; white-space: nowrap; }
@@ -167,8 +208,6 @@ h1 span { color: var(--gold); font-size: 0.8em; margin-left: 0.25rem; }
 .chip-name { color: var(--muted); }
 .chip strong { font-variant-numeric: tabular-nums; }
 .chip-rate { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.8rem; }
-.chip-crystal strong { color: var(--crystal); }
-.chip-deuterium strong { color: var(--deuterium); }
 .chip-energy .chip-rate { color: #d8cf9a; }
 .chip-warp strong { color: var(--gold); }
 
@@ -192,7 +231,10 @@ h1 span { color: var(--gold); font-size: 0.8em; margin-left: 0.25rem; }
   color: var(--muted);
   box-shadow: none;
 }
-.tab .icon { color: inherit; }
+.tab .icon { opacity: 0.75; }
+.tab:hover .icon,
+.tab.active .icon { opacity: 1; }
+.tab.active .icon { border-color: var(--good); box-shadow: 0 0 6px var(--good-glow); }
 .tab:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); background: var(--bg-2); box-shadow: none; }
 .tab.active,
 .tab.active:hover:not(:disabled) {
@@ -282,7 +324,7 @@ button.danger:hover:not(:disabled) { background: rgba(229, 83, 75, 0.14); box-sh
 
 .dim-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5.5rem minmax(12rem, 16rem) 9.5rem;
+  grid-template-columns: minmax(0, 1fr) 5.5rem minmax(12rem, 16rem) 11rem;
   gap: 0.75rem;
   align-items: center;
   padding: 0.6rem 0.4rem;
@@ -312,6 +354,7 @@ button.danger:hover:not(:disabled) { background: rgba(229, 83, 75, 0.14); box-sh
   text-align: center;
 }
 .buy-label { font-weight: 600; }
+.buy-max { white-space: nowrap; }
 .btn-cost { font-size: 0.75rem; color: #a9e9bf; font-variant-numeric: tabular-nums; line-height: 1.3; }
 .buy-btn:disabled .btn-cost { color: var(--dim); }
 
@@ -325,12 +368,14 @@ button.danger:hover:not(:disabled) { background: rgba(229, 83, 75, 0.14); box-sh
   box-shadow: 0 0 5px rgba(167, 139, 250, 0.3);
   text-align: left;
 }
-.catalog-card .icon { width: 1.5rem; height: 1.5rem; }
 .catalog-card:hover:not(:disabled) { background: var(--violet-soft); box-shadow: 0 0 12px rgba(167, 139, 250, 0.5); }
-.catalog-card:disabled .icon { color: var(--dim); }
+.catalog-card:disabled .icon { filter: grayscale(0.9) brightness(0.55); }
+.catalog-card:disabled .card-badge { border-color: var(--line-strong); box-shadow: none; }
+.catalog-card:disabled .card-badge::before { background-color: var(--dim); }
 
 .protocol-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); gap: 0.6rem; }
 .protocol-slot { padding: 0.6rem 0.7rem; border: 1px solid var(--line); background: var(--panel); }
+.slot-controls .icon { width: 24px; height: 24px; }
 .slot-controls,
 .slot-params { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
 .slot-controls button { padding: 0.25rem 0.55rem; font-size: 0.82rem; }
@@ -379,7 +424,7 @@ select {
   background: var(--panel);
 }
 .tech-head { display: flex; align-items: center; gap: 0.55rem; }
-.tech-head .icon-row { width: 28px; height: 28px; }
+.tech-head .icon-row { width: 40px; height: 40px; border-width: 1px; border-radius: 6px; }
 .tech-head h3 { flex: 1; font-size: 0.92rem; }
 .tech-head small { display: block; color: var(--dim); font-weight: 400; font-size: 0.72rem; }
 .tech-owned { font-size: 0.82rem; color: var(--gold); white-space: nowrap; }
@@ -408,7 +453,7 @@ select {
   background: var(--panel);
   color: var(--muted);
 }
-.ach .ach-icon { width: 2.2rem; height: 2.2rem; color: var(--dim); }
+.ach .ach-icon { width: 52px; height: 52px; border-radius: 6px; filter: grayscale(1) brightness(0.45); opacity: 0.8; }
 .ach strong { color: var(--ink); font-size: 0.88rem; }
 .ach p { font-size: 0.74rem; flex: 1; }
 .ach-progress { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
@@ -418,7 +463,7 @@ select {
   background: rgba(59, 227, 122, 0.08);
   box-shadow: inset 0 0 12px rgba(59, 227, 122, 0.15);
 }
-.ach.unlocked .ach-icon { color: #f2c94c; }
+.ach.unlocked .ach-icon { filter: none; opacity: 1; box-shadow: 0 0 10px rgba(242, 201, 76, 0.35), 0 1px 3px rgba(0, 0, 0, 0.65); }
 .ach.unlocked .ach-progress { color: var(--good); }
 
 /* ---------- save ---------- */
@@ -472,12 +517,16 @@ textarea {
 }
 
 @media (max-width: 560px) {
-  .big-amount { font-size: 1.8rem; }
+  .res-main { gap: 0.3rem; min-width: 0; }
+  .res-card { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; padding: 0.35rem 0.3rem; }
+  .res-card .icon-res { grid-row: auto; width: 32px; height: 32px; margin-bottom: 0.15rem; }
+  .res-amount { font-size: 1.15rem; max-width: 100%; }
+  .res-rate { font-size: 0.7rem; }
   .tab { min-width: 0; flex: 1 1 30%; }
   .dim-row { grid-template-columns: 1fr 1fr; }
   .dim-name { grid-column: 1 / -1; }
   .dim-owned { grid-column: 1 / -1; text-align: left; }
-  .icon-row { width: 32px; height: 32px; }
+  .icon-row { width: 48px; height: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

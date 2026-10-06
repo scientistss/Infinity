@@ -52,7 +52,7 @@ const NODES: Record<CurvatureId, CurvatureTechDef> = {
     name: "成本缓和",
     nameEn: "Growth Cut",
     effect: "全部生产者成本成长 −0.01",
-    note: "已建数量不变，之后的价格按新成长计算。",
+    note: "已有设施等级不变，之后的价格按新成长计算。",
     cost: 1,
     maxRank: 1,
   },

@@ -114,7 +114,7 @@ async function handleAction(action: UiAction): Promise<void> {
     const before = state.producers[action.id];
     state = buy(state, action.id, action.mode === "max" ? "max" : 1);
     const gained = state.producers[action.id].sub(before);
-    status = gained.gte(1) ? `已购买 ${gained.toFixed(0)} 台` : "资源不足";
+    status = gained.gte(1) ? `已升级 ${gained.toFixed(0)} 级` : "资源不足";
     if (gained.gte(1)) persist();
   } else if (action.type === "buy-tech") {
     const next = buyCurvature(state, action.id);
