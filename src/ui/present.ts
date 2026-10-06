@@ -1,3 +1,7 @@
+import { positionBonus } from "../game/galaxy";
+import { boosterFactor } from "../game/boosters";
+import { presentEmpire, type EmpireView, type GalaxyCursor } from "./empire-present";
+import { activePlanet, withPlanet } from "../game/empire";
 import { CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
 import { arcadeSymbolDef } from "../data/arcade";
 import { arcadeView, type ArcadeView } from "./arcade-present";
@@ -269,6 +273,7 @@ export interface TechView {
 }
 
 export interface ViewModel {
+  empire: EmpireView;
   telemetry: string;
   multiplier: string;
   played: string;
@@ -304,6 +309,7 @@ export interface ViewModel {
 }
 
 export interface PresentInput {
+  galaxyCursor?: GalaxyCursor;
   status: string;
   banner: string | null;
   notice: string | null;
@@ -315,6 +321,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
   const open = unlockedSlotCount(state);
   const unspent = unspentCores(state);
   return {
+    empire: presentEmpire(state, input.galaxyCursor),
     telemetry: formatCount(state.warpCores),
     multiplier: `全局 ${formatMultiplier(big(eco.global))}`,
     played: formatPlayed(state.totalTime),
@@ -364,7 +371,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
 // ---------- top bar ----------
 
 function resourceView(state: GameState, eco: EconomySnapshot, id: ResourceId): ResourceView {
-  const stock = state.resources[id].toNumber();
+  const stock = activePlanet(state).resources[id].toNumber();
   const cap = eco.caps[id];
   const ratio = cap > 0 ? stock / cap : 0;
   const net = eco.net[id];
@@ -375,7 +382,7 @@ function resourceView(state: GameState, eco: EconomySnapshot, id: ResourceId): R
   else if (net < 0 && stock > 0) eta = `约 ${formatDuration(stock / -net)} 后耗尽`;
   return {
     id,
-    amount: formatAmount(state.resources[id]),
+    amount: formatAmount(activePlanet(state).resources[id]),
     cap: `/ ${formatAmount(big(cap))}`,
     fillPct: Math.max(0, Math.min(100, ratio * 100)),
     fill: ratio >= 1 ? "full" : ratio >= WARN_RATIO ? "warn" : "ok",
@@ -392,7 +399,7 @@ function energyLine(eco: EconomySnapshot): string {
 // ---------- queue ----------
 
 function queueView(state: GameState): QueueView {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const capacity = queueCapacity(state);
   const items = planet.buildQueue.map((order, index): QueueItemView => {
     const def = buildingById(order.building);
@@ -517,7 +524,7 @@ function darkMatterView(state: GameState): DarkMatterView {
 
 /** The research tab appears once a research lab stands (or any research exists, e.g. after a launch). */
 export function researchVisible(state: GameState): boolean {
-  if (state.planet.buildings.research_lab >= 1 || state.research.queue.length > 0) return true;
+  if (activePlanet(state).buildings.research_lab >= 1 || state.research.queue.length > 0) return true;
   return Object.values(state.research.levels).some((level) => level > 0);
 }
 
@@ -596,7 +603,7 @@ function researchView(state: GameState, def: ResearchDef): ResearchView {
 function researchEffect(state: GameState, def: ResearchDef, target: number): string {
   const levels = state.research.levels;
   if (def.id === "energy_tech") {
-    const b = state.planet.buildings.fusion_reactor;
+    const b = activePlanet(state).buildings.fusion_reactor;
     const now = fusionOutputPerHour(b, target - 1);
     const next = fusionOutputPerHour(b, target);
     return `${def.effect}。下一级：核聚变供电 ${formatAmount(big(now))} → ${formatAmount(big(next))}`;
@@ -616,7 +623,7 @@ function researchEffect(state: GameState, def: ResearchDef, target: number): str
 // ---------- building cards ----------
 
 function withLevel(state: GameState, id: BuildingId, level: number): GameState {
-  return { ...state, planet: { ...state.planet, buildings: { ...state.planet.buildings, [id]: level } } };
+  return { ...withPlanet(state, { planet: { ...activePlanet(state), buildings: { ...activePlanet(state).buildings, [id]: level } } }) };
 }
 
 function costLine(cost: ReturnType<typeof canEnqueue>["cost"]): string {
@@ -633,7 +640,7 @@ function signed(value: number, unit: string): string {
 }
 
 function buildingView(state: GameState, eco: EconomySnapshot, def: BuildingDef): BuildingView {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const check = canEnqueue(state, def.id);
   const target = check.targetLevel;
   const missing = missingRequirements(state, def);
@@ -665,7 +672,7 @@ function effectOf(
   target: number,
 ): { effect: string; gainPerSecond: number } {
   const id = def.id;
-  const b = state.planet.buildings;
+  const b = activePlanet(state).buildings;
   if (id === "metal_storage" || id === "crystal_storage" || id === "deuterium_tank") {
     return { effect: `容量 ${formatAmount(big(storageCapacity(target - 1)))} → ${formatAmount(big(storageCapacity(target)))}`, gainPerSecond: 0 };
   }
@@ -704,10 +711,10 @@ function effectOf(
 }
 
 function productionSetting(state: GameState, id: ProductionBuildingId): ProductionSettingView {
-  const level = state.planet.buildings[id];
+  const level = activePlanet(state).buildings[id];
   return {
     id,
-    value: String(Math.round(pctOf(state.planet, id) * 100)),
+    value: String(Math.round(pctOf(activePlanet(state), id) * 100)),
     note: `等级 ${level}`,
   };
 }
@@ -715,15 +722,15 @@ function productionSetting(state: GameState, id: ProductionBuildingId): Producti
 // ---------- overview ----------
 
 function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const b = planet.buildings;
   const g = eco.global;
   const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
   const plasma = state.research.levels.plasma_tech;
   const plasmaFactor = {
-    metal_mine: 1 + PLASMA_BONUS.metal * plasma,
-    crystal_mine: 1 + PLASMA_BONUS.crystal * plasma,
-    deuterium_synth: 1 + PLASMA_BONUS.deuterium * plasma,
+    metal_mine: (1 + PLASMA_BONUS.metal * plasma) * boosterFactor(state,"metal") * (planet.homeworld ? 1 : positionBonus(planet.coordinates.position,"metal")),
+    crystal_mine: (1 + PLASMA_BONUS.crystal * plasma) * boosterFactor(state,"crystal") * (planet.homeworld ? 1 : positionBonus(planet.coordinates.position,"crystal")),
+    deuterium_synth: (1 + PLASMA_BONUS.deuterium * plasma) * boosterFactor(state,"deuterium"),
   };
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
     perSecond(
@@ -744,7 +751,7 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
       key: "caps",
       cells: [
         "库存 / 上限",
-        ...RESOURCE_IDS.map((id) => `${formatAmount(state.resources[id])} / ${formatAmount(big(eco.caps[id]))}`),
+        ...RESOURCE_IDS.map((id) => `${formatAmount(activePlanet(state).resources[id])} / ${formatAmount(big(eco.caps[id]))}`),
       ],
     },
   ];

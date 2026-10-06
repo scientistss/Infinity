@@ -1,6 +1,8 @@
-# Infinity — 游戏设计大纲 v0.4
+# Infinity — 游戏设计大纲（P1–P3 基线与 P4 扩展）
 
-**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file is the design source of truth. The repository today is the planet-surface slice described at the end: OGame-style buildings by level with a build queue, storage caps and planet fields (port phase 1), plus a running protocol-card engine.
+> **当前实现状态：v0.5.0-alpha.1 / 存档 v9。** 下文保留原有分阶段设计和 P1–P3 数值说明，不代表每项规划都已经实现。P4 的多星球、银河、运输/部署/殖民/侦察与消息已经接入；尚未实现的 P4 内容、数值取舍、状态结构和验收结果以 [P4_IMPLEMENTATION.md](P4_IMPLEMENTATION.md) 为准。原文中“舰队待 P4”“单星球”等旧切片描述被该实现说明取代；没有开放战斗或更高层重置。
+
+**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file preserves the design baseline. P4_IMPLEMENTATION.md records the current implementation and its limits. The earlier planet-surface slice uses: OGame-style buildings by level with a build queue, storage caps and planet fields (port phase 1), plus a running protocol-card engine.
 
 > 类型：网页放置/增量 · Vite + TypeScript + break_infinity.js（大数走 `src/game/decimal.ts`）
 > 核心卖点：**可视化协议卡** × **OGame 式星际扩张**

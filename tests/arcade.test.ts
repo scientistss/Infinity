@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { ARCADE, ARCADE_SYMBOL_DEFS, BOARD, EMPTY_SYMBOLS, GOOD_SYMBOLS, LUCKY_EXCLUDED } from "../src/data/arcade";
 import {
@@ -181,7 +182,7 @@ describe("prizes", () => {
     const window = productionMe(state) * 600;
     const expected = Math.floor(Math.min(cap * 0.35, window) / 2);
     const after = revealRun(state, "manual").state;
-    expect(after.resources.crystal.sub(state.resources.crystal).toNumber()).toBe(expected);
+    expect(activePlanet(after).resources.crystal.sub(activePlanet(state).resources.crystal).toNumber()).toBe(expected);
     expect(cap).toBe(40000 * 5);
   });
 
@@ -192,7 +193,7 @@ describe("prizes", () => {
     expect(highBig.darkMatter.toNumber()).toBe(700);
     const jackpot = revealRun(withRun(opened(), tileOf("jackpot"), false, 0.5, 0), "manual");
     expect(jackpot.state.darkMatter.toNumber()).toBe(1000);
-    expect(jackpot.state.resources.metal.gt(opened().resources.metal)).toBe(true);
+    expect(activePlanet(jackpot.state).resources.metal.gt(activePlanet(opened()).resources.metal)).toBe(true);
     expect(jackpot.state.arcade.stats.darkMatter).toBe(1000);
   });
 
@@ -238,7 +239,7 @@ describe("drifting ships (P3)", () => {
     const cap = prizeCap(state);
     const valueMe = Math.min(cap * 0.35, productionMe(state) * 600) / 2;
     const after = revealRun(state, "manual");
-    const ships = after.state.planet.units.light_fighter;
+    const ships = activePlanet(after.state).units.light_fighter;
     expect(ships).toBe(Math.floor(valueMe / 5000));
     expect(after.result!.lines.join("")).toContain("轻型战斗机");
     expect(after.state.arcade.stats.hits.drifter).toBe(1);
@@ -248,11 +249,11 @@ describe("drifting ships (P3)", () => {
     const state = setBet(opened(), "drifter", 3).state;
     const unit = betUnitDeut(state);
     const hit = revealRun(withRun(state, tileOf("empty")), "manual").state;
-    expect(hit.planet.units.light_fighter).toBe(0);
+    expect(activePlanet(hit).units.light_fighter).toBe(0);
     const win = revealRun(withRun(state, tileOf("drifter"), false, 0, 0), "manual").state;
     const prize = Math.min(prizeCap(state) * 0.2, productionMe(state) * 600) / 2;
     const expected = Math.floor(prize / 5000) + Math.floor((3 * unit * 3 * betOdds("drifter")) / 5000);
-    expect(Math.abs(win.planet.units.light_fighter - expected)).toBeLessThanOrEqual(1);
+    expect(Math.abs(activePlanet(win).units.light_fighter - expected)).toBeLessThanOrEqual(1);
   });
 
   it("the supply box can hold DETROIT", () => {
@@ -269,14 +270,14 @@ describe("bets and top-up", () => {
     const cap = prizeCap(state);
     const prize = Math.floor(Math.min(cap * 0.2, productionMe(state) * 600));
     const win = Math.floor(2 * unit * 3 * betOdds("metal"));
-    const metalGain = hit.resources.metal.sub(state.resources.metal).toNumber();
+    const metalGain = activePlanet(hit).resources.metal.sub(activePlanet(state).resources.metal).toNumber();
     expect(metalGain).toBeGreaterThanOrEqual(prize + win - 2);
     expect(metalGain).toBeLessThanOrEqual(prize + win + 2);
-    expect(state.resources.deuterium.sub(hit.resources.deuterium).toNumber()).toBeGreaterThanOrEqual(2 * unit - 1);
+    expect(activePlanet(state).resources.deuterium.sub(activePlanet(hit).resources.deuterium).toNumber()).toBeGreaterThanOrEqual(2 * unit - 1);
     const miss = revealRun(withRun(state, tileOf("empty")), "manual").state;
-    expect(miss.resources.metal.eq(state.resources.metal)).toBe(true);
-    expect(state.resources.deuterium.sub(miss.resources.deuterium).toNumber()).toBe(2 * unit);
-    state = { ...state, resources: { ...state.resources, deuterium: big(0) } };
+    expect(activePlanet(miss).resources.metal.eq(activePlanet(state).resources.metal)).toBe(true);
+    expect(activePlanet(state).resources.deuterium.sub(activePlanet(miss).resources.deuterium).toNumber()).toBe(2 * unit);
+    state = { ...withPlanet(state, { resources: { ...activePlanet(state).resources, deuterium: big(0) } }) };
     const broke = revealRun(withRun(state, tileOf("metal")), "manual");
     expect(broke.result!.lines[0]).toContain("本次未押注");
   });
@@ -288,7 +289,7 @@ describe("bets and top-up", () => {
   });
 
   it("top-up price doubles within 24 h of game time and the store holds 5 runs", () => {
-    let state = { ...opened(), resources: { ...opened().resources, deuterium: big(1e9) } };
+    let state = { ...withPlanet(opened(), { resources: { ...activePlanet(opened()).resources, deuterium: big(1e9) } }) };
     const p0 = topUpPrice(state);
     state = topUp(state).state;
     expect(topUpPrice(state)).toBe(p0 * 2);

@@ -1,3 +1,4 @@
+import { activePlanet } from "../game/empire";
 import { big } from "../game/decimal";
 import {
   OFFLINE_BASE_SECONDS,
@@ -59,14 +60,14 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
   const rawSeconds = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
   const appliedSeconds = Math.min(rawSeconds, capSeconds);
   const before = new Set(state.unlocked);
-  const beforeResources = state.resources;
+  const beforeResources = activePlanet(state).resources;
   const log = emptyTickLog();
   const next = tick(state, appliedSeconds, "offline", log);
   // Production while away. Builds spend resources, so prefer this-run lifetime output unless a launch reset it.
   const sameRun = next.stats.launches === state.stats.launches;
   const gains = emptyGains();
   for (const id of RESOURCE_IDS) {
-    const delta = sameRun ? next.lifetime[id].sub(state.lifetime[id]) : next.resources[id].sub(beforeResources[id]);
+    const delta = sameRun ? next.lifetime[id].sub(state.lifetime[id]) : activePlanet(next).resources[id].sub(beforeResources[id]);
     gains[id] = delta.gt(0) ? delta : big(0);
   }
   return {

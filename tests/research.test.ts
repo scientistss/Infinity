@@ -1,3 +1,4 @@
+import { activePlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { equipCard, unlockedSlotCount, enqueueCheapest, refreshUnlocks } from "../src/automation/engine";
 import { catchUp } from "../src/core/offline";
@@ -59,7 +60,7 @@ describe("research queue", () => {
     let state = lab(1, 10000);
     expect(researchCapacity(state)).toBe(2);
     state = enqueueResearch(state, "energy_tech", "manual").state;
-    expect(state.resources.crystal.toNumber()).toBe(10000 - 800);
+    expect(activePlanet(state).resources.crystal.toNumber()).toBe(10000 - 800);
     expect(state.research.queue[0]?.totalSeconds).toBeCloseTo(2.4, 9);
     state = enqueueResearch(state, "energy_tech", "manual").state;
     expect(state.research.queue[1]?.targetLevel).toBe(2);
@@ -71,12 +72,12 @@ describe("research queue", () => {
     let state = lab(1, 10000);
     state = enqueueResearch(state, "computer_tech", "manual").state;
     state = enqueueResearch(state, "computer_tech", "manual").state;
-    expect(state.resources.crystal.toNumber()).toBe(10000 - 400 - 800);
+    expect(activePlanet(state).resources.crystal.toNumber()).toBe(10000 - 400 - 800);
     const cancelled = cancelResearch(state, 0);
     expect(cancelled.ok).toBe(true);
     expect(cancelled.state.research.queue).toHaveLength(1);
     expect(cancelled.state.research.queue[0]?.targetLevel).toBe(1);
-    expect(cancelled.state.resources.crystal.toNumber()).toBe(10000 - 400);
+    expect(activePlanet(cancelled.state).resources.crystal.toNumber()).toBe(10000 - 400);
     expect(cancelled.state.research.queue[0]?.totalSeconds).toBeGreaterThan(0);
   });
 
@@ -96,7 +97,7 @@ describe("research queue", () => {
     expect(economy(powered).supply).toBeGreaterThan(300000);
     const result = enqueueResearch(powered, "graviton_tech", "manual");
     expect(result.ok).toBe(true);
-    expect(result.state.resources.metal.eq(powered.resources.metal)).toBe(true);
+    expect(activePlanet(result.state).resources.metal.eq(activePlanet(powered).resources.metal)).toBe(true);
   });
 
   it("tick finishes research and levels up; long and short ticks agree", () => {
@@ -113,7 +114,7 @@ describe("research queue", () => {
     let short = state;
     for (let i = 0; i < 80; i += 1) short = tick(short, 0.25);
     expect(short.research.levels.energy_tech).toBe(2);
-    expect(short.resources.metal.sub(long.resources.metal).abs().toNumber()).toBeLessThan(1e-3);
+    expect(activePlanet(short).resources.metal.sub(activePlanet(long).resources.metal).abs().toNumber()).toBeLessThan(1e-3);
   });
 
   it("offline catch-up reports finished research", () => {
@@ -154,7 +155,7 @@ describe("research effects", () => {
     expect(canEnqueue(withResearch(state, { computer_tech: 10 }), "nanite_factory").ok).toBe(true);
     // Levels already built stay even without the research.
     const built = stateWith({ fusion_reactor: 3, deuterium_synth: 5 });
-    expect(built.planet.buildings.fusion_reactor).toBe(3);
+    expect(activePlanet(built).buildings.fusion_reactor).toBe(3);
   });
 
   it("launch keeps research levels and dark matter, drops queued research", () => {
@@ -169,7 +170,7 @@ describe("research effects", () => {
     // Dark matter carries over (a new achievement such as the first launch can add to it).
     expect(next.darkMatter.gte(state.darkMatter)).toBe(true);
     expect(next.darkMatter.gte(1234)).toBe(true);
-    expect(next.planet.buildings.research_lab).toBe(0);
+    expect(activePlanet(next).buildings.research_lab).toBe(0);
   });
 });
 
@@ -188,7 +189,7 @@ describe("research protocols", () => {
     const state = stateWith({ metal_mine: 5, crystal_mine: 1, deuterium_synth: 3 }, { metal: 1e6, crystal: 1e6, deuterium: 1e6 });
     const result = enqueueCheapest(state, "mines");
     expect(result.ok).toBe(true);
-    expect(result.state.planet.buildQueue[0]?.building).toBe("crystal_mine");
+    expect(activePlanet(result.state).buildQueue[0]?.building).toBe("crystal_mine");
     const broke = stateWith({ metal_mine: 5 }, { metal: 0, crystal: 0, deuterium: 0 });
     const waiting = enqueueCheapest(broke, "mines");
     expect(waiting.ok).toBe(false);

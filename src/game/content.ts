@@ -26,9 +26,10 @@ export interface ResourceDef {
  * v6 (P1): OGame buildings by level, build queue, storage caps, planet fields.
  * v7 (P2): research levels + research queue, dark matter, 12 protocol slots (design doc §4).
  * v8 (P3): planet.units (ships and defenses) and planet.shipyardQueue (design doc §17).
+ * v9 (P4 foundation): canonical planets[], research origin, fleets, universe seed and messages.
  * Test-phase policy: no migration. Older saves start a fresh game with a one-time notice.
  */
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.save.v1";
 

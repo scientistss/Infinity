@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { canEnqueue, cancel, completeActive, enqueue, nextTargetLevel } from "../src/game/queue";
 import { usedFields } from "../src/game/planet";
@@ -8,14 +9,14 @@ describe("build queue", () => {
     const start = stateWith({}, { metal: 1000, crystal: 1000 });
     const queued = enqueue(start, "metal_mine", "manual");
     expect(queued.ok).toBe(true);
-    expect(queued.state.resources.metal.toNumber()).toBe(940);
-    expect(queued.state.resources.crystal.toNumber()).toBe(985);
-    expect(queued.state.planet.buildQueue).toHaveLength(1);
+    expect(activePlanet(queued.state).resources.metal.toNumber()).toBe(940);
+    expect(activePlanet(queued.state).resources.crystal.toNumber()).toBe(985);
+    expect(activePlanet(queued.state).buildQueue).toHaveLength(1);
     const cancelled = cancel(queued.state, 0);
     expect(cancelled.ok).toBe(true);
-    expect(cancelled.state.resources.metal.toNumber()).toBe(1000);
-    expect(cancelled.state.resources.crystal.toNumber()).toBe(1000);
-    expect(cancelled.state.planet.buildQueue).toHaveLength(0);
+    expect(activePlanet(cancelled.state).resources.metal.toNumber()).toBe(1000);
+    expect(activePlanet(cancelled.state).resources.crystal.toNumber()).toBe(1000);
+    expect(activePlanet(cancelled.state).buildQueue).toHaveLength(0);
   });
 
   it("rejects a third order at capacity 2 with a reason", () => {
@@ -30,27 +31,27 @@ describe("build queue", () => {
 
   it("queues the same building twice at L+1 and L+2 with different prices", () => {
     let state = rich(stateWith({ metal_mine: 4 }));
-    const before = state.resources.metal;
+    const before = activePlanet(state).resources.metal;
     state = enqueue(state, "metal_mine", "manual").state;
     state = enqueue(state, "metal_mine", "manual").state;
-    const [a, b] = state.planet.buildQueue;
+    const [a, b] = activePlanet(state).buildQueue;
     expect(a?.targetLevel).toBe(5);
     expect(b?.targetLevel).toBe(6);
     expect(a?.paid.metal.toNumber()).toBe(Math.floor(60 * 1.5 ** 4));
     expect(b?.paid.metal.toNumber()).toBe(Math.floor(60 * 1.5 ** 5));
-    expect(before.sub(state.resources.metal).toNumber()).toBe(303 + 455);
+    expect(before.sub(activePlanet(state).resources.metal).toNumber()).toBe(303 + 455);
   });
 
   it("computes duration only when an order starts", () => {
     let state = rich(stateWith({ robotics_factory: 0, metal_mine: 15 }));
     state = enqueue(state, "robotics_factory", "manual").state;
     state = enqueue(state, "metal_mine", "manual").state;
-    const waiting = state.planet.buildQueue[1];
-    expect(state.planet.buildQueue[0]?.totalSeconds).toBeGreaterThan(0);
+    const waiting = activePlanet(state).buildQueue[1];
+    expect(activePlanet(state).buildQueue[0]?.totalSeconds).toBeGreaterThan(0);
     expect(waiting?.totalSeconds).toBe(0);
     const done = completeActive(state);
     expect(done.completed).toEqual({ building: "robotics_factory", level: 1 });
-    const started = done.state.planet.buildQueue[0];
+    const started = activePlanet(done.state).buildQueue[0];
     // Metal mine 16 at S=600 with R=1: (M+C)/(2500·1·2) h → ×6 s.
     const m = Math.floor(60 * 1.5 ** 15);
     const c = Math.floor(15 * 1.5 ** 15);
@@ -61,22 +62,22 @@ describe("build queue", () => {
     let state = rich(stateWith({ metal_mine: 4 }));
     state = enqueue(state, "metal_mine", "manual").state; // → 5
     state = enqueue(state, "metal_mine", "manual").state; // → 6
-    const metal = state.resources.metal;
+    const metal = activePlanet(state).resources.metal;
     const result = cancel(state, 0);
-    const left = result.state.planet.buildQueue[0];
+    const left = activePlanet(result.state).buildQueue[0];
     expect(left?.targetLevel).toBe(5);
     expect(left?.paid.metal.toNumber()).toBe(303);
     expect(left?.totalSeconds).toBeGreaterThan(0);
     // Refund: the cancelled 303 plus the 455 − 303 price difference.
-    expect(result.state.resources.metal.sub(metal).toNumber()).toBe(303 + (455 - 303));
+    expect(activePlanet(result.state).resources.metal.sub(metal).toNumber()).toBe(303 + (455 - 303));
   });
 
   it("refunds may exceed the storage cap", () => {
     let state = stateWith({}, { metal: 9_990, crystal: 600 });
     state = enqueue(state, "metal_mine", "manual").state;
-    state = { ...state, resources: { ...state.resources, metal: state.resources.metal.add(60) } };
+    state = { ...withPlanet(state, { resources: { ...activePlanet(state).resources, metal: activePlanet(state).resources.metal.add(60) } }) };
     const result = cancel(state, 0);
-    expect(result.state.resources.metal.toNumber()).toBe(10_050);
+    expect(activePlanet(result.state).resources.metal.toNumber()).toBe(10_050);
   });
 
   it("checks built prerequisites, not queued ones", () => {
@@ -103,7 +104,7 @@ describe("build queue", () => {
 
   it("counts queued orders against planet fields", () => {
     let state = rich(stateWith({ metal_mine: 100, crystal_mine: 62 }));
-    expect(usedFields(state.planet)).toBe(162);
+    expect(usedFields(activePlanet(state))).toBe(162);
     state = enqueue(state, "solar_plant", "manual").state;
     expect(canEnqueue(state, "solar_plant").reason).toContain("星球格子已满");
   });
@@ -111,7 +112,7 @@ describe("build queue", () => {
   it("next target level includes queued orders", () => {
     let state = rich(stateWith({ solar_plant: 3 }));
     state = enqueue(state, "solar_plant", "manual").state;
-    expect(nextTargetLevel(state.planet, "solar_plant")).toBe(5);
+    expect(nextTargetLevel(activePlanet(state), "solar_plant")).toBe(5);
   });
 
   it("manual orders count as manual actions, protocol orders do not", () => {

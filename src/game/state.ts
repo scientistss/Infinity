@@ -8,6 +8,7 @@ import {
   PROTOCOL_SLOT_COUNT,
   RESOURCE_IDS,
   type GameState,
+  type ResourceAmounts,
   type PlayerStats,
   type ProtocolLoadout,
   type ProtocolSlotState,
@@ -49,7 +50,7 @@ export function createDefaultProtocols(): ProtocolLoadout {
 }
 
 /** OGame new-account start: 500 metal, 500 crystal, no buildings. Base production keeps it moving. */
-export function startingResources(): GameState["resources"] {
+export function startingResources(): ResourceAmounts {
   return {
     metal: big(STARTING_RESOURCES.metal),
     crystal: big(STARTING_RESOURCES.crystal),
@@ -59,8 +60,12 @@ export function startingResources(): GameState["resources"] {
 
 export function createInitialState(): GameState {
   return {
-    resources: startingResources(),
-    planet: createPlanet(),
+    planets: [{ ...createPlanet(), resources: startingResources() }],
+    activePlanetId: "home",
+    universe: { seed: 0x1f17a17e },
+    fleets: [],
+    messages: [],
+    nextFleetId: 1,
     research: createResearch(),
     darkMatter: big(0),
     items: { kraken_box: 0, newtron_box: 0, detroit_box: 0, booster_box: 0, supply_pack: 0 },

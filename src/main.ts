@@ -1,3 +1,6 @@
+import { sendFleet, quoteFlight, recallFleet, abandonColony } from "./game/fleet";
+import { validCoordinates } from "./game/galaxy";
+import { activePlanet, selectPlanet } from "./game/empire";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
 import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
@@ -14,7 +17,7 @@ import {
 } from "./automation/engine";
 import { buildingById } from "./data/buildings";
 import { big } from "./game/decimal";
-import { formatAmount } from "./game/format";
+import { formatAmount, formatDuration } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
 import { cancelResearch, enqueueResearch } from "./game/research";
 import { cancelUnits, orderUnits } from "./game/shipyard";
@@ -59,6 +62,7 @@ if (store) {
 }
 
 let state: GameState = loaded.state;
+let galaxyCursor = { galaxy: activePlanet(state).coordinates.galaxy, system: activePlanet(state).coordinates.system };
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
 let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
@@ -99,12 +103,35 @@ function frame(now: number): void {
 }
 
 function render(): void {
-  view.update(present(state, { status, banner, notice, catchup }));
+  view.update(present(state, { status, banner, notice, catchup, galaxyCursor }));
 }
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
-  if (action.type === "dismiss-offline") {
+  if (action.type === "select-planet") {
+    state = selectPlanet(state, action.id);
+    status = `已切换至 ${activePlanet(state).name}，库存和建筑均为该星球独立数据`;
+    persist();
+  } else if (action.type === "galaxy-browse") {
+    if (validCoordinates({ galaxy: action.galaxy, system: action.system, position: 1 })) galaxyCursor = { galaxy: action.galaxy, system: action.system };
+    else status = "银河或恒星系编号超出范围";
+  } else if (action.type === "preview-flight") {
+    const quote = quoteFlight(state, action.request);
+    status = quote.ok ? `单程 ${formatDuration(quote.duration)} · 往返燃料 ${formatAmount(quote.fuel)} 重氢 · 货舱 ${formatAmount(quote.capacity)}（含燃料）` : quote.reason;
+  } else if (action.type === "send-fleet") {
+    const result = sendFleet(state, action.request);
+    state = result.state; status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "recall-fleet") {
+    const result = recallFleet(state, action.id);
+    state = result.state; status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "abandon-colony") {
+    if (!window.confirm("放弃当前殖民地会永久删除其资源、建筑、队列及驻留舰船，不退款。确定继续？")) return;
+    const result = abandonColony(state, state.activePlanetId);
+    state = result.state; status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "dismiss-offline") {
     catchup = null;
   } else if (action.type === "dismiss-notice") {
     notice = null;
@@ -191,7 +218,7 @@ async function handleAction(action: UiAction): Promise<void> {
     persist();
   } else if (action.type === "setProduction") {
     state = setProductionPct(state, action.id, action.pct);
-    status = `${buildingById(action.id).nameZh}产量设为 ${state.planet.productionPct[action.id]}%`;
+    status = `${buildingById(action.id).nameZh}产量设为 ${activePlanet(state).productionPct[action.id]}%`;
     persist();
   } else if (action.type === "protocol-palette") {
     const result = equipFirstEmpty(state, action.cardId);
@@ -231,7 +258,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源、建筑、建造队列和产量设置，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会清空全部殖民地、在途舰队和所有星球资源、建筑、舰船、防御及队列，只保留新母星；进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";

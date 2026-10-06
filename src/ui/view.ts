@@ -1,3 +1,6 @@
+import { empirePanelsHtml, planetSelectorHtml, readFlight, setFlightTarget, updateEmpirePanel } from "./empire-panel";
+import type { FleetRequest } from "../game/fleet";
+import { GALAXY } from "../game/galaxy";
 import { ACHIEVEMENTS } from "../data/achievements";
 import { CURVATURE_TECH, isCurvatureId } from "../data/curvature-tech";
 import { CARD_CATALOG } from "../data/protocol-cards";
@@ -27,6 +30,11 @@ import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyar
 import { isUnitId, type UnitId } from "../data/units";
 
 export type UiAction =
+  | { type: "select-planet"; id: string }
+  | { type: "galaxy-browse"; galaxy: number; system: number }
+  | { type: "send-fleet" | "preview-flight"; request: FleetRequest }
+  | { type: "recall-fleet"; id: number }
+  | { type: "abandon-colony" }
   | { type: "scrape" }
   | { type: "enqueue"; id: BuildingId }
   | { type: "cancelQueue"; index: number }
@@ -89,7 +97,25 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       selectTab(root, button.dataset.tab);
       return;
     }
+    if (button.dataset.route) {
+      setFlightTarget(root, button.dataset.route, button.dataset.mission ?? "transport");
+      selectTab(root, "fleet");
+      return;
+    }
     const action = button.dataset.action;
+    if (action === "select-planet") onAction({ type: "select-planet", id: button.dataset.planet ?? "" });
+    if (action === "abandon-colony") onAction({ type: "abandon-colony" });
+    if (action === "recall-fleet") onAction({ type: "recall-fleet", id: Number(button.dataset.fleet) });
+    if (action === "send-fleet" || action === "preview-flight") onAction({ type: action, request: readFlight(root) });
+    if (action === "galaxy-browse" || action === "galaxy-prev" || action === "galaxy-next") {
+      const galaxy = Number((root.querySelector("#browse-galaxy") as HTMLInputElement).value);
+      const field = root.querySelector("#browse-system") as HTMLInputElement;
+      let system = Number(field.value);
+      if (action === "galaxy-prev") system = (system + GALAXY.systems - 2) % GALAXY.systems + 1;
+      if (action === "galaxy-next") system = system % GALAXY.systems + 1;
+      field.value = String(system);
+      onAction({ type: "galaxy-browse", galaxy, system });
+    }
     if (action === "scrape") onAction({ type: "scrape" });
     if (action === "prestige") onAction({ type: "prestige" });
     if (action === "save") onAction({ type: "save" });
@@ -182,6 +208,10 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   root.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (target instanceof HTMLSelectElement && target.id === "active-planet") {
+      onAction({ type: "select-planet", id: target.value });
+      return;
+    }
     if (target instanceof HTMLSelectElement && target.dataset.prod) {
       const id = target.dataset.prod;
       const pct = Number(target.value);
@@ -241,6 +271,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
 
   return {
     update(model) {
+      updateEmpirePanel(root, model.empire, model.status);
       setText(root, "telemetry", model.telemetry);
       setText(root, "multiplier", `产量 ${model.multiplier}`);
       setText(root, "played", `累计 ${model.played}`);
@@ -588,6 +619,10 @@ const TAB_KEY = "infinity.ui.tab";
 const HIDDEN_TABS = new Set(["research", "shipyard", "defense", "darkmatter", "arcade"]);
 const DEFAULT_TAB = "facilities";
 const TABS = [
+  { id: "empire", label: "帝国", icon: "logo" },
+  { id: "galaxy", label: "银河", icon: "logo" },
+  { id: "fleet", label: "舰队", icon: "shipyard" },
+  { id: "messages", label: "消息", icon: "save" },
   { id: "overview", label: "概览", icon: "logo" },
   { id: "facilities", label: "建筑", icon: "robotics_factory" },
   { id: "research", label: "研究", icon: "tech" },
@@ -868,7 +903,7 @@ function shellMarkup(): string {
           <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
           <div>
             <h1>Infinity <span>无限</span></h1>
-            <p class="kicker">Planet surface · v0.4</p>
+            <p class="kicker">星际扩张 · v0.5.0-alpha.1</p>
           </div>
         </div>
         <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
@@ -901,6 +936,7 @@ function shellMarkup(): string {
       </div>
       <nav class="tabs" role="tablist" aria-label="主菜单">${tabs}</nav>
     </header>
+    ${planetSelectorHtml()}
 
     <main class="wrap">
       <div class="notice" data-bind="notice" role="status" hidden>
@@ -981,6 +1017,8 @@ function shellMarkup(): string {
         ${researchGroups()}
       </section>
 
+      ${empirePanelsHtml()}
+
       ${shipyardPanelsHtml(icon)}
 
       ${arcadePanelHtml(icon("ring_machine", "icon-h2", { alt: "" }))}
@@ -1007,7 +1045,7 @@ function shellMarkup(): string {
           <h2 id="protocol-title">协议卡</h2>
           <p data-bind="protocol-meta">槽位</p>
         </div>
-        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
+        <p class="lede">当前协议卡只作用于选中的星球，其他殖民地仍独立生产与建造。把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
         <p class="rates">${icon("energy")} <span data-bind="protocol-energy"></span></p>
         <div class="catalog-row">${catalogButtons()}</div>
         <div class="protocol-slots">${protocolSlots()}</div>
@@ -1017,7 +1055,7 @@ function shellMarkup(): string {
         <div class="prestige-panel">
           <div class="panel-head">
             <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
-            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置全部星球资源、建筑、舰船、防御、队列和在途舰队，删除殖民地，只留下新母星（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
           </div>
           <dl class="prestige-stats">
             <div>
@@ -1050,7 +1088,7 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version: 8, savedAt, lastTickAt, state }。测试期只接受 v8：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 9, savedAt, lastTickAt, state }。测试期只接受 v9：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>

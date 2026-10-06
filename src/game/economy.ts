@@ -1,3 +1,5 @@
+import { positionBonus } from "./galaxy";
+import { activePlanet } from "./empire";
 /**
  * Planet economy at one instant (design doc §5.2–§5.3). Rates are constant between events,
  * which is what lets tick() integrate exactly (§5.10).
@@ -55,7 +57,7 @@ export function globalMultiplier(state: GameState): number {
 }
 
 export function storageCaps(state: GameState): ResourceRates {
-  const b = state.planet.buildings;
+  const b = activePlanet(state).buildings;
   return {
     metal: storageCapacity(b.metal_storage),
     crystal: storageCapacity(b.crystal_storage),
@@ -87,7 +89,7 @@ interface Flow {
 }
 
 function flow(state: GameState, fusionFactor: number, global: number): Flow {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const b = planet.buildings;
   const doubled = outputScale(state);
   const tech = state.research.levels;
@@ -104,11 +106,12 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
     deuterium_synth: (1 + PLASMA_BONUS.deuterium * tech.plasma_tech) * boosterFactor(state, "deuterium"),
   };
   // Plasma technology and resource boosters scale mine output only, not the planet's base production (OGame).
+  const positionFactor = (res: "metal" | "crystal" | "deuterium") => planet.homeworld ? 1 : positionBonus(planet.coordinates.position, res);
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
     mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * efficiency * plasma[id];
   const gross: ResourceRates = {
-    metal: perSecond(BASE_PRODUCTION.metal + mine("metal_mine"), ECONOMY_SPEED) * global,
-    crystal: perSecond(BASE_PRODUCTION.crystal + mine("crystal_mine"), ECONOMY_SPEED) * global,
+    metal: perSecond(BASE_PRODUCTION.metal + mine("metal_mine") * positionFactor("metal"), ECONOMY_SPEED) * global,
+    crystal: perSecond(BASE_PRODUCTION.crystal + mine("crystal_mine") * positionFactor("crystal"), ECONOMY_SPEED) * global,
     deuterium: perSecond(mine("deuterium_synth"), ECONOMY_SPEED) * global,
   };
   const fusionBurn = perSecond(fusionDeutPerHour(b.fusion_reactor) * pctOf(planet, "fusion_reactor"), ECONOMY_SPEED);
@@ -122,7 +125,7 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
 export function economy(state: GameState): EconomySnapshot {
   const global = globalMultiplier(state);
   const caps = storageCaps(state);
-  const stock = state.resources;
+  const stock = activePlanet(state).resources;
 
   let fusionFactor = 1;
   let current = flow(state, 1, global);

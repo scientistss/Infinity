@@ -822,3 +822,48 @@ textarea {
   .unit-order { grid-template-columns: 1fr 1fr 1fr; }
   .unit-order input { grid-column: 1 / -1; }
 }
+
+/* P4 empire command surfaces. Inputs are mounted once; the HUD never replaces them. */
+.planet-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 12px auto; max-width: 1400px; padding: 12px 20px; border: 1px solid var(--line); background: var(--bg-2); }
+.planet-toolbar label { color: var(--muted); }
+.planet-toolbar select { min-width: 200px; max-width: 100%; padding: 8px; }
+.planet-toolbar #active-coordinate { color: var(--crystal); }
+.expansion-hero { padding: 28px; border: 1px solid #354954; border-radius: 8px; background: radial-gradient(ellipse at 90% 0, #223b49 0, transparent 60%), linear-gradient(110deg,#111921,#15191e); }
+.expansion-hero h2 { font-size: 1.55rem; margin: 9px 0 12px; }
+.expansion-hero p:last-child { max-width: 900px; color: #b9cbd8; }
+.empire-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin: 18px 0; }
+.empire-metrics > div { background: var(--panel); border: 1px solid var(--line); padding: 18px; }
+.empire-metrics span, .empire-metrics strong { display: block; }
+.empire-metrics span { color: var(--muted); margin-bottom: 8px; }
+.empire-metrics strong { font-weight: 500; font-size: .95rem; }
+.empire-scroll { overflow-x: auto; }
+.empire-table { width: 100%; border-collapse: collapse; min-width: 760px; text-align: left; font-size: .85rem; }
+.empire-table th, .empire-table td { border-bottom: 1px solid var(--line); padding: 14px 12px; }
+.empire-table th { color: var(--muted); font-weight: 400; }
+.empire-table small { display: block; color: var(--muted); margin-top: 5px; }
+.empire-table .selected { background: #112129; }
+.empire-note { margin: 16px 0; color: var(--muted); font-size: .82rem; line-height: 1.8; }
+.galaxy-controls, .flight-buttons { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin: 16px 0; }
+.galaxy-controls label { color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.galaxy-controls input { width: 100px; }
+.galaxy-controls input, .flight-fields input, .flight-fields select, .flight-ships input { border: 1px solid var(--line-strong); background: #0c1014; padding: 9px; color: var(--ink); border-radius: 4px; font: inherit; min-width: 0; }
+.galaxy-legend { display: flex; flex-wrap: wrap; gap: 20px; color: var(--muted); font-size: .78rem; margin: 18px 0; }
+.galaxy-legend span:nth-child(1) { color: var(--crystal); }.galaxy-legend span:nth-child(2) { color: var(--gold); }
+.galaxy-rows { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.galaxy-row { display: grid; grid-template-columns: 36px 48px 1fr auto; gap: 18px; align-items: center; padding: 13px 20px; min-height: 82px; border-bottom: 1px solid var(--line); background: #0f1419; }
+.galaxy-row:last-child { border: 0; }.galaxy-row:nth-child(even) { background: #12171e; }
+.galaxy-row.own { border-left: 3px solid var(--crystal); }.galaxy-row.npc { border-left: 3px solid #b38c58; }
+.orbit-index { color: var(--dim); font-size: 1.05rem; }.orbit-name { min-width: 0; }.orbit-name strong { font-size: .92rem; font-weight: 500; }.orbit-name span { display: block; color: var(--muted); font-size: .75rem; margin-top: 5px; }
+.orbit-planet { height: 42px; width: 42px; border-radius: 50%; background: radial-gradient(circle at 28% 28%,#90b3c5,#3b5e6f 32%,#18212c 65%,#070b10 80%); box-shadow: -2px -1px 8px #51768c44; }
+.planet-1 { filter: hue-rotate(140deg) saturate(.6); }.planet-2 { filter: hue-rotate(320deg); }.planet-3 { filter: hue-rotate(200deg) saturate(.4); }.galaxy-row.empty .orbit-planet { opacity: .35; }
+.orbit-actions { display: flex; gap: 8px; }.orbit-actions button { padding: 6px 12px; font-size: .82rem; }
+.fleet-layout { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); gap: 24px; margin-top: 16px; }
+.fleet-composer { border: 1px solid var(--line); border-radius: 6px; background: #11161b; padding: 22px; }
+.flight-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 20px 0; }.flight-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .8rem; }
+.flight-ships { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 12px; }.flight-ships label { display: flex; justify-content: space-between; align-items: center; gap: 5px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .74rem; }.flight-ships small { display: block; color: var(--muted); margin-top: 4px; }.flight-ships input { width: 86px; padding: 7px; }
+.flight-buttons button:last-child { border-color: var(--crystal); color: var(--crystal); }.flight-feedback { color: var(--gold); font-size: .82rem; min-height: 42px; line-height: 1.8; }
+.fleets-list { display: grid; gap: 12px; margin-top: 16px; }.flight-card { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 18px; font-size: .8rem; }.flight-card header { display: flex; justify-content: space-between; align-items: center; padding: 0; margin: 0 0 12px; }.flight-card header span { color: var(--crystal); }.flight-card p { margin: 8px 0; }.flight-card progress { display: block; width: 100%; height: 5px; margin: 16px 0; accent-color: var(--crystal); }
+.empty-space { padding: 36px 22px; border: 1px dashed var(--line-strong); color: var(--muted); text-align: center; line-height: 2; font-size: .85rem; }.empty-space p { font-size: .78rem; }
+.fleet-messages { margin-top: 18px; }.fleet-messages article { padding: 18px 20px; border: 1px solid var(--line); border-bottom: 0; }.fleet-messages article:last-child { border-bottom: 1px solid var(--line); }.fleet-messages time { color: var(--crystal); font-size: .7rem; }.fleet-messages p { font-size: .88rem; margin-top: 8px; }
+@media(max-width:850px) { .fleet-layout { grid-template-columns: 1fr; }.empire-metrics { grid-template-columns: 1fr; }.empire-metrics>div { padding: 12px 18px; }.empire-metrics strong,.empire-metrics span { display: inline; margin-right: 10px; } }
+@media(max-width:520px) { .planet-toolbar { margin: 10px; padding: 10px; gap: 8px; }.planet-toolbar .muted { display: none; }.planet-toolbar select { min-width: 0; flex: 1; font-size: .75rem; }.expansion-hero { padding: 18px; }.expansion-hero h2 { font-size: 1.15rem; }.galaxy-row { grid-template-columns: 24px 30px minmax(0,1fr); gap: 10px; padding: 12px; }.orbit-planet { width: 28px; height: 28px; }.orbit-actions { grid-column: 3; }.orbit-name strong { font-size: .8rem; }.orbit-name span { font-size: .66rem; }.fleet-composer { padding: 14px; }.flight-ships { grid-template-columns: 1fr; }.flight-fields { gap: 8px; }.flight-fields input { width: 100%; }.galaxy-controls { gap: 8px; }.galaxy-controls button { font-size: .78rem; }.empire-metrics strong { font-size: .78rem; } }
