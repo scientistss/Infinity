@@ -1,0 +1,68 @@
+name: Restore verified P4 source
+
+on:
+  push:
+    branches: [feat/p4-playable-core]
+    paths: [.p4-delivery/bundle.b64]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: p4-source-delivery
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    if: github.repository == 'scientistss/Infinity' && github.ref == 'refs/heads/feat/p4-playable-core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/p4-playable-core
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify complete bundle and per-file source hashes
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const zlib = require('node:zlib');
+          const sha = text => crypto.createHash('sha256').update(text).digest('hex');
+          const payload = zlib.brotliDecompressSync(Buffer.from(fs.readFileSync('.p4-delivery/bundle.b64', 'utf8').trim(), 'base64'));
+          if (sha(payload) !== 'eb78b180ff5bc0934257f6c06e1000f44a93a106583636ccd7c76faa3e95d5f7') throw Error('Bundle checksum mismatch');
+          const files = JSON.parse(payload.toString('utf8'));
+          if (!Array.isArray(files) || files.length !== 48) throw Error('Incomplete bundle');
+          const seen = new Set();
+          for (const f of files) {
+            if (!/^(src\/|tests\/|scripts\/|docs\/|README\.md$|index\.html$|package(-lock)?\.json$)/.test(f.path) || f.path.split('/').includes('..') || seen.has(f.path)) throw Error('Invalid source path');
+            seen.add(f.path);
+            const exists = fs.existsSync(f.path);
+            const original = exists ? fs.readFileSync(f.path, 'utf8') : '';
+            if (f.before === null ? exists : !exists || sha(original) !== f.before) throw Error('Source changed: ' + f.path);
+            const lines = original.match(/[^\n]*\n|[^\n]+$/g) || [];
+            for (const [start, end, text] of [...f.edits].reverse()) lines.splice(start, end - start, text);
+            const result = lines.join('');
+            if (sha(result) !== f.after) throw Error('Output checksum mismatch: ' + f.path);
+            fs.mkdirSync(path.dirname(f.path), { recursive: true });
+            fs.writeFileSync(f.path, result);
+            console.log('Verified:', f.path);
+          }
+          JS
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run sim -- 60
+      - name: Commit readable source and remove transport bundle
+        run: |
+          git diff --check
+          git config user.name 'scientistss'
+          git config user.email 'scientistss@users.noreply.github.com'
+          git rm .p4-delivery/bundle.b64
+          git add src tests scripts docs README.md index.html package.json package-lock.json
+          git commit -m 'P4 核心：多星球、银河、舰队殖民与消息（存档 v9，190 项测试）'
+          git push origin HEAD:refs/heads/feat/p4-playable-core
