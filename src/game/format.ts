@@ -1,22 +1,22 @@
-import { big, type BigNumber } from "./decimal";
+import type { BigNumber } from "./decimal";
 
-const SUFFIXES = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"];
-
-/** Stable, readable amount. Sub-1000 values keep two decimals so ticks are visible. */
+/**
+ * Antimatter-Dimensions-style scientific notation: values under 1000 keep two
+ * decimals so ticks stay visible; everything else is `m.mme+x` (e.g. 1.23e4).
+ */
 export function formatAmount(value: BigNumber): string {
   const sign = value.sign() < 0 ? "-" : "";
   const abs = value.abs();
   if (abs.lt(1000)) return sign + abs.toFixed(2);
 
-  const exp = Math.floor(abs.log10());
-  if (!Number.isFinite(exp)) return value.toString();
-
-  const tier = Math.floor(exp / 3);
-  if (tier > 0 && tier < SUFFIXES.length) {
-    const scaled = abs.div(big(10).pow(tier * 3));
-    return sign + scaled.toFixed(2) + SUFFIXES[tier];
+  let exponent = abs.exponent;
+  let mantissa = Number(abs.mantissa.toFixed(2));
+  if (!Number.isFinite(exponent) || !Number.isFinite(mantissa)) return value.toString();
+  if (mantissa >= 10) {
+    mantissa /= 10;
+    exponent += 1;
   }
-  return sign + abs.toExponential(2);
+  return `${sign}${mantissa.toFixed(2)}e${exponent}`;
 }
 
 export function formatCount(value: BigNumber): string {
