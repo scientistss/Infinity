@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { equipCard, setProductionPct } from "../src/automation/engine";
 import { catchUp } from "../src/core/offline";
@@ -60,7 +61,7 @@ describe("storage caps", () => {
     const state = stateWith({ metal_mine: 5, solar_plant: 5 }, { metal: 9_000, crystal: 0 });
     const rate = economy(state).net.metal;
     const after = tick(state, 3600);
-    expect(after.resources.metal.toNumber()).toBe(10_000);
+    expect(activePlanet(after).resources.metal.toNumber()).toBe(10_000);
     expect(after.lifetime.metal.toNumber()).toBeCloseTo(1_000, 6);
     expect(after.stats.seenStorageFull).toBe(true);
     expect(rate).toBeGreaterThan(0);
@@ -72,12 +73,12 @@ describe("storage caps", () => {
     let state = stateWith({ metal_mine: 5, solar_plant: 5 }, { metal: 9_990, crystal: 1000 });
     state = enqueue(state, "metal_mine", "manual").state;
     state = tick(state, 0.5);
-    state = { ...state, resources: { ...state.resources, metal: big(10_000) } };
+    state = { ...withPlanet(state, { resources: { ...activePlanet(state).resources, metal: big(10_000) } }) };
     state = cancel(state, 0).state;
-    const over = state.resources.metal.toNumber();
+    const over = activePlanet(state).resources.metal.toNumber();
     expect(over).toBeGreaterThan(10_000);
     const later = tick(state, 600);
-    expect(later.resources.metal.toNumber()).toBe(over);
+    expect(activePlanet(later).resources.metal.toNumber()).toBe(over);
     expect(later.lifetime.metal.sub(state.lifetime.metal).toNumber()).toBe(0);
   });
 
@@ -90,7 +91,7 @@ describe("storage caps", () => {
 describe("tick", () => {
   it("one long tick equals many short ones (relative error < 1e-9, same builds)", () => {
     let start = rich(stateWith({ metal_mine: 12, crystal_mine: 10, deuterium_synth: 6, solar_plant: 14, robotics_factory: 2 }), 0);
-    start = { ...start, resources: { metal: big(200_000), crystal: big(120_000), deuterium: big(30_000) } };
+    start = { ...withPlanet(start, { resources: { metal: big(200_000), crystal: big(120_000), deuterium: big(30_000) } }) };
     start = enqueue(start, "metal_mine", "manual").state;
     start = enqueue(start, "crystal_mine", "manual").state;
     start = withCard(start, "queue_scheduler");
@@ -102,12 +103,12 @@ describe("tick", () => {
     for (let i = 0; i < 3600; i += 1) short = tick(short, 1, "live", shortLog);
 
     for (const id of ["metal", "crystal", "deuterium"] as const) {
-      expect(relErr(long.resources[id].toNumber(), short.resources[id].toNumber())).toBeLessThan(1e-9);
+      expect(relErr(activePlanet(long).resources[id].toNumber(), activePlanet(short).resources[id].toNumber())).toBeLessThan(1e-9);
       expect(relErr(long.lifetime[id].toNumber(), short.lifetime[id].toNumber())).toBeLessThan(1e-9);
     }
     expect(longLog.completedBuilds.length).toBeGreaterThan(2);
     expect(shortLog.completedBuilds).toEqual(longLog.completedBuilds);
-    expect(long.planet.buildings).toEqual(short.planet.buildings);
+    expect(activePlanet(long).buildings).toEqual(activePlanet(short).buildings);
     expect(long.totalTime.toNumber()).toBeCloseTo(3600, 9);
   });
 
@@ -121,12 +122,12 @@ describe("tick", () => {
   it("completes a queued build after its build time", () => {
     let state = rich(stateWith({ metal_mine: 9 }));
     state = enqueue(state, "metal_mine", "manual").state;
-    const seconds = state.planet.buildQueue[0]?.totalSeconds ?? 0;
+    const seconds = activePlanet(state).buildQueue[0]?.totalSeconds ?? 0;
     expect(seconds).toBeGreaterThan(1);
-    expect(tick(state, seconds - 0.01).planet.buildings.metal_mine).toBe(9);
+    expect(activePlanet(tick(state, seconds - 0.01)).buildings.metal_mine).toBe(9);
     const done = tick(state, seconds + 0.01);
-    expect(done.planet.buildings.metal_mine).toBe(10);
-    expect(done.planet.buildQueue).toHaveLength(0);
+    expect(activePlanet(done).buildings.metal_mine).toBe(10);
+    expect(activePlanet(done).buildQueue).toHaveLength(0);
     expect(done.stats.buildsCompleted).toBe(1);
     expect(done.stats.seenQueueIdle).toBe(true);
   });
@@ -143,7 +144,7 @@ describe("offline", () => {
     expect(result.completedBuilds.length).toBeGreaterThan(2);
     expect(result.completedBuilds[0]).toEqual({ building: "metal_mine", level: 19 });
     expect(result.completedBuilds[1]).toEqual({ building: "metal_mine", level: 20 });
-    expect(result.state.planet.buildings.metal_mine).toBeGreaterThanOrEqual(20);
+    expect(activePlanet(result.state).buildings.metal_mine).toBeGreaterThanOrEqual(20);
   });
 
   it("caps offline time at 2 hours", () => {
@@ -158,8 +159,8 @@ describe("protocol cards", () => {
     let state = rich(stateWith({ metal_mine: 10 }));
     state = withCard(state, "auto_build");
     const after = tick(state, 5);
-    const queued = after.planet.buildQueue.filter((o) => o.building === "metal_mine").length;
-    const built = after.planet.buildings.metal_mine - 10;
+    const queued = activePlanet(after).buildQueue.filter((o) => o.building === "metal_mine").length;
+    const built = activePlanet(after).buildings.metal_mine - 10;
     expect(queued + built).toBe(1);
     expect(after.protocols.slots[0]?.lamp).toBe("green");
   });
@@ -168,14 +169,14 @@ describe("protocol cards", () => {
     let state = rich(stateWith({ robotics_factory: 10, metal_mine: 19 }));
     state = withCard(state, "queue_scheduler");
     // One order per pass: one after 1 s, the queue is full (2/2) after 2 s.
-    expect(tick(state, 1).planet.buildQueue.length).toBe(1);
+    expect(activePlanet(tick(state, 1)).buildQueue.length).toBe(1);
     const filled = tick(state, 2);
-    expect(filled.planet.buildQueue.map((o) => o.targetLevel)).toEqual([20, 21]);
+    expect(activePlanet(filled).buildQueue.map((o) => o.targetLevel)).toEqual([20, 21]);
     // When the head finishes, the event pass refills the free slot at once.
-    const head = filled.planet.buildQueue[0]?.remainingSeconds ?? 0;
+    const head = activePlanet(filled).buildQueue[0]?.remainingSeconds ?? 0;
     const refilled = tick(filled, head + 1e-6);
-    expect(refilled.planet.buildings.metal_mine).toBe(20);
-    expect(refilled.planet.buildQueue.map((o) => o.targetLevel)).toEqual([21, 22]);
+    expect(activePlanet(refilled).buildings.metal_mine).toBe(20);
+    expect(activePlanet(refilled).buildQueue.map((o) => o.targetLevel)).toEqual([21, 22]);
     const poor = withCard(stateWith({ robotics_factory: 1, metal_mine: 5 }, { metal: 0, crystal: 0 }), "queue_scheduler");
     const red = tick(poor, 1);
     expect(red.protocols.slots[0]?.lamp).toBe("red");
@@ -186,7 +187,7 @@ describe("protocol cards", () => {
     let state = stateWith({ metal_mine: 5, solar_plant: 5 }, { metal: 9_990 });
     state = withCard(state, "production_tuner");
     const after = tick(state, 30);
-    expect(after.planet.productionPct.metal_mine).toBe(0);
+    expect(activePlanet(after).productionPct.metal_mine).toBe(0);
   });
 });
 
@@ -198,10 +199,10 @@ describe("launch", () => {
     state = { ...state, lifetime: { metal: big(5e6), crystal: big(0), deuterium: big(0) }, curvature: { ...state.curvature, manual_ten: 1 } };
     const next = prestige(state);
     expect(next.warpCores.toNumber()).toBe(2);
-    expect(next.planet.buildings.metal_mine).toBe(0);
-    expect(next.planet.buildQueue).toHaveLength(0);
-    expect(next.resources.metal.toNumber()).toBe(500);
-    expect(next.resources.crystal.toNumber()).toBe(500);
+    expect(activePlanet(next).buildings.metal_mine).toBe(0);
+    expect(activePlanet(next).buildQueue).toHaveLength(0);
+    expect(activePlanet(next).resources.metal.toNumber()).toBe(500);
+    expect(activePlanet(next).resources.crystal.toNumber()).toBe(500);
     expect(next.protocols.slots[0]?.card?.id).toBe("auto_build");
     expect(next.curvature.manual_ten).toBe(1);
   });

@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "./empire";
 /**
  * Build queue (design doc §5.5). One order under construction per planet, the rest wait.
  * Cost is charged on enqueue at the order's target level and refunded in full on cancel.
@@ -54,7 +55,7 @@ export function costFor(state: GameState, id: BuildingId, level: number): Resour
 
 /** Seconds an order of `def` at `level` would take if it started now. */
 export function secondsFor(state: GameState, def: BuildingDef, level: number, cost?: ResourceCost): number {
-  const b = state.planet.buildings;
+  const b = activePlanet(state).buildings;
   return buildSeconds(cost ?? costFor(state, def.id, level), level, def, b.robotics_factory, b.nanite_factory);
 }
 
@@ -73,7 +74,7 @@ export function shortfall(state: GameState, cost: ResourceCost): string {
   const blocked: string[] = [];
   const caps = storageCaps(state);
   for (const id of RESOURCE_IDS) {
-    const lack = cost[id].sub(state.resources[id]);
+    const lack = cost[id].sub(activePlanet(state).resources[id]);
     if (!lack.gt(0)) continue;
     parts.push(`${resourceName(id)} ${formatAmount(lack)}`);
     if (cost[id].gt(caps[id])) blocked.push(buildingById(STORAGE_FOR[id]).nameZh);
@@ -85,7 +86,7 @@ export function shortfall(state: GameState, cost: ResourceCost): string {
 
 export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
   const def = buildingById(id);
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const targetLevel = nextTargetLevel(planet, id);
   const cost = costFor(state, id, targetLevel);
   const fail = (reason: string): EnqueueCheck => ({ ok: false, reason, targetLevel, cost });
@@ -107,7 +108,7 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
 export function enqueue(state: GameState, id: BuildingId, source: OrderSource): QueueResult {
   const check = canEnqueue(state, id);
   if (!check.ok) return { state, ok: false, reason: check.reason };
-  const planet = clonePlanet(state.planet);
+  const planet = clonePlanet(activePlanet(state));
   const order: BuildOrder = {
     building: id,
     targetLevel: check.targetLevel,
@@ -117,32 +118,32 @@ export function enqueue(state: GameState, id: BuildingId, source: OrderSource): 
     source,
   };
   planet.buildQueue.push(order);
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   for (const res of RESOURCE_IDS) resources[res] = resources[res].sub(check.cost[res]);
   const stats =
     source === "manual" ? { ...state.stats, manualActions: state.stats.manualActions + 1 } : state.stats;
-  const next = startNext({ ...state, planet, resources, stats });
+  const next = startNext({ ...withPlanet(state, { planet, resources }), stats });
   return { state: next, ok: true, reason: `${buildingById(id).nameZh} → 等级 ${check.targetLevel} 已入队` };
 }
 
 /** Give the head order its duration if it has not started yet. */
 export function startNext(state: GameState): GameState {
-  const head = state.planet.buildQueue[0];
+  const head = activePlanet(state).buildQueue[0];
   if (!head || head.totalSeconds > 0) return state;
-  const planet = clonePlanet(state.planet);
+  const planet = clonePlanet(activePlanet(state));
   const order = planet.buildQueue[0];
   if (!order) return state;
   const seconds = secondsFor(state, buildingById(order.building), order.targetLevel, order.paid);
   order.totalSeconds = seconds;
   order.remainingSeconds = seconds;
-  return { ...state, planet };
+  return { ...withPlanet(state, { planet }) };
 }
 
 /** Finish the head order: level up, record stats, start the next one. */
 export function completeActive(state: GameState): { state: GameState; completed: CompletedBuild | null } {
-  const head = state.planet.buildQueue[0];
+  const head = activePlanet(state).buildQueue[0];
   if (!head) return { state, completed: null };
-  const planet = clonePlanet(state.planet);
+  const planet = clonePlanet(activePlanet(state));
   planet.buildQueue.shift();
   planet.buildings[head.building] = Math.max(planet.buildings[head.building], head.targetLevel);
   const stats = {
@@ -150,7 +151,7 @@ export function completeActive(state: GameState): { state: GameState; completed:
     buildsCompleted: state.stats.buildsCompleted + 1,
     seenQueueIdle: state.stats.seenQueueIdle || planet.buildQueue.length === 0,
   };
-  const next = startNext({ ...state, planet, stats });
+  const next = startNext({ ...withPlanet(state, { planet }), stats });
   return { state: next, completed: { building: head.building, level: head.targetLevel } };
 }
 
@@ -159,11 +160,11 @@ export function completeActive(state: GameState): { state: GameState; completed:
  * drop one level and get the price difference back.
  */
 export function cancel(state: GameState, index: number): QueueResult {
-  const target = state.planet.buildQueue[index];
+  const target = activePlanet(state).buildQueue[index];
   if (!Number.isInteger(index) || !target) return { state, ok: false, reason: "队列中没有这一项" };
-  const planet = clonePlanet(state.planet);
+  const planet = clonePlanet(activePlanet(state));
   planet.buildQueue.splice(index, 1);
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   for (const res of RESOURCE_IDS) resources[res] = resources[res].add(target.paid[res]);
   for (let i = index; i < planet.buildQueue.length; i += 1) {
     const order = planet.buildQueue[i];
@@ -179,7 +180,7 @@ export function cancel(state: GameState, index: number): QueueResult {
     }
     // A waiting order has no duration yet; a started one keeps its timer.
   }
-  const next = startNext({ ...state, planet, resources });
+  const next = startNext({ ...withPlanet(state, { planet, resources }) });
   return {
     state: next,
     ok: true,

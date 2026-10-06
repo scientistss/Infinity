@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet, selectPlanet } from "./empire";
 /**
  * Deep-space ring machine, beacon version (design doc §8.6, P2; P3 opens the drifting-ships tile).
  *
@@ -6,7 +7,7 @@
  * uniform numbers. Pity changes where a run lands, never the public odds table.
  */
 import { unitMissing, unitSpend } from "./shipyard";
-import { DRIFTER_LADDER, unitById, type ShipId } from "../data/units";
+import { DRIFTER_LADDER, unitById, type ShipId, type UnitId } from "../data/units";
 import {
   ARCADE,
   ARCADE_PHASE,
@@ -331,8 +332,8 @@ export function accrueBeacons(state: GameState, dt: number): { state: GameState;
 /** OGame-style points: resources spent on every building and research level / 1000. */
 export function empirePoints(state: GameState): number {
   let spent = 0;
-  for (const def of BUILDINGS) {
-    const level = state.planet.buildings[def.id];
+  for (const planet of state.planets) for (const def of BUILDINGS) {
+    const level = planet.buildings[def.id];
     if (level <= 0) continue;
     const cost = cumulativeCost(def, level);
     spent += cost.metal.add(cost.crystal).add(cost.deuterium).toNumber();
@@ -344,7 +345,11 @@ export function empirePoints(state: GameState): number {
       spent += cost.metal.add(cost.crystal).add(cost.deuterium).toNumber();
     }
   }
-  spent += unitSpend(state.planet);
+  for (const planet of state.planets) spent += unitSpend(planet);
+  for (const fleet of state.fleets) for (const [id, count] of Object.entries(fleet.ships)) {
+    const cost = unitById(id as UnitId).cost;
+    spent += (cost.metal + cost.crystal + cost.deuterium) * count;
+  }
   return Math.floor(spent / 1000);
 }
 
@@ -362,8 +367,10 @@ export function prizeCap(state: GameState): number {
 
 /** Empire gross production per second in metal equivalent. */
 export function productionMe(state: GameState): number {
-  const gross = economy(state).gross;
-  return gross.metal + 2 * gross.crystal + 3 * gross.deuterium;
+  return state.planets.reduce((sum, planet) => {
+    const gross = economy(selectPlanet(state, planet.id)).gross;
+    return sum + gross.metal + 2 * gross.crystal + 3 * gross.deuterium;
+  }, 0);
 }
 
 interface PrizeContext {
@@ -399,9 +406,9 @@ function giveResource(state: GameState, res: ResourceId, amount: number): { stat
   const room = Math.floor(freeStorage(state, res));
   const given = Math.min(whole, room);
   const lost = whole - given;
-  const resources = { ...state.resources, [res]: state.resources[res].add(given) };
+  const resources = { ...activePlanet(state).resources, [res]: activePlanet(state).resources[res].add(given) };
   const overflow = lost > 0 ? `（仓库满，溢出 ${formatAmount(big(lost))}）` : "";
-  return { state: { ...state, resources }, text: `${RES_ZH[res]} +${formatAmount(big(given))}${overflow}` };
+  return { state: { ...withPlanet(state, { resources }) }, text: `${RES_ZH[res]} +${formatAmount(big(given))}${overflow}` };
 }
 
 // ---------- drifting ships (P3) ----------
@@ -454,9 +461,9 @@ export function drifterShips(state: GameState, valueMe: number, v: number): { sh
 
 function giveShips(state: GameState, valueMe: number, v: number): { state: GameState; text: string } {
   const split = drifterShips(state, valueMe, v);
-  const units = { ...state.planet.units };
+  const units = { ...activePlanet(state).units };
   for (const { id, count } of split.ships) units[id] += count;
-  let next: GameState = { ...state, planet: { ...state.planet, units } };
+  let next: GameState = { ...withPlanet(state, { planet: { ...activePlanet(state), units } }) };
   const parts = split.ships.map(({ id, count }) => `${unitById(id).nameZh} ×${count.toLocaleString("zh-CN")}`);
   if (split.leftoverMe >= 1) {
     const metal = giveResource(next, "metal", split.leftoverMe);
@@ -617,11 +624,11 @@ export function revealRun(state: GameState, mode: RevealMode): ArcadeResult & { 
   let active = false;
   if (units > 0) {
     const cost = units * unit;
-    if (current.resources.deuterium.gte(cost)) {
+    if (activePlanet(current).resources.deuterium.gte(cost)) {
       active = true;
       const stats = { ...current.arcade.stats, betSpent: current.arcade.stats.betSpent + cost * ME_FACTOR.deuterium };
       current = withArcade(
-        { ...current, resources: { ...current.resources, deuterium: current.resources.deuterium.sub(cost) } },
+        { ...withPlanet(current, { resources: { ...activePlanet(current).resources, deuterium: activePlanet(current).resources.deuterium.sub(cost) } }) },
         { stats },
       );
       lines.push(`押注 ${units} 注，花费重氢 ${formatAmount(big(cost))}`);
@@ -734,7 +741,7 @@ export function topUpReason(state: GameState): string {
   if (!arcadeUnlocked(state)) return "需要天体物理学 1 级";
   if (state.arcade.runs.length >= ARCADE.storedMax) return `开奖次数已存满（${ARCADE.storedMax}）`;
   const price = topUpPrice(state);
-  if (state.resources.deuterium.lt(price)) return `重氢不足（需要 ${formatAmount(big(price))}）`;
+  if (activePlanet(state).resources.deuterium.lt(price)) return `重氢不足（需要 ${formatAmount(big(price))}）`;
   return "";
 }
 
@@ -742,11 +749,7 @@ export function topUp(state: GameState): ArcadeResult {
   const reason = topUpReason(state);
   if (reason) return { state, ok: false, reason };
   const price = topUpPrice(state);
-  const paid: GameState = {
-    ...state,
-    resources: { ...state.resources, deuterium: state.resources.deuterium.sub(price) },
-    arcade: { ...state.arcade, topUps: [...recentTopUps(state), state.totalTime.toNumber()] },
-  };
+  const paid: GameState = { ...withPlanet(state, { resources: { ...activePlanet(state).resources, deuterium: activePlanet(state).resources.deuterium.sub(price) } }), arcade: { ...state.arcade, topUps: [...recentTopUps(state), state.totalTime.toNumber()] } };
   const granted = grantRun(paid, "topup");
   return { state: granted.state, ok: true, reason: `重氢加注 ${formatAmount(big(price))}，多攒 1 次开奖` };
 }

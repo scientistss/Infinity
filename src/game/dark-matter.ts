@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "./empire";
 /**
  * Dark matter (design doc §8.8). P2–P3 uses: halve / finish the running build, research or shipyard batch, the
  * item shop (KRAKEN, NEWTRON, DETROIT, resource boosters), resource packages and inventory items.
@@ -99,7 +100,7 @@ export function speedupQuote(remainingSeconds: number, target: SpeedupTarget, mo
 
 function activeRemaining(state: GameState, target: SpeedupTarget): number | null {
   if (target === "shipyard") return shipyardRemaining(state);
-  const head = target === "build" ? state.planet.buildQueue[0] : state.research.queue[0];
+  const head = target === "build" ? activePlanet(state).buildQueue[0] : state.research.queue[0];
   if (!head || head.totalSeconds <= 0) return null;
   return head.remainingSeconds;
 }
@@ -137,14 +138,11 @@ export function advanceBuild(state: GameState, seconds: number, carry: boolean):
   let current = state;
   let left = seconds;
   for (let guard = 0; guard < 10 && left > 0; guard += 1) {
-    const head = current.planet.buildQueue[0];
+    const head = activePlanet(current).buildQueue[0];
     if (!head || head.totalSeconds <= 0) break;
     if (left + 1e-9 < head.remainingSeconds) {
-      const [, ...rest] = current.planet.buildQueue;
-      current = {
-        ...current,
-        planet: { ...current.planet, buildQueue: [{ ...head, remainingSeconds: head.remainingSeconds - left }, ...rest] },
-      };
+      const [, ...rest] = activePlanet(current).buildQueue;
+      current = { ...withPlanet(current, { planet: { ...activePlanet(current), buildQueue: [{ ...head, remainingSeconds: head.remainingSeconds - left }, ...rest] } }) };
       break;
     }
     left -= head.remainingSeconds;
@@ -201,7 +199,7 @@ export function shopItemReason(state: GameState, id: ShopItemId, res: ResourceId
   if (lack) return lack;
   if (def.kind === "kraken" && activeRemaining(state, "build") === null) return "没有正在建造的项目";
   if (def.kind === "newtron" && activeRemaining(state, "research") === null) return "没有正在进行的研究";
-  if (def.kind === "detroit" && activeRemaining(state, "shipyard") === null) return state.planet.shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次";
+  if (def.kind === "detroit" && activeRemaining(state, "shipyard") === null) return activePlanet(state).shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次";
   if (def.kind === "booster") {
     const current = activeBooster(state, res);
     if (current && current.pct > (def.pct ?? 0)) return `${resourceName(res)}已有 +${current.pct}% 加成生效中`;
@@ -252,7 +250,7 @@ export function supplyPackAmount(state: GameState, res: ResourceId): number {
 
 export function freeStorage(state: GameState, res: ResourceId): number {
   const cap = economy(state).caps[res];
-  return Math.max(0, cap - state.resources[res].toNumber());
+  return Math.max(0, cap - activePlanet(state).resources[res].toNumber());
 }
 
 /**
@@ -281,7 +279,7 @@ export function packageQuote(state: GameState, kind: PackageKind, fraction: numb
 export function buyPackage(state: GameState, kind: PackageKind, fraction: number): DmResult {
   const quote = packageQuote(state, kind, fraction);
   if (!quote.ok) return fail(state, quote.reason);
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   const parts: string[] = [];
   for (const id of RESOURCE_IDS) {
     if (quote.amounts[id].lte(0)) continue;
@@ -289,7 +287,7 @@ export function buyPackage(state: GameState, kind: PackageKind, fraction: number
     parts.push(`${resourceName(id)} ${formatAmount(quote.amounts[id])}`);
   }
   return {
-    state: { ...spend(state, quote.dm), resources },
+    state: { ...withPlanet(spend(state, quote.dm), { resources }) },
     ok: true,
     reason: `花费 ${formatDm(quote.dm)} 暗物质，获得 ${parts.join("、")}`,
   };
@@ -316,7 +314,7 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
   }
   if (id === "detroit_box") {
     const remaining = activeRemaining(state, "shipyard");
-    if (remaining === null) return fail(state, state.planet.shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次");
+    if (remaining === null) return fail(state, activePlanet(state).shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次");
     return { state: advanceShipyard(take(state), remaining * 0.3, false).state, ok: true, reason: "底特律：造船厂当前批次剩余时间 −30%" };
   }
   if (id === "booster_box") {
@@ -333,7 +331,7 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
     return { state: next, ok: true, reason: `资源 +10%：${applied.join("、")}，持续 1 小时` };
   }
   // Supply pack = the merchant's 10% package of each resource.
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   const parts: string[] = [];
   for (const res of RESOURCE_IDS) {
     const amount = Math.floor(Math.min(supplyPackAmount(state, res), freeStorage(state, res)));
@@ -342,5 +340,5 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
     parts.push(`${resourceName(res)} ${formatAmount(big(amount))}`);
   }
   if (parts.length === 0) return fail(state, "仓库已满，放不下");
-  return { state: { ...take(state), resources }, ok: true, reason: `资源补给包：${parts.join("、")}` };
+  return { state: { ...withPlanet(take(state), { resources }) }, ok: true, reason: `资源补给包：${parts.join("、")}` };
 }

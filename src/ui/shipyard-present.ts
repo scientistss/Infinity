@@ -1,3 +1,4 @@
+import { activePlanet } from "../game/empire";
 /**
  * Presenter for the shipyard and defense tabs (P3): unit cards with live stats, the shipyard queue,
  * missile silo and pause state. Pure: GameState in, plain view data out.
@@ -50,7 +51,7 @@ export interface ShipyardView {
 }
 
 export function shipyardVisible(state: GameState): boolean {
-  return state.planet.buildings.shipyard >= 1 || state.planet.shipyardQueue.length > 0;
+  return activePlanet(state).buildings.shipyard >= 1 || activePlanet(state).shipyardQueue.length > 0;
 }
 
 /** The engine stage a ship flies with now: the last stage whose drive level is met. */
@@ -99,7 +100,7 @@ function costLine(def: UnitDef): string {
 }
 
 function unitCard(state: GameState, def: UnitDef): UnitCardView {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const chain: RequirementChip[] = def.requires.map((req) => ({
     label: `${requirementName(req)} ${req.level}`,
     met: requirementLevel(state, req) >= req.level,
@@ -120,7 +121,7 @@ function unitCard(state: GameState, def: UnitDef): UnitCardView {
   } else {
     const stage = currentDrive(state, def);
     mobility = stage
-      ? `速度 ${num(shipSpeed(state, def))}（${DRIVE_NAME[stage.drive]}引擎 ${state.research.levels[stage.drive]} 级）· 货舱 ${num(def.cargo)} · 油耗 ${stage.fuel}`
+      ? `速度 ${num(shipSpeed(state, def))}（${DRIVE_NAME[stage.drive]}引擎 ${state.research.levels[stage.drive]} 级）· 货舱 ${num(def.cargo * (1 + 0.05 * state.research.levels.hyperspace_tech))} · 油耗 ${stage.fuel}`
       : "不能飞";
   }
   const queued = queuedUnits(planet, def.id);
@@ -144,7 +145,7 @@ function unitCard(state: GameState, def: UnitDef): UnitCardView {
 
 function shipyardQueueView(state: GameState): QueueView {
   const paused = shipyardPausedReason(state);
-  const items = state.planet.shipyardQueue.map((order, index): QueueItemView => {
+  const items = activePlanet(state).shipyardQueue.map((order, index): QueueItemView => {
     const def = unitById(order.unit);
     const per = unitSeconds(state, order.unit);
     const active = index === 0;
@@ -165,11 +166,11 @@ function shipyardQueueView(state: GameState): QueueView {
   });
   let idleHint = "";
   if (items.length === 0) {
-    idleHint = state.planet.buildings.shipyard < 1 ? "先建造造船厂（建筑页）。" : "造船厂空闲。下单时按批次扣费，逐艘完成；取消时退还所有未完成的单位。";
+    idleHint = activePlanet(state).buildings.shipyard < 1 ? "先建造造船厂（建筑页）。" : "造船厂空闲。下单时按批次扣费，逐艘完成；取消时退还所有未完成的单位。";
   }
   const total = shipyardQueueSeconds(state);
   return {
-    summary: `造船队列 ${state.planet.shipyardQueue.length}/${SHIPYARD.maxOrders}${total > 0 ? ` · 全部完成约 ${formatDuration(Math.ceil(total))}` : ""}${paused ? ` · ${paused}` : ""}`,
+    summary: `造船队列 ${activePlanet(state).shipyardQueue.length}/${SHIPYARD.maxOrders}${total > 0 ? ` · 全部完成约 ${formatDuration(Math.ceil(total))}` : ""}${paused ? ` · ${paused}` : ""}`,
     items,
     signature: items.map((item) => item.key.split(":").slice(0, 2).join(":")).join("|"),
     idleHint,
@@ -177,7 +178,7 @@ function shipyardQueueView(state: GameState): QueueView {
 }
 
 export function shipyardView(state: GameState): ShipyardView {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const visible = shipyardVisible(state);
   const ships = visible ? SHIPS.map((def) => unitCard(state, def)) : [];
   const defenses = visible ? DEFENSES.map((def) => unitCard(state, def)) : [];

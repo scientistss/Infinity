@@ -1,3 +1,6 @@
+import { validCoordinates, coordinateKey, GALAXY, type Coordinates } from "./galaxy";
+import { MISSIONS, type Fleet, type FleetMessage } from "./fleet";
+import { SHIP_IDS } from "../data/units";
 import type { Action, Condition, ProtocolCard, Trigger } from "../data/protocol-cards";
 import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
@@ -54,6 +57,10 @@ export interface SerializedOrder {
 }
 
 export interface SerializedPlanet {
+  id: string;
+  coordinates: Coordinates;
+  homeworld: boolean;
+  resources: Record<ResourceId, string>;
   name: string;
   tempMax: number;
   fieldsMax: number;
@@ -66,6 +73,7 @@ export interface SerializedPlanet {
 }
 
 export interface SerializedResearchOrder {
+  planetId: string;
   tech: ResearchId;
   targetLevel: number;
   paid: Record<ResourceId, string>;
@@ -75,8 +83,12 @@ export interface SerializedResearchOrder {
 }
 
 export interface SerializedState {
-  resources: Record<ResourceId, string>;
-  planet: SerializedPlanet;
+  planets: SerializedPlanet[];
+  activePlanetId: string;
+  universe: { seed: number };
+  fleets: Array<Omit<Fleet, "cargo"> & { cargo: Record<ResourceId, string> }>;
+  messages: FleetMessage[];
+  nextFleetId: number;
   research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
   darkMatter: string;
   /** Optional (added during v7); missing means empty. */
@@ -113,12 +125,12 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Thrown when a file's version is not {@link SAVE_VERSION}. Test phase: no migration. */
+/** Unsupported versions never replace a game. v8 has an explicit migration. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
       version < SAVE_VERSION
-        ? `存档版本 v${version} 已过时（当前 v${SAVE_VERSION}）。测试期不迁移旧存档，未导入，当前进度保持不变。`
+        ? `存档版本 v${version} 已过时（当前 v${SAVE_VERSION}）。仅支持 v8 → v9 迁移，未导入，当前进度保持不变。`
         : `存档版本 v${version} 比游戏更新（当前 v${SAVE_VERSION}），未导入，当前进度保持不变。`,
     );
     this.name = "SaveVersionError";
@@ -126,18 +138,23 @@ export class SaveVersionError extends Error {
 }
 
 export interface LoadResult extends OfflineCatchup {
-  /** One-time notice, e.g. an outdated save was replaced by a fresh game. */
   notice: string | null;
+  /** Callers must suspend all writes while an original is protected. */
+  saveBlocked?: boolean;
 }
 
 export function outdatedSaveNotice(version: number): string {
-  return `测试版存档格式已更新（v${version} → v${SAVE_VERSION}），旧进度已重置。`;
+  return `存档格式需要更新（v${version} → v${SAVE_VERSION}），此版本无法自动迁移。原存档未覆盖，自动保存已暂停；请在存档页导出原件，或明确选择重新开始。`;
 }
 
 export function serializeState(state: GameState): SerializedState {
   return {
-    resources: mapResources(state.resources),
-    planet: serializePlanet(state.planet),
+    planets: state.planets.map(serializePlanet),
+    activePlanetId: state.activePlanetId,
+    universe: { ...state.universe },
+    fleets: state.fleets.map((f) => ({ ...f, target: { ...f.target }, ships: { ...f.ships }, cargo: mapResources(f.cargo) })),
+    messages: state.messages.map((m) => ({ ...m })),
+    nextFleetId: state.nextFleetId,
     research: serializeResearch(state.research),
     darkMatter: bigToString(state.darkMatter),
     items: { ...state.items },
@@ -161,9 +178,26 @@ export function serializeState(state: GameState): SerializedState {
 export function deserializeState(raw: unknown): GameState {
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
-  state.resources = readResourceMap(raw.resources, "资源");
-  state.planet = readPlanet(raw.planet);
+  if (!Array.isArray(raw.planets) || !raw.planets.length || raw.planets.length > 501) throw new Error("星球列表无效");
+  state.planets = raw.planets.map(readPlanet);
+  if (new Set(state.planets.map((p) => p.id)).size !== state.planets.length || new Set(state.planets.map((p) => coordinateKey(p.coordinates))).size !== state.planets.length) throw new Error("星球编号或坐标重复");
+  if (state.planets.filter((p) => p.homeworld).length !== 1) throw new Error("必须且只能有一颗母星");
+  state.activePlanetId = readId(raw.activePlanetId);
+  if (!state.planets.some((p) => p.id === state.activePlanetId)) throw new Error("当前星球不存在");
+  if (!isRecord(raw.universe)) throw new Error("宇宙数据缺失");
+  state.universe = { seed: readInteger(raw.universe.seed, "宇宙种子", 0, 4294967295) };
   state.research = readResearch(raw.research);
+  if (state.research.queue.some((q) => !state.planets.some((p) => p.id === q.planetId))) throw new Error("研究来源星球不存在");
+  if (!Array.isArray(raw.fleets) || raw.fleets.length > GALAXY.maxFleetCount) throw new Error("舰队列表无效");
+  state.fleets = raw.fleets.map((f) => readFleet(f, state));
+  if (new Set(state.fleets.map((f) => f.id)).size !== state.fleets.length) throw new Error("舰队编号重复");
+  state.nextFleetId = readInteger(raw.nextFleetId, "下一个舰队编号", 1, Number.MAX_SAFE_INTEGER);
+  if (state.fleets.some((f) => f.id >= state.nextFleetId)) throw new Error("舰队编号顺序无效");
+  if (!Array.isArray(raw.messages) || raw.messages.length > GALAXY.maxMessages) throw new Error("消息列表无效");
+  state.messages = raw.messages.map((m) => {
+    if (!isRecord(m) || typeof m.text !== "string" || m.text.length > 2000) throw new Error("消息格式无效");
+    return { id: readId(m.id), at: readSeconds(m.at, "消息时间"), text: m.text };
+  });
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
   state.items = readItems(raw.items);
   state.boosters = readBoosters(raw.boosters);
@@ -172,6 +206,7 @@ export function deserializeState(raw: unknown): GameState {
   state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.curvature = readCurvature(raw.curvature);
   state.totalTime = readAmount(raw.totalTime, "游玩时间");
+  if (!Number.isFinite(state.totalTime.toNumber())) throw new Error("游玩时间超出可模拟范围");
   state.manualClicks = readCount(raw.manualClicks);
   state.seenEnergyShortage = raw.seenEnergyShortage === true;
   state.hasPrestiged = raw.hasPrestiged === true || state.warpCores.gt(0);
@@ -194,7 +229,27 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only the current version (v8) is accepted; anything else throws without touching the current game. */
+/** Pure v8 conversion. All mapped data must pass the normal v9 validator. */
+function migrateV8State(raw: unknown): unknown {
+  if (!isRecord(raw) || !isRecord(raw.planet) || !isRecord(raw.resources) ||
+      !isRecord(raw.research) || !Array.isArray(raw.research.queue) || raw.planets !== undefined) {
+    throw new Error("v8 单星球存档结构不完整，未迁移");
+  }
+  const { planet, resources, ...account } = raw;
+  const home = createPlanet();
+  return {
+    ...account,
+    planets: [{ ...planet, id: home.id, coordinates: home.coordinates, homeworld: true, resources }],
+    activePlanetId: home.id, universe: createInitialState().universe,
+    fleets: [], messages: [], nextFleetId: 1,
+    research: { ...raw.research, queue: raw.research.queue.map((order) => {
+      if (!isRecord(order)) throw new Error("v8 研究订单格式不正确");
+      return { ...order, planetId: home.id };
+    }) },
+  };
+}
+
+/** Validate v9 or migrate v8 without mutating the supplied file. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -205,7 +260,7 @@ export function importSave(json: string): SaveFile {
   if (!isRecord(parsed)) throw new Error("存档必须是 JSON 对象");
   const version = parsed.version;
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
-  if (version !== SAVE_VERSION) throw new SaveVersionError(version);
+  if (version !== SAVE_VERSION && version !== 8) throw new SaveVersionError(version);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -215,7 +270,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(deserializeState(parsed.state)),
+    state: serializeState(deserializeState(version === 8 ? migrateV8State(parsed.state) : parsed.state)),
   };
 }
 
@@ -244,25 +299,50 @@ function storedVersion(raw: string): number | null {
   return null;
 }
 
-/**
- * Load the local save and apply elapsed real time (capped at the offline limit).
- * A save older than the current version is discarded: fresh game plus a one-time notice (design doc §5.9).
- * Newer or corrupt saves throw so the caller can report it.
- */
+/** Keep the first original forever and one more recent replacement snapshot. */
+export const BACKUP_KEY = "infinity.save.backup.original";
+export const LATEST_BACKUP_KEY = "infinity.save.backup.latest";
+
+export function preserveSave(store: KeyValueStore, raw: string): void {
+  const first = store.getItem(BACKUP_KEY);
+  if (first === raw || store.getItem(LATEST_BACKUP_KEY) === raw) return;
+  const key = first === null ? BACKUP_KEY : LATEST_BACKUP_KEY;
+  store.setItem(key, raw);
+  if (store.getItem(key) !== raw) throw new Error("原存档备份写入失败，升级已暂停");
+}
+
+export function readBackup(store: KeyValueStore): string | null {
+  return store.getItem(LATEST_BACKUP_KEY) ?? store.getItem(BACKUP_KEY);
+}
+
+/** No corrupt/unsupported file is overwritten. A caller must honor saveBlocked. */
 export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
   const raw = store.getItem(STORAGE_KEY);
   if (!raw) return { ...emptyCatchup(createInitialState()), notice: null };
   const version = storedVersion(raw);
-  if (version !== null && version < SAVE_VERSION) {
-    return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
+  try {
+    if (version !== null && version < 8) {
+      return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version), saveBlocked: true };
+    }
+    const file = importSave(raw);
+    // Exact backup must succeed before advancing the old save or writing v9.
+    if (version === 8) preserveSave(store, raw);
+    const elapsed = Math.max(0, (now - file.lastTickAt) / 1000);
+    return { ...catchUp(deserializeState(file.state), elapsed),
+      notice: version === 8 ? "存档已迁移（v8 → v9）：母星、资源、科技、队列和协议卡已保留；原文件已备份，可在存档页导出。" : null };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "未知读取错误";
+    return { ...emptyCatchup(createInitialState()), saveBlocked: true,
+      notice: `原存档未覆盖，自动保存已暂停。${detail}。请先在存档页导出原件，再决定导入或重新开始。` };
   }
-  const file = importSave(raw);
-  const elapsed = (now - file.lastTickAt) / 1000;
-  return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
 }
 
 function serializePlanet(planet: PlanetState): SerializedPlanet {
   return {
+    id: planet.id,
+    coordinates: { ...planet.coordinates },
+    homeworld: planet.homeworld,
+    resources: mapResources(planet.resources),
     name: planet.name,
     tempMax: planet.tempMax,
     fieldsMax: planet.fieldsMax,
@@ -284,8 +364,14 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
 function readPlanet(raw: unknown): PlanetState {
   if (!isRecord(raw)) throw new Error("星球数据格式不正确");
   const planet = createPlanet();
+  planet.id = readId(raw.id);
+  planet.coordinates = readCoordinates(raw.coordinates);
+  if (typeof raw.homeworld !== "boolean") throw new Error("母星标志无效");
+  planet.homeworld = raw.homeworld;
+  planet.resources = readResourceMap(raw.resources, "星球资源");
   if (typeof raw.name === "string" && raw.name.trim()) planet.name = raw.name.slice(0, 40);
-  if (typeof raw.tempMax === "number" && Number.isFinite(raw.tempMax)) planet.tempMax = raw.tempMax;
+  if (typeof raw.tempMax !== "number" || !Number.isFinite(raw.tempMax) || raw.tempMax < -300 || raw.tempMax > 300) throw new Error("星球温度无效");
+  planet.tempMax = raw.tempMax;
   if (raw.fieldsMax !== undefined) planet.fieldsMax = readInteger(raw.fieldsMax, "星球格子", 1, 10000);
 
   if (!isRecord(raw.buildings)) throw new Error("建筑等级格式不正确");
@@ -495,6 +581,7 @@ function serializeResearch(research: ResearchState): SerializedState["research"]
   return {
     levels: { ...research.levels },
     queue: research.queue.map((order) => ({
+      planetId: order.planetId,
       tech: order.tech,
       targetLevel: order.targetLevel,
       paid: mapResources(order.paid),
@@ -533,7 +620,7 @@ function readResearchOrder(raw: unknown, index: number): ResearchOrder {
   const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
   if (!source) throw new Error(`${label}来源无效`);
   const paid = readResourceMap(raw.paid, `${label}已付`);
-  return { tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
+  return { planetId: readId(raw.planetId), tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
 }
 
 function readInteger(raw: unknown, label: string, min: number, max: number): number {
@@ -796,4 +883,35 @@ function mapResources(values: Record<ResourceId, BigNumber>): Record<ResourceId,
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readId(raw: unknown): string {
+  if (typeof raw !== "string" || !/^[a-zA-Z0-9:_-]{1,80}$/.test(raw)) throw new Error("对象编号无效");
+  return raw;
+}
+function readCoordinates(raw: unknown): Coordinates {
+  if (!isRecord(raw)) throw new Error("坐标格式无效");
+  const c = { galaxy: Number(raw.galaxy), system: Number(raw.system), position: Number(raw.position) };
+  if (!validCoordinates(c) || typeof raw.galaxy !== "number" || typeof raw.system !== "number" || typeof raw.position !== "number") throw new Error("坐标超出范围");
+  return c;
+}
+function readFleet(raw: unknown, state: GameState): Fleet {
+  if (!isRecord(raw) || !MISSIONS.includes(raw.mission as Fleet["mission"])) throw new Error("舰队任务无效");
+  const originId = readId(raw.originId);
+  if (!state.planets.some((p) => p.id === originId)) throw new Error("舰队母港不存在");
+  if (!isRecord(raw.ships)) throw new Error("舰队单位格式无效");
+  const ships: Fleet["ships"] = {};
+  for (const [id, count] of Object.entries(raw.ships)) {
+    if (!SHIP_IDS.includes(id as typeof SHIP_IDS[number]) || id === "solar_satellite") throw new Error("舰队包含不可飞行单位");
+    ships[id as typeof SHIP_IDS[number]] = readInteger(count, "舰船数量", 0, MAX_UNITS);
+  }
+  if (!Object.values(ships).some((n) => n > 0)) throw new Error("舰队不能为空");
+  const duration = readSeconds(raw.duration, "飞行总时长"), remaining = readSeconds(raw.remaining, "飞行剩余时间"), elapsed = readSeconds(raw.elapsed, "已飞行时间");
+  if (duration < GALAXY.minFlightSeconds || remaining > duration + 1e-6 || elapsed > duration + 1e-6 || typeof raw.returning !== "boolean") throw new Error("飞行计时无效");
+  const tolerance = 1e-8 * Math.max(1, duration);
+  if (elapsed + remaining > duration + tolerance || (!raw.returning && Math.abs(elapsed + remaining - duration) > tolerance)) throw new Error("飞行计时不一致");
+  const mission = raw.mission as Fleet["mission"];
+  if (!raw.returning && mission === "colonize" && !ships.colony_ship) throw new Error("殖民舰队缺少殖民船");
+  if (mission === "scout" && !ships.espionage_probe) throw new Error("侦察舰队缺少间谍卫星");
+  return { id: readInteger(raw.id, "舰队编号", 1, Number.MAX_SAFE_INTEGER), originId, target: readCoordinates(raw.target), mission, ships, cargo: readResourceMap(raw.cargo, "舰队货物"), duration, remaining, elapsed, returning: raw.returning };
 }

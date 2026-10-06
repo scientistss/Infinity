@@ -1,19 +1,4 @@
-/**
- * Pacing check (design doc §3.4 / appendix B) driven by the real game code: formulas.ts, queue.ts and tick().
- * A greedy player keeps the 2-slot build queue full: power first, crystal ≤ metal−2, deuterium ≤ crystal−3,
- * robotics ≈ metal/3, storage when the next build would exceed 90% of a cap. No curvature, no manual clicks.
- * P2: a research lab once metal mine 10 stands (lab ≈ metal/4 while no research runs), and a 2-slot research
- * queue that always picks the cheapest useful research whose price is ≤ 25% of current stock.
- *
- * P3: shipyard 1 once metal mine 10 and robotics 2 stand, shipyard 2 after combustion drive 2 (small cargo), then
- * shipyard ≈ robotics. With an idle shipyard it orders one light fighter and one small cargo as soon as each costs
- * ≤ 25% of stock, and solar satellites to cover the energy deficit (counting queued ones).
- *
- * Dark matter: at each snapshot it prices finishing the running build / research on the dark-matter clock
- * (1 OGame hour = 1 game minute) next to the old S = 600 conversion, and what a 9,000 DM wallet buys.
- *
- * Usage: npm run sim [-- minutes]   (runs through tsx; no browser needed)
- */
+import { activePlanet } from "../src/game/empire";
 import { buildingById, type BuildingId } from "../src/data/buildings";
 import { economy } from "../src/game/economy";
 import { expansionScore, tick } from "../src/game/logic";
@@ -35,7 +20,7 @@ declare const process: { argv: string[] };
 const horizonMinutes = Number(process.argv[2] ?? 150);
 
 function want(state: GameState): BuildingId {
-  const p = state.planet;
+  const p = activePlanet(state);
   const lv = (id: BuildingId) => nextTargetLevel(p, id) - 1; // count queued levels as built
   const eco = economy(state);
   let pick: BuildingId;
@@ -77,7 +62,7 @@ const RESEARCH_PLAN: Array<[ResearchId, number]> = [
 function pickResearch(state: GameState): ResearchId | null {
   let best: ResearchId | null = null;
   let bestValue = Number.POSITIVE_INFINITY;
-  const stock = state.resources.metal.add(state.resources.crystal.mul(2)).add(state.resources.deuterium.mul(3)).toNumber();
+  const stock = activePlanet(state).resources.metal.add(activePlanet(state).resources.crystal.mul(2)).add(activePlanet(state).resources.deuterium.mul(3)).toNumber();
   for (const [id, cap] of RESEARCH_PLAN) {
     const check = canEnqueueResearch(state, id);
     if (!check.ok || check.targetLevel > cap) continue;
@@ -107,7 +92,7 @@ function oldFinishPrice(seconds: number, research: boolean): number {
 const started: Array<{ research: boolean; minutes: number; seconds: number }> = [];
 const seenOrders = new Set<string>();
 function recordStarts(s: GameState, minutes: number): void {
-  const build = s.planet.buildQueue[0];
+  const build = activePlanet(s).buildQueue[0];
   if (build && build.totalSeconds > 0 && !seenOrders.has(`b${build.building}${build.targetLevel}`)) {
     seenOrders.add(`b${build.building}${build.targetLevel}`);
     started.push({ research: false, minutes, seconds: build.totalSeconds });
@@ -146,20 +131,20 @@ function dmReport(minutes: number, s: GameState): string {
   return `t=${minutes}min 资源包 10% 金属 ${pack.amounts.metal.toNumber().toExponential(2)} / ${pack.dm.toLocaleString("en-US")} 暗物质（日产 ${dailyProduction(s, "metal").toExponential(2)}，受仓库限制） · 加成·铜 金属 ≈ +${boosterGain.toExponential(2)} / 2,500 暗物质`;
 }
 function stockValue(s: GameState): number {
-  return s.resources.metal.add(s.resources.crystal.mul(2)).add(s.resources.deuterium.mul(3)).toNumber();
+  return activePlanet(s).resources.metal.add(activePlanet(s).resources.crystal.mul(2)).add(activePlanet(s).resources.deuterium.mul(3)).toNumber();
 }
 
 function shipyardOrders(s: GameState): GameState {
-  if (s.planet.buildings.shipyard < 1 || s.planet.shipyardQueue.length > 0) return s;
+  if (activePlanet(s).buildings.shipyard < 1 || activePlanet(s).shipyardQueue.length > 0) return s;
   for (const id of ["light_fighter", "small_cargo"] as UnitId[]) {
-    if (s.planet.units[id] > 0) continue;
+    if (activePlanet(s).units[id] > 0) continue;
     if (metalEquivalent(unitCost(unitById(id))).toNumber() > 0.25 * stockValue(s)) continue;
     const r = orderUnits(s, id, 1, "protocol");
     if (r.ok) return r.state;
   }
   const deficit = deficitAfterQueued(s);
   if (deficit > 0) {
-    const need = Math.ceil(deficit / (satelliteEnergy(s.planet) * outputScale(s)));
+    const need = Math.ceil(deficit / (satelliteEnergy(activePlanet(s)) * outputScale(s)));
     if (metalEquivalent(unitCost(unitById("solar_satellite"), need)).toNumber() <= 0.25 * stockValue(s)) {
       const r = orderUnits(s, "solar_satellite", need, "protocol");
       if (r.ok) return r.state;
@@ -173,14 +158,14 @@ state = { ...state, arcade: createArcade(20261006) };
 let arcadeRuns = 0;
 let arcadeDm = 0;
 const fmtLv = (s: GameState) => {
-  const b = s.planet.buildings;
+  const b = activePlanet(s).buildings;
   const r = s.research.levels;
-  const u = s.planet.units;
+  const u = activePlanet(s).units;
   return `金${b.metal_mine} 晶${b.crystal_mine} 氘${b.deuterium_synth} 电${b.solar_plant} 聚${b.fusion_reactor} 机${b.robotics_factory} 研${b.research_lab} 船${b.shipyard} 仓${b.metal_storage}/${b.crystal_storage}/${b.deuterium_tank} 能${r.energy_tech} 计${r.computer_tech} 天${r.astrophysics} 燃${r.combustion_drive} 卫星${u.solar_satellite} 轻战${u.light_fighter} 小运${u.small_cargo}`;
 };
 
 for (let second = 1; second <= horizonMinutes * 60; second += 1) {
-  for (let tries = 0; tries < 2 && state.planet.buildQueue.length < 2; tries += 1) {
+  for (let tries = 0; tries < 2 && activePlanet(state).buildQueue.length < 2; tries += 1) {
     const id = want(state);
     if (!canEnqueue(state, id).ok) break;
     state = enqueue(state, id, "protocol").state;
@@ -210,24 +195,24 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   mark("暗物质 ≥ 5,000", state.stats.darkMatterEarned >= 5000);
   mark("首次星环机开奖", state.arcade.stats.runs >= 1);
   mark("星环机首个暗物质", state.arcade.stats.darkMatter > 0);
-  mark("金属矿 10 级", state.planet.buildings.metal_mine >= 10);
+  mark("金属矿 10 级", activePlanet(state).buildings.metal_mine >= 10);
   mark("首次仓库满", state.stats.seenStorageFull);
-  mark("机器人工厂 1 级", state.planet.buildings.robotics_factory >= 1);
-  mark("首个仓库", Math.max(state.planet.buildings.metal_storage, state.planet.buildings.crystal_storage) >= 1);
+  mark("机器人工厂 1 级", activePlanet(state).buildings.robotics_factory >= 1);
+  mark("首个仓库", Math.max(activePlanet(state).buildings.metal_storage, activePlanet(state).buildings.crystal_storage) >= 1);
   mark("首次能源不足", state.stats.seenEnergyShort);
-  mark("研究实验室 1 级", state.planet.buildings.research_lab >= 1);
+  mark("研究实验室 1 级", activePlanet(state).buildings.research_lab >= 1);
   mark("首项研究完成", state.stats.researchCompleted >= 1);
   mark("计算机技术 1 级", state.research.levels.computer_tech >= 1);
   mark("计算机技术 4 级（+2 槽）", state.research.levels.computer_tech >= 4);
   mark("能源技术 3 级", state.research.levels.energy_tech >= 3);
-  mark("核聚变 1 级", state.planet.buildings.fusion_reactor >= 1);
+  mark("核聚变 1 级", activePlanet(state).buildings.fusion_reactor >= 1);
   mark("天体物理学 1 级", state.research.levels.astrophysics >= 1);
-  mark("造船厂 1 级", state.planet.buildings.shipyard >= 1);
+  mark("造船厂 1 级", activePlanet(state).buildings.shipyard >= 1);
   mark("燃烧引擎 1 级", state.research.levels.combustion_drive >= 1);
-  mark("首艘轻型战斗机", state.planet.units.light_fighter >= 1);
-  mark("造船厂 2 级", state.planet.buildings.shipyard >= 2);
-  mark("首艘小型运输舰", state.planet.units.small_cargo >= 1);
-  mark("首颗太阳能卫星", state.planet.units.solar_satellite >= 1);
+  mark("首艘轻型战斗机", activePlanet(state).units.light_fighter >= 1);
+  mark("造船厂 2 级", activePlanet(state).buildings.shipyard >= 2);
+  mark("首艘小型运输舰", activePlanet(state).units.small_cargo >= 1);
+  mark("首颗太阳能卫星", activePlanet(state).units.solar_satellite >= 1);
   mark("重置分 1e6（1 核心）", score >= 1e6);
   mark("重置分 4e6（2 核心）", score >= 4e6);
   mark("重置分 1e7", score >= 1e7);
@@ -251,4 +236,4 @@ console.log("  资源包 / 资源加成:");
 for (const line of dmLines) console.log(`    ${line}`);
 console.log(`  星环机：开奖 ${arcadeRuns} 次，暗物质 +${arcadeDm.toLocaleString("en-US")}（含 JACKPOT），累计暗物质 ${state.stats.darkMatterEarned.toLocaleString("en-US")}`);
 const next = buildingById("metal_mine");
-console.log(`  下一级金属矿 ${nextTargetLevel(state.planet, next.id)}`);
+console.log(`  下一级金属矿 ${nextTargetLevel(activePlanet(state), next.id)}`);

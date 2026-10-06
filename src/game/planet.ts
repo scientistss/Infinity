@@ -1,6 +1,8 @@
 import balance from "../data/balance.json";
 import { BUILDING_IDS, PRODUCTION_IDS, type BuildingId, type ProductionBuildingId } from "../data/buildings";
-import type { BigNumber } from "./decimal";
+import { big, type BigNumber } from "./decimal";
+import type { ResourceAmounts } from "./types";
+import type { Coordinates } from "./galaxy";
 import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
 
@@ -19,9 +21,13 @@ export interface BuildOrder {
 }
 
 /**
- * The single planet of P1. Resources stay on GameState until P4 moves everything into planets[].
+ * A planet owns its stock, buildings and queues; research belongs to the empire.
  */
 export interface PlanetState {
+  id: string;
+  coordinates: Coordinates;
+  homeworld: boolean;
+  resources: ResourceAmounts;
   name: string;
   /** Max temperature in °C. Drives deuterium output. */
   tempMax: number;
@@ -52,6 +58,10 @@ export function fullProduction(): Record<ProductionBuildingId, number> {
 
 export function createPlanet(): PlanetState {
   return {
+    id: "home",
+    coordinates: { galaxy: 1, system: 50, position: 8 },
+    homeworld: true,
+    resources: { metal: big(500), crystal: big(500), deuterium: big(0) },
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
     fieldsMax: HOMEWORLD.fields,
@@ -73,6 +83,8 @@ export function usedFields(planet: PlanetState): number {
 export function clonePlanet(planet: PlanetState): PlanetState {
   return {
     ...planet,
+    coordinates: { ...planet.coordinates },
+    resources: { ...planet.resources },
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),

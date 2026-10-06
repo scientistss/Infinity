@@ -99,8 +99,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(0, 4000, 2000),
     factor: 2,
     requires: [lab(7), tech("energy_tech", 5), tech("shielding_tech", 5)],
-    effect: "超空间引擎、星际研究网络的前置",
-    later: "货舱 +5%/级（第 4 阶段舰队）",
+    effect: "货舱 +5%/级；超空间引擎、星际研究网络的前置",
   },
   {
     id: "plasma_tech",
@@ -120,8 +119,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(400, 0, 600),
     factor: 2,
     requires: [lab(1), tech("energy_tech", 1)],
-    effect: "燃烧引擎舰船速度 +10%/级（舰船卡片显示）",
-    later: "飞行时间（第 4 阶段）",
+    effect: "燃烧引擎舰船速度 +10%/级（已用于舰队航行）",
   },
   {
     id: "impulse_drive",
@@ -131,8 +129,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(2000, 4000, 600),
     factor: 2,
     requires: [lab(2), tech("energy_tech", 1)],
-    effect: "天体物理学的前置",
-    later: "脉冲引擎舰船速度 +20%/级（舰船卡片显示，飞行第 4 阶段）；导弹射程 5L−1 个恒星系（第 5 阶段）",
+    effect: "脉冲引擎舰船速度 +20%/级；天体物理学的前置",
+    later: "导弹射程 5L−1 个恒星系（第 5 阶段）",
   },
   {
     id: "hyperspace_drive",
@@ -142,8 +140,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(10000, 20000, 6000),
     factor: 2,
     requires: [lab(7), tech("hyperspace_tech", 3)],
-    effect: "高级舰船前置；超空间引擎舰船速度 +30%/级（舰船卡片显示）",
-    later: "飞行时间（第 4 阶段）",
+    effect: "高级舰船前置；超空间引擎舰船速度 +30%/级（已用于舰队航行）",
   },
   {
     id: "espionage_tech",
@@ -164,8 +161,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(0, 400, 600),
     factor: 2,
     requires: [lab(1)],
-    effect: "每 2 级 +1 协议卡槽（上限 12）；纳米机器人工厂需要 10 级",
-    later: "舰队槽 +1/级（第 4 阶段）",
+    effect: "舰队槽 = 1+L；每 2 级 +1 协议卡槽（上限 12）；纳米机器人工厂需要 10 级",
   },
   {
     id: "astrophysics",
@@ -176,8 +172,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     factor: 1.75,
     roundTo: 100,
     requires: [lab(3), tech("espionage_tech", 4), tech("impulse_drive", 3)],
-    effect: "1 级解锁深空星环机（信标版）",
-    later: "殖民地数 ⌈L/2⌉、远征槽 ⌊√L⌋（第 4 阶段）",
+    effect: "最多 ⌈L/2⌉ 颗殖民地（母星另计）；1 级解锁深空星环机（信标版）",
+    later: "舰队充能与远征槽尚未开放",
   },
   {
     id: "intergalactic_research_network",
@@ -187,8 +183,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(240000, 400000, 160000),
     factor: 2,
     requires: [lab(10), tech("computer_tech", 8), tech("hyperspace_tech", 8)],
-    effect: "联通 L 个额外研究实验室（只有一颗星球时没有效果）",
-    later: "多星球后生效（第 4 阶段）",
+    effect: "联通最多 L 个满足前置且未升级中的额外实验室；研究时间绑定出资星球",
   },
   {
     id: "graviton_tech",

@@ -1,3 +1,7 @@
+import { icon, heroMarkup, updateHero, GAME_VERSION } from "./art";
+import { empirePanelsHtml, planetSelectorHtml, readFlight, setFlightTarget, updateEmpirePanel } from "./empire-panel";
+import type { FleetRequest } from "../game/fleet";
+import { GALAXY } from "../game/galaxy";
 import { ACHIEVEMENTS } from "../data/achievements";
 import { CURVATURE_TECH, isCurvatureId } from "../data/curvature-tech";
 import { CARD_CATALOG } from "../data/protocol-cards";
@@ -27,6 +31,11 @@ import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyar
 import { isUnitId, type UnitId } from "../data/units";
 
 export type UiAction =
+  | { type: "select-planet"; id: string }
+  | { type: "galaxy-browse"; galaxy: number; system: number }
+  | { type: "send-fleet" | "preview-flight"; request: FleetRequest }
+  | { type: "recall-fleet"; id: number }
+  | { type: "abandon-colony" }
   | { type: "scrape" }
   | { type: "enqueue"; id: BuildingId }
   | { type: "cancelQueue"; index: number }
@@ -47,6 +56,7 @@ export type UiAction =
   | { type: "prestige" }
   | { type: "save" }
   | { type: "export" }
+  | { type: "export-backup" }
   | { type: "import-text"; text: string }
   | { type: "import-file"; file: File }
   | { type: "reset" }
@@ -89,11 +99,30 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       selectTab(root, button.dataset.tab);
       return;
     }
+    if (button.dataset.route) {
+      setFlightTarget(root, button.dataset.route, button.dataset.mission ?? "transport");
+      selectTab(root, "fleet");
+      return;
+    }
     const action = button.dataset.action;
+    if (action === "select-planet") onAction({ type: "select-planet", id: button.dataset.planet ?? "" });
+    if (action === "abandon-colony") onAction({ type: "abandon-colony" });
+    if (action === "recall-fleet") onAction({ type: "recall-fleet", id: Number(button.dataset.fleet) });
+    if (action === "send-fleet" || action === "preview-flight") onAction({ type: action, request: readFlight(root) });
+    if (action === "galaxy-browse" || action === "galaxy-prev" || action === "galaxy-next") {
+      const galaxy = Number((root.querySelector("#browse-galaxy") as HTMLInputElement).value);
+      const field = root.querySelector("#browse-system") as HTMLInputElement;
+      let system = Number(field.value);
+      if (action === "galaxy-prev") system = (system + GALAXY.systems - 2) % GALAXY.systems + 1;
+      if (action === "galaxy-next") system = system % GALAXY.systems + 1;
+      field.value = String(system);
+      onAction({ type: "galaxy-browse", galaxy, system });
+    }
     if (action === "scrape") onAction({ type: "scrape" });
     if (action === "prestige") onAction({ type: "prestige" });
     if (action === "save") onAction({ type: "save" });
     if (action === "export") onAction({ type: "export" });
+    if (action === "export-backup") onAction({ type: "export-backup" });
     if (action === "import-text") onAction({ type: "import-text", text: transfer.value });
     if (action === "reset") onAction({ type: "reset" });
     if (action === "dismiss-offline") onAction({ type: "dismiss-offline" });
@@ -182,6 +211,10 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   root.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (target instanceof HTMLSelectElement && target.id === "active-planet") {
+      onAction({ type: "select-planet", id: target.value });
+      return;
+    }
     if (target instanceof HTMLSelectElement && target.dataset.prod) {
       const id = target.dataset.prod;
       const pct = Number(target.value);
@@ -241,6 +274,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
 
   return {
     update(model) {
+      updateEmpirePanel(root, model.empire, model.status);
       setText(root, "telemetry", model.telemetry);
       setText(root, "multiplier", `产量 ${model.multiplier}`);
       setText(root, "played", `累计 ${model.played}`);
@@ -588,42 +622,22 @@ const TAB_KEY = "infinity.ui.tab";
 const HIDDEN_TABS = new Set(["research", "shipyard", "defense", "darkmatter", "arcade"]);
 const DEFAULT_TAB = "facilities";
 const TABS = [
-  { id: "overview", label: "概览", icon: "logo" },
-  { id: "facilities", label: "建筑", icon: "robotics_factory" },
-  { id: "research", label: "研究", icon: "tech" },
-  { id: "shipyard", label: "造船厂", icon: "shipyard" },
-  { id: "defense", label: "防御", icon: "defense" },
-  { id: "darkmatter", label: "暗物质", icon: "dark_matter" },
-  { id: "arcade", label: "星环机", icon: "ring_machine" },
-  { id: "protocol", label: "协议卡", icon: "protocol_card" },
-  { id: "curvature", label: "曲率", icon: "warp_core" },
-  { id: "achievements", label: "成就", icon: "achievement" },
-  { id: "save", label: "存档", icon: "save" },
+  { id: "empire", label: "帝国", icon: "nav-planet" },
+  { id: "galaxy", label: "银河", icon: "nav-galaxy" },
+  { id: "fleet", label: "舰队", icon: "nav-fleet" },
+  { id: "messages", label: "消息", icon: "nav-messages" },
+  { id: "overview", label: "概览", icon: "nav-ranking" },
+  { id: "facilities", label: "建筑", icon: "nav-build" },
+  { id: "research", label: "研究", icon: "nav-research" },
+  { id: "shipyard", label: "造船厂", icon: "nav-dock" },
+  { id: "defense", label: "防御", icon: "nav-shield" },
+  { id: "darkmatter", label: "暗物质", icon: "nav-resource" },
+  { id: "arcade", label: "星环机", icon: "nav-trade" },
+  { id: "protocol", label: "协议卡", icon: "nav-tasks" },
+  { id: "curvature", label: "曲率", icon: "nav-tree" },
+  { id: "achievements", label: "成就", icon: "nav-achievements" },
+  { id: "save", label: "存档", icon: "nav-settings" },
 ] as const;
-
-/** Chinese alt text for each painted icon. */
-const ICON_ALT: Record<string, string> = {
-  metal: "金属",
-  crystal: "晶体",
-  deuterium: "重氢",
-  energy: "能量",
-  metal_mine: "金属矿",
-  crystal_mine: "晶体矿",
-  deuterium_synth: "重氢合成器",
-  solar_plant: "太阳能电站",
-  robotics_factory: "机器人工厂",
-  launch: "殖民舰",
-  warp_core: "曲率核心",
-  tech: "曲率科技",
-  achievement: "成就勋章",
-  protocol_card: "协议卡",
-  save: "存档",
-  logo: "Infinity 行星标志",
-  dark_matter: "暗物质",
-  ring_machine: "深空星环机",
-  shipyard: "造船厂",
-  defense: "防御",
-};
 
 /**
  * Painted icon per building. P1 adds buildings without their own art yet; they reuse the closest
@@ -640,31 +654,9 @@ const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
   deuterium_tank: "deuterium",
   robotics_factory: "robotics_factory",
   nanite_factory: "robotics_factory",
-  shipyard: "launch",
-  research_lab: "tech",
+  shipyard: "shipyard",
+  research_lab: "research_lab",
 };
-
-/** Simple self-drawn SVG icons (no painted WebP yet). */
-const SVG_ICONS = new Set(["dark_matter", "shipyard", "defense"]);
-
-/** Icons that also ship a 256px variant for large or high-DPI rendering. */
-const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core", "ring_machine"]);
-
-interface IconOptions {
-  /** Defer loading until the image is near the viewport (default true; header icons pass false). */
-  lazy?: boolean;
-  /** Rendered CSS size in px, used for the srcset `sizes` hint on icons with a 256px variant. */
-  size?: number;
-  alt?: string;
-}
-
-/** Painted OGame-style icon (WebP) with a steel-grey rounded frame applied in CSS. */
-function icon(name: string, extra = "", options: IconOptions = {}): string {
-  const { lazy = true, size = 48, alt = ICON_ALT[name] ?? "" } = options;
-  const src = `${ICON_BASE}${name}${SVG_ICONS.has(name) ? ".svg" : ".webp"}`;
-  const srcset = HI_RES_ICONS.has(name) ? ` srcset="${src} 128w, ${ICON_BASE}${name}-256.webp 256w" sizes="${size}px"` : "";
-  return `<img class="icon icon-${name}${extra ? ` ${extra}` : ""}" src="${src}"${srcset} alt="${alt}" width="128" height="128"${lazy ? ' loading="lazy"' : ""} decoding="async" draggable="false" />`;
-}
 
 /** Protocol card art plus the card's own single-color glyph as a small violet badge (CSS mask). */
 function cardIcon(cardId: string, label: string): string {
@@ -689,6 +681,7 @@ function selectTab(root: ParentNode, id: string): void {
   for (const panel of root.querySelectorAll<HTMLElement>("[data-tab-panel]")) {
     panel.hidden = panel.dataset.tabPanel !== tab;
   }
+  updateHero(root, tab);
   try {
     localStorage.setItem(TAB_KEY, tab);
   } catch {
@@ -819,9 +812,9 @@ function shellMarkup(): string {
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
-    (achievement) => `
+    (achievement, index) => `
       <li class="ach" data-bind="ach-${achievement.id}" title="${achievement.detail}">
-        ${icon("achievement", "ach-icon")}
+        ${icon((["badge-explorer", "badge-colonist", "badge-galaxy", "badge-infinity"] as const)[Math.min(3, Math.floor(index / 6))]!, "ach-icon", { alt: achievement.name })}
         <strong>${achievement.name}</strong>
         <p>${achievement.detail}</p>
         <span class="ach-progress" data-bind="ach-progress-${achievement.id}">0 / 1</span>
@@ -865,10 +858,10 @@ function shellMarkup(): string {
     <header class="topbar">
       <div class="topbar-main">
         <div class="brand">
-          <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
+          ${icon("nav-planet", "logo", { lazy: false })}
           <div>
             <h1>Infinity <span>无限</span></h1>
-            <p class="kicker">Planet surface · v0.4</p>
+            <p class="kicker">星际扩张 · v${GAME_VERSION}</p>
           </div>
         </div>
         <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
@@ -901,8 +894,10 @@ function shellMarkup(): string {
       </div>
       <nav class="tabs" role="tablist" aria-label="主菜单">${tabs}</nav>
     </header>
+    ${planetSelectorHtml()}
 
     <main class="wrap">
+      ${heroMarkup()}
       <div class="notice" data-bind="notice" role="status" hidden>
         <span data-bind="notice-text"></span>
         <button type="button" data-action="dismiss-notice">知道了</button>
@@ -981,6 +976,8 @@ function shellMarkup(): string {
         ${researchGroups()}
       </section>
 
+      ${empirePanelsHtml()}
+
       ${shipyardPanelsHtml(icon)}
 
       ${arcadePanelHtml(icon("ring_machine", "icon-h2", { alt: "" }))}
@@ -1007,7 +1004,7 @@ function shellMarkup(): string {
           <h2 id="protocol-title">协议卡</h2>
           <p data-bind="protocol-meta">槽位</p>
         </div>
-        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
+        <p class="lede">当前协议卡只作用于选中的星球，其他殖民地仍独立生产与建造。把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
         <p class="rates">${icon("energy")} <span data-bind="protocol-energy"></span></p>
         <div class="catalog-row">${catalogButtons()}</div>
         <div class="protocol-slots">${protocolSlots()}</div>
@@ -1017,7 +1014,7 @@ function shellMarkup(): string {
         <div class="prestige-panel">
           <div class="panel-head">
             <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
-            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置全部星球资源、建筑、舰船、防御、队列和在途舰队，删除殖民地，只留下新母星（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
           </div>
           <dl class="prestige-stats">
             <div>
@@ -1050,17 +1047,19 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version: 8, savedAt, lastTickAt, state }。测试期只接受 v8：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 9, savedAt, lastTickAt, state }。支持 v9 直接读取及 v8 单星球存档迁移；不支持的版本不会覆盖原件。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>
-          <button type="button" data-action="export">导出 JSON</button>
+          <button type="button" data-action="export">导出当前 JSON</button>
+          <button type="button" data-action="export-backup">导出保留的原存档</button>
           <label class="file-button">
             导入文件
             <input data-bind="import-file" type="file" accept="application/json,.json" />
           </label>
           <button type="button" data-action="reset" class="danger">重置</button>
         </div>
+        <p class="recovery-actions" id="save-protection" role="status"></p>
         <label class="transfer-label" for="transfer">导入文本</label>
         <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON，或用导出填入此框"></textarea>
         <button type="button" data-action="import-text">从文本导入</button>
