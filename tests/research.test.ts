@@ -166,7 +166,9 @@ describe("research effects", () => {
     expect(next.research.levels.energy_tech).toBe(6);
     expect(next.research.levels.computer_tech).toBe(4);
     expect(next.research.queue).toHaveLength(0);
-    expect(next.darkMatter.toNumber()).toBe(1234);
+    // Dark matter carries over (a new achievement such as the first launch can add to it).
+    expect(next.darkMatter.gte(state.darkMatter)).toBe(true);
+    expect(next.darkMatter.gte(1234)).toBe(true);
     expect(next.planet.buildings.research_lab).toBe(0);
   });
 });
@@ -210,7 +212,8 @@ describe("save v7 research", () => {
     const restored = deserializeState(file.state);
     expect(serializeState(restored)).toEqual(serializeState(state));
     expect(restored.research.queue).toHaveLength(2);
-    expect(restored.darkMatter.toNumber()).toBe(777);
+    expect(restored.darkMatter.eq(state.darkMatter)).toBe(true);
+    expect(state.darkMatter.gte(777)).toBe(true);
   });
 
   it("rejects unknown research and bad levels", () => {
