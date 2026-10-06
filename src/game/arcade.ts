@@ -1,11 +1,12 @@
 /**
- * Deep-space ring machine, beacon version (design doc §8.6, P2).
+ * Deep-space ring machine, beacon version (design doc §8.6, P2; P3 opens the drifting-ships tile).
  *
  * Runs are rolled the moment they are granted (beacon, deuterium top-up, bonus) with the RNG state stored in
  * the save; revealing only plays them back. Prize sizes use the state at reveal time with the pre-rolled
  * uniform numbers. Pity changes where a run lands, never the public odds table.
  */
-import { unitSpend } from "./shipyard";
+import { unitMissing, unitSpend } from "./shipyard";
+import { DRIFTER_LADDER, unitById, type ShipId } from "../data/units";
 import {
   ARCADE,
   ARCADE_PHASE,
@@ -202,7 +203,7 @@ export function createArcade(seed: number = freshSeed()): ArcadeState {
     beaconProgress: 0,
     beaconRequired: ARCADE.beaconSeconds,
     topUps: [],
-    bets: { metal: 0, crystal: 0, deuterium: 0 },
+    bets: { metal: 0, crystal: 0, deuterium: 0, drifter: 0 },
     rollPity: { empty: 0, jackpot: 0 },
     pity: { empty: 0, jackpot: 0 },
     position: 0,
@@ -403,6 +404,74 @@ function giveResource(state: GameState, res: ResourceId, amount: number): { stat
   return { state: { ...state, resources }, text: `${RES_ZH[res]} +${formatAmount(big(given))}${overflow}` };
 }
 
+// ---------- drifting ships (P3) ----------
+
+/** Metal-equivalent value of one ship (crystal ×2, deuterium ×3). */
+export function shipValueMe(id: ShipId): number {
+  const c = unitById(id).cost;
+  return c.metal + 2 * c.crystal + 3 * c.deuterium;
+}
+
+/**
+ * Ships a drifter tile can hand out: every ladder ship whose requirements are met, plus one tier above the
+ * best of them (design doc §8.6.2: "只出现已解锁及高一档的舰船，不出死星"). Without any, the first rung.
+ */
+export function drifterPool(state: GameState): ShipId[] {
+  let top = -1;
+  const pool: ShipId[] = [];
+  DRIFTER_LADDER.forEach((id, index) => {
+    if (unitMissing(state, id).length === 0) {
+      pool.push(id);
+      top = index;
+    }
+  });
+  const above = DRIFTER_LADDER[top + 1];
+  if (above && !pool.includes(above)) pool.push(above);
+  return pool;
+}
+
+/**
+ * Split a metal-equivalent value into ships: ~60% into a type picked by `v` from the pool, the rest into the
+ * cheapest pool ship. Whatever is too small for one more ship comes as metal.
+ */
+export function drifterShips(state: GameState, valueMe: number, v: number): { ships: Array<{ id: ShipId; count: number }>; leftoverMe: number } {
+  const pool = drifterPool(state);
+  const cheapest = [...pool].sort((a, b) => shipValueMe(a) - shipValueMe(b))[0]!;
+  const pick = pool[Math.min(pool.length - 1, Math.floor(Math.max(0, v) * pool.length))]!;
+  let left = Math.max(0, valueMe);
+  const ships: Array<{ id: ShipId; count: number }> = [];
+  const add = (id: ShipId, count: number) => {
+    if (count <= 0) return;
+    const same = ships.find((entry) => entry.id === id);
+    if (same) same.count += count;
+    else ships.push({ id, count });
+    left -= count * shipValueMe(id);
+  };
+  add(pick, Math.floor((left * 0.6) / shipValueMe(pick)));
+  add(cheapest, Math.floor(left / shipValueMe(cheapest)));
+  return { ships, leftoverMe: Math.max(0, left) };
+}
+
+function giveShips(state: GameState, valueMe: number, v: number): { state: GameState; text: string } {
+  const split = drifterShips(state, valueMe, v);
+  const units = { ...state.planet.units };
+  for (const { id, count } of split.ships) units[id] += count;
+  let next: GameState = { ...state, planet: { ...state.planet, units } };
+  const parts = split.ships.map(({ id, count }) => `${unitById(id).nameZh} ×${count.toLocaleString("zh-CN")}`);
+  if (split.leftoverMe >= 1) {
+    const metal = giveResource(next, "metal", split.leftoverMe);
+    next = metal.state;
+    parts.push(`零头折合${metal.text}`);
+  }
+  return { state: next, text: parts.length > 0 ? parts.join("、") : "空空如也" };
+}
+
+/** Metal-equivalent value range of a drifter tile right now: half the resource prize (for the tooltip). */
+export function drifterRange(state: GameState, bigTier: boolean): [number, number] {
+  const [lo, hi] = resourceRange(state, bigTier);
+  return [lo / 2, hi / 2];
+}
+
 interface Applied {
   state: GameState;
   line: string;
@@ -420,6 +489,12 @@ function applyLight(state: GameState, light: LightRoll, ctx: PrizeContext, train
     const tier = light.big ? ARCADE.tiers.big : ARCADE.tiers.normal;
     const valueMe = Math.min(ctx.cap * lerp(tier, light.u), ctx.window);
     const given = giveResource(state, symbol, valueMe / ME_FACTOR[symbol]);
+    return { state: given.state, line: `${name}${tierZh}：${given.text}`, paid: true };
+  }
+  if (symbol === "drifter") {
+    const tier = light.big ? ARCADE.tiers.big : ARCADE.tiers.normal;
+    const valueMe = Math.min(ctx.cap * lerp(tier, light.u), ctx.window) / 2;
+    const given = giveShips(state, valueMe, light.v);
     return { state: given.state, line: `${name}${tierZh}：${given.text}`, paid: true };
   }
   if (symbol === "dark_matter") {
@@ -461,7 +536,7 @@ function applyLight(state: GameState, light: LightRoll, ctx: PrizeContext, train
   if (symbol === "jackpot") {
     const kind = jackpotKind(state, light.v);
     const valueMe = Math.min(ctx.cap * lerp(ARCADE.tiers.jackpot, light.u), ctx.jackpotWindow);
-    const given = giveResource(state, kind, valueMe / ME_FACTOR[kind]);
+    const given = kind === "drifter" ? giveShips(state, valueMe / 2, light.v) : giveResource(state, kind, valueMe / ME_FACTOR[kind]);
     const dm = Math.round(lerp(ARCADE.darkMatter.jackpot, light.v));
     const next = grantDarkMatter(given.state, dm);
     const stats = { ...next.arcade.stats, darkMatter: next.arcade.stats.darkMatter + dm };
@@ -471,7 +546,7 @@ function applyLight(state: GameState, light: LightRoll, ctx: PrizeContext, train
   return { state, line: `${name}：没有效果`, paid: false };
 }
 
-/** JACKPOT prize kind: the symbol with the most units bet, else metal / crystal / deuterium 68 / 24 / 8. */
+/** JACKPOT prize kind: the symbol with the most units bet (drifter = ships), else metal / crystal / deuterium 68 / 24 / 8. */
 function jackpotKind(state: GameState, v: number): BetSymbol {
   let best: BetSymbol | null = null;
   for (const symbol of BET_SYMBOLS) {
@@ -517,11 +592,12 @@ export function setBet(state: GameState, symbol: BetSymbol, units: number): Arca
 // ---------- reveal ----------
 
 function settleBets(state: GameState, ctx: { unit: number; active: boolean }, symbol: ArcadeSymbol): { state: GameState; line: string } {
-  if (!ctx.active || (symbol !== "metal" && symbol !== "crystal" && symbol !== "deuterium")) return { state, line: "" };
+  if (!ctx.active || (symbol !== "metal" && symbol !== "crystal" && symbol !== "deuterium" && symbol !== "drifter")) return { state, line: "" };
   const units = state.arcade.bets[symbol];
   if (units <= 0) return { state, line: "" };
   const winMe = units * ctx.unit * ME_FACTOR.deuterium * betOdds(symbol);
-  const given = giveResource(state, symbol, winMe / ME_FACTOR[symbol]);
+  // A drifter bet pays ships of the same value (design doc §8.6.5).
+  const given = symbol === "drifter" ? giveShips(state, winMe, 0.5) : giveResource(state, symbol, winMe / ME_FACTOR[symbol]);
   const stats = { ...given.state.arcade.stats, betWon: given.state.arcade.stats.betWon + winMe };
   return {
     state: withArcade(given.state, { stats }),

@@ -2,6 +2,7 @@ import {
   CARD_CATALOG,
   SLOT_RULES,
   type Action,
+  type BuildUnitsCount,
   type CardCatalogId,
   type CheapestGroup,
   type Condition,
@@ -19,7 +20,9 @@ import {
   type BuildingId,
 } from "../data/buildings";
 import { RESEARCH, RESEARCH_IDS, isResearchId, researchById, type ResearchId } from "../data/research";
-import { protocolSlotBonus, protocolsRelaxed, relaxedWarpCoreCount } from "../prestige/tree";
+import { outputScale, protocolSlotBonus, protocolsRelaxed, relaxedWarpCoreCount } from "../prestige/tree";
+import { DEFENSE_IDS, UNIT_IDS, isUnitId, unitById, type UnitId } from "../data/units";
+import { deficitAfterQueued, orderUnits, satelliteEnergy, unitTotal, type UnitAmount } from "../game/shipyard";
 import { big, isValidAmount, type BigNumber } from "../game/decimal";
 import { formatAmount, formatDuration } from "../game/format";
 import { baseCollectAmount, economy, energyReport, storageCaps } from "../game/economy";
@@ -84,6 +87,7 @@ const TRIGGER_LABEL: Record<Trigger["kind"], string> = {
   storageFull: "仓库满",
   researchIdle: "研究空闲",
   runsReady: "有开奖次数",
+  shipyardIdle: "造船厂空闲",
 };
 
 const ACTION_LABEL: Record<Action["kind"], string> = {
@@ -95,6 +99,7 @@ const ACTION_LABEL: Record<Action["kind"], string> = {
   enqueueCheapest: "最便宜优先",
   runLights: "跑灯开奖",
   setBet: "改押注",
+  buildUnits: "造船 / 防御",
 };
 
 const CHEAPEST_LABEL: Record<CheapestGroup, string> = {
@@ -145,6 +150,9 @@ export function unlockHint(state: GameState, id: CardCatalogId): string {
   if (unlock.kind === "firstStorageFull") return "首次有资源到达仓库上限";
   if (unlock.kind === "researchGte") return `${researchById(unlock.tech).nameZh}达到 ${unlock.value} 级`;
   if (unlock.kind === "arcadeManualRuns") return `星环机手动开奖 ${unlock.count} 次`;
+  if (unlock.kind === "unitGte") return `拥有 ${unlock.value} 个${unitById(unlock.unit).nameZh}`;
+  if (unlock.kind === "firstDefense") return "造出第一座防御设施";
+  if (unlock.kind !== "warpCoreTotal") return "";
   return `累计 ${relaxedWarpCoreCount(state, unlock.count)} 曲率核心`;
 }
 
@@ -163,6 +171,9 @@ export function unlockProgress(state: GameState, id: CardCatalogId): string {
   }
   if (unlock.kind === "warpCoreTotal") {
     return `${unlockHint(state, id)}（${state.warpCores.toFixed(0)}/${relaxedWarpCoreCount(state, unlock.count)}）`;
+  }
+  if (unlock.kind === "unitGte") {
+    return `${unlockHint(state, id)}（${Math.min(state.planet.units[unlock.unit], unlock.value)}/${unlock.value}）`;
   }
   if (unlock.kind === "firstQueueIdle") {
     const idle = state.stats.seenQueueIdle ? "已跑空" : "未跑空";
@@ -209,11 +220,12 @@ export function evaluateLoadout(state: GameState, periodSeconds: number): GameSt
 }
 
 /**
- * Event pass (design doc §13): only `queueIdle` / `researchIdle` / `storageFull` cards whose event just happened run.
+ * Event pass (design doc §13): only `queueIdle` / `researchIdle` / `storageFull` / `runsReady` / `shipyardIdle` cards
+ * whose event just happened run.
  * Interval timers do not advance. Used online and offline so a finished build is refilled at once.
  */
 export function evaluateEvents(state: GameState, events: ProtocolEvents): GameState {
-  if (!events.queueIdle && !events.researchIdle && !events.runsReady && events.storageFull.length === 0) return state;
+  if (!events.queueIdle && !events.researchIdle && !events.runsReady && !events.shipyardIdle && events.storageFull.length === 0) return state;
   let next = refreshUnlocks(state);
   const open = unlockedSlotCount(next);
   for (let index = 0; index < open; index += 1) {
@@ -224,6 +236,7 @@ export function evaluateEvents(state: GameState, events: ProtocolEvents): GameSt
       (trigger.kind === "queueIdle" && events.queueIdle) ||
       (trigger.kind === "researchIdle" && events.researchIdle) ||
       (trigger.kind === "runsReady" && events.runsReady === true) ||
+      (trigger.kind === "shipyardIdle" && events.shipyardIdle === true) ||
       (trigger.kind === "storageFull" && events.storageFull.includes(trigger.res));
     if (hit) next = runSlot(next, index, 0);
   }
@@ -424,6 +437,21 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
         value: String(condition.value),
         options: withCurrent(steps.map((n) => ({ value: String(n), label: String(n) })), String(condition.value)),
       });
+    } else if (condition.kind === "unitCountLt") {
+      fields.push({ path: at("unit"), label: "单位", value: condition.unit, options: unitOptions() });
+      fields.push({
+        path: at("value"),
+        label: "数量<",
+        value: String(condition.value),
+        options: withCurrent(UNIT_STEPS.map((n) => ({ value: String(n), label: n.toLocaleString("zh-CN") })), String(condition.value)),
+      });
+    } else if (condition.kind === "energyDeficitGte") {
+      fields.push({
+        path: at("value"),
+        label: "能源缺口≥",
+        value: String(condition.value),
+        options: withCurrent([1, 10, 50, 100, 500, 1000, 5000].map((n) => ({ value: String(n), label: n.toLocaleString("zh-CN") })), String(condition.value)),
+      });
     } else if (condition.kind === "buildTimeLt") {
       fields.push({ path: at("building"), label: "建筑", value: condition.building, options: buildingOptions() });
       fields.push({
@@ -490,6 +518,31 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       value: String(action.units),
       options: Array.from({ length: maxBetUnits() + 1 }, (_, n) => ({ value: String(n), label: `${n} 注` })),
     });
+  } else if (action.kind === "buildUnits") {
+    fields.push({ path: "action.unit", label: "单位", value: action.unit, options: unitOptions() });
+    const mode = countMode(action.count);
+    fields.push({
+      path: "action.count",
+      label: "数量",
+      value: mode,
+      options: withCurrent(
+        [
+          ...[1, 5, 10, 50, 100, 1000].map((n) => ({ value: String(n), label: `${n.toLocaleString("zh-CN")} 个` })),
+          { value: "max", label: "最大（资源够多少造多少）" },
+          { value: "deficit", label: "补足能源缺口（太阳能卫星）" },
+          { value: "fill", label: "补到 N 个" },
+        ],
+        mode,
+      ),
+    });
+    if (typeof action.count === "object") {
+      fields.push({
+        path: "action.fillTo",
+        label: "补到",
+        value: String(action.count.fillTo),
+        options: withCurrent(UNIT_STEPS.map((n) => ({ value: String(n), label: n.toLocaleString("zh-CN") })), String(action.count.fillTo)),
+      });
+    }
   } else if (action.kind === "prestige") {
     fields.push({
       path: "action.minGain",
@@ -514,6 +567,11 @@ function triggerReady(state: GameState, trigger: Trigger): string | null {
   }
   if (trigger.kind === "runsReady") {
     return state.arcade.runs.length > 0 ? null : "没有可用开奖次数";
+  }
+  if (trigger.kind === "shipyardIdle") {
+    if (state.planet.buildings.shipyard < 1) return "还没有造船厂";
+    const batches = state.planet.shipyardQueue.length;
+    return batches === 0 ? null : `造船厂忙（${batches} 批）`;
   }
   if (trigger.kind === "storageFull") {
     const cap = storageCaps(state)[trigger.res];
@@ -611,7 +669,38 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
     }
     return setBet(state, action.symbol, action.units);
   }
+  if (action.kind === "buildUnits") return buildUnitsAction(state, action.unit, action.count);
   const result = enqueue(state, action.building, "protocol");
+  return { state: result.state, ok: result.ok, reason: result.reason };
+}
+
+const UNIT_STEPS = [1, 5, 10, 20, 50, 100, 200, 500, 1000, 5000, 10000];
+
+function countMode(count: BuildUnitsCount): string {
+  if (typeof count === "number") return String(count);
+  if (typeof count === "object") return "fill";
+  return count;
+}
+
+/** Solar satellites needed to close the energy deficit (queued satellites already count). */
+export function satellitesForDeficit(state: GameState): number {
+  const deficit = deficitAfterQueued(state);
+  if (deficit <= 0) return 0;
+  const per = satelliteEnergy(state.planet) * outputScale(state);
+  return per > 0 ? Math.ceil(deficit / per - 1e-9) : 0;
+}
+
+function buildUnitsAction(state: GameState, unit: UnitId, count: BuildUnitsCount): { state: GameState; ok: boolean; reason: string } {
+  let amount: UnitAmount;
+  if (count === "deficit") {
+    if (unit !== "solar_satellite") return { state, ok: false, reason: "「补足能源缺口」只适用于太阳能卫星" };
+    const need = satellitesForDeficit(state);
+    if (need <= 0) return { state, ok: true, reason: "能源没有缺口（已计入排队中的卫星）" };
+    amount = need;
+  } else {
+    amount = count;
+  }
+  const result = orderUnits(state, unit, amount, "protocol");
   return { state: result.state, ok: result.ok, reason: result.reason };
 }
 
@@ -734,6 +823,15 @@ function conditionFails(state: GameState, condition: Condition): string | null {
       const name = condition.pity === "empty" ? "空灯保底" : "大奖保底";
       return count >= condition.value ? null : `${name} ${count} < ${condition.value}`;
     }
+    case "unitCountLt": {
+      const total = unitTotal(state.planet, condition.unit);
+      const name = unitById(condition.unit).nameZh;
+      return total < condition.value ? null : `${name} ${total.toLocaleString("zh-CN")}（含排队）不少于 ${condition.value.toLocaleString("zh-CN")}`;
+    }
+    case "energyDeficitGte": {
+      const deficit = deficitAfterQueued(state);
+      return deficit >= condition.value ? null : `能源缺口 ${Math.ceil(deficit).toLocaleString("zh-CN")} < ${condition.value.toLocaleString("zh-CN")}（已计入排队中的卫星）`;
+    }
     case "costRatioLt": {
       const name = buildingById(condition.building).nameZh;
       const costs = costFor(state, condition.building, nextTargetLevel(state.planet, condition.building));
@@ -778,6 +876,10 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
       return state.warpCores.gte(relaxedWarpCoreCount(state, unlock.count));
     case "arcadeManualRuns":
       return state.arcade.stats.manualRuns >= unlock.count;
+    case "unitGte":
+      return state.planet.units[unlock.unit] >= unlock.value;
+    case "firstDefense":
+      return DEFENSE_IDS.some((id) => state.planet.units[id] > 0);
   }
 }
 
@@ -828,6 +930,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     else if (value === "queueIdle") card.trigger = { kind: "queueIdle" };
     else if (value === "researchIdle") card.trigger = { kind: "researchIdle" };
     else if (value === "runsReady") card.trigger = { kind: "runsReady" };
+    else if (value === "shipyardIdle") card.trigger = { kind: "shipyardIdle" };
     else card.trigger = { kind: "storageFull", res: "metal" };
     return true;
   }
@@ -858,6 +961,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     else if (value === "enqueueCheapest") card.action = { kind: "enqueueCheapest", group: "mines" };
     else if (value === "runLights") card.action = { kind: "runLights", count: "all" };
     else if (value === "setBet") card.action = { kind: "setBet", symbol: "metal", units: 1 };
+    else if (value === "buildUnits") card.action = { kind: "buildUnits", unit: "solar_satellite", count: 1 };
     else card.action = { kind: "enqueue", building: "metal_mine", levels: 1 };
     return true;
   }
@@ -891,6 +995,24 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     card.action = { ...card.action, units };
     return true;
   }
+  if (path === "action.unit" && card.action.kind === "buildUnits" && isUnitId(value)) {
+    card.action = { ...card.action, unit: value };
+    return true;
+  }
+  if (path === "action.count" && card.action.kind === "buildUnits") {
+    const n = Number(value);
+    if (value === "max" || value === "deficit") card.action = { ...card.action, count: value };
+    else if (value === "fill") card.action = { ...card.action, count: { fillTo: typeof card.action.count === "object" ? card.action.count.fillTo : 50 } };
+    else if (Number.isInteger(n) && n >= 1 && n <= 1_000_000) card.action = { ...card.action, count: n };
+    else return false;
+    return true;
+  }
+  if (path === "action.fillTo" && card.action.kind === "buildUnits" && typeof card.action.count === "object") {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) return false;
+    card.action = { ...card.action, count: { fillTo: n } };
+    return true;
+  }
   if (path === "action.pct" && card.action.kind === "setProduction") {
     const pct = Number(value);
     if (!Number.isInteger(pct) || pct < 0 || pct > 100 || pct % 10 !== 0) return false;
@@ -903,7 +1025,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     card.action = { ...card.action, minGain };
     return true;
   }
-  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds|tech|pity|kind)$/.exec(path);
+  const match = /^condition\.(\d+)\.(res|value|building|level|ratio|eff|qlen|seconds|tech|pity|kind|unit)$/.exec(path);
   if (!match) return false;
   const index = Number(match[1]);
   const field = match[2];
@@ -961,6 +1083,12 @@ function patchCondition(condition: Condition, field: string, value: string): Con
       }
       if (field === "value" && Number.isInteger(num) && num >= 1 && num <= 1000) return { ...condition, value: num };
       return null;
+    case "unitCountLt":
+      if (field === "unit" && isUnitId(value)) return { ...condition, unit: value };
+      if (field === "value" && Number.isInteger(num) && num >= 1 && num <= 1_000_000) return { ...condition, value: num };
+      return null;
+    case "energyDeficitGte":
+      return field === "value" && Number.isFinite(num) && num > 0 ? { ...condition, value: num } : null;
   }
 }
 
@@ -979,6 +1107,7 @@ function triggerPhrase(trigger: Trigger): string {
   if (trigger.kind === "storageFull") return `${RES_LABEL[trigger.res]}达到仓库上限`;
   if (trigger.kind === "researchIdle") return "研究队列有空位";
   if (trigger.kind === "runsReady") return "星环机有开奖次数";
+  if (trigger.kind === "shipyardIdle") return "造船厂空闲";
   return `${RES_LABEL[trigger.res]} ≥ ${trigger.gte}`;
 }
 
@@ -1008,6 +1137,10 @@ function conditionPhrase(condition: Condition): string {
       return `开奖次数 ≥ ${condition.value}`;
     case "pityGte":
       return `${condition.pity === "empty" ? "空灯保底" : "大奖保底"}计数 ≥ ${condition.value}`;
+    case "unitCountLt":
+      return `${unitById(condition.unit).nameZh}（含排队）少于 ${condition.value.toLocaleString("zh-CN")}`;
+    case "energyDeficitGte":
+      return `能源缺口（计入排队卫星）≥ ${condition.value.toLocaleString("zh-CN")}`;
   }
 }
 
@@ -1019,6 +1152,13 @@ function actionPhrase(action: Action): string {
   if (action.kind === "enqueueCheapest") return `入队${CHEAPEST_LABEL[action.group]}中最便宜的下一级`;
   if (action.kind === "runLights") return action.count === 1 ? "按常驻押注开奖 1 次" : "按常驻押注开完全部开奖";
   if (action.kind === "setBet") return `把${arcadeSymbolDef(action.symbol).nameZh}的常驻押注改为 ${action.units} 注`;
+  if (action.kind === "buildUnits") {
+    const name = unitById(action.unit).nameZh;
+    if (action.count === "max") return `按现有资源造最多的${name}`;
+    if (action.count === "deficit") return `造够补足能源缺口的${name}`;
+    if (typeof action.count === "object") return `把${name}补到 ${action.count.fillTo.toLocaleString("zh-CN")} 个`;
+    return `造 ${action.count.toLocaleString("zh-CN")} 个${name}`;
+  }
   return `入队 ${buildingById(action.building).nameZh} +1 级`;
 }
 
@@ -1040,6 +1180,10 @@ function buildingOptions(): ParamOption[] {
 
 function researchOptions(): ParamOption[] {
   return RESEARCH_IDS.map((id: ResearchId) => ({ value: id, label: researchById(id).nameZh }));
+}
+
+function unitOptions(): ParamOption[] {
+  return UNIT_IDS.map((id) => ({ value: id, label: unitById(id).nameZh }));
 }
 
 function productionOptions(): ParamOption[] {

@@ -15,6 +15,9 @@ import {
   setBet,
   topUp,
   topUpPrice,
+  drifterPool,
+  drifterShips,
+  shipValueMe,
   type PendingRun,
 } from "../src/game/arcade";
 import { equipCard, patchSlot, protocolSentence } from "../src/automation/engine";
@@ -51,13 +54,14 @@ describe("board and public odds (beacon run, P2)", () => {
   it("closed tiles move their weight per the doc and the table sums to 100%", () => {
     const sum = Object.values(SYMBOL_CHANCE).reduce((a, b) => a + b, 0);
     expect(sum).toBeCloseTo(1, 12);
-    expect(SYMBOL_CHANCE.metal).toBeCloseTo(0.29, 12); // 26% + merchant 3% until P4
+    expect(SYMBOL_CHANCE.metal).toBeCloseTo(0.19, 12); // 16% + merchant 3% until P4 (P3 moved 10% to drifters)
     expect(SYMBOL_CHANCE.empty).toBeCloseTo(0.27, 12);
-    expect(SYMBOL_CHANCE.drifter).toBe(0);
+    expect(SYMBOL_CHANCE.drifter).toBeCloseTo(0.1, 12);
     expect(SYMBOL_CHANCE.blackhole).toBe(0);
     expect(TILE_WEIGHTS[tileOf("pirate")]).toBe(0);
     expect(TILE_WEIGHTS.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12);
-    expect(betOdds("metal")).toBeCloseTo(0.9 / 0.29, 12);
+    expect(betOdds("metal")).toBeCloseTo(0.9 / 0.19, 12);
+    expect(betOdds("drifter").toFixed(1)).toBe("9.0");
     expect(betOdds("deuterium").toFixed(1)).toBe("15.0");
   });
 
@@ -204,6 +208,56 @@ describe("prizes", () => {
     expect(state.arcade.stats.hits.empty).toBe(55);
     expect(state.arcade.pity.empty).toBe(55);
     expect(state.arcade.stats.manualRuns).toBe(55);
+  });
+});
+
+describe("drifting ships (P3)", () => {
+  it("only unlocked ladder ships plus one tier above, never the deathstar", () => {
+    expect(drifterPool(opened())).toEqual(["light_fighter"]);
+    const yard = withResearch(opened(12345, { shipyard: 2, robotics_factory: 2 }), { combustion_drive: 2 });
+    expect(drifterPool(yard)).toEqual(["light_fighter", "small_cargo", "heavy_fighter"]);
+    const all = withResearch(opened(12345, { shipyard: 12 }), {
+      combustion_drive: 6, impulse_drive: 6, hyperspace_drive: 7, hyperspace_tech: 6, armour_tech: 2, ion_tech: 2,
+      shielding_tech: 2, laser_tech: 12, plasma_tech: 5, graviton_tech: 1,
+    });
+    expect(drifterPool(all)).not.toContain("deathstar");
+    expect(drifterPool(all)).toContain("destroyer");
+  });
+
+  it("splits the value into ships; the rest comes as metal", () => {
+    const yard = withResearch(opened(12345, { shipyard: 2, robotics_factory: 2 }), { combustion_drive: 2 });
+    const split = drifterShips(yard, 100_000, 0.99);
+    const value = split.ships.reduce((sum, s) => sum + s.count * shipValueMe(s.id), 0);
+    expect(value + split.leftoverMe).toBeCloseTo(100_000, 6);
+    expect(split.leftoverMe).toBeLessThan(shipValueMe("light_fighter"));
+    expect(split.ships[0]?.id).toBe("heavy_fighter");
+  });
+
+  it("a drifter tile pays half the resource prize in ships", () => {
+    const state = withRun(opened(), tileOf("drifter"), false, 0.5, 0);
+    const cap = prizeCap(state);
+    const valueMe = Math.min(cap * 0.35, productionMe(state) * 600) / 2;
+    const after = revealRun(state, "manual");
+    const ships = after.state.planet.units.light_fighter;
+    expect(ships).toBe(Math.floor(valueMe / 5000));
+    expect(after.result!.lines.join("")).toContain("轻型战斗机");
+    expect(after.state.arcade.stats.hits.drifter).toBe(1);
+  });
+
+  it("a drifter bet pays ships of the same value", () => {
+    const state = setBet(opened(), "drifter", 3).state;
+    const unit = betUnitDeut(state);
+    const hit = revealRun(withRun(state, tileOf("empty")), "manual").state;
+    expect(hit.planet.units.light_fighter).toBe(0);
+    const win = revealRun(withRun(state, tileOf("drifter"), false, 0, 0), "manual").state;
+    const prize = Math.min(prizeCap(state) * 0.2, productionMe(state) * 600) / 2;
+    const expected = Math.floor(prize / 5000) + Math.floor((3 * unit * 3 * betOdds("drifter")) / 5000);
+    expect(Math.abs(win.planet.units.light_fighter - expected)).toBeLessThanOrEqual(1);
+  });
+
+  it("the supply box can hold DETROIT", () => {
+    const after = revealRun(withRun(opened(), tileOf("supply"), false, 0.5), "manual").state;
+    expect(after.items.detroit_box).toBe(1);
   });
 });
 

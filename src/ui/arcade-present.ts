@@ -1,6 +1,7 @@
 /** View model for the deep-space ring machine tab (design doc §8.6). No DOM here. */
 import {
   ARCADE,
+  ARCADE_PHASE,
   ARCADE_SYMBOL_DEFS,
   BET_SYMBOLS,
   BOARD,
@@ -108,6 +109,10 @@ function tileTitle(index: number, ranges: Ranges): string {
     const fmt = (v: number) => formatAmount(big(Math.floor(v / factor)));
     return `${def.nameZh} · ${chance}\n本次可能：普通 ${fmt(lo)}–${fmt(hi)}，大档 ${fmt(blo)}–${fmt(bhi)}`;
   }
+  if (symbol === "drifter") {
+    const fmt = (v: number) => formatAmount(big(Math.floor(v / 2)));
+    return `${def.nameZh} · ${chance}\n本次舰船价值（金属当量）：普通 ${fmt(ranges.normal[0])}–${fmt(ranges.normal[1])}，大档 ${fmt(ranges.big[0])}–${fmt(ranges.big[1])}\n${def.effectZh}`;
+  }
   return `${def.nameZh} · ${chance}\n${def.effectZh}`;
 }
 
@@ -144,7 +149,7 @@ export function arcadeView(state: GameState): ArcadeView {
   const ranges: Ranges = visible ? { normal: resourceRange(state, false), big: resourceRange(state, true) } : { normal: [0, 0], big: [0, 0] };
 
   const odds: ArcadeOddsRow[] = ARCADE_SYMBOL_DEFS.map((def) => {
-    const open = def.opensIn <= 2;
+    const open = def.opensIn <= ARCADE_PHASE;
     const chance = SYMBOL_CHANCE[def.id];
     const merged = !open && def.mergeInto ? `并入${arcadeSymbolDef(def.mergeInto).nameZh}` : "—";
     return {
@@ -160,7 +165,7 @@ export function arcadeView(state: GameState): ArcadeView {
   }));
 
   const runs = arcade.stats.runs;
-  const stats: ArcadeOddsRow[] = ARCADE_SYMBOL_DEFS.filter((def) => def.opensIn <= 2).map((def) => {
+  const stats: ArcadeOddsRow[] = ARCADE_SYMBOL_DEFS.filter((def) => def.opensIn <= ARCADE_PHASE).map((def) => {
     const hits = arcade.stats.hits[def.id];
     return {
       key: def.id,

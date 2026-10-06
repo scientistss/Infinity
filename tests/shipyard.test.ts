@@ -245,3 +245,88 @@ describe("shipyard dark matter, saves, points, achievements", () => {
     expect(a.unlocked).toContain("first_defense");
   });
 });
+
+describe("DETROIT (shipyard items)", () => {
+  it("shop DETROIT takes OGame hours off on the dark-matter clock and carries into later batches", async () => {
+    const { buyShopItem, useInventory, addInventory, shopItemReason } = await import("../src/game/dark-matter");
+    let s = yard(1);
+    s = { ...s, darkMatter: big(20_000) };
+    expect(shopItemReason(s, "detroit_bronze")).toBe("造船厂没有在造的批次");
+    s = orderUnits(s, "light_fighter", 5, "manual").state; // 5 × 4.8 s = 24 s
+    s = orderUnits(s, "rocket_launcher", 10, "manual").state; // 10 × 2.4 s
+    const bought = buyShopItem(s, "detroit_bronze"); // 0.5 OGame h = 30 s
+    expect(bought.ok).toBe(true);
+    expect(s.darkMatter.sub(bought.state.darkMatter).toNumber()).toBe(750);
+    expect(bought.state.planet.units.light_fighter).toBe(5);
+    expect(bought.state.planet.units.rocket_launcher).toBe(2);
+    expect(bought.state.planet.shipyardQueue[0]?.progress).toBeCloseTo(0.5, 6);
+    // Inventory DETROIT: −30% of the head batch only.
+    let t = addInventory(orderUnits(yard(1), "light_fighter", 10, "manual").state, "detroit_box", 1);
+    t = useInventory(t, "detroit_box").state;
+    expect(t.planet.units.light_fighter).toBe(3);
+    expect(t.items.detroit_box).toBe(0);
+    expect(useInventory(t, "detroit_box").ok).toBe(false);
+  });
+});
+
+describe("shipyard protocol cards (P3)", () => {
+  it("卫星供电 unlocks with the first satellite and orders exactly the deficit when the shipyard is idle", async () => {
+    const { equipCard, protocolSentence, satellitesForDeficit } = await import("../src/automation/engine");
+    let s = rich(stateWith({ shipyard: 1, metal_mine: 15, crystal_mine: 12, solar_plant: 5 }));
+    expect(tick(s, 0.01).unlockedCards).not.toContain("satellite_power");
+    s.planet.units.solar_satellite = 1;
+    s = tick(s, 0.01);
+    expect(s.unlockedCards).toContain("satellite_power");
+    s = equipCard(s, 0, "satellite_power").state;
+    expect(protocolSentence(s.protocols.slots[0]!.card!)).toBe("当造船厂空闲，若能源缺口（计入排队卫星）≥ 1，则造够补足能源缺口的太阳能卫星。");
+    const need = satellitesForDeficit(s);
+    expect(need).toBeGreaterThan(0);
+    s = tick(s, 1);
+    expect(s.planet.shipyardQueue[0]?.unit).toBe("solar_satellite");
+    expect(s.planet.shipyardQueue[0]?.source).toBe("protocol");
+    expect(deficitAfterQueued(s)).toBe(0);
+    // Busy shipyard: the card waits.
+    s = tick(s, 1);
+    expect(s.planet.shipyardQueue).toHaveLength(1);
+    expect(s.protocols.slots[0]!.reason).toContain("造船厂忙");
+    // After the batch, energy is covered.
+    s = tick(s, 3600);
+    expect(economy(s).supply).toBeGreaterThanOrEqual(economy(s).demand);
+  });
+
+  it("防御维护 unlocks with the first defense and fills to N; the shipyardIdle event refills at once", async () => {
+    const { equipCard, patchSlot, protocolSentence } = await import("../src/automation/engine");
+    let s = yard(2);
+    s.planet.units.rocket_launcher = 1;
+    s = equipCard(tick(s, 0.01), 0, "defense_keeper").state;
+    expect(protocolSentence(s.protocols.slots[0]!.card!)).toBe("当造船厂空闲，若火箭发射器（含排队）少于 50，则把火箭发射器补到 50 个。");
+    s = tick(s, 1);
+    expect(s.planet.shipyardQueue[0]?.count).toBe(49);
+    s = patchSlot(s, 0, "condition.0.value", "100");
+    s = patchSlot(s, 0, "action.fillTo", "100");
+    // One long tick: the batch ends mid-step and the idle event orders the next one in the same tick.
+    s = tick(s, 49 * unitSeconds(s, "rocket_launcher") + 0.5);
+    expect(s.planet.units.rocket_launcher).toBe(50);
+    expect(s.planet.shipyardQueue[0]?.count).toBe(50);
+    s = patchSlot(s, 0, "action.count", "max");
+    expect(protocolSentence(s.protocols.slots[0]!.card!)).toContain("按现有资源造最多的火箭发射器");
+    s = patchSlot(s, 0, "action.unit", "light_fighter");
+    s = patchSlot(s, 0, "action.count", "5");
+    expect(protocolSentence(s.protocols.slots[0]!.card!)).toContain("造 5 个轻型战斗机");
+    s = patchSlot(s, 0, "condition.0.unit", "small_cargo");
+    expect(s.protocols.slots[0]!.card!.conditions[0]).toEqual({ kind: "unitCountLt", unit: "small_cargo", value: 100 });
+    const back = deserializeState(JSON.parse(JSON.stringify(serializeState(s))));
+    expect(back.protocols.slots[0]!.card).toEqual(s.protocols.slots[0]!.card);
+  });
+
+  it("the deficit mode only applies to solar satellites", async () => {
+    const { equipCard, patchSlot } = await import("../src/automation/engine");
+    let s = rich(stateWith({ shipyard: 1, metal_mine: 15, crystal_mine: 12 }));
+    s.planet.units.solar_satellite = 1;
+    s = equipCard(tick(s, 0.01), 0, "satellite_power").state;
+    s = patchSlot(s, 0, "action.unit", "rocket_launcher");
+    s = tick(s, 1);
+    expect(s.planet.shipyardQueue).toHaveLength(0);
+    expect(s.protocols.slots[0]!.reason).toContain("只适用于太阳能卫星");
+  });
+});

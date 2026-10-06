@@ -1,6 +1,6 @@
 /**
- * Dark matter uses in P2 (design doc §8.8): halve / finish build and research, the item shop
- * (KRAKEN, NEWTRON, resource boosters) and resource packages. Prices come from balance.json → darkMatterPrices;
+ * Dark matter uses in P2–P3 (design doc §8.8): halve / finish build, research and the shipyard batch, the item
+ * shop (KRAKEN, NEWTRON, DETROIT, resource boosters) and resource packages. Prices come from balance.json → darkMatterPrices;
  * every OGame duration runs on the dark-matter clock below.
  * Officers, calling the merchant and planet relocation arrive in P4; changing class in P7.
  */
@@ -27,18 +27,21 @@ export type ShopItemId =
   | "newtron_bronze"
   | "newtron_silver"
   | "newtron_gold"
+  | "detroit_bronze"
+  | "detroit_silver"
+  | "detroit_gold"
   | "booster_bronze"
   | "booster_silver"
   | "booster_gold";
 
-export type ShopItemKind = "kraken" | "newtron" | "booster";
+export type ShopItemKind = "kraken" | "newtron" | "detroit" | "booster";
 
 export interface ShopItemDef {
   id: ShopItemId;
   kind: ShopItemKind;
   nameZh: string;
   dm: number;
-  /** KRAKEN / NEWTRON: OGame hours taken off the running build / research. */
+  /** KRAKEN / NEWTRON / DETROIT: OGame hours taken off the running build / research / shipyard. */
   ogameHours?: number;
   /** Booster: production bonus in percent and OGame duration in days. */
   pct?: number;
@@ -54,6 +57,9 @@ export const SHOP_ITEMS: readonly ShopItemDef[] = [
   { id: "newtron_bronze", kind: "newtron", nameZh: "纽特隆·铜", ...items.newtron_bronze },
   { id: "newtron_silver", kind: "newtron", nameZh: "纽特隆·银", ...items.newtron_silver },
   { id: "newtron_gold", kind: "newtron", nameZh: "纽特隆·金", ...items.newtron_gold },
+  { id: "detroit_bronze", kind: "detroit", nameZh: "底特律·铜", ...items.detroit_bronze },
+  { id: "detroit_silver", kind: "detroit", nameZh: "底特律·银", ...items.detroit_silver },
+  { id: "detroit_gold", kind: "detroit", nameZh: "底特律·金", ...items.detroit_gold },
   { id: "booster_bronze", kind: "booster", nameZh: "资源加成·铜", ...items.booster_bronze },
   { id: "booster_silver", kind: "booster", nameZh: "资源加成·银", ...items.booster_silver },
   { id: "booster_gold", kind: "booster", nameZh: "资源加成·金", ...items.booster_gold },
@@ -71,14 +77,15 @@ export function isShopItemId(value: string): value is ShopItemId {
 
 /**
  * Items kept in the inventory (found in the ring machine's supply box, design doc §8.6.2).
- * 底特律 (shipyard) is a P3 item and is not dropped yet.
+ * 底特律 (shipyard) drops from P3 on.
  */
-export const INVENTORY_IDS = ["kraken_box", "newtron_box", "booster_box", "supply_pack"] as const;
+export const INVENTORY_IDS = ["kraken_box", "newtron_box", "detroit_box", "booster_box", "supply_pack"] as const;
 export type InventoryItemId = (typeof INVENTORY_IDS)[number];
 
 export const INVENTORY_LABEL: Record<InventoryItemId, { name: string; detail: string }> = {
   kraken_box: { name: "克拉肯", detail: "正在建造的建筑剩余时间 −30%" },
   newtron_box: { name: "纽特隆", detail: "正在进行的研究剩余时间 −30%" },
+  detroit_box: { name: "底特律", detail: "造船厂当前批次剩余时间 −30%" },
   booster_box: { name: "资源 +10%", detail: "三种矿产量 +10%，持续 1 小时游戏时间" },
   supply_pack: { name: "资源补给包", detail: "立即获得三种资源各 2.4 分钟的产量（= 资源包 10% 档，受仓库上限限制）" },
 };

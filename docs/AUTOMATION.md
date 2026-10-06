@@ -10,7 +10,7 @@
 - 机器人工厂每 2 级 +1 槽，计算机技术每 2 级 +1 槽，曲率科技可永久 +1。未开启的槽位留在板上，写明还差几个。
 - 槽位自上而下执行。每张卡每次求值最多行动 1 次，可单独开关。
 - 进行中大约每 1 秒求值一次。离线补算改为每 60 秒一次。
-- 事件卡：建造完成后队列出现空位（`queueIdle`）、研究完成后研究队列出现空位（`researchIdle`）、某资源到达仓库上限（`storageFull`）、星环机攒到信标开奖（`runsReady`）时，会在当下额外求值一次（离线补算也一样），不必等下一个周期。
+- 事件卡：建造完成后队列出现空位（`queueIdle`）、研究完成后研究队列出现空位（`researchIdle`）、某资源到达仓库上限（`storageFull`）、星环机攒到信标开奖（`runsReady`）、造船厂最后一批完成（`shipyardIdle`）时，会在当下额外求值一次（离线补算也一样），不必等下一个周期。
 
 ## 解锁顺序
 
@@ -25,17 +25,19 @@
 9. 研究调度 — 研究实验室 1 级。默认：「当 研究队列有空位，若 计算机技术等级低于 10，则 研究 计算机技术 +1 级」
 10. 最便宜优先 — 计算机技术 2 级。默认：「当 建造队列有空位，则 入队三矿中最便宜的下一级」。范围可选三矿 / 三仓 / 研究；按金属当量（1 晶体 = 2 金属，1 重氢 = 3 金属）比较，跳过前置不足、队列已满等非资源原因的候选；最便宜的那项买不起时等待并写明缺什么，不会改买更贵的
 11. 自动跑灯 — 星环机手动开奖 10 次。默认：「当 星环机有开奖次数，若 开奖次数 ≥ 1，则 按常驻押注开完全部开奖」。可改为每次开 1 次，条件可改为「开奖次数 ≥ n」或「空灯保底 / 大奖保底计数 ≥ n」，动作可换成「改押注」（把某个符号的常驻押注改为 0–12 注）。离线攒到的次数会在离线结算里自动开完并列出结果
+12. 卫星供电 — 拥有第 1 颗太阳能卫星。默认：「当 造船厂空闲，若 能源缺口（计入排队卫星）≥ 1，则 造够补足能源缺口的太阳能卫星」。缺口 = 需求 − 供给，排队中的卫星按每颗 `⌊(T_max+140)/6⌋ × 全局倍率` 算作供给，所以不会重复下单
+13. 防御维护 — 造出第 1 座防御设施。默认：「当 造船厂空闲，若 火箭发射器（含排队）少于 50，则 把火箭发射器补到 50 个」。单位、N 都可改；数量可选固定个数、最大（资源够多少造多少）、补到 N、补足能源缺口（只适用于太阳能卫星）
 
 ## 积木
 
 | 类型 | 种类 | 说明 |
 | --- | --- | --- |
-| 触发 | `interval`、`onResource`、`queueIdle`、`storageFull`、`researchIdle`、`runsReady` | 间隔、资源阈值、建造队列有空位、资源满仓、研究队列有空位、星环机有开奖次数 |
-| 条件 | `resourceGte` / `resourceLt`、`energyEffLt`、`levelLt`、`costRatioLt`、`storageGte`、`queueLenLt`、`buildTimeLt`、`researchLevelLt`、`researchTimeLt`、`runsGte`、`pityGte` | 建筑按等级判断；成本比例看下一级成本；仓库看库存 / 上限；研究看等级与下一级研究时间；星环机看存量与保底计数 |
-| 动作 | `enqueue`、`setProduction`、`collect`、`prestige`、`enqueueResearch`、`enqueueCheapest`、`runLights`、`setBet` | 建造 / 研究类动作只把一级放进队列，入队时扣费；不再有 ×10 / 最大；跑灯按常驻押注开奖 |
+| 触发 | `interval`、`onResource`、`queueIdle`、`storageFull`、`researchIdle`、`runsReady`、`shipyardIdle` | 间隔、资源阈值、建造队列有空位、资源满仓、研究队列有空位、星环机有开奖次数、造船队列为空 |
+| 条件 | `resourceGte` / `resourceLt`、`energyEffLt`、`levelLt`、`costRatioLt`、`storageGte`、`queueLenLt`、`buildTimeLt`、`researchLevelLt`、`researchTimeLt`、`runsGte`、`pityGte`、`unitCountLt`、`energyDeficitGte` | 建筑按等级判断；成本比例看下一级成本；仓库看库存 / 上限；研究看等级与下一级研究时间；星环机看存量与保底计数；单位数量含排队；能源缺口计入排队中的卫星 |
+| 动作 | `enqueue`、`setProduction`、`collect`、`prestige`、`enqueueResearch`、`enqueueCheapest`、`runLights`、`setBet`、`buildUnits` | 建造 / 研究类动作只把一级放进队列，入队时扣费；跑灯按常驻押注开奖；`buildUnits { unit, count }` 下一批造船订单，`count` 为个数、`"max"`、`{ fillTo: N }` 或 `"deficit"`（补足能源缺口，本作扩展） |
 
 未解锁的卡不能装配。状态灯：绿 = 本次执行，灰 = 等待或关闭，红 = 入队失败（会写明缺哪种资源、队列已满或前置不足）。原因显示在卡槽下方，悬停灯也能看到。
 
 ## 存档
 
-负载在 `state.protocols`（12 个槽位）。存档版本为 7。测试期不写迁移：本地存档版本低于 7 时新开一局并提示一次，导入非 v7 文件会被拒绝且不覆盖当前进度。协议卡、解锁进度和曲率核心在发射殖民舰后保留。
+负载在 `state.protocols`（12 个槽位）。存档版本为 8。测试期不写迁移：本地存档版本低于 8 时新开一局并提示一次，导入非 v8 文件会被拒绝且不覆盖当前进度。协议卡、解锁进度和曲率核心在发射殖民舰后保留。

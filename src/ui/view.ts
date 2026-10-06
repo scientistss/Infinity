@@ -16,7 +16,7 @@ import {
 import { PROTOCOL_SLOT_COUNT, type CurvatureId } from "../game/types";
 import { RESEARCH, RESEARCH_GROUP_LABEL, isResearchId, type ResearchDef, type ResearchGroup, type ResearchId } from "../data/research";
 import type { QueueView, TableRowView, ViewModel } from "./present";
-import { INVENTORY_IDS, PACKAGE_FRACTIONS, SHOP_ITEMS, dmClockSeconds, isInventoryId, isShopItemId, type InventoryItemId, type ShopItemId } from "../data/dark-matter";
+import { INVENTORY_IDS, INVENTORY_LABEL, PACKAGE_FRACTIONS, SHOP_ITEMS, dmClockSeconds, isInventoryId, isShopItemId, type InventoryItemId, type ShopItemId } from "../data/dark-matter";
 import type { PackageKind, SpeedupMode, SpeedupTarget } from "../game/dark-matter";
 import { formatDuration } from "../game/format";
 import type { ResourceId } from "../game/types";
@@ -990,7 +990,7 @@ function shellMarkup(): string {
           <h2 id="dm-title">${icon("dark_matter", "icon-h2", { alt: "" })} 暗物质</h2>
           <p data-bind="dm-summary"></p>
         </div>
-        <p class="blurb">暗物质时钟：价格和道具时长里的 1 个 OGame 小时 = 1 分钟游戏时间。正在建造 / 研究的项目可在队列里花暗物质「减半」或「完成」（每开始 30 秒 750，单次上限建筑 72,000、研究 108,000）。克拉肯 / 纽特隆按同一价格卖时间、可顺延到下一项；资源包的价格等于跳过同样产量所需时间的价格。军官、呼叫商人、星球搬迁第 4 阶段开放；更换职业第 7 阶段开放。</p>
+        <p class="blurb">暗物质时钟：价格和道具时长里的 1 个 OGame 小时 = 1 分钟游戏时间。正在建造 / 研究的项目和造船厂当前批次可在队列里花暗物质「减半」或「完成」（每开始 30 秒 750，单次上限建筑 72,000、研究 108,000）。克拉肯 / 纽特隆 / 底特律按同一价格卖时间、可顺延到下一项；资源包的价格等于跳过同样产量所需时间的价格。军官、呼叫商人、星球搬迁第 4 阶段开放；更换职业第 7 阶段开放。</p>
         <h3 class="group-title">生效中的资源加成</h3>
         <ul class="dm-list" data-bind="dm-boosters"></ul>
         <h3 class="group-title">背包</h3>
@@ -1073,8 +1073,8 @@ function inventoryCards(): string {
   return INVENTORY_IDS.map(
     (id) => `
       <article class="dm-card">
-        <h4>${{ kraken_box: "克拉肯", newtron_box: "纽特隆", booster_box: "资源 +10%", supply_pack: "资源补给包" }[id]} <strong data-bind="dm-inv-count-${id}">×0</strong></h4>
-        <p class="muted">${{ kraken_box: "正在建造的建筑剩余时间 −30%", newtron_box: "正在进行的研究剩余时间 −30%", booster_box: "三种矿产量 +10%，1 小时游戏时间", supply_pack: "三种资源各 2.4 分钟的产量（= 资源包 10% 档）" }[id]}</p>
+        <h4>${INVENTORY_LABEL[id].name} <strong data-bind="dm-inv-count-${id}">×0</strong></h4>
+        <p class="muted">${INVENTORY_LABEL[id].detail}</p>
         <button type="button" data-action="dm-use" data-id="${id}" data-bind="dm-inv-${id}">使用</button>
       </article>`,
   ).join("");
@@ -1094,7 +1094,7 @@ function shopCards(): string {
     const detail =
       def.kind === "booster"
         ? `矿产量 +${def.pct}%，${formatDuration(dmClockSeconds((def.ogameDays ?? 7) * 24))}`
-        : `${def.kind === "kraken" ? "建造" : "研究"}缩短 ${formatDuration(dmClockSeconds(def.ogameHours ?? 0))}`;
+        : `${def.kind === "kraken" ? "建造" : def.kind === "detroit" ? "造船" : "研究"}缩短 ${formatDuration(dmClockSeconds(def.ogameHours ?? 0))}`;
     return `
       <article class="dm-card">
         <h4>${def.nameZh} <small>${def.dm.toLocaleString("zh-CN")} 暗物质</small></h4>

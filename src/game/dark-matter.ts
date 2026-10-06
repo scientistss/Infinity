@@ -1,6 +1,6 @@
 /**
- * Dark matter (design doc §8.8). P2 uses: halve / finish the running build or research, the item shop
- * (KRAKEN, NEWTRON, resource boosters), resource packages and inventory items.
+ * Dark matter (design doc §8.8). P2–P3 uses: halve / finish the running build, research or shipyard batch, the
+ * item shop (KRAKEN, NEWTRON, DETROIT, resource boosters), resource packages and inventory items.
  * Every OGame duration (button price, item length, merchant day) runs on the dark-matter clock:
  * one OGame hour = one game minute (balance.json → darkMatterPrices.secondsPerOgameHour).
  */
@@ -52,7 +52,7 @@ export interface PackageQuote {
 const fail = (state: GameState, reason: string): DmResult => ({ state, ok: false, reason });
 
 export function emptyInventory(): Record<InventoryItemId, number> {
-  return { kraken_box: 0, newtron_box: 0, booster_box: 0, supply_pack: 0 };
+  return { kraken_box: 0, newtron_box: 0, detroit_box: 0, booster_box: 0, supply_pack: 0 };
 }
 
 /** Add dark matter from an in-game source. */
@@ -201,6 +201,7 @@ export function shopItemReason(state: GameState, id: ShopItemId, res: ResourceId
   if (lack) return lack;
   if (def.kind === "kraken" && activeRemaining(state, "build") === null) return "没有正在建造的项目";
   if (def.kind === "newtron" && activeRemaining(state, "research") === null) return "没有正在进行的研究";
+  if (def.kind === "detroit" && activeRemaining(state, "shipyard") === null) return state.planet.shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次";
   if (def.kind === "booster") {
     const current = activeBooster(state, res);
     if (current && current.pct > (def.pct ?? 0)) return `${resourceName(res)}已有 +${current.pct}% 加成生效中`;
@@ -214,9 +215,14 @@ export function buyShopItem(state: GameState, id: ShopItemId, res: ResourceId = 
   const reason = shopItemReason(state, id, res);
   if (reason) return fail(state, reason);
   const paid = spend(state, def.dm);
-  if (def.kind === "kraken" || def.kind === "newtron") {
+  if (def.kind === "kraken" || def.kind === "newtron" || def.kind === "detroit") {
     const seconds = dmClockSeconds(def.ogameHours ?? 0);
-    const next = def.kind === "kraken" ? advanceBuild(paid, seconds, true) : advanceResearch(paid, seconds, true);
+    const next =
+      def.kind === "kraken"
+        ? advanceBuild(paid, seconds, true)
+        : def.kind === "newtron"
+          ? advanceResearch(paid, seconds, true)
+          : advanceShipyard(paid, seconds, true).state;
     return { state: next, ok: true, reason: `${def.nameZh}：缩短 ${formatDuration(seconds)}（OGame ${def.ogameHours} 小时）` };
   }
   const seconds = dmClockSeconds((def.ogameDays ?? 7) * 24);
@@ -307,6 +313,11 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
     const remaining = activeRemaining(state, "research");
     if (remaining === null) return fail(state, "没有正在进行的研究");
     return { state: advanceResearch(take(state), remaining * 0.3, false), ok: true, reason: "纽特隆：研究剩余时间 −30%" };
+  }
+  if (id === "detroit_box") {
+    const remaining = activeRemaining(state, "shipyard");
+    if (remaining === null) return fail(state, state.planet.shipyardQueue.length > 0 ? "造船暂停中" : "造船厂没有在造的批次");
+    return { state: advanceShipyard(take(state), remaining * 0.3, false).state, ok: true, reason: "底特律：造船厂当前批次剩余时间 −30%" };
   }
   if (id === "booster_box") {
     let next = take(state);
