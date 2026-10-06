@@ -1,5 +1,6 @@
 import { big, type BigNumber } from "../game/decimal";
 import type { GameState } from "../game/types";
+import { DEFENSE_IDS, SHIP_IDS } from "./units";
 
 /** Each unlocked achievement adds this much global output. Bonuses add, they do not compound. */
 export const ACHIEVEMENT_BONUS = 0.01;
@@ -150,7 +151,47 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     met: (state) => state.research.levels.plasma_tech >= 1,
     progress: (state) => count(state.research.levels.plasma_tech, 1),
   },
+  {
+    id: "first_shipyard",
+    name: "造船厂",
+    detail: "造船厂达到 1 级（打开造船厂与防御标签）",
+    met: (state) => state.planet.buildings.shipyard >= 1,
+    progress: (state) => count(state.planet.buildings.shipyard, 1),
+  },
+  {
+    id: "first_ship",
+    name: "第一艘舰船",
+    detail: "造出第一艘能飞的舰船（太阳能卫星不算）",
+    met: (state) => flyingShips(state) >= 1,
+    progress: (state) => count(Math.min(1, flyingShips(state)), 1),
+  },
+  {
+    id: "first_satellite",
+    name: "轨道电站",
+    detail: "造出第一颗太阳能卫星",
+    met: (state) => state.planet.units.solar_satellite >= 1,
+    progress: (state) => count(Math.min(1, state.planet.units.solar_satellite), 1),
+  },
+  {
+    id: "first_defense",
+    name: "设防",
+    detail: "造出第一座防御设施",
+    met: (state) => defenseCount(state) >= 1,
+    progress: (state) => count(Math.min(1, defenseCount(state)), 1),
+  },
 ];
+
+function flyingShips(state: GameState): number {
+  let total = 0;
+  for (const id of SHIP_IDS) if (id !== "solar_satellite") total += state.planet.units[id];
+  return total;
+}
+
+function defenseCount(state: GameState): number {
+  let total = 0;
+  for (const id of DEFENSE_IDS) total += state.planet.units[id];
+  return total;
+}
 
 function researchTotal(state: GameState): number {
   let total = 0;

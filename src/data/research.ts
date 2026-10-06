@@ -78,8 +78,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(200, 100, 0),
     factor: 2,
     requires: [lab(1), tech("energy_tech", 2)],
-    effect: "离子、等离子技术的前置",
-    later: "激光武器（第 3 阶段）",
+    effect: "离子、等离子技术的前置；轻 / 重型激光炮、战列巡洋舰的前置",
   },
   {
     id: "ion_tech",
@@ -89,8 +88,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(1000, 300, 100),
     factor: 2,
     requires: [lab(4), tech("energy_tech", 4), tech("laser_tech", 5)],
-    effect: "等离子技术的前置",
-    later: "离子炮（第 3 阶段）；拆除费用 −4%/级（拆除随第 4 阶段）",
+    effect: "等离子技术、离子炮、巡洋舰的前置",
+    later: "拆除费用 −4%/级（拆除随第 4 阶段）",
   },
   {
     id: "hyperspace_tech",
@@ -121,8 +120,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(400, 0, 600),
     factor: 2,
     requires: [lab(1), tech("energy_tech", 1)],
-    effect: "舰船引擎前置",
-    later: "燃烧引擎舰船速度 +10%/级（第 3–4 阶段）",
+    effect: "燃烧引擎舰船速度 +10%/级（舰船卡片显示）",
+    later: "飞行时间（第 4 阶段）",
   },
   {
     id: "impulse_drive",
@@ -133,7 +132,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     factor: 2,
     requires: [lab(2), tech("energy_tech", 1)],
     effect: "天体物理学的前置",
-    later: "脉冲引擎舰船速度 +20%/级；导弹射程 5L−1 个恒星系（第 3–5 阶段）",
+    later: "脉冲引擎舰船速度 +20%/级（舰船卡片显示，飞行第 4 阶段）；导弹射程 5L−1 个恒星系（第 5 阶段）",
   },
   {
     id: "hyperspace_drive",
@@ -143,8 +142,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(10000, 20000, 6000),
     factor: 2,
     requires: [lab(7), tech("hyperspace_tech", 3)],
-    effect: "高级舰船前置",
-    later: "超空间引擎舰船速度 +30%/级（第 3–4 阶段）",
+    effect: "高级舰船前置；超空间引擎舰船速度 +30%/级（舰船卡片显示）",
+    later: "飞行时间（第 4 阶段）",
   },
   {
     id: "espionage_tech",
@@ -200,7 +199,7 @@ export const RESEARCH: readonly ResearchDef[] = [
     factor: 3,
     requires: [lab(12)],
     effect: "不花资源，要求当前能源供给 ≥ 所需能源（不消耗）",
-    later: "死星前置（第 3 阶段）",
+    later: "死星前置",
   },
   {
     id: "weapons_tech",
@@ -210,8 +209,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(800, 200, 0),
     factor: 2,
     requires: [lab(4)],
-    effect: "战斗科技",
-    later: "攻击 +10%/级（第 5 阶段）",
+    effect: "舰船与防御攻击 +10%/级（卡片显示）",
+    later: "战斗第 5 阶段",
   },
   {
     id: "shielding_tech",
@@ -221,8 +220,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(200, 600, 0),
     factor: 2,
     requires: [lab(6), tech("energy_tech", 3)],
-    effect: "超空间技术的前置",
-    later: "护盾 +10%/级（第 5 阶段）",
+    effect: "舰船与防御护盾 +10%/级（卡片显示）；超空间技术的前置",
+    later: "战斗第 5 阶段",
   },
   {
     id: "armour_tech",
@@ -232,8 +231,8 @@ export const RESEARCH: readonly ResearchDef[] = [
     baseCost: cost(1000, 0, 0),
     factor: 2,
     requires: [lab(2)],
-    effect: "战斗科技",
-    later: "结构 +10%/级（第 5 阶段）",
+    effect: "舰船与防御结构 +10%/级（卡片显示）",
+    later: "战斗第 5 阶段",
   },
 ];
 

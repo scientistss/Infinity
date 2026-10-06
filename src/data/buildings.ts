@@ -6,9 +6,9 @@
 
 /**
  * Gameplay phase currently shipped. P1 = buildings, storage, build times and the build queue;
- * P2 = research (research queue, prerequisites, research effects).
+ * P2 = research (research queue, prerequisites, research effects); P3 = shipyard, ships, defenses, missile silo.
  */
-export const CURRENT_PHASE = 2;
+export const CURRENT_PHASE = 3;
 
 export const BUILDING_IDS = [
   "metal_mine",
@@ -197,7 +197,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
       { kind: "research", id: "computer_tech", level: 10 },
     ],
     earlyLevelSpeedup: false,
-    blurb: "建造时间每级 ÷2（之后也作用于造船）。不享受低等级加速。",
+    blurb: "建造与造船时间每级 ÷2。不享受低等级加速；升级期间造船暂停。",
   },
   {
     id: "shipyard",
@@ -209,7 +209,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
     factor: 2,
     requires: [{ kind: "building", id: "robotics_factory", level: 2 }],
     earlyLevelSpeedup: true,
-    blurb: "建造舰船与防御。可以先建，第 3 阶段生效。",
+    blurb: "建造舰船与防御。每级造船时间 ÷(1+等级)；升级期间造船暂停。",
   },
   {
     id: "research_lab",

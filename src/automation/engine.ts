@@ -62,6 +62,8 @@ export interface ProtocolEvents {
   storageFull: StoredResId[];
   /** A ring machine run was just granted (beacon). */
   runsReady?: boolean;
+  /** The shipyard queue just ran empty (P3). */
+  shipyardIdle?: boolean;
 }
 
 const RES_LABEL: Record<ResId, string> = {

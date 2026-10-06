@@ -5,6 +5,7 @@
  * the save; revealing only plays them back. Prize sizes use the state at reveal time with the pre-rolled
  * uniform numbers. Pity changes where a run lands, never the public odds table.
  */
+import { unitSpend } from "./shipyard";
 import {
   ARCADE,
   ARCADE_PHASE,
@@ -342,6 +343,7 @@ export function empirePoints(state: GameState): number {
       spent += cost.metal.add(cost.crystal).add(cost.deuterium).toNumber();
     }
   }
+  spent += unitSpend(state.planet);
   return Math.floor(spent / 1000);
 }
 

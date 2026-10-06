@@ -17,6 +17,7 @@ import {
   fusionOutputPerHour,
   mineOutputPerHour,
   perSecond,
+  satelliteEnergyPerUnit,
   solarOutputPerHour,
   storageCapacity,
 } from "./formulas";
@@ -72,6 +73,11 @@ export function energyDemand(planet: PlanetState): number {
   );
 }
 
+/** Energy from solar satellites before the output-double multiplier (P3). */
+export function satelliteSupply(planet: PlanetState): number {
+  return satelliteEnergyPerUnit(planet.tempMax) * planet.units.solar_satellite;
+}
+
 interface Flow {
   supply: number;
   demand: number;
@@ -87,7 +93,8 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
   const tech = state.research.levels;
   const supply =
     (solarOutputPerHour(b.solar_plant) * pctOf(planet, "solar_plant") +
-      fusionOutputPerHour(b.fusion_reactor, tech.energy_tech) * pctOf(planet, "fusion_reactor") * fusionFactor) *
+      fusionOutputPerHour(b.fusion_reactor, tech.energy_tech) * pctOf(planet, "fusion_reactor") * fusionFactor +
+      satelliteSupply(planet)) *
     doubled;
   const demand = energyDemand(planet);
   const efficiency = demand > 0 ? Math.min(1, supply / demand) : 1;

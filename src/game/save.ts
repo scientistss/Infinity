@@ -9,6 +9,8 @@ import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
 import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
 import { createPlanet, type BuildOrder, type PlanetState } from "./planet";
+import { UNIT_IDS, isUnitId, type UnitId } from "../data/units";
+import { SHIPYARD, type ShipyardOrder } from "./shipyard";
 import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
 import { createResearch, type ResearchOrder, type ResearchState } from "./research";
 import { INVENTORY_IDS, type InventoryItemId } from "../data/dark-matter";
@@ -58,6 +60,9 @@ export interface SerializedPlanet {
   buildings: Record<BuildingId, number>;
   productionPct: Record<ProductionBuildingId, number>;
   buildQueue: SerializedOrder[];
+  /** v8 (P3). */
+  units: Record<UnitId, number>;
+  shipyardQueue: ShipyardOrder[];
 }
 
 export interface SerializedResearchOrder {
@@ -74,7 +79,7 @@ export interface SerializedState {
   planet: SerializedPlanet;
   research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
   darkMatter: string;
-  /** Optional within v7 (added after the first v7 release); missing means empty. */
+  /** Optional (added during v7); missing means empty. */
   items?: Record<InventoryItemId, number>;
   boosters?: Booster[];
   arcade?: ArcadeState;
@@ -189,7 +194,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only the current version (v7) is accepted; anything else throws without touching the current game. */
+/** Validate a file. Only the current version (v8) is accepted; anything else throws without touching the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -271,6 +276,8 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
       remainingSeconds: order.remainingSeconds,
       source: order.source,
     })),
+    units: { ...planet.units },
+    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order })),
   };
 }
 
@@ -301,7 +308,30 @@ function readPlanet(raw: unknown): PlanetState {
   if (!Array.isArray(raw.buildQueue)) throw new Error("建造队列格式不正确");
   if (raw.buildQueue.length > MAX_QUEUE) throw new Error("建造队列过长");
   planet.buildQueue = raw.buildQueue.map((entry, index) => readOrder(entry, index));
+
+  if (!isRecord(raw.units)) throw new Error("舰船与防御数量格式不正确");
+  for (const id of UNIT_IDS) {
+    const value = raw.units[id];
+    planet.units[id] = value === undefined ? 0 : readInteger(value, `${id} 数量`, 0, MAX_UNITS);
+  }
+  if (!Array.isArray(raw.shipyardQueue)) throw new Error("造船队列格式不正确");
+  if (raw.shipyardQueue.length > SHIPYARD.maxOrders) throw new Error("造船队列过长");
+  planet.shipyardQueue = raw.shipyardQueue.map((entry, index) => readShipyardOrder(entry, index));
   return planet;
+}
+
+const MAX_UNITS = 1e15;
+
+function readShipyardOrder(raw: unknown, index: number): ShipyardOrder {
+  const label = `造船队列第 ${index + 1} 项`;
+  if (!isRecord(raw) || !isUnitId(raw.unit)) throw new Error(`${label}单位无效`);
+  const count = readInteger(raw.count, `${label}数量`, 1, SHIPYARD.maxBatch);
+  if (typeof raw.progress !== "number" || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress >= 1) {
+    throw new Error(`${label}进度无效`);
+  }
+  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  if (!source) throw new Error(`${label}来源无效`);
+  return { unit: raw.unit, count, progress: raw.progress, source };
 }
 
 function readOrder(raw: unknown, index: number): BuildOrder {
@@ -388,7 +418,7 @@ function readFinite(raw: unknown, label: string, fallback: number): number {
   return raw;
 }
 
-/** Ring machine state; optional inside v7 (absent = fresh machine). */
+/** Ring machine state; optional (absent = fresh machine). */
 function readArcade(raw: unknown): ArcadeState {
   if (raw === undefined) return createArcade();
   if (!isRecord(raw)) throw new Error("星环机数据格式不正确");
@@ -583,6 +613,7 @@ function readStats(raw: unknown): PlayerStats {
     seenQueueIdle: raw.seenQueueIdle === true,
     researchCompleted: readCount(raw.researchCompleted),
     darkMatterEarned: readCount(raw.darkMatterEarned),
+    unitsBuilt: raw.unitsBuilt === undefined ? 0 : readCount(raw.unitsBuilt),
   };
 }
 

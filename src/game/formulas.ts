@@ -140,6 +140,11 @@ export function fusionOutputPerHour(level: number, energyTech = 0): number {
   return level <= 0 ? 0 : 30 * level * Math.pow(1.05 + 0.01 * energyTech, level);
 }
 
+/** Solar satellite output per unit: ⌊(T_max + 140) / 6⌋ (design doc §5.2, §7.1). */
+export function satelliteEnergyPerUnit(tempMax: number): number {
+  return Math.max(0, Math.floor((tempMax + 140) / 6));
+}
+
 export function fusionDeutPerHour(level: number): number {
   return level <= 0 ? 0 : 10 * growth(level);
 }

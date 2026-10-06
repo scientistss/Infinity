@@ -76,6 +76,8 @@ export interface PlayerStats {
   researchCompleted: number;
   /** Dark matter earned from all sources, all runs. */
   darkMatterEarned: number;
+  /** Ships and defenses finished, all runs (P3). */
+  unitsBuilt: number;
 }
 
 export interface GameState {

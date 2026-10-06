@@ -21,8 +21,8 @@ import {
   type ProductionBuildingId,
 } from "../game/content";
 import { big } from "../game/decimal";
-import { economy, pctOf, type EconomySnapshot } from "../game/economy";
-import { formatAmount, formatCount, formatDm, formatDuration, formatMultiplier, formatPlayed, formatRate } from "../game/format";
+import { economy, pctOf, satelliteSupply, type EconomySnapshot } from "../game/economy";
+import { formatAmount, formatCount, formatDm, formatDuration, formatMultiplier, formatPlayed, formatRate, formatUnits } from "../game/format";
 import {
   BASE_PRODUCTION,
   ECONOMY_SPEED,
@@ -30,11 +30,14 @@ import {
   fusionOutputPerHour,
   mineOutputPerHour,
   perSecond,
+  satelliteEnergyPerUnit,
   solarOutputPerHour,
   storageCapacity,
 } from "../game/formulas";
 import { expansionScore, scrapeAmount, warpGain } from "../game/logic";
 import { usedFields } from "../game/planet";
+import { SILO_SLOTS_PER_LEVEL, unitById } from "../data/units";
+import { shipyardView, type ShipyardView } from "./shipyard-present";
 import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../game/queue";
 import type { CompletedBuild } from "../game/queue";
 import {
@@ -251,6 +254,7 @@ export interface OfflineView {
   gains: OfflineGainView[];
   builds: string[];
   research: string[];
+  units: string[];
   arcade: string[];
   protocol: string;
 }
@@ -274,6 +278,7 @@ export interface ViewModel {
   energyShort: boolean;
   queue: QueueView;
   research: ResearchPanelView;
+  shipyard: ShipyardView;
   darkMatter: DarkMatterView;
   arcade: ArcadeView;
   buildings: BuildingView[];
@@ -319,6 +324,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     energyShort: eco.efficiency < 1,
     queue: queueView(state),
     research: researchPanel(state),
+    shipyard: shipyardView(state),
     darkMatter: darkMatterView(state),
     arcade: arcadeView(state),
     buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
@@ -415,7 +421,7 @@ function queueView(state: GameState): QueueView {
 
 // ---------- dark matter ----------
 
-function speedupButtons(
+export function speedupButtons(
   state: GameState,
   remaining: number | null,
   target: SpeedupTarget,
@@ -670,7 +676,12 @@ function effectOf(
   if (id === "nanite_factory") {
     return { effect: `建造速度 ×${2 ** (target - 1)} → ×${2 ** target}`, gainPerSecond: 0 };
   }
-  if (id === "shipyard") return { effect: "第 3 阶段起建造舰船与防御；现在可以先建", gainPerSecond: 0 };
+  if (id === "shipyard") {
+    return { effect: target === 1 ? "解锁造船厂与防御标签" : `造船速度 ×${target} → ×${target + 1}（造船时间 ÷(1+等级)）`, gainPerSecond: 0 };
+  }
+  if (id === "missile_silo") {
+    return { effect: `导弹井容量 ${(target - 1) * SILO_SLOTS_PER_LEVEL} → ${target * SILO_SLOTS_PER_LEVEL} 格`, gainPerSecond: 0 };
+  }
   if (id === "research_lab") {
     return { effect: `研究速度 ×${target} → ×${target + 1}（研究时间 ÷(1+等级)）`, gainPerSecond: 0 };
   }
@@ -749,6 +760,10 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
         `核聚变反应堆（${b.fusion_reactor} 级）${eco.fusionFactor < 1 ? ` · 缺重氢降额 ${(eco.fusionFactor * 100).toFixed(0)}%` : ""}`,
         `+${formatAmount(big(fusion))}`,
       ],
+    },
+    {
+      key: "satellite",
+      cells: [`太阳能卫星（${formatUnits(planet.units.solar_satellite)} 颗 × ${satelliteEnergyPerUnit(planet.tempMax)}）`, `+${formatAmount(big(satelliteSupply(planet) * doubled))}`],
     },
     { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, `−${formatAmount(big(use("metal_mine")))}`] },
     { key: "crystal_mine", cells: [`晶体矿（${b.crystal_mine} 级）`, `−${formatAmount(big(use("crystal_mine")))}`] },
@@ -863,6 +878,7 @@ function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
     })),
     builds: builds.length > 0 ? builds : ["离线期间没有完成的建造"],
     research: summarizeResearch(catchup.completedResearch),
+    units: catchup.completedUnits.map((done) => `${unitById(done.unit).nameZh} +${formatUnits(done.count)}`),
     arcade: summarizeArcadeOffline(catchup),
     protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次（建造完成、满仓时也会触发）。`,
   };

@@ -5,6 +5,10 @@
  * P2: a research lab once metal mine 10 stands (lab ≈ metal/4 while no research runs), and a 2-slot research
  * queue that always picks the cheapest useful research whose price is ≤ 25% of current stock.
  *
+ * P3: shipyard 1 once metal mine 10 and robotics 2 stand, shipyard 2 after combustion drive 2 (small cargo), then
+ * shipyard ≈ robotics. With an idle shipyard it orders one light fighter and one small cargo as soon as each costs
+ * ≤ 25% of stock, and solar satellites to cover the energy deficit (counting queued ones).
+ *
  * Dark matter: at each snapshot it prices finishing the running build / research on the dark-matter clock
  * (1 OGame hour = 1 game minute) next to the old S = 600 conversion, and what a 9,000 DM wallet buys.
  *
@@ -23,6 +27,9 @@ import { dailyProduction, packageQuote, speedupQuote } from "../src/game/dark-ma
 import { DM_PRICES } from "../src/data/dark-matter";
 import { ECONOMY_SPEED } from "../src/game/formulas";
 import type { GameState } from "../src/game/types";
+import { deficitAfterQueued, orderUnits, satelliteEnergy, unitCost } from "../src/game/shipyard";
+import { unitById, type UnitId } from "../src/data/units";
+import { outputScale } from "../src/prestige/tree";
 
 declare const process: { argv: string[] };
 const horizonMinutes = Number(process.argv[2] ?? 150);
@@ -38,6 +45,8 @@ function want(state: GameState): BuildingId {
   else if (lv("deuterium_synth") >= 1 && lv("robotics_factory") < Math.min(10, Math.floor(lv("metal_mine") / 3))) pick = "robotics_factory";
   else if (lv("metal_mine") >= 10 && state.research.queue.length === 0 && lv("research_lab") < Math.min(10, Math.floor(lv("metal_mine") / 4))) pick = "research_lab";
   else if (lv("metal_mine") >= 10 && lv("research_lab") < 1) pick = "research_lab";
+  else if (lv("metal_mine") >= 10 && lv("robotics_factory") >= 2 && lv("shipyard") < 1) pick = "shipyard";
+  else if (state.research.levels.combustion_drive >= 2 && lv("shipyard") < Math.max(2, Math.min(6, lv("robotics_factory") - 1))) pick = "shipyard";
   else if (state.research.levels.energy_tech >= 3 && lv("deuterium_synth") >= 5 && lv("fusion_reactor") < Math.floor(lv("deuterium_synth") / 2) - 2) pick = "fusion_reactor";
   else pick = "metal_mine";
   const cost = costFor(state, pick, nextTargetLevel(p, pick));
@@ -136,6 +145,29 @@ function dmReport(minutes: number, s: GameState): string {
   const boosterGain = eco.gross.metal * 0.1 * DM_PRICES.secondsPerOgameHour * 24 * 7;
   return `t=${minutes}min 资源包 10% 金属 ${pack.amounts.metal.toNumber().toExponential(2)} / ${pack.dm.toLocaleString("en-US")} 暗物质（日产 ${dailyProduction(s, "metal").toExponential(2)}，受仓库限制） · 加成·铜 金属 ≈ +${boosterGain.toExponential(2)} / 2,500 暗物质`;
 }
+function stockValue(s: GameState): number {
+  return s.resources.metal.add(s.resources.crystal.mul(2)).add(s.resources.deuterium.mul(3)).toNumber();
+}
+
+function shipyardOrders(s: GameState): GameState {
+  if (s.planet.buildings.shipyard < 1 || s.planet.shipyardQueue.length > 0) return s;
+  for (const id of ["light_fighter", "small_cargo"] as UnitId[]) {
+    if (s.planet.units[id] > 0) continue;
+    if (metalEquivalent(unitCost(unitById(id))).toNumber() > 0.25 * stockValue(s)) continue;
+    const r = orderUnits(s, id, 1, "protocol");
+    if (r.ok) return r.state;
+  }
+  const deficit = deficitAfterQueued(s);
+  if (deficit > 0) {
+    const need = Math.ceil(deficit / (satelliteEnergy(s.planet) * outputScale(s)));
+    if (metalEquivalent(unitCost(unitById("solar_satellite"), need)).toNumber() <= 0.25 * stockValue(s)) {
+      const r = orderUnits(s, "solar_satellite", need, "protocol");
+      if (r.ok) return r.state;
+    }
+  }
+  return s;
+}
+
 let state = createInitialState();
 state = { ...state, arcade: createArcade(20261006) };
 let arcadeRuns = 0;
@@ -143,7 +175,8 @@ let arcadeDm = 0;
 const fmtLv = (s: GameState) => {
   const b = s.planet.buildings;
   const r = s.research.levels;
-  return `金${b.metal_mine} 晶${b.crystal_mine} 氘${b.deuterium_synth} 电${b.solar_plant} 聚${b.fusion_reactor} 机${b.robotics_factory} 研${b.research_lab} 仓${b.metal_storage}/${b.crystal_storage}/${b.deuterium_tank} 能${r.energy_tech} 计${r.computer_tech} 天${r.astrophysics}`;
+  const u = s.planet.units;
+  return `金${b.metal_mine} 晶${b.crystal_mine} 氘${b.deuterium_synth} 电${b.solar_plant} 聚${b.fusion_reactor} 机${b.robotics_factory} 研${b.research_lab} 船${b.shipyard} 仓${b.metal_storage}/${b.crystal_storage}/${b.deuterium_tank} 能${r.energy_tech} 计${r.computer_tech} 天${r.astrophysics} 燃${r.combustion_drive} 卫星${u.solar_satellite} 轻战${u.light_fighter} 小运${u.small_cargo}`;
 };
 
 for (let second = 1; second <= horizonMinutes * 60; second += 1) {
@@ -157,6 +190,7 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
     if (!id) break;
     state = enqueueResearch(state, id, "protocol").state;
   }
+  state = shipyardOrders(state);
   state = tick(state, 1);
   recordStarts(state, second / 60);
   // Ring machine: reveal every stored run right away, no bets (fixed seed, so the run is reproducible).
@@ -188,6 +222,12 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   mark("能源技术 3 级", state.research.levels.energy_tech >= 3);
   mark("核聚变 1 级", state.planet.buildings.fusion_reactor >= 1);
   mark("天体物理学 1 级", state.research.levels.astrophysics >= 1);
+  mark("造船厂 1 级", state.planet.buildings.shipyard >= 1);
+  mark("燃烧引擎 1 级", state.research.levels.combustion_drive >= 1);
+  mark("首艘轻型战斗机", state.planet.units.light_fighter >= 1);
+  mark("造船厂 2 级", state.planet.buildings.shipyard >= 2);
+  mark("首艘小型运输舰", state.planet.units.small_cargo >= 1);
+  mark("首颗太阳能卫星", state.planet.units.solar_satellite >= 1);
   mark("重置分 1e6（1 核心）", score >= 1e6);
   mark("重置分 4e6（2 核心）", score >= 4e6);
   mark("重置分 1e7", score >= 1e7);
