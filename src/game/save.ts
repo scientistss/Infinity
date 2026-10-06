@@ -11,6 +11,8 @@ import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
 import { createPlanet, type BuildOrder, type PlanetState } from "./planet";
 import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
 import { createResearch, type ResearchOrder, type ResearchState } from "./research";
+import { INVENTORY_IDS, type InventoryItemId } from "../data/dark-matter";
+import type { Booster } from "./boosters";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
   CURVATURE_IDS,
@@ -70,6 +72,9 @@ export interface SerializedState {
   planet: SerializedPlanet;
   research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
   darkMatter: string;
+  /** Optional within v7 (added after the first v7 release); missing means empty. */
+  items?: Record<InventoryItemId, number>;
+  boosters?: Booster[];
   lifetime: Record<ResourceId, string>;
   warpCores: string;
   curvature: Record<CurvatureId, number>;
@@ -127,6 +132,8 @@ export function serializeState(state: GameState): SerializedState {
     planet: serializePlanet(state.planet),
     research: serializeResearch(state.research),
     darkMatter: bigToString(state.darkMatter),
+    items: { ...state.items },
+    boosters: state.boosters.map((booster) => ({ ...booster })),
     lifetime: mapResources(state.lifetime),
     warpCores: bigToString(state.warpCores),
     curvature: { ...state.curvature },
@@ -149,6 +156,8 @@ export function deserializeState(raw: unknown): GameState {
   state.planet = readPlanet(raw.planet);
   state.research = readResearch(raw.research);
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
+  state.items = readItems(raw.items);
+  state.boosters = readBoosters(raw.boosters);
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
   state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.curvature = readCurvature(raw.curvature);
@@ -304,6 +313,33 @@ function readOrder(raw: unknown, index: number): BuildOrder {
   return { building: raw.building, targetLevel, paid, totalSeconds, remainingSeconds, source };
 }
 
+function readItems(raw: unknown): Record<InventoryItemId, number> {
+  const items = createInitialState().items;
+  if (raw === undefined) return items;
+  if (!isRecord(raw)) throw new Error("背包格式不正确");
+  for (const id of INVENTORY_IDS) {
+    if (raw[id] === undefined) continue;
+    items[id] = readInteger(raw[id], `背包 ${id}`, 0, 1_000_000);
+  }
+  return items;
+}
+
+function readBoosters(raw: unknown): Booster[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("资源加成格式不正确");
+  const out: Booster[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.res !== "string" || !(RESOURCE_IDS as readonly string[]).includes(entry.res)) {
+      throw new Error("资源加成资源无效");
+    }
+    const pct = readInteger(entry.pct, "资源加成百分比", 1, 100);
+    const until = readSeconds(entry.until, "资源加成结束时间");
+    if (out.some((booster) => booster.res === entry.res)) throw new Error("同一资源只能有一个加成");
+    out.push({ res: entry.res as ResourceId, pct, until });
+  }
+  return out;
+}
+
 function serializeResearch(research: ResearchState): SerializedState["research"] {
   return {
     levels: { ...research.levels },
@@ -425,6 +461,7 @@ function readStats(raw: unknown): PlayerStats {
     seenStorageFull: raw.seenStorageFull === true,
     seenQueueIdle: raw.seenQueueIdle === true,
     researchCompleted: readCount(raw.researchCompleted),
+    darkMatterEarned: readCount(raw.darkMatterEarned),
   };
 }
 

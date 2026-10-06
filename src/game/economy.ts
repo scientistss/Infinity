@@ -5,6 +5,7 @@
 import { achievementFactor } from "../data/achievements";
 import { PRODUCTION_IDS, type ProductionBuildingId } from "../data/buildings";
 import { PLASMA_BONUS } from "../data/research";
+import { boosterFactor } from "./boosters";
 import { outputScale, passiveCoreBonus } from "../prestige/tree";
 import { MANUAL_MIN_METAL } from "./content";
 import { big, type BigNumber } from "./decimal";
@@ -91,11 +92,11 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
   const demand = energyDemand(planet);
   const efficiency = demand > 0 ? Math.min(1, supply / demand) : 1;
   const plasma = {
-    metal_mine: 1 + PLASMA_BONUS.metal * tech.plasma_tech,
-    crystal_mine: 1 + PLASMA_BONUS.crystal * tech.plasma_tech,
-    deuterium_synth: 1 + PLASMA_BONUS.deuterium * tech.plasma_tech,
+    metal_mine: (1 + PLASMA_BONUS.metal * tech.plasma_tech) * boosterFactor(state, "metal"),
+    crystal_mine: (1 + PLASMA_BONUS.crystal * tech.plasma_tech) * boosterFactor(state, "crystal"),
+    deuterium_synth: (1 + PLASMA_BONUS.deuterium * tech.plasma_tech) * boosterFactor(state, "deuterium"),
   };
-  // Plasma technology scales mine output only, not the planet's base production (OGame).
+  // Plasma technology and resource boosters scale mine output only, not the planet's base production (OGame).
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
     mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * efficiency * plasma[id];
   const gross: ResourceRates = {

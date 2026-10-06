@@ -1,4 +1,4 @@
-import type { BigNumber } from "./decimal";
+import { big, type BigNumber } from "./decimal";
 
 /**
  * Antimatter-Dimensions-style scientific notation: values under 1000 keep two
@@ -50,4 +50,11 @@ export function formatDuration(totalSeconds: number): string {
 export function formatPlayed(value: BigNumber): string {
   if (value.gt(1e12)) return `${formatAmount(value)} 秒`;
   return formatDuration(value.toNumber());
+}
+
+/** Dark matter is a whole-number currency: thousands separators below 1e9, scientific above. */
+export function formatDm(value: BigNumber | number): string {
+  const n = typeof value === "number" ? value : value.toNumber();
+  if (!Number.isFinite(n) || Math.abs(n) >= 1e9) return formatAmount(typeof value === "number" ? big(value) : value);
+  return Math.floor(n).toLocaleString("en-US");
 }

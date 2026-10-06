@@ -25,6 +25,7 @@ export function emptyStats(): PlayerStats {
     seenStorageFull: false,
     seenQueueIdle: false,
     researchCompleted: 0,
+    darkMatterEarned: 0,
   };
 }
 
@@ -60,6 +61,8 @@ export function createInitialState(): GameState {
     planet: createPlanet(),
     research: createResearch(),
     darkMatter: big(0),
+    items: { kraken_box: 0, newtron_box: 0, booster_box: 0, supply_pack: 0 },
+    boosters: [],
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
     curvature: emptyCurvature(),
