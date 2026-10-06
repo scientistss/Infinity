@@ -4,7 +4,8 @@ import {
   OFFLINE_MAX_SECONDS,
   PROTOCOL_OFFLINE_EVAL_SECONDS,
 } from "../game/content";
-import { applyAchievementUnlocks, tick } from "../game/logic";
+import { applyAchievementUnlocks, tick, type TickLog } from "../game/logic";
+import type { CompletedBuild } from "../game/queue";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "../game/types";
 import type { BigNumber } from "../game/decimal";
 
@@ -17,8 +18,10 @@ export interface OfflineCatchup {
   capped: boolean;
   capSeconds: number;
   gains: Record<ResourceId, BigNumber>;
-  /** Simplified protocol passes in this window. The tick evaluates cards on this cadence. */
+  /** Regular protocol passes in this window (event cards also run when builds finish). */
   protocolEvaluations: number;
+  /** Build orders finished while away, in completion order. */
+  completedBuilds: CompletedBuild[];
   newAchievementIds: string[];
 }
 
@@ -39,17 +42,20 @@ export function offlineProtocolEvaluations(appliedSeconds: number): number {
   return Math.floor(appliedSeconds / PROTOCOL_OFFLINE_EVAL_SECONDS);
 }
 
-/** One offline batch: production plus protocol cards on the 60s cadence, then achievements. */
+/** One offline batch through the same event-driven tick as live play; protocol passes every 60s. */
 export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchup {
   const capSeconds = offlineCapSeconds(state);
   const rawSeconds = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
   const appliedSeconds = Math.min(rawSeconds, capSeconds);
   const before = new Set(state.unlocked);
   const beforeResources = state.resources;
-  const next = tick(state, appliedSeconds, "offline");
+  const log: TickLog = { completedBuilds: [] };
+  const next = tick(state, appliedSeconds, "offline", log);
+  // Production while away. Builds spend resources, so prefer this-run lifetime output unless a launch reset it.
+  const sameRun = next.stats.launches === state.stats.launches;
   const gains = emptyGains();
   for (const id of RESOURCE_IDS) {
-    const delta = next.resources[id].sub(beforeResources[id]);
+    const delta = sameRun ? next.lifetime[id].sub(state.lifetime[id]) : next.resources[id].sub(beforeResources[id]);
     gains[id] = delta.gt(0) ? delta : big(0);
   }
   return {
@@ -60,6 +66,7 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
     capSeconds,
     gains,
     protocolEvaluations: offlineProtocolEvaluations(appliedSeconds),
+    completedBuilds: log.completedBuilds,
     newAchievementIds: next.unlocked.filter((id) => !before.has(id)),
   };
 }
@@ -73,6 +80,7 @@ export function emptyCatchup(state: GameState): OfflineCatchup {
     capSeconds: offlineCapSeconds(state),
     gains: emptyGains(),
     protocolEvaluations: 0,
+    completedBuilds: [],
     newAchievementIds: [],
   };
 }

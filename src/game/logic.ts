@@ -1,79 +1,155 @@
-import { evaluateLoadout, hasRunnableProtocol, refreshUnlocks } from "../automation/engine";
-import { achievementFactor, ACHIEVEMENTS } from "../data/achievements";
+import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
+import { ACHIEVEMENTS } from "../data/achievements";
+import type { StoredResId } from "../data/protocol-cards";
 import {
   OFFLINE_PROTOCOL_SECONDS,
   PRESTIGE_SCORE_UNIT,
-  PRODUCERS,
+  PROTOCOL_LIVE_EVAL_SECONDS,
   SCORE_WEIGHTS,
-  producerById,
-  type ProducerDef,
 } from "./content";
-import {
-  affordableCount,
-  big,
-  bigFloor,
-  bigMin,
-  bigSqrt,
-  seriesCost,
-  type BigNumber,
-} from "./decimal";
-import {
-  applySeedStock,
-  growthRatio,
-  manualClickAmount,
-  passiveCoreBonus,
-  producerOutputScale,
-  scoreMultiplier,
-} from "../prestige/tree";
+import { big, bigFloor, bigSqrt, type BigNumber } from "./decimal";
+import { baseCollectAmount, economy, type EconomySnapshot } from "./economy";
+import { MIN_BUILD_SECONDS } from "./formulas";
+import { completeActive, startNext, queueCapacity, type CompletedBuild } from "./queue";
+import { applySeedStock, manualClickMultiplier, scoreMultiplier } from "../prestige/tree";
 import { createInitialState } from "./state";
-import { RESOURCE_IDS, type GameState, type ProducerId, type ResourceId } from "./types";
+import { RESOURCE_IDS, type GameState } from "./types";
 
-export type BuyMode = 1 | 10 | "max";
+export { energyReport, globalMultiplier, productionPerSecond, storageCaps, type EnergyReport } from "./economy";
+
 export type TickMode = "live" | "offline";
 
-const LIVE_PROTOCOL_SECONDS = 1;
-
-export interface EnergyReport {
-  supply: BigNumber;
-  demand: BigNumber;
-  efficiency: BigNumber;
-  shortage: BigNumber;
+/** Optional sink for things that happened inside one tick (offline summary). */
+export interface TickLog {
+  completedBuilds: CompletedBuild[];
 }
 
+const EPS = 1e-9;
+
 /**
- * Advance the simulation by `dtSeconds`.
- * Live play evaluates armed protocol cards about once per second.
- * Offline catch-up evaluates them on the balance interval (60s).
+ * Advance the simulation by `dtSeconds` with event-driven piecewise integration (design doc §5.10).
+ * Between events (build finished, storage full, deuterium empty, protocol pass) every rate is
+ * constant, so one long tick equals many short ones. Live play runs protocol passes every second,
+ * offline catch-up every 60 seconds; queue/storage events run event cards immediately in both.
  * Pure: the input state is not mutated.
  */
-export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live"): GameState {
-  const ready = applyAchievementUnlocks(state);
-  if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return ready;
-  const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : LIVE_PROTOCOL_SECONDS;
-  if (!hasRunnableProtocol(ready)) {
-    return applyAchievementUnlocks(refreshUnlocks(markEnergyShortage(produce(ready, dtSeconds))));
-  }
+export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
+  let current = applyAchievementUnlocks(startNext(state));
+  if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
+  const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
+  const limit = Math.ceil(dtSeconds / period) + 4 * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 64;
 
-  let current = ready;
-  let remaining = dtSeconds;
-  let guard = 0;
-  const limit = Math.ceil(dtSeconds / period) + 2;
-  while (remaining > 1e-6 && guard < limit) {
-    guard += 1;
-    const accrued = current.protocols.accumulator;
-    if (accrued >= period) {
-      current = evaluateLoadout(current, period);
-      current = setAccumulator(current, 0);
-      continue;
+  let t = 0;
+  let segments = 0;
+  while (dtSeconds - t > EPS) {
+    segments += 1;
+    const eco = economy(current);
+    const left = dtSeconds - t;
+    if (segments > limit) {
+      // Safety valve: integrate the rest in one piece rather than spin.
+      current = integrate(current, left, eco).state;
+      break;
     }
-    const step = Math.min(remaining, period - accrued);
-    current = produce(current, step);
-    const accruedNext = accrued + step;
-    remaining -= step;
-    if (accruedNext >= period - 1e-8) current = evaluateLoadout(setAccumulator(current, 0), period);
-    else current = setAccumulator(current, accruedNext);
+    let step = left;
+    const head = current.planet.buildQueue[0];
+    if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
+    step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
+    step = Math.min(step, nextBoundary(current, eco));
+
+    const moved = integrate(current, step, eco);
+    current = moved.state;
+
+    // Queue: count down the active order, finish it, start the next one.
+    let queueIdle = false;
+    const active = current.planet.buildQueue[0];
+    if (active && active.totalSeconds > 0) {
+      const remaining = active.remainingSeconds - step;
+      if (remaining <= EPS) {
+        const done = completeActive(current);
+        current = done.state;
+        if (done.completed) log?.completedBuilds.push(done.completed);
+        queueIdle = current.planet.buildQueue.length < queueCapacity(current);
+      } else {
+        current = withHeadRemaining(current, remaining);
+      }
+    }
+
+    const events: ProtocolEvents = { queueIdle, storageFull: moved.filled };
+    if (moved.filled.length > 0 && !current.stats.seenStorageFull) {
+      current = { ...current, stats: { ...current.stats, seenStorageFull: true } };
+    }
+    current = evaluateEvents(refreshUnlocks(current), events);
+
+    const accrued = current.protocols.accumulator + step;
+    if (accrued >= period - EPS) current = evaluateLoadout(setAccumulator(current, 0), period);
+    else current = setAccumulator(current, accrued);
+
+    current = applyAchievementUnlocks(refreshUnlocks(current));
+    t += step;
   }
-  return applyAchievementUnlocks(refreshUnlocks(markEnergyShortage(current)));
+  return applyAchievementUnlocks(refreshUnlocks(markStorageSeen(current)));
+}
+
+/** Seconds until the first resource changes regime (reaches its cap, or deuterium runs dry). */
+function nextBoundary(state: GameState, eco: EconomySnapshot): number {
+  let soonest = Number.POSITIVE_INFINITY;
+  for (const id of RESOURCE_IDS) {
+    const stock = state.resources[id].toNumber();
+    const cap = eco.caps[id];
+    const rate = eco.net[id];
+    if (stock < cap && rate > 0) soonest = Math.min(soonest, (cap - stock) / rate);
+    else if (stock > cap && rate < 0) soonest = Math.min(soonest, (stock - cap) / -rate);
+    else if (stock > 0 && stock <= cap && rate < 0) soonest = Math.min(soonest, stock / -rate);
+  }
+  return soonest;
+}
+
+/** Integrate `dt` seconds at constant rates. Clamps at caps and zero; lifetime counts real output only. */
+function integrate(state: GameState, dt: number, eco: EconomySnapshot): { state: GameState; filled: StoredResId[] } {
+  const resources = { ...state.resources };
+  const lifetime = { ...state.lifetime };
+  const filled: StoredResId[] = [];
+  if (dt <= 0) return { state, filled };
+  for (const id of RESOURCE_IDS) {
+    const before = resources[id];
+    const cap = big(eco.caps[id]);
+    let after = before.add(eco.net[id] * dt);
+    const tolerance = eco.caps[id] * 1e-12;
+    if (before.lt(cap) && after.gte(cap.sub(tolerance))) {
+      after = cap;
+      filled.push(id);
+    } else if (before.gt(cap) && after.lte(cap.add(tolerance))) {
+      after = cap;
+    }
+    if (after.lt(Math.max(1e-9, Math.abs(eco.net[id] * dt) * 1e-12))) after = big(0);
+    resources[id] = after;
+    const produced = after.sub(before).add(eco.consumption[id] * dt);
+    if (produced.gt(0)) lifetime[id] = lifetime[id].add(produced);
+  }
+  return {
+    state: { ...state, resources, lifetime, totalTime: state.totalTime.add(dt) },
+    filled,
+  };
+}
+
+function withHeadRemaining(state: GameState, remaining: number): GameState {
+  const [head, ...rest] = state.planet.buildQueue;
+  if (!head) return state;
+  return {
+    ...state,
+    planet: { ...state.planet, buildQueue: [{ ...head, remainingSeconds: remaining }, ...rest] },
+  };
+}
+
+function setAccumulator(state: GameState, accumulator: number): GameState {
+  return { ...state, protocols: { ...state.protocols, accumulator } };
+}
+
+function markStorageSeen(state: GameState): GameState {
+  if (state.stats.seenStorageFull) return state;
+  const caps = economy(state).caps;
+  const full = RESOURCE_IDS.some((id) => state.resources[id].gte(caps[id]));
+  return full ? { ...state, stats: { ...state.stats, seenStorageFull: true } } : state;
 }
 
 /** Record an energy shortage, then append any newly met achievements. Already unlocked stays unlocked. */
@@ -88,77 +164,22 @@ export function applyAchievementUnlocks(state: GameState): GameState {
       added = true;
     }
   }
-  if (!added && marked === state) return state;
+  if (!added) return marked;
   return {
     ...marked,
     unlocked: ACHIEVEMENTS.filter((def) => owned.has(def.id)).map((def) => def.id),
   };
 }
 
-function produce(state: GameState, dtSeconds: number): GameState {
-  const resources = { ...state.resources };
-  const lifetime = { ...state.lifetime };
-  for (const id of RESOURCE_IDS) {
-    const gain = productionPerSecond(state, id).mul(dtSeconds);
-    resources[id] = resources[id].add(gain);
-    lifetime[id] = lifetime[id].add(gain);
-  }
-  return { ...state, resources, lifetime, totalTime: state.totalTime.add(dtSeconds) };
-}
-
-function setAccumulator(state: GameState, accumulator: number): GameState {
-  return { ...state, protocols: { ...state.protocols, accumulator } };
-}
-
-/** Unspent warp cores, robotics factories, and +1% per achievement. Does not include energy efficiency. */
-export function globalMultiplier(state: GameState): BigNumber {
-  let mult = big(1).add(passiveCoreBonus(state));
-  for (const producer of PRODUCERS) {
-    if (producer.globalProductionMult === 1) continue;
-    mult = mult.mul(big(producer.globalProductionMult).pow(state.producers[producer.id]));
-  }
-  return mult.mul(achievementFactor(state));
-}
-
-export function energyReport(state: GameState): EnergyReport {
-  let supply = big(0);
-  let demand = big(0);
-  for (const producer of PRODUCERS) {
-    const owned = state.producers[producer.id];
-    if (producer.producesEnergy > 0) {
-      supply = supply.add(owned.mul(producer.producesEnergy).mul(producerOutputScale(state)));
-    }
-    if (producer.consumesEnergy > 0) demand = demand.add(owned.mul(producer.consumesEnergy));
-  }
-  const efficiency = demand.gt(0) ? bigMin(big(1), supply.div(demand)) : big(1);
-  const shortage = demand.gt(supply) ? demand.sub(supply) : big(0);
-  return { supply, demand, efficiency, shortage };
-}
-
-/** Resource output scale: global multiplier × energy efficiency. */
-export function resourceMultiplier(state: GameState): BigNumber {
-  return globalMultiplier(state).mul(energyReport(state).efficiency);
-}
-
 export function markEnergyShortage(state: GameState): GameState {
   if (state.seenEnergyShortage && state.stats.seenEnergyShort) return state;
-  const short = state.seenEnergyShortage || energyReport(state).efficiency.lt(1);
+  const short = state.seenEnergyShortage || economy(state).efficiency < 1;
   if (!short) return state;
   return {
     ...state,
     seenEnergyShortage: true,
     stats: { ...state.stats, seenEnergyShort: true },
   };
-}
-
-export function productionPerSecond(state: GameState, id: ResourceId): BigNumber {
-  let rate = big(0);
-  for (const producer of PRODUCERS) {
-    const each = producer.rates[id];
-    if (each === 0) continue;
-    rate = rate.add(state.producers[producer.id].mul(each));
-  }
-  return rate.mul(producerOutputScale(state)).mul(resourceMultiplier(state));
 }
 
 export function expansionScore(state: GameState): BigNumber {
@@ -177,7 +198,7 @@ export function warpGain(state: GameState): BigNumber {
 }
 
 /**
- * Launch the colony ship. Resets the surface and banks warp cores.
+ * Launch the colony ship. Resets buildings, queue, production settings and resources to the 500/500 start.
  * Protocol cards, unlocks, achievements, the tech tree, and manual-click progress stay.
  * Returns the same state when the gain would be zero.
  */
@@ -195,9 +216,8 @@ export function prestige(state: GameState): GameState {
   next.unlocked = state.unlocked.slice();
   next.offlineBonusHours = state.offlineBonusHours;
   next.stats = {
-    scrapes: state.stats.scrapes,
+    ...state.stats,
     launches: state.stats.launches + 1,
-    seenEnergyShort: state.stats.seenEnergyShort,
     manualActions: 0,
     automatedLaunches: state.stats.automatedLaunches + (state.stats.manualActions === 0 ? 1 : 0),
   };
@@ -211,9 +231,14 @@ export function prestige(state: GameState): GameState {
   return applyAchievementUnlocks(refreshUnlocks(applySeedStock(next)));
 }
 
-/** Manual collect. Counts toward the auto-collect unlock. Auto-collect does not call this. */
+/** Metal from one manual collect: max(10, one second of metal output), ×10 with the curvature tech. */
+export function scrapeAmount(state: GameState): number {
+  return baseCollectAmount(state) * manualClickMultiplier(state);
+}
+
+/** Manual collect. Counts toward the auto-collect unlock. Auto-collect does not call this. Can exceed the cap. */
 export function scrape(state: GameState): GameState {
-  const gain = big(manualClickAmount(state));
+  const gain = big(scrapeAmount(state));
   return applyAchievementUnlocks(
     refreshUnlocks({
       ...state,
@@ -227,95 +252,4 @@ export function scrape(state: GameState): GameState {
       },
     }),
   );
-}
-
-export function isProducerUnlocked(state: GameState, id: ProducerId): boolean {
-  const unlock = producerById(id).unlock;
-  if (unlock.kind === "start") return true;
-  if (unlock.kind === "ownedGte") return state.producers[unlock.producer].gte(unlock.value);
-  return state.lifetime[unlock.res].gte(unlock.value);
-}
-
-export function nextUnitCost(state: GameState, def: ProducerDef, owned: BigNumber): Record<ResourceId, BigNumber> {
-  const ratio = growthRatio(state, def.ratio);
-  const costs = emptyCosts();
-  for (const id of RESOURCE_IDS) {
-    const base = def.costs[id];
-    costs[id] = base > 0 ? big(base).mul(big(ratio).pow(owned)) : big(0);
-  }
-  return costs;
-}
-
-export function bulkCost(
-  state: GameState,
-  def: ProducerDef,
-  owned: BigNumber,
-  count: BigNumber,
-): Record<ResourceId, BigNumber> {
-  const ratio = growthRatio(state, def.ratio);
-  const costs = emptyCosts();
-  if (count.lte(0)) return costs;
-  for (const id of RESOURCE_IDS) {
-    const base = def.costs[id];
-    costs[id] = base > 0 ? seriesCost(count, base, ratio, owned) : big(0);
-  }
-  return costs;
-}
-
-export function canAfford(state: GameState, costs: Record<ResourceId, BigNumber>): boolean {
-  return RESOURCE_IDS.every((id) => state.resources[id].gte(costs[id]));
-}
-
-export function maxBuyCount(state: GameState, id: ProducerId): BigNumber {
-  const def = producerById(id);
-  const owned = state.producers[id];
-  let cap: BigNumber | null = null;
-
-  for (const resourceId of RESOURCE_IDS) {
-    const base = def.costs[resourceId];
-    if (base <= 0) continue;
-    const affordable = affordableCount(state.resources[resourceId], base, growthRatio(state, def.ratio), owned);
-    cap = cap === null ? affordable : bigMin(cap, affordable);
-  }
-
-  if (cap === null) return big(0);
-  let count = bigFloor(cap);
-  if (count.lt(0)) count = big(0);
-
-  const fits = (qty: BigNumber): boolean => canAfford(state, bulkCost(state, def, owned, qty));
-  for (let step = 0; step < 6 && fits(count.add(1)); step += 1) count = count.add(1);
-  for (let step = 0; step < 6 && count.gt(0) && !fits(count); step += 1) count = count.sub(1);
-  return count;
-}
-
-export function buy(state: GameState, id: ProducerId, mode: BuyMode, manual = true): GameState {
-  if (!isProducerUnlocked(state, id)) return state;
-  const affordable = maxBuyCount(state, id);
-  const qty = mode === "max" ? affordable : affordable.gte(mode) ? big(mode) : big(0);
-  if (qty.lt(1)) return state;
-
-  const def = producerById(id);
-  const owned = state.producers[id];
-  const costs = bulkCost(state, def, owned, qty);
-  if (!canAfford(state, costs)) return state;
-
-  const resources = { ...state.resources };
-  for (const resourceId of RESOURCE_IDS) {
-    const next = resources[resourceId].sub(costs[resourceId]);
-    resources[resourceId] = next.lt(0) ? big(0) : next;
-  }
-
-  const bought = markEnergyShortage({
-    ...state,
-    resources,
-    producers: { ...state.producers, [id]: owned.add(qty) },
-    stats: manual
-      ? { ...state.stats, manualActions: state.stats.manualActions + 1 }
-      : state.stats,
-  });
-  return applyAchievementUnlocks(refreshUnlocks(bought));
-}
-
-function emptyCosts(): Record<ResourceId, BigNumber> {
-  return { metal: big(0), crystal: big(0), deuterium: big(0) };
 }

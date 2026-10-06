@@ -1,9 +1,21 @@
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
-import { buy, prestige, scrape, tick } from "./game/logic";
+import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
 import { curvatureById } from "./data/curvature-tech";
-import { buyCurvature, manualClickAmount } from "./prestige/tree";
-import { clearSlot, equipCard, equipFirstEmpty, moveSlot, patchSlot, toggleSlot } from "./automation/engine";
+import { buyCurvature } from "./prestige/tree";
+import {
+  clearSlot,
+  equipCard,
+  equipFirstEmpty,
+  moveSlot,
+  patchSlot,
+  setProductionPct,
+  toggleSlot,
+} from "./automation/engine";
+import { buildingById } from "./data/buildings";
+import { big } from "./game/decimal";
+import { formatAmount } from "./game/format";
+import { cancel, enqueue } from "./game/queue";
 import {
   clearSave,
   deserializeState,
@@ -28,10 +40,13 @@ if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 
 const store = localStorageSafe();
 let loaded: OfflineCatchup = emptyCatchup(createInitialState());
+let notice: string | null = null;
 let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
 if (store) {
   try {
-    loaded = loadGame(store);
+    const result = loadGame(store);
+    loaded = result;
+    notice = result.notice;
   } catch {
     loaded = emptyCatchup(createInitialState());
     status = "存档无法读取，已重新开始";
@@ -45,7 +60,9 @@ let banner: string | null = unlockBanner(loaded.newAchievementIds);
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
-view.update(present(state, status, banner, catchup));
+// Write the fresh v6 game right away so the "save format updated" notice only shows once.
+if (notice) persist();
+render();
 
 let lastFrame = performance.now();
 window.requestAnimationFrame(frame);
@@ -72,18 +89,38 @@ function frame(now: number): void {
     const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (unlocked) banner = unlocked;
   }
-  view.update(present(state, status, banner, catchup));
+  render();
   window.requestAnimationFrame(frame);
+}
+
+function render(): void {
+  view.update(present(state, { status, banner, notice, catchup }));
 }
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
   if (action.type === "dismiss-offline") {
     catchup = null;
+  } else if (action.type === "dismiss-notice") {
+    notice = null;
   } else if (action.type === "scrape") {
-    const mined = manualClickAmount(state);
+    const mined = scrapeAmount(state);
     state = scrape(state);
-    status = `采集 +${mined} 金属`;
+    status = `采集 +${formatAmount(big(mined))} 金属`;
+  } else if (action.type === "enqueue") {
+    const result = enqueue(state, action.id, "manual");
+    state = result.state;
+    status = result.ok ? result.reason : `${buildingById(action.id).nameZh}：${result.reason}`;
+    if (result.ok) persist();
+  } else if (action.type === "cancelQueue") {
+    const result = cancel(state, action.index);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "setProduction") {
+    state = setProductionPct(state, action.id, action.pct);
+    status = `${buildingById(action.id).nameZh}产量设为 ${state.planet.productionPct[action.id]}%`;
+    persist();
   } else if (action.type === "protocol-palette") {
     const result = equipFirstEmpty(state, action.cardId);
     state = result.state;
@@ -110,12 +147,7 @@ async function handleAction(action: UiAction): Promise<void> {
     state = patchSlot(state, action.index, action.path, action.value);
     status = "已调整协议参数";
     persist();
-  } else if (action.type === "buy") {
-    const before = state.producers[action.id];
-    state = buy(state, action.id, action.mode === "max" ? "max" : 1);
-    const gained = state.producers[action.id].sub(before);
-    status = gained.gte(1) ? `已升级 ${gained.toFixed(0)} 级` : "资源不足";
-    if (gained.gte(1)) persist();
+
   } else if (action.type === "buy-tech") {
     const next = buyCurvature(state, action.id);
     if (next === state) {
@@ -127,7 +159,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源与设施，保留曲率核心、曲率科技、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会重置资源、建筑、建造队列和产量设置，保留曲率核心、曲率科技、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";
@@ -154,14 +186,15 @@ async function handleAction(action: UiAction): Promise<void> {
     state = createInitialState();
     catchup = null;
     banner = null;
+    notice = null;
     status = "已重置";
     view.setTransferText("");
   }
-  if (action.type === "scrape" || action.type === "buy" || action.type === "prestige") {
+  if (action.type === "scrape" || action.type === "enqueue" || action.type === "prestige") {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (note) banner = note;
   }
-  view.update(present(state, status, banner, catchup));
+  render();
 }
 
 function applyImport(json: string): void {
@@ -170,11 +203,13 @@ function applyImport(json: string): void {
     state = deserializeState(file.state);
     catchup = null;
     banner = null;
+    notice = null;
     status = "已导入存档";
     persist("已导入并存入本地");
     view.setTransferText(exportSave(state, file.savedAt));
   } catch (error) {
-    status = error instanceof Error ? error.message : "导入失败";
+    // The current game is untouched: importSave throws before anything is replaced.
+    status = `导入失败，当前进度未改动：${error instanceof Error ? error.message : "未知错误"}`;
   }
 }
 

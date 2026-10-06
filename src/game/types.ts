@@ -1,18 +1,12 @@
 import type { BigNumber } from "./decimal";
-import type { CardCatalogId, ProducerId, ProtocolCard } from "../data/protocol-cards";
+import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
+import type { BuildingId, ProductionBuildingId } from "../data/buildings";
+import type { BuildOrder, PlanetState } from "./planet";
 
-export type { CardCatalogId, ProducerId, ProtocolCard };
+export type { BuildingId, BuildOrder, CardCatalogId, PlanetState, ProductionBuildingId, ProtocolCard };
 
 export const RESOURCE_IDS = ["metal", "crystal", "deuterium"] as const;
 export type ResourceId = (typeof RESOURCE_IDS)[number];
-
-export const PRODUCER_IDS = [
-  "metal_mine",
-  "solar_plant",
-  "crystal_mine",
-  "deuterium_synth",
-  "robotics_factory",
-] as const satisfies readonly ProducerId[];
 
 export const CURVATURE_IDS = [
   "seed_stock",
@@ -54,15 +48,22 @@ export interface PlayerStats {
   launches: number;
   /** True once energy demand has exceeded supply. */
   seenEnergyShort: boolean;
-  /** Manual mining and manual purchases since the last launch. */
+  /** Manual mining and manual build orders since the last launch. */
   manualActions: number;
   /** Launches finished with zero manual actions that run. */
   automatedLaunches: number;
+  /** Build orders finished, all runs. */
+  buildsCompleted: number;
+  /** Sticky once any resource has reached its storage cap. Unlocks card 8. */
+  seenStorageFull: boolean;
+  /** Sticky once the build queue has run empty after a completion. Unlocks card 7 (with robotics ≥ 1). */
+  seenQueueIdle: boolean;
 }
 
 export interface GameState {
   resources: Record<ResourceId, BigNumber>;
-  producers: Record<ProducerId, BigNumber>;
+  /** Buildings, build queue, production settings. Resources move into the planet in P4. */
+  planet: PlanetState;
   /** Resources gained this run. Prestige clears this. */
   lifetime: Record<ResourceId, BigNumber>;
   /** Curvature cores earned. Spent ranks live in `curvature`, not in this total. */

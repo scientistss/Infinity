@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   // GitHub project Pages: https://scientistss.github.io/Infinity/
@@ -6,5 +6,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+  },
+  test: {
+    include: ["tests/**/*.test.ts"],
+    environment: "node",
   },
 });

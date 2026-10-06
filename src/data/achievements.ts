@@ -28,8 +28,8 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "first_metal_mine",
     name: "金属矿 1 级",
     detail: "金属矿达到 1 级",
-    met: (state) => state.producers.metal_mine.gte(1),
-    progress: (state) => ({ current: state.producers.metal_mine, goal: big(1), amount: false }),
+    met: (state) => state.planet.buildings.metal_mine >= 1,
+    progress: (state) => count(state.planet.buildings.metal_mine, 1),
   },
   {
     id: "energy_short",
@@ -41,7 +41,7 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
   {
     id: "first_protocol",
     name: "首张协议卡",
-    detail: "手动采矿 100 次，达到「自动采集」解锁线",
+    detail: "手动采集 100 次，达到「自动采集」解锁线",
     met: (state) => state.stats.scrapes >= 100,
     progress: (state) => count(state.stats.scrapes, 100),
   },
@@ -49,29 +49,29 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "mines_10",
     name: "金属矿 10 级",
     detail: "金属矿达到 10 级",
-    met: (state) => state.producers.metal_mine.gte(10),
-    progress: (state) => ({ current: state.producers.metal_mine, goal: big(10), amount: false }),
+    met: (state) => state.planet.buildings.metal_mine >= 10,
+    progress: (state) => count(state.planet.buildings.metal_mine, 10),
   },
   {
     id: "first_crystal",
     name: "晶体开采",
     detail: "晶体矿达到 1 级",
-    met: (state) => state.producers.crystal_mine.gte(1),
-    progress: (state) => ({ current: state.producers.crystal_mine, goal: big(1), amount: false }),
+    met: (state) => state.planet.buildings.crystal_mine >= 1,
+    progress: (state) => count(state.planet.buildings.crystal_mine, 1),
   },
   {
     id: "first_deuterium",
     name: "重氢合成",
     detail: "重氢合成器达到 1 级",
-    met: (state) => state.producers.deuterium_synth.gte(1),
-    progress: (state) => ({ current: state.producers.deuterium_synth, goal: big(1), amount: false }),
+    met: (state) => state.planet.buildings.deuterium_synth >= 1,
+    progress: (state) => count(state.planet.buildings.deuterium_synth, 1),
   },
   {
     id: "first_robotics",
     name: "机器上线",
     detail: "机器人工厂达到 1 级",
-    met: (state) => state.producers.robotics_factory.gte(1),
-    progress: (state) => ({ current: state.producers.robotics_factory, goal: big(1), amount: false }),
+    met: (state) => state.planet.buildings.robotics_factory >= 1,
+    progress: (state) => count(state.planet.buildings.robotics_factory, 1),
   },
   {
     id: "metal_1e9",
@@ -90,11 +90,37 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
   {
     id: "automated_loop",
     name: "完全自动化一轮",
-    detail: "一整轮不手动采矿、不手动升级设施，并完成发射",
+    detail: "一整轮不手动采集、不手动入队建筑，并完成发射",
     met: (state) => state.stats.automatedLaunches >= 1,
     progress: (state) => count(state.stats.automatedLaunches, 1),
   },
+  {
+    id: "first_storage",
+    name: "第一座仓库",
+    detail: "任意一种仓库（金属仓库、晶体仓库、重氢罐）达到 1 级",
+    met: (state) => storageLevel(state) >= 1,
+    progress: (state) => count(storageLevel(state), 1),
+  },
+  {
+    id: "fusion_ignition",
+    name: "核聚变点火",
+    detail: "核聚变反应堆达到 1 级",
+    met: (state) => state.planet.buildings.fusion_reactor >= 1,
+    progress: (state) => count(state.planet.buildings.fusion_reactor, 1),
+  },
+  {
+    id: "nanite_age",
+    name: "纳米时代",
+    detail: "纳米机器人工厂达到 1 级",
+    met: (state) => state.planet.buildings.nanite_factory >= 1,
+    progress: (state) => count(state.planet.buildings.nanite_factory, 1),
+  },
 ];
+
+function storageLevel(state: GameState): number {
+  const b = state.planet.buildings;
+  return Math.max(b.metal_storage, b.crystal_storage, b.deuterium_tank);
+}
 
 const BY_ID = Object.fromEntries(ACHIEVEMENTS.map((def) => [def.id, def])) as Record<string, AchievementDef>;
 

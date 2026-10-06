@@ -1,5 +1,5 @@
 {
-  "version": "0.1",
+  "version": "0.2-p1",
   "resources": {
     "metal": { "id": "metal", "labelZh": "金属", "accumulating": true },
     "crystal": { "id": "crystal", "labelZh": "晶体", "accumulating": true },
@@ -11,61 +11,27 @@
     "efficiency": "min(1, supply / demand)",
     "note": "eff < 1 时按比例降低所有矿产出；UI 显示缺 X 能源"
   },
-  "costFormula": "base × growth^n",
-  "rateFormula": "n × baseRate × globalMult × energyEff",
-  "starting": {
-    "freeSolarPlant": 1,
-    "manualMineMetalPerClick": 1
+  "universe": {
+    "economySpeed": 600,
+    "homeworld": { "name": "母星", "tempMax": 40, "fields": 163 },
+    "baseProduction": { "metal": 30, "crystal": 15 },
+    "minBuildSeconds": 1,
+    "note": "OGame formulas are per hour at speed 1. per-second = perHour × S / 3600; build seconds = hours × 3600 / S."
   },
-  "buyMultipliers": [1, 10, "max"],
-  "producers": [
-    {
-      "id": "metal_mine",
-      "labelZh": "金属矿",
-      "baseCost": { "metal": 10 },
-      "growth": 1.15,
-      "produces": { "metal": 1 },
-      "consumesEnergy": 1,
-      "unlock": { "kind": "start" }
-    },
-    {
-      "id": "solar_plant",
-      "labelZh": "太阳能电站",
-      "baseCost": { "metal": 30, "crystal": 10 },
-      "growth": 1.17,
-      "producesEnergy": 5,
-      "consumesEnergy": 0,
-      "unlock": { "kind": "ownedGte", "producer": "metal_mine", "value": 3 }
-    },
-    {
-      "id": "crystal_mine",
-      "labelZh": "晶体矿",
-      "baseCost": { "metal": 60 },
-      "growth": 1.18,
-      "produces": { "crystal": 0.4 },
-      "consumesEnergy": 2,
-      "unlock": { "kind": "lifetimeGte", "res": "metal", "value": "100" }
-    },
-    {
-      "id": "deuterium_synth",
-      "labelZh": "重氢合成器",
-      "baseCost": { "metal": 300, "crystal": 100 },
-      "growth": 1.22,
-      "produces": { "deuterium": 0.1 },
-      "consumesEnergy": 3,
-      "unlock": { "kind": "lifetimeGte", "res": "crystal", "value": "500" }
-    },
-    {
-      "id": "robotics_factory",
-      "labelZh": "机器人工厂",
-      "baseCost": { "crystal": 1000, "deuterium": 200 },
-      "growth": 2.0,
-      "globalProductionMult": 1.25,
-      "cardSlotsPerLevels": 2,
-      "consumesEnergy": 0,
-      "unlock": { "kind": "lifetimeGte", "res": "deuterium", "value": "50" }
-    }
-  ],
+  "storage": {
+    "base": 5000,
+    "k": 2.5,
+    "exp": 0.60606,
+    "formula": "base × floor(k × e^(20·L/33))"
+  },
+  "queue": {
+    "baseCapacity": 2
+  },
+  "starting": {
+    "metal": 500,
+    "crystal": 500,
+    "manualMinMetal": 10
+  },
   "prestige": {
     "id": "launch_colony_ship",
     "labelZh": "发射殖民舰",
@@ -74,10 +40,10 @@
     "scoreFormula": "metalAcc + 3*crystalAcc + 10*deuteriumAcc",
     "gainFormula": "floor(sqrt(score / divisor))",
     "divisor": 1e6,
-    "resets": ["metal", "crystal", "deuterium", "producers", "robotics_factory"],
+    "resets": ["metal", "crystal", "deuterium", "planet"],
     "keeps": ["warp_core", "curvature_tech", "achievements", "protocol_cards"],
     "unspentCoreBonusPerCore": 0.02,
-    "targetFirstGain": [2, 4]
+    "targetFirstGain": [1, 3]
   },
   "offline": {
     "baseCapHours": 2,
