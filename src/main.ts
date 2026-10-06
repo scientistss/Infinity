@@ -18,6 +18,7 @@ import { formatAmount } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
 import { cancelResearch, enqueueResearch } from "./game/research";
 import { buyPackage, buyShopItem, speedUp, useInventory } from "./game/dark-matter";
+import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
 import {
   clearSave,
@@ -150,6 +151,32 @@ async function handleAction(action: UiAction): Promise<void> {
     state = result.state;
     status = result.reason;
     if (result.ok) persist();
+  } else if (action.type === "arcade-run") {
+    const result = revealRun(state, "manual");
+    state = result.state;
+    status = result.reason;
+    if (result.result) view.playArcade([result.result]);
+    if (result.ok) persist();
+  } else if (action.type === "arcade-all") {
+    const result = revealAll(state, "manual");
+    state = result.state;
+    status = result.reason;
+    if (result.results.length > 0) view.playArcade(result.results);
+    if (result.ok) persist();
+  } else if (action.type === "arcade-topup") {
+    const result = topUp(state);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "arcade-bet") {
+    const result = setBet(state, action.symbol, state.arcade.bets[action.symbol] + action.delta);
+    state = result.state;
+    status = result.reason;
+    persist();
+  } else if (action.type === "arcade-bet-clear") {
+    state = { ...state, arcade: { ...state.arcade, bets: { metal: 0, crystal: 0, deuterium: 0 } } };
+    status = "已清空押注";
+    persist();
   } else if (action.type === "setProduction") {
     state = setProductionPct(state, action.id, action.pct);
     status = `${buildingById(action.id).nameZh}产量设为 ${state.planet.productionPct[action.id]}%`;

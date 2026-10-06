@@ -19,6 +19,9 @@ import type { QueueView, TableRowView, ViewModel } from "./present";
 import { INVENTORY_IDS, PACKAGE_FRACTIONS, SHOP_ITEMS, isInventoryId, isShopItemId, type InventoryItemId, type ShopItemId } from "../data/dark-matter";
 import type { PackageKind, SpeedupMode, SpeedupTarget } from "../game/dark-matter";
 import type { ResourceId } from "../game/types";
+import { isBetSymbol, type BetSymbol } from "../data/arcade";
+import type { RunResult } from "../game/arcade";
+import { ArcadeAnimator, arcadePanelHtml, readSkipPreference, updateArcadePanel, writeSkipPreference } from "./arcade-panel";
 
 export type UiAction =
   | { type: "scrape" }
@@ -30,6 +33,11 @@ export type UiAction =
   | { type: "dm-shop"; id: ShopItemId; res: ResourceId }
   | { type: "dm-package"; kind: PackageKind; fraction: number }
   | { type: "dm-use"; id: InventoryItemId }
+  | { type: "arcade-run" }
+  | { type: "arcade-all" }
+  | { type: "arcade-topup" }
+  | { type: "arcade-bet"; symbol: BetSymbol; delta: number }
+  | { type: "arcade-bet-clear" }
   | { type: "setProduction"; id: ProductionBuildingId; pct: number }
   | { type: "prestige" }
   | { type: "save" }
@@ -50,6 +58,10 @@ export type UiAction =
 export interface GameView {
   update(model: ViewModel): void;
   setTransferText(text: string): void;
+  /** Play the ring machine light for results that were just revealed (state already updated). */
+  playArcade(results: RunResult[]): void;
+  /** Current "skip animation" preference. */
+  arcadeSkip(): boolean;
 }
 
 export function mountView(root: HTMLElement, onAction: (action: UiAction) => void): GameView {
@@ -57,6 +69,10 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   selectTab(root, readSavedTab());
 
   const transfer = requiredTextArea(root, "transfer");
+  const animator = new ArcadeAnimator();
+  const skipBox = requiredInput(root, "arcade-skip");
+  skipBox.checked = readSkipPreference();
+  skipBox.addEventListener("change", () => writeSkipPreference(skipBox.checked));
   const fileInput = requiredInput(root, "import-file");
 
   root.addEventListener("click", (event) => {
@@ -110,6 +126,15 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "dm-use") {
       const id = button.dataset.id ?? "";
       if (isInventoryId(id)) onAction({ type: "dm-use", id });
+    }
+    if (action === "arcade-run") onAction({ type: "arcade-run" });
+    if (action === "arcade-all") onAction({ type: "arcade-all" });
+    if (action === "arcade-topup") onAction({ type: "arcade-topup" });
+    if (action === "arcade-bet-clear") onAction({ type: "arcade-bet-clear" });
+    if (action === "arcade-bet") {
+      const symbol = button.dataset.symbol;
+      const delta = button.dataset.delta === "-1" ? -1 : 1;
+      if (isBetSymbol(symbol)) onAction({ type: "arcade-bet", symbol, delta });
     }
     if (action === "research") {
       const id = button.dataset.id ?? "";
@@ -212,6 +237,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       requiredElement(root, "energy-chip").classList.toggle("short", model.energyShort);
       setText(root, "status", model.status);
       setText(root, "status-dm", model.status);
+      setText(root, "status-arcade", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
       setText(root, "unspent-line", model.unspentLine);
@@ -232,6 +258,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue", "build");
       updateResearch(root, model);
       updateDarkMatter(root, model);
+      updateArcade(root, model, animator);
 
       for (const building of model.buildings) {
         setText(root, `level-${building.id}`, building.level);
@@ -291,6 +318,8 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         );
         fillList(requiredElement(root, "offline-builds"), model.offline.builds);
         fillList(requiredElement(root, "offline-research"), model.offline.research);
+        fillList(requiredElement(root, "offline-arcade"), model.offline.arcade);
+        requiredElement(root, "offline-arcade-wrap").hidden = model.offline.arcade.length === 0;
       }
 
       const banner = requiredElement(root, "banner");
@@ -347,7 +376,25 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     setTransferText(text) {
       transfer.value = text;
     },
+    playArcade(results) {
+      animator.play(results, skipBox.checked, performance.now());
+    },
+    arcadeSkip() {
+      return skipBox.checked;
+    },
   };
+}
+
+function updateArcade(root: HTMLElement, model: ViewModel, animator: ArcadeAnimator): void {
+  const arcade = model.arcade;
+  const tab = requiredElement(root, "tab-arcade");
+  if (tab.hidden === arcade.visible) {
+    tab.hidden = !arcade.visible;
+    if (!arcade.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
+  }
+  const panel = root.querySelector<HTMLElement>('[data-tab-panel="arcade"]');
+  if (!panel || panel.hidden) return;
+  updateArcadePanel(root, arcade, animator, performance.now());
 }
 
 function updateDarkMatter(root: HTMLElement, model: ViewModel): void {
@@ -506,6 +553,7 @@ const TABS = [
   { id: "facilities", label: "建筑", icon: "robotics_factory" },
   { id: "research", label: "研究", icon: "tech" },
   { id: "darkmatter", label: "暗物质", icon: "dark_matter" },
+  { id: "arcade", label: "星环机", icon: "ring_machine" },
   { id: "protocol", label: "协议卡", icon: "protocol_card" },
   { id: "curvature", label: "曲率", icon: "warp_core" },
   { id: "achievements", label: "成就", icon: "achievement" },
@@ -531,6 +579,7 @@ const ICON_ALT: Record<string, string> = {
   save: "存档",
   logo: "Infinity 行星标志",
   dark_matter: "暗物质",
+  ring_machine: "深空星环机",
 };
 
 /**
@@ -553,7 +602,7 @@ const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
 };
 
 /** Simple self-drawn SVG icons (no painted WebP yet). */
-const SVG_ICONS = new Set(["dark_matter"]);
+const SVG_ICONS = new Set(["dark_matter", "ring_machine"]);
 
 /** Icons that also ship a 256px variant for large or high-DPI rendering. */
 const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core"]);
@@ -723,7 +772,7 @@ function shellMarkup(): string {
 
   const tabs = TABS.map(
     (tab) =>
-      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" || tab.id === "darkmatter" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" || tab.id === "darkmatter" || tab.id === "arcade" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
@@ -757,6 +806,10 @@ function shellMarkup(): string {
         <ul class="offline-gains offline-builds" data-bind="offline-builds"></ul>
         <h3 class="offline-sub">离线期间完成的研究</h3>
         <ul class="offline-gains offline-builds" data-bind="offline-research"></ul>
+        <div data-bind="offline-arcade-wrap" hidden>
+          <h3 class="offline-sub">深空星环机</h3>
+          <ul class="offline-gains offline-builds" data-bind="offline-arcade"></ul>
+        </div>
         <p class="muted" data-bind="offline-detail"></p>
         <p class="muted" data-bind="offline-protocol"></p>
         <button type="button" data-action="dismiss-offline">知道了</button>
@@ -870,6 +923,8 @@ function shellMarkup(): string {
         ${queuePanel("", "rqueue", "研究队列")}
         ${researchGroups()}
       </section>
+
+      ${arcadePanelHtml(icon("ring_machine", "icon-h2", { alt: "" }))}
 
       <section class="tab-panel" data-tab-panel="darkmatter" aria-labelledby="dm-title" hidden>
         <div class="panel-head">

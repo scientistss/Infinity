@@ -1,4 +1,6 @@
 import { CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
+import { arcadeSymbolDef } from "../data/arcade";
+import { arcadeView, type ArcadeView } from "./arcade-present";
 import { CARD_CATALOG, SLOT_RULES } from "../data/protocol-cards";
 import { protocolSentence, slotFields, slotUnlockHint, unlockProgress, unlockedSlotCount, type ParamField } from "../automation/engine";
 import { offlineCapSeconds, type OfflineCatchup } from "../core/offline";
@@ -248,6 +250,7 @@ export interface OfflineView {
   gains: OfflineGainView[];
   builds: string[];
   research: string[];
+  arcade: string[];
   protocol: string;
 }
 
@@ -271,6 +274,7 @@ export interface ViewModel {
   queue: QueueView;
   research: ResearchPanelView;
   darkMatter: DarkMatterView;
+  arcade: ArcadeView;
   buildings: BuildingView[];
   production: ProductionSettingView[];
   overview: OverviewView;
@@ -315,6 +319,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     queue: queueView(state),
     research: researchPanel(state),
     darkMatter: darkMatterView(state),
+    arcade: arcadeView(state),
     buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
     production: PRODUCTION_IDS.map((id) => productionSetting(state, id)),
     overview: overviewView(state, eco),
@@ -834,6 +839,12 @@ export function summarizeResearch(done: readonly CompletedResearch[]): string[] 
   });
 }
 
+function summarizeArcadeOffline(catchup: OfflineCatchup): string[] {
+  const lines = catchup.arcadeRuns.map((entry) => `${arcadeSymbolDef(entry.symbol).nameZh}${entry.big ? "（大）" : ""}：${entry.summary}`);
+  if (catchup.arcadeStored > 0) lines.push(`星环机现有 ${catchup.arcadeStored} 次开奖等你揭晓`);
+  return lines;
+}
+
 function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
   if (!catchup || catchup.appliedSeconds < 1) return null;
   const cap = formatDuration(catchup.capSeconds);
@@ -851,6 +862,7 @@ function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
     })),
     builds: builds.length > 0 ? builds : ["离线期间没有完成的建造"],
     research: summarizeResearch(catchup.completedResearch),
+    arcade: summarizeArcadeOffline(catchup),
     protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次（建造完成、满仓时也会触发）。`,
   };
 }
