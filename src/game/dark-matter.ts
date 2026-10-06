@@ -224,7 +224,7 @@ export function dailyProduction(state: GameState, res: ResourceId): number {
   return Math.max(RESOURCE_PACKAGE.minAmount, perSecond * seconds);
 }
 
-function freeStorage(state: GameState, res: ResourceId): number {
+export function freeStorage(state: GameState, res: ResourceId): number {
   const cap = economy(state).caps[res];
   return Math.max(0, cap - state.resources[res].toNumber());
 }

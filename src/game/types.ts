@@ -5,6 +5,7 @@ import type { BuildOrder, PlanetState } from "./planet";
 import type { ResearchOrder, ResearchState } from "./research";
 import type { Booster } from "./boosters";
 import type { InventoryItemId } from "../data/dark-matter";
+import type { ArcadeState } from "./arcade";
 
 export type {
   BuildingId,
@@ -89,6 +90,8 @@ export interface GameState {
   items: Record<InventoryItemId, number>;
   /** Active resource boosters, at most one per resource. Kept on launch until they run out. */
   boosters: Booster[];
+  /** Deep-space ring machine (beacon version): stored pre-rolled runs, bets, pity, history. Kept on launch. */
+  arcade: ArcadeState;
   /** Resources gained this run. Prestige clears this. */
   lifetime: Record<ResourceId, BigNumber>;
   /** Curvature cores earned. Spent ranks live in `curvature`, not in this total. */

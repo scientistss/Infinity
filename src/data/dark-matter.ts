@@ -68,7 +68,7 @@ export const INVENTORY_LABEL: Record<InventoryItemId, { name: string; detail: st
   kraken_box: { name: "克拉肯", detail: "正在建造的建筑剩余时间 −30%" },
   newtron_box: { name: "纽特隆", detail: "正在进行的研究剩余时间 −30%" },
   booster_box: { name: "资源 +10%", detail: "三种矿产量 +10%，持续 1 小时游戏时间" },
-  supply_pack: { name: "资源补给包", detail: "立即获得帝国 1 小时游戏时间的三种资源产量（受仓库上限限制）" },
+  supply_pack: { name: "资源补给包", detail: "立即获得三种资源各 1 个 OGame 日的产量（受仓库上限限制）" },
 };
 
 export function isInventoryId(value: string): value is InventoryItemId {
