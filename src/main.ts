@@ -17,6 +17,7 @@ import { big } from "./game/decimal";
 import { formatAmount } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
 import { cancelResearch, enqueueResearch } from "./game/research";
+import { buyPackage, buyShopItem, speedUp, useInventory } from "./game/dark-matter";
 import { researchById } from "./data/research";
 import {
   clearSave,
@@ -126,6 +127,26 @@ async function handleAction(action: UiAction): Promise<void> {
     if (result.ok) persist();
   } else if (action.type === "cancelResearch") {
     const result = cancelResearch(state, action.index);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "dm-speedup") {
+    const result = speedUp(state, action.target, action.mode);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "dm-shop") {
+    const result = buyShopItem(state, action.id, action.res);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "dm-package") {
+    const result = buyPackage(state, action.kind, action.fraction);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "dm-use") {
+    const result = useInventory(state, action.id);
     state = result.state;
     status = result.reason;
     if (result.ok) persist();

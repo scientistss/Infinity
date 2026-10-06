@@ -3,6 +3,8 @@ import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
 import type { BuildingId, ProductionBuildingId } from "../data/buildings";
 import type { BuildOrder, PlanetState } from "./planet";
 import type { ResearchOrder, ResearchState } from "./research";
+import type { Booster } from "./boosters";
+import type { InventoryItemId } from "../data/dark-matter";
 
 export type {
   BuildingId,
@@ -71,6 +73,8 @@ export interface PlayerStats {
   seenQueueIdle: boolean;
   /** Research levels finished, all runs. */
   researchCompleted: number;
+  /** Dark matter earned from all sources, all runs. */
+  darkMatterEarned: number;
 }
 
 export interface GameState {
@@ -81,6 +85,10 @@ export interface GameState {
   research: ResearchState;
   /** Dark matter (design doc §8.8). Empire resource, kept on launch, not affected by production multipliers. */
   darkMatter: BigNumber;
+  /** Inventory items (ring machine supply box). Kept on launch. */
+  items: Record<InventoryItemId, number>;
+  /** Active resource boosters, at most one per resource. Kept on launch until they run out. */
+  boosters: Booster[];
   /** Resources gained this run. Prestige clears this. */
   lifetime: Record<ResourceId, BigNumber>;
   /** Curvature cores earned. Spent ranks live in `curvature`, not in this total. */

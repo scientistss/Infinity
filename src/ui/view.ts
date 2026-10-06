@@ -16,6 +16,9 @@ import {
 import { PROTOCOL_SLOT_COUNT, type CurvatureId } from "../game/types";
 import { RESEARCH, RESEARCH_GROUP_LABEL, isResearchId, type ResearchDef, type ResearchGroup, type ResearchId } from "../data/research";
 import type { QueueView, TableRowView, ViewModel } from "./present";
+import { INVENTORY_IDS, PACKAGE_FRACTIONS, SHOP_ITEMS, isInventoryId, isShopItemId, type InventoryItemId, type ShopItemId } from "../data/dark-matter";
+import type { PackageKind, SpeedupMode, SpeedupTarget } from "../game/dark-matter";
+import type { ResourceId } from "../game/types";
 
 export type UiAction =
   | { type: "scrape" }
@@ -23,6 +26,10 @@ export type UiAction =
   | { type: "cancelQueue"; index: number }
   | { type: "enqueueResearch"; id: ResearchId }
   | { type: "cancelResearch"; index: number }
+  | { type: "dm-speedup"; target: SpeedupTarget; mode: SpeedupMode }
+  | { type: "dm-shop"; id: ShopItemId; res: ResourceId }
+  | { type: "dm-package"; kind: PackageKind; fraction: number }
+  | { type: "dm-use"; id: InventoryItemId }
   | { type: "setProduction"; id: ProductionBuildingId; pct: number }
   | { type: "prestige" }
   | { type: "save" }
@@ -81,6 +88,28 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "cancel-queue") {
       const index = Number(button.dataset.index);
       if (Number.isInteger(index)) onAction({ type: "cancelQueue", index });
+    }
+    if (action === "dm-speedup") {
+      const target = button.dataset.target === "research" ? "research" : "build";
+      const mode = button.dataset.mode === "finish" ? "finish" : "halve";
+      onAction({ type: "dm-speedup", target, mode });
+    }
+    if (action === "dm-shop") {
+      const id = button.dataset.id ?? "";
+      const res = button.dataset.res;
+      const resource: ResourceId = res === "crystal" || res === "deuterium" ? res : "metal";
+      if (isShopItemId(id)) onAction({ type: "dm-shop", id, res: resource });
+    }
+    if (action === "dm-package") {
+      const kind = button.dataset.kind;
+      const fraction = Number(button.dataset.fraction);
+      if ((kind === "metal" || kind === "crystal" || kind === "deuterium" || kind === "bundle") && Number.isFinite(fraction)) {
+        onAction({ type: "dm-package", kind, fraction });
+      }
+    }
+    if (action === "dm-use") {
+      const id = button.dataset.id ?? "";
+      if (isInventoryId(id)) onAction({ type: "dm-use", id });
     }
     if (action === "research") {
       const id = button.dataset.id ?? "";
@@ -182,6 +211,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "energy-top", model.energy);
       requiredElement(root, "energy-chip").classList.toggle("short", model.energyShort);
       setText(root, "status", model.status);
+      setText(root, "status-dm", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
       setText(root, "unspent-line", model.unspentLine);
@@ -199,8 +229,9 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         requiredElement(root, `fill-${resource.id}`).style.width = `${resource.fillPct.toFixed(1)}%`;
       }
 
-      updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue");
+      updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue", "build");
       updateResearch(root, model);
+      updateDarkMatter(root, model);
 
       for (const building of model.buildings) {
         setText(root, `level-${building.id}`, building.level);
@@ -319,6 +350,40 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   };
 }
 
+function updateDarkMatter(root: HTMLElement, model: ViewModel): void {
+  const dm = model.darkMatter;
+  setText(root, "dm-chip", dm.chip);
+  const tab = requiredElement(root, "tab-darkmatter");
+  if (tab.hidden === dm.visible) {
+    tab.hidden = !dm.visible;
+    if (!dm.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
+  }
+  requiredElement(root, "dm-chip-wrap").hidden = !dm.visible;
+  setText(root, "dm-summary", dm.summary);
+  for (const item of dm.shop) {
+    for (const button of item.buttons) {
+      const node = requiredButton(root, `dm-shop-${item.id}${button.res ? `-${button.res}` : ""}`);
+      node.disabled = !button.enabled;
+      node.title = button.title;
+    }
+  }
+  for (const pack of dm.packages) {
+    for (const button of pack.buttons) {
+      const node = requiredButton(root, `dm-pack-${pack.kind}-${Math.round(button.fraction * 100)}`);
+      if (node.textContent !== button.label) node.textContent = button.label;
+      node.disabled = !button.enabled;
+      node.title = button.title;
+    }
+  }
+  for (const item of dm.inventory) {
+    setText(root, `dm-inv-count-${item.id}`, item.count);
+    const node = requiredButton(root, `dm-inv-${item.id}`);
+    node.disabled = !item.enabled;
+    node.title = item.title;
+  }
+  fillList(requiredElement(root, "dm-boosters"), dm.boosters);
+}
+
 function updateResearch(root: HTMLElement, model: ViewModel): void {
   const research = model.research;
   const tab = requiredElement(root, "tab-research");
@@ -327,7 +392,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {
     if (!research.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
   }
   requiredElement(root, "rqueue-wrap-ov").hidden = !research.visible;
-  updateQueue(root, "rqueue", ["", "-ov"], research.queue, "cancel-research");
+  updateQueue(root, "rqueue", ["", "-ov"], research.queue, "cancel-research", "research");
   setText(root, "research-summary", research.summary);
   for (const item of research.items) {
     setText(root, `rlevel-${item.id}`, item.level);
@@ -362,6 +427,7 @@ function updateQueue(
   suffixes: readonly string[],
   queue: QueueView,
   cancelAction: string,
+  target: SpeedupTarget,
 ): void {
   for (const suffix of suffixes) setText(root, `${prefix}-summary${suffix}`, queue.summary);
   for (const suffix of suffixes) {
@@ -381,6 +447,10 @@ function updateQueue(
               <span class="muted" data-q="detail"></span>
             </div>
             <div class="queue-bar"><span data-q="fill"></span></div>
+            <span class="queue-dm" data-q="dm"${item.halve ? "" : " hidden"}>
+              <button type="button" class="dm-btn" data-action="dm-speedup" data-target="${target}" data-mode="halve" data-q="halve"></button>
+              <button type="button" class="dm-btn" data-action="dm-speedup" data-target="${target}" data-mode="finish" data-q="finish"></button>
+            </span>
             <button type="button" class="danger queue-cancel" data-action="${cancelAction}" data-index="${item.index}">取消</button>
           </li>`,
         )
@@ -396,6 +466,15 @@ function updateQueue(
       if (label && label.textContent !== item.label) label.textContent = item.label;
       if (detail && detail.textContent !== item.detail) detail.textContent = item.detail;
       if (fill) fill.style.width = `${item.progressPct.toFixed(1)}%`;
+      const dm = row.querySelector<HTMLElement>('[data-q="dm"]');
+      if (dm) dm.hidden = item.halve === null;
+      for (const [key, view] of [["halve", item.halve], ["finish", item.finish]] as const) {
+        const btn = row.querySelector<HTMLButtonElement>(`[data-q="${key}"]`);
+        if (!btn || !view) continue;
+        if (btn.textContent !== view.label) btn.textContent = view.label;
+        btn.disabled = !view.enabled;
+        btn.title = view.title;
+      }
     });
   }
 }
@@ -426,6 +505,7 @@ const TABS = [
   { id: "overview", label: "概览", icon: "logo" },
   { id: "facilities", label: "建筑", icon: "robotics_factory" },
   { id: "research", label: "研究", icon: "tech" },
+  { id: "darkmatter", label: "暗物质", icon: "dark_matter" },
   { id: "protocol", label: "协议卡", icon: "protocol_card" },
   { id: "curvature", label: "曲率", icon: "warp_core" },
   { id: "achievements", label: "成就", icon: "achievement" },
@@ -450,6 +530,7 @@ const ICON_ALT: Record<string, string> = {
   protocol_card: "协议卡",
   save: "存档",
   logo: "Infinity 行星标志",
+  dark_matter: "暗物质",
 };
 
 /**
@@ -471,6 +552,9 @@ const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
   research_lab: "tech",
 };
 
+/** Simple self-drawn SVG icons (no painted WebP yet). */
+const SVG_ICONS = new Set(["dark_matter"]);
+
 /** Icons that also ship a 256px variant for large or high-DPI rendering. */
 const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core"]);
 
@@ -485,7 +569,7 @@ interface IconOptions {
 /** Painted OGame-style icon (WebP) with a steel-grey rounded frame applied in CSS. */
 function icon(name: string, extra = "", options: IconOptions = {}): string {
   const { lazy = true, size = 48, alt = ICON_ALT[name] ?? "" } = options;
-  const src = `${ICON_BASE}${name}.webp`;
+  const src = `${ICON_BASE}${name}${SVG_ICONS.has(name) ? ".svg" : ".webp"}`;
   const srcset = HI_RES_ICONS.has(name) ? ` srcset="${src} 128w, ${ICON_BASE}${name}-256.webp 256w" sizes="${size}px"` : "";
   return `<img class="icon icon-${name}${extra ? ` ${extra}` : ""}" src="${src}"${srcset} alt="${alt}" width="128" height="128"${lazy ? ' loading="lazy"' : ""} decoding="async" draggable="false" />`;
 }
@@ -639,7 +723,7 @@ function shellMarkup(): string {
 
   const tabs = TABS.map(
     (tab) =>
-      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" || tab.id === "darkmatter" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
@@ -708,6 +792,11 @@ function shellMarkup(): string {
           <strong data-bind="telemetry">0</strong>
           <span class="chip-rate" data-bind="multiplier">产量 ×1.00</span>
           <span class="chip-rate" data-bind="played">累计 0 秒</span>
+        </div>
+        <div class="chip chip-dm" data-bind="dm-chip-wrap" title="暗物质 Dark Matter" hidden>
+          ${icon("dark_matter", "", { lazy: false, size: 22 })}
+          <span class="chip-name">暗物质</span>
+          <strong data-bind="dm-chip">0</strong>
         </div>
       </div>
       <nav class="tabs" role="tablist" aria-label="主菜单">${tabs}</nav>
@@ -782,6 +871,23 @@ function shellMarkup(): string {
         ${researchGroups()}
       </section>
 
+      <section class="tab-panel" data-tab-panel="darkmatter" aria-labelledby="dm-title" hidden>
+        <div class="panel-head">
+          <h2 id="dm-title">${icon("dark_matter", "icon-h2", { alt: "" })} 暗物质</h2>
+          <p data-bind="dm-summary"></p>
+        </div>
+        <p class="blurb">价格沿用 OGame 原价，时间先按宇宙速度 ×600 换算回 OGame 小时。正在建造 / 研究的项目可在队列里花暗物质「减半」或「完成」（每 30 分钟 OGame 时间 750，单次上限建筑 72,000、研究 108,000）。军官、呼叫商人、星球搬迁第 4 阶段开放；更换职业第 7 阶段开放。</p>
+        <h3 class="group-title">生效中的资源加成</h3>
+        <ul class="dm-list" data-bind="dm-boosters"></ul>
+        <h3 class="group-title">背包</h3>
+        <div class="dm-grid">${inventoryCards()}</div>
+        <h3 class="group-title">道具商店</h3>
+        <div class="dm-grid">${shopCards()}</div>
+        <h3 class="group-title">资源包（最多 1 个 OGame 日的产量，受仓库空间限制）</h3>
+        <div class="dm-packs">${packageRows()}</div>
+        <p class="status" data-bind="status-dm" role="status"></p>
+      </section>
+
       <section class="tab-panel protocol-board" data-tab-panel="protocol" aria-labelledby="protocol-title" hidden>
         <div class="panel-head">
           <h2 id="protocol-title">协议卡</h2>
@@ -847,6 +953,62 @@ function shellMarkup(): string {
         <p class="status" data-bind="status" role="status">就绪</p>
       </section>
     </main>`;
+}
+
+function inventoryCards(): string {
+  return INVENTORY_IDS.map(
+    (id) => `
+      <article class="dm-card">
+        <h4>${{ kraken_box: "克拉肯", newtron_box: "纽特隆", booster_box: "资源 +10%", supply_pack: "资源补给包" }[id]} <strong data-bind="dm-inv-count-${id}">×0</strong></h4>
+        <p class="muted">${{ kraken_box: "正在建造的建筑剩余时间 −30%", newtron_box: "正在进行的研究剩余时间 −30%", booster_box: "三种矿产量 +10%，1 小时游戏时间", supply_pack: "三种资源各 1 个 OGame 日的产量（同资源包）" }[id]}</p>
+        <button type="button" data-action="dm-use" data-id="${id}" data-bind="dm-inv-${id}">使用</button>
+      </article>`,
+  ).join("");
+}
+
+function shopCards(): string {
+  return SHOP_ITEMS.map((def) => {
+    const buttons =
+      def.kind === "booster"
+        ? (["metal", "crystal", "deuterium"] as const)
+            .map(
+              (res) =>
+                `<button type="button" data-action="dm-shop" data-id="${def.id}" data-res="${res}" data-bind="dm-shop-${def.id}-${res}">${{ metal: "金属", crystal: "晶体", deuterium: "重氢" }[res]}</button>`,
+            )
+            .join("")
+        : `<button type="button" data-action="dm-shop" data-id="${def.id}" data-bind="dm-shop-${def.id}">购买并使用</button>`;
+    const detail =
+      def.kind === "booster"
+        ? `矿产量 +${def.pct}%，OGame ${def.ogameDays} 天`
+        : `${def.kind === "kraken" ? "建造" : "研究"}缩短 OGame ${def.ogameHours} 小时`;
+    return `
+      <article class="dm-card">
+        <h4>${def.nameZh} <small>${def.dm.toLocaleString("zh-CN")} 暗物质</small></h4>
+        <p class="muted">${detail}</p>
+        <div class="dm-buttons">${buttons}</div>
+      </article>`;
+  }).join("");
+}
+
+function packageRows(): string {
+  const kinds = [
+    ["metal", "金属包"],
+    ["crystal", "晶体包"],
+    ["deuterium", "重氢包"],
+    ["bundle", "三资源套餐"],
+  ] as const;
+  return kinds
+    .map(
+      ([kind, label]) => `
+      <div class="dm-pack-row">
+        <span>${label}</span>
+        ${PACKAGE_FRACTIONS.map(
+          (fraction) =>
+            `<button type="button" data-action="dm-package" data-kind="${kind}" data-fraction="${fraction}" data-bind="dm-pack-${kind}-${Math.round(fraction * 100)}">${Math.round(fraction * 100)}%</button>`,
+        ).join("")}
+      </div>`,
+    )
+    .join("");
 }
 
 function techCards(): string {

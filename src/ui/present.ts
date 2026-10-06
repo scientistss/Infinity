@@ -20,7 +20,7 @@ import {
 } from "../game/content";
 import { big } from "../game/decimal";
 import { economy, pctOf, type EconomySnapshot } from "../game/economy";
-import { formatAmount, formatCount, formatDuration, formatMultiplier, formatPlayed, formatRate } from "../game/format";
+import { formatAmount, formatCount, formatDm, formatDuration, formatMultiplier, formatPlayed, formatRate } from "../game/format";
 import {
   BASE_PRODUCTION,
   ECONOMY_SPEED,
@@ -53,6 +53,23 @@ import {
   type ResearchId,
 } from "../data/research";
 import { RESEARCH_SPEED, researchEnergyRequirement } from "../game/formulas";
+import {
+  DM_ACHIEVEMENT_REWARD,
+  INVENTORY_IDS,
+  INVENTORY_LABEL,
+  PACKAGE_FRACTIONS,
+  SHOP_ITEMS,
+  type InventoryItemId,
+  type ShopItemId,
+} from "../data/dark-matter";
+import {
+  packageQuote,
+  shopItemReason,
+  speedupQuote,
+  type PackageKind,
+  type SpeedupMode,
+  type SpeedupTarget,
+} from "../game/dark-matter";
 import { outputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
 import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ResourceId } from "../game/types";
 
@@ -72,6 +89,12 @@ export interface ResourceView {
   eta: string;
 }
 
+export interface DmButtonView {
+  label: string;
+  enabled: boolean;
+  title: string;
+}
+
 export interface QueueItemView {
   index: number;
   key: string;
@@ -79,6 +102,9 @@ export interface QueueItemView {
   detail: string;
   progressPct: number;
   active: boolean;
+  /** Dark matter halve / finish buttons, only on the running order. */
+  halve: DmButtonView | null;
+  finish: DmButtonView | null;
 }
 
 export interface QueueView {
@@ -128,6 +154,40 @@ export interface ResearchPanelView {
   queue: QueueView;
   summary: string;
   items: ResearchView[];
+}
+
+export interface ShopItemView {
+  id: ShopItemId;
+  name: string;
+  detail: string;
+  price: string;
+  /** Boosters get one button per resource; time items one button. */
+  buttons: Array<{ res: ResourceId | ""; label: string; enabled: boolean; title: string }>;
+}
+
+export interface PackageView {
+  kind: PackageKind;
+  label: string;
+  buttons: Array<{ fraction: number; label: string; enabled: boolean; title: string }>;
+}
+
+export interface InventoryView {
+  id: InventoryItemId;
+  name: string;
+  detail: string;
+  count: string;
+  enabled: boolean;
+  title: string;
+}
+
+export interface DarkMatterView {
+  visible: boolean;
+  chip: string;
+  summary: string;
+  shop: ShopItemView[];
+  packages: PackageView[];
+  inventory: InventoryView[];
+  boosters: string[];
 }
 
 export interface ProductionSettingView {
@@ -210,6 +270,7 @@ export interface ViewModel {
   energyShort: boolean;
   queue: QueueView;
   research: ResearchPanelView;
+  darkMatter: DarkMatterView;
   buildings: BuildingView[];
   production: ProductionSettingView[];
   overview: OverviewView;
@@ -253,6 +314,7 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     energyShort: eco.efficiency < 1,
     queue: queueView(state),
     research: researchPanel(state),
+    darkMatter: darkMatterView(state),
     buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
     production: PRODUCTION_IDS.map((id) => productionSetting(state, id)),
     overview: overviewView(state, eco),
@@ -334,6 +396,7 @@ function queueView(state: GameState): QueueView {
         : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
       progressPct: Math.max(0, Math.min(100, progress)),
       active,
+      ...speedupButtons(state, active ? order.remainingSeconds : null, "build"),
     };
   });
   return {
@@ -341,6 +404,100 @@ function queueView(state: GameState): QueueView {
     items,
     signature: items.map((item) => item.key).join("|"),
     idleHint: items.length === 0 ? "队列空闲。选择下方建筑入队，入队时扣费，取消全额退还。" : "",
+  };
+}
+
+// ---------- dark matter ----------
+
+function speedupButtons(
+  state: GameState,
+  remaining: number | null,
+  target: SpeedupTarget,
+): { halve: DmButtonView | null; finish: DmButtonView | null } {
+  if (remaining === null) return { halve: null, finish: null };
+  const button = (mode: SpeedupMode): DmButtonView => {
+    const quote = speedupQuote(remaining, target, mode);
+    const affordable = state.darkMatter.gte(quote.dm);
+    const verb = mode === "halve" ? "减半" : "完成";
+    return {
+      label: `${verb} ${formatDm(quote.dm)}`,
+      enabled: quote.allowed && affordable,
+      title: !quote.allowed
+        ? quote.reason
+        : affordable
+          ? `花 ${formatDm(quote.dm)} 暗物质${mode === "halve" ? "把剩余时间减半" : "立即完成"}（OGame 价格：每 30 分钟 750）`
+          : `暗物质不足：需要 ${formatDm(quote.dm)}`,
+    };
+  };
+  return { halve: button("halve"), finish: button("finish") };
+}
+
+const RES_SHORT: Record<ResourceId, string> = { metal: "金属", crystal: "晶体", deuterium: "重氢" };
+
+function darkMatterView(state: GameState): DarkMatterView {
+  const visible = state.stats.darkMatterEarned > 0 || state.darkMatter.gt(0);
+  const shop: ShopItemView[] = SHOP_ITEMS.map((def) => {
+    const price = `${formatDm(def.dm)} 暗物质`;
+    if (def.kind === "booster") {
+      const seconds = ((def.ogameDays ?? 7) * 86400) / ECONOMY_SPEED;
+      return {
+        id: def.id,
+        name: def.nameZh,
+        detail: `所选资源矿产量 +${def.pct}%，持续 ${formatDuration(seconds)}（OGame ${def.ogameDays} 天）。同一资源只保留最强的一个。`,
+        price,
+        buttons: RESOURCE_IDS.map((res) => {
+          const reason = shopItemReason(state, def.id, res);
+          return { res, label: RES_SHORT[res], enabled: reason === "", title: reason || `购买并激活：${RES_SHORT[res]}` };
+        }),
+      };
+    }
+    const seconds = ((def.ogameHours ?? 0) * 3600) / (def.kind === "kraken" ? ECONOMY_SPEED : RESEARCH_SPEED);
+    const reason = shopItemReason(state, def.id);
+    return {
+      id: def.id,
+      name: def.nameZh,
+      detail: `${def.kind === "kraken" ? "正在建造的建筑" : "正在进行的研究"}缩短 OGame ${def.ogameHours} 小时 = ${formatDuration(seconds)}，多余的时间顺延到下一项。`,
+      price,
+      buttons: [{ res: "", label: "购买并使用", enabled: reason === "", title: reason || "立即生效" }],
+    };
+  });
+  const kinds: PackageKind[] = ["metal", "crystal", "deuterium", "bundle"];
+  const packages: PackageView[] = kinds.map((kind) => ({
+    kind,
+    label: kind === "bundle" ? "三资源套餐" : `${RES_SHORT[kind]}包`,
+    buttons: PACKAGE_FRACTIONS.map((fraction) => {
+      const quote = packageQuote(state, kind, fraction);
+      const got = RESOURCE_IDS.filter((id) => quote.amounts[id].gt(0))
+        .map((id) => `${RES_SHORT[id]} ${formatAmount(quote.amounts[id])}`)
+        .join("、");
+      return {
+        fraction,
+        label: `${Math.round(fraction * 100)}% · ${formatDm(quote.dm)}`,
+        enabled: quote.ok,
+        title: quote.ok ? `获得 ${got}` : quote.reason || "不可购买",
+      };
+    }),
+  }));
+  const inventory: InventoryView[] = INVENTORY_IDS.map((id) => ({
+    id,
+    name: INVENTORY_LABEL[id].name,
+    detail: INVENTORY_LABEL[id].detail,
+    count: `×${state.items[id]}`,
+    enabled: state.items[id] > 0,
+    title: state.items[id] > 0 ? "使用一个" : "背包里没有（深空星环机的补给箱会掉落）",
+  }));
+  const now = state.totalTime.toNumber();
+  const boosters = state.boosters
+    .filter((booster) => booster.until > now)
+    .map((booster) => `${RES_SHORT[booster.res]}矿 +${booster.pct}% · 剩余 ${formatDuration(Math.ceil(booster.until - now))}`);
+  return {
+    visible,
+    chip: formatDm(state.darkMatter),
+    summary: `现有 ${formatDm(state.darkMatter)} 暗物质 · 累计获得 ${formatDm(state.stats.darkMatterEarned)}。来源：每个新成就 +${DM_ACHIEVEMENT_REWARD}；深空星环机（天体物理学 1 级后开放）。`,
+    shop,
+    packages,
+    inventory,
+    boosters: boosters.length > 0 ? boosters : ["没有生效中的资源加成"],
   };
 }
 
@@ -368,6 +525,7 @@ function researchQueueView(state: GameState): QueueView {
         : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
       progressPct: Math.max(0, Math.min(100, progress)),
       active,
+      ...speedupButtons(state, active ? order.remainingSeconds : null, "research"),
     };
   });
   const lab = effectiveLabLevel(state);

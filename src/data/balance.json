@@ -55,5 +55,36 @@
   "achievements": {
     "countApprox": 15,
     "globalBonusPerAchievement": 0.01
+  },
+  "darkMatter": {
+    "achievementReward": 500,
+    "note": "Dark matter is only earned in game: achievements (P2), the deep-space ring machine (P2), ranking milestones (P4), alliance quests (P6), pirates (P5)."
+  },
+  "darkMatterPrices": {
+    "source": "OGame shop and halve/finish button (community formula 750 x ROUNDUP(OGame hours x 2); KRAKEN/NEWTRON 3000/10000/26000; boosters 2500/8500/25000; resource merchant 120000 DM per day of production, 360000 for all three, min 500). Times are converted back to OGame hours with S.",
+    "speedup": {
+      "dmPerHalfHour": 750,
+      "min": 750,
+      "maxBuilding": 72000,
+      "maxResearch": 108000
+    },
+    "items": {
+      "kraken_bronze": { "dm": 3000, "ogameHours": 0.5 },
+      "kraken_silver": { "dm": 10000, "ogameHours": 3 },
+      "kraken_gold": { "dm": 26000, "ogameHours": 6 },
+      "newtron_bronze": { "dm": 3000, "ogameHours": 0.5 },
+      "newtron_silver": { "dm": 10000, "ogameHours": 2 },
+      "newtron_gold": { "dm": 26000, "ogameHours": 6 },
+      "booster_bronze": { "dm": 2500, "pct": 10, "ogameDays": 7 },
+      "booster_silver": { "dm": 8500, "pct": 20, "ogameDays": 7 },
+      "booster_gold": { "dm": 25000, "pct": 30, "ogameDays": 7 }
+    },
+    "resourcePackage": {
+      "dmPerResource": 120000,
+      "dmBundle": 360000,
+      "minDm": 500,
+      "ogameHours": 24,
+      "minAmount": 10000
+    }
   }
 }

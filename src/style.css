@@ -571,7 +571,7 @@ textarea {
 .queue-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
 .queue-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(8rem, 16rem) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 16rem) auto auto;
   gap: 0.7rem;
   align-items: center;
   padding: 0.35rem 0.5rem;
@@ -672,3 +672,32 @@ textarea {
 .rcard.locked .bld-blurb {
   opacity: 0.7;
 }
+
+/* ---------- P2 dark matter ---------- */
+.chip-dm strong { color: #c9a8ff; }
+.queue-dm { display: inline-flex; gap: 0.3rem; }
+.queue-dm[hidden] { display: none; }
+.dm-btn {
+  padding: 0.2rem 0.5rem;
+  border-color: rgba(185, 152, 255, 0.55);
+  color: #d9c2ff;
+  font-size: 0.78rem;
+}
+.dm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.6rem;
+}
+.dm-card {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(185, 152, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(40, 20, 70, 0.25);
+}
+.dm-card h4 { margin: 0 0 0.25rem; font-size: 0.95rem; }
+.dm-card h4 small { color: #c9a8ff; font-weight: normal; margin-left: 0.3rem; }
+.dm-card p { margin: 0 0 0.45rem; font-size: 0.82rem; }
+.dm-buttons, .dm-pack-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.dm-pack-row { margin-bottom: 0.4rem; }
+.dm-pack-row > span { min-width: 6rem; }
+.dm-list { margin: 0 0 0.5rem; padding-left: 1.2rem; }

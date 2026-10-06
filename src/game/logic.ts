@@ -20,6 +20,8 @@ import {
 } from "./research";
 import { applySeedStock, manualClickMultiplier, scoreMultiplier } from "../prestige/tree";
 import { createInitialState } from "./state";
+import { nextBoosterExpiry, pruneBoosters } from "./boosters";
+import { DM_ACHIEVEMENT_REWARD } from "../data/dark-matter";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export { energyReport, globalMultiplier, productionPerSecond, storageCaps, type EnergyReport } from "./economy";
@@ -68,10 +70,10 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
     step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
-    step = Math.min(step, nextBoundary(current, eco));
+    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current));
 
     const moved = integrate(current, step, eco);
-    current = moved.state;
+    current = pruneBoosters(moved.state);
 
     // Queue: count down the active order, finish it, start the next one.
     let queueIdle = false;
@@ -181,22 +183,28 @@ function markStorageSeen(state: GameState): GameState {
   return full ? { ...state, stats: { ...state.stats, seenStorageFull: true } } : state;
 }
 
-/** Record an energy shortage, then append any newly met achievements. Already unlocked stays unlocked. */
+/**
+ * Record an energy shortage, then append any newly met achievements. Already unlocked stays unlocked.
+ * Each new achievement grants a little dark matter (design doc §8.8).
+ */
 export function applyAchievementUnlocks(state: GameState): GameState {
   const marked = markEnergyShortage(state);
   const owned = new Set(marked.unlocked);
-  let added = false;
+  let added = 0;
   for (const def of ACHIEVEMENTS) {
     if (owned.has(def.id)) continue;
     if (def.met(marked)) {
       owned.add(def.id);
-      added = true;
+      added += 1;
     }
   }
-  if (!added) return marked;
+  if (added === 0) return marked;
+  const reward = added * DM_ACHIEVEMENT_REWARD;
   return {
     ...marked,
     unlocked: ACHIEVEMENTS.filter((def) => owned.has(def.id)).map((def) => def.id),
+    darkMatter: marked.darkMatter.add(reward),
+    stats: { ...marked.stats, darkMatterEarned: marked.stats.darkMatterEarned + reward },
   };
 }
 
@@ -240,6 +248,8 @@ export function prestige(state: GameState): GameState {
   next.curvature = { ...state.curvature };
   next.research = { levels: { ...state.research.levels }, queue: [] };
   next.darkMatter = state.darkMatter;
+  next.items = { ...state.items };
+  next.boosters = state.boosters.map((booster) => ({ ...booster }));
   next.totalTime = state.totalTime;
   next.manualClicks = state.manualClicks;
   next.seenEnergyShortage = state.seenEnergyShortage;

@@ -101,6 +101,8 @@ for (let second = 1; second <= horizonMinutes * 60; second += 1) {
   const mark = (key: string, hit: boolean) => {
     if (hit && marks[key] === undefined) marks[key] = minutes;
   };
+  mark("首个暗物质（成就）", state.stats.darkMatterEarned > 0);
+  mark("暗物质 ≥ 5,000", state.stats.darkMatterEarned >= 5000);
   mark("金属矿 10 级", state.planet.buildings.metal_mine >= 10);
   mark("首次仓库满", state.stats.seenStorageFull);
   mark("机器人工厂 1 级", state.planet.buildings.robotics_factory >= 1);
