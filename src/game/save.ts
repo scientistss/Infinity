@@ -1,43 +1,34 @@
-import type { Condition, ProtocolCard, Trigger } from "../data/protocol-cards";
+import type { Action, Condition, ProtocolCard, Trigger } from "../data/protocol-cards";
 import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
-import { isCatalogId, isResId, refreshUnlocks } from "../automation/engine";
+import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
+import { isCatalogId, isResId, isStoredResId, refreshUnlocks } from "../automation/engine";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
-import {
-  FREE_SOLAR_PLANTS,
-  OFFLINE_BASE_HOURS,
-  OFFLINE_CAP_SECONDS,
-  OFFLINE_MAX_HOURS,
-  OFFLINE_PROTOCOL_SECONDS,
-  SAVE_VERSION,
-  STORAGE_KEY,
-  producerById,
-} from "./content";
+import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, STORAGE_KEY } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
-import { markEnergyShortage, tick } from "./logic";
+import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
 import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
+import { createPlanet, type BuildOrder, type PlanetState } from "./planet";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
   CURVATURE_IDS,
   PROTOCOL_SLOT_COUNT,
-  PRODUCER_IDS,
   RESOURCE_IDS,
+  type BuildingId,
   type CardLamp,
   type CurvatureId,
   type GameState,
   type PlayerStats,
-  type ProducerId,
+  type ProductionBuildingId,
   type ProtocolLoadout,
   type ProtocolSlotState,
   type ResourceId,
 } from "./types";
 
-const LEGACY_PRODUCER: Partial<Record<ProducerId, string>> = {
-  metal_mine: "miner",
-  crystal_mine: "drill",
-  deuterium_synth: "well",
-  solar_plant: "solar",
-};
+/** Highest level accepted from a file. OGame levels stay far below this. */
+const MAX_LEVEL = 1000;
+/** Longest queue a file may carry (OGame commander queue length; P1 capacity is 2). */
+const MAX_QUEUE = 5;
 
 export interface KeyValueStore {
   getItem(key: string): string | null;
@@ -45,9 +36,27 @@ export interface KeyValueStore {
   removeItem(key: string): void;
 }
 
+export interface SerializedOrder {
+  building: BuildingId;
+  targetLevel: number;
+  paid: Record<ResourceId, string>;
+  totalSeconds: number;
+  remainingSeconds: number;
+  source: "manual" | "protocol";
+}
+
+export interface SerializedPlanet {
+  name: string;
+  tempMax: number;
+  fieldsMax: number;
+  buildings: Record<BuildingId, number>;
+  productionPct: Record<ProductionBuildingId, number>;
+  buildQueue: SerializedOrder[];
+}
+
 export interface SerializedState {
   resources: Record<ResourceId, string>;
-  producers: Record<ProducerId, string>;
+  planet: SerializedPlanet;
   lifetime: Record<ResourceId, string>;
   warpCores: string;
   curvature: Record<CurvatureId, number>;
@@ -73,23 +82,37 @@ export interface SerializedState {
 export interface SaveFile {
   version: number;
   savedAt: number;
-  /** Wall clock of the last simulated tick. Older files use savedAt. */
+  /** Wall clock of the last simulated tick. */
   lastTickAt: number;
   state: SerializedState;
 }
 
-export interface OfflineResult {
-  state: GameState;
-  appliedSeconds: number;
-  rawSeconds: number;
-  capped: boolean;
+/** Thrown when a file's version is not {@link SAVE_VERSION}. Test phase: no migration. */
+export class SaveVersionError extends Error {
+  constructor(readonly version: number) {
+    super(
+      version < SAVE_VERSION
+        ? `存档版本 v${version} 已过时（当前 v${SAVE_VERSION}）。测试期不迁移旧存档，未导入，当前进度保持不变。`
+        : `存档版本 v${version} 比游戏更新（当前 v${SAVE_VERSION}），未导入，当前进度保持不变。`,
+    );
+    this.name = "SaveVersionError";
+  }
+}
+
+export interface LoadResult extends OfflineCatchup {
+  /** One-time notice, e.g. an outdated save was replaced by a fresh game. */
+  notice: string | null;
+}
+
+export function outdatedSaveNotice(version: number): string {
+  return `测试版存档格式已更新（v${version} → v${SAVE_VERSION}），旧进度已重置。`;
 }
 
 export function serializeState(state: GameState): SerializedState {
   return {
-    resources: mapResources(state.resources, bigToString),
-    producers: mapProducers(state.producers, bigToString),
-    lifetime: mapResources(state.lifetime, bigToString),
+    resources: mapResources(state.resources),
+    planet: serializePlanet(state.planet),
+    lifetime: mapResources(state.lifetime),
     warpCores: bigToString(state.warpCores),
     curvature: { ...state.curvature },
     totalTime: bigToString(state.totalTime),
@@ -108,9 +131,9 @@ export function deserializeState(raw: unknown): GameState {
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
   state.resources = readResourceMap(raw.resources, "资源");
-  state.producers = readProducerMap(raw.producers, "设施");
+  state.planet = readPlanet(raw.planet);
   state.lifetime = readResourceMap(raw.lifetime, "累计产出");
-  state.warpCores = readAmount(raw.warpCores ?? raw.telemetry, "曲率核心");
+  state.warpCores = readAmount(raw.warpCores, "曲率核心");
   state.curvature = readCurvature(raw.curvature);
   state.totalTime = readAmount(raw.totalTime, "游玩时间");
   state.manualClicks = readCount(raw.manualClicks);
@@ -119,11 +142,7 @@ export function deserializeState(raw: unknown): GameState {
   state.unlockedCards = readUnlocked(raw.unlockedCards);
   state.protocols = readProtocols(raw.protocols);
   state.unlocked = readAchievements(raw.unlocked);
-  state.stats = readStats(raw.stats, {
-    scrapes: state.manualClicks,
-    seenEnergyShort: state.seenEnergyShortage,
-    launches: state.hasPrestiged ? 1 : 0,
-  });
+  state.stats = readStats(raw.stats);
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
@@ -139,6 +158,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
+/** Validate a file. Only v6 is accepted; anything else throws without touching the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -147,9 +167,9 @@ export function importSave(json: string): SaveFile {
     throw new Error("不是有效的 JSON");
   }
   if (!isRecord(parsed)) throw new Error("存档必须是 JSON 对象");
-  if (!isSupportedVersion(parsed.version)) {
-    throw new Error(`不支持的存档版本（支持 1–${SAVE_VERSION}）`);
-  }
+  const version = parsed.version;
+  if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
+  if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -177,24 +197,106 @@ export function clearSave(store: KeyValueStore): void {
   store.removeItem(STORAGE_KEY);
 }
 
-/** Apply elapsed real time, capped at the offline limit. Protocols step on the offline interval. */
-export function applyOffline(state: GameState, elapsedSeconds: number, nowCap = OFFLINE_CAP_SECONDS): OfflineResult {
-  const rawSeconds = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
-  const appliedSeconds = Math.min(rawSeconds, nowCap);
+/** Version number stored in localStorage, or null when absent or unreadable. */
+function storedVersion(raw: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed) && typeof parsed.version === "number" && Number.isFinite(parsed.version)) return parsed.version;
+  } catch {
+    // Unreadable JSON falls through to importSave, which reports it.
+  }
+  return null;
+}
+
+/**
+ * Load the local save and apply elapsed real time (capped at the offline limit).
+ * A save older than v6 is discarded: fresh game plus a one-time notice (design doc §5.9).
+ * Newer or corrupt saves throw so the caller can report it.
+ */
+export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
+  const raw = store.getItem(STORAGE_KEY);
+  if (!raw) return { ...emptyCatchup(createInitialState()), notice: null };
+  const version = storedVersion(raw);
+  if (version !== null && version < SAVE_VERSION) {
+    return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
+  }
+  const file = importSave(raw);
+  const elapsed = (now - file.lastTickAt) / 1000;
+  return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
+}
+
+function serializePlanet(planet: PlanetState): SerializedPlanet {
   return {
-    state: tick(state, appliedSeconds, "offline"),
-    appliedSeconds,
-    rawSeconds,
-    capped: rawSeconds > nowCap,
+    name: planet.name,
+    tempMax: planet.tempMax,
+    fieldsMax: planet.fieldsMax,
+    buildings: { ...planet.buildings },
+    productionPct: { ...planet.productionPct },
+    buildQueue: planet.buildQueue.map((order) => ({
+      building: order.building,
+      targetLevel: order.targetLevel,
+      paid: mapResources(order.paid),
+      totalSeconds: order.totalSeconds,
+      remainingSeconds: order.remainingSeconds,
+      source: order.source,
+    })),
   };
 }
 
-/** Apply elapsed real time since lastTickAt, capped at the current offline limit. */
-export function loadGame(store: KeyValueStore, now = Date.now()): OfflineCatchup {
-  const file = readSave(store);
-  if (!file) return emptyCatchup(createInitialState());
-  const elapsed = (now - file.lastTickAt) / 1000;
-  return catchUp(deserializeState(file.state), elapsed);
+function readPlanet(raw: unknown): PlanetState {
+  if (!isRecord(raw)) throw new Error("星球数据格式不正确");
+  const planet = createPlanet();
+  if (typeof raw.name === "string" && raw.name.trim()) planet.name = raw.name.slice(0, 40);
+  if (typeof raw.tempMax === "number" && Number.isFinite(raw.tempMax)) planet.tempMax = raw.tempMax;
+  if (raw.fieldsMax !== undefined) planet.fieldsMax = readInteger(raw.fieldsMax, "星球格子", 1, 10000);
+
+  if (!isRecord(raw.buildings)) throw new Error("建筑等级格式不正确");
+  for (const id of BUILDING_IDS) {
+    const value = raw.buildings[id];
+    planet.buildings[id] = value === undefined ? 0 : readInteger(value, `建筑 ${id} 等级`, 0, MAX_LEVEL);
+  }
+
+  if (raw.productionPct !== undefined) {
+    if (!isRecord(raw.productionPct)) throw new Error("产量设置格式不正确");
+    for (const id of PRODUCTION_IDS) {
+      const value = raw.productionPct[id];
+      if (value === undefined) continue;
+      const pct = readInteger(value, `产量设置 ${id}`, 0, 100);
+      if (pct % 10 !== 0) throw new Error(`产量设置 ${id} 必须是 10 的倍数`);
+      planet.productionPct[id] = pct;
+    }
+  }
+
+  if (!Array.isArray(raw.buildQueue)) throw new Error("建造队列格式不正确");
+  if (raw.buildQueue.length > MAX_QUEUE) throw new Error("建造队列过长");
+  planet.buildQueue = raw.buildQueue.map((entry, index) => readOrder(entry, index));
+  return planet;
+}
+
+function readOrder(raw: unknown, index: number): BuildOrder {
+  const label = `建造队列第 ${index + 1} 项`;
+  if (!isRecord(raw) || typeof raw.building !== "string" || !isBuildingId(raw.building)) {
+    throw new Error(`${label}建筑无效`);
+  }
+  const targetLevel = readInteger(raw.targetLevel, `${label}目标等级`, 1, MAX_LEVEL);
+  const totalSeconds = readSeconds(raw.totalSeconds, `${label}总时长`);
+  const remainingSeconds = Math.min(readSeconds(raw.remainingSeconds, `${label}剩余时间`), totalSeconds);
+  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  if (!source) throw new Error(`${label}来源无效`);
+  const paid = readResourceMap(raw.paid, `${label}已付`);
+  return { building: raw.building, targetLevel, paid, totalSeconds, remainingSeconds, source };
+}
+
+function readInteger(raw: unknown, label: string, min: number, max: number): number {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < min || raw > max) {
+    throw new Error(`${label}必须是 ${min}–${max} 的整数`);
+  }
+  return raw;
+}
+
+function readSeconds(raw: unknown, label: string): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) throw new Error(`${label}无效`);
+  return raw;
 }
 
 function readAmount(raw: unknown, label: string): BigNumber {
@@ -218,20 +320,6 @@ function readResourceMap(raw: unknown, label: string): Record<ResourceId, BigNum
     crystal: readAmount(raw.crystal, `${label}·晶体`),
     deuterium: readAmount(raw.deuterium, `${label}·重氢`),
   };
-}
-
-function readProducerMap(raw: unknown, label: string): Record<ProducerId, BigNumber> {
-  if (!isRecord(raw)) throw new Error(`${label} 格式不正确`);
-  const out = {} as Record<ProducerId, BigNumber>;
-  let solarExplicit = false;
-  for (const id of PRODUCER_IDS) {
-    const legacy = LEGACY_PRODUCER[id];
-    const value = raw[id] !== undefined ? raw[id] : legacy ? raw[legacy] : undefined;
-    if (id === "solar_plant" && value !== undefined) solarExplicit = true;
-    out[id] = value === undefined ? big(0) : readAmount(value, `${label}·${producerById(id).name}`);
-  }
-  if (!solarExplicit) out.solar_plant = big(FREE_SOLAR_PLANTS);
-  return out;
 }
 
 function readCurvature(raw: unknown): Record<CurvatureId, number> {
@@ -263,24 +351,17 @@ function readAchievements(raw: unknown): string[] {
   return ACHIEVEMENTS.map((def) => def.id).filter((id) => found.has(id));
 }
 
-function readStats(
-  raw: unknown,
-  fallback: { scrapes: number; seenEnergyShort: boolean; launches: number },
-): PlayerStats {
-  if (!isRecord(raw)) {
-    return {
-      ...emptyStats(),
-      scrapes: fallback.scrapes,
-      seenEnergyShort: fallback.seenEnergyShort,
-      launches: fallback.launches,
-    };
-  }
+function readStats(raw: unknown): PlayerStats {
+  if (!isRecord(raw)) return emptyStats();
   return {
     scrapes: readCount(raw.scrapes),
     launches: readCount(raw.launches),
     seenEnergyShort: raw.seenEnergyShort === true,
     manualActions: readCount(raw.manualActions),
     automatedLaunches: readCount(raw.automatedLaunches),
+    buildsCompleted: readCount(raw.buildsCompleted),
+    seenStorageFull: raw.seenStorageFull === true,
+    seenQueueIdle: raw.seenQueueIdle === true,
   };
 }
 
@@ -288,10 +369,6 @@ function readBonusHours(raw: unknown): number {
   const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : 0;
   if (!Number.isFinite(value) || value < 0) return 0;
   return Math.min(OFFLINE_MAX_HOURS - OFFLINE_BASE_HOURS, value);
-}
-
-function isSupportedVersion(version: unknown): version is number {
-  return typeof version === "number" && Number.isInteger(version) && version >= 1 && version <= SAVE_VERSION;
 }
 
 function readUnlocked(raw: unknown): GameState["unlockedCards"] {
@@ -329,7 +406,6 @@ function readProtocols(raw: unknown): ProtocolLoadout {
 
 function readSlot(raw: unknown): ProtocolSlotState {
   if (!isRecord(raw)) return emptyProtocolSlot();
-  if ("cardId" in raw && !("card" in raw)) return emptyProtocolSlot();
   const card = raw.card == null ? null : readCard(raw.card);
   if (raw.card != null && !card) return emptyProtocolSlot();
   const elapsed = typeof raw.elapsed === "number" && Number.isFinite(raw.elapsed) && raw.elapsed >= 0 ? raw.elapsed : 0;
@@ -361,51 +437,54 @@ function readTrigger(raw: unknown): Trigger | null {
     const gte = typeof raw.gte === "string" || typeof raw.gte === "number" ? String(raw.gte) : "";
     if (gte) return { kind: "onResource", res: raw.res, gte };
   }
+  if (raw.kind === "queueIdle") return { kind: "queueIdle" };
+  if (raw.kind === "storageFull" && typeof raw.res === "string" && isStoredResId(raw.res)) {
+    return { kind: "storageFull", res: raw.res };
+  }
   return null;
 }
 
 function readCondition(raw: unknown): Condition | null {
   if (!isRecord(raw) || typeof raw.kind !== "string") return null;
+  const building = typeof raw.building === "string" && isBuildingId(raw.building) ? raw.building : null;
   if ((raw.kind === "resourceGte" || raw.kind === "resourceLt") && typeof raw.res === "string" && isResId(raw.res)) {
     const value = typeof raw.value === "string" || typeof raw.value === "number" ? String(raw.value) : "";
     if (!value) return null;
     return { kind: raw.kind, res: raw.res, value };
   }
   if (raw.kind === "energyEffLt" && typeof raw.value === "number") return { kind: "energyEffLt", value: raw.value };
-  if (raw.kind === "ownedLt" && typeof raw.producer === "string" && isKnownProducer(raw.producer) && typeof raw.value === "number") {
-    return { kind: "ownedLt", producer: raw.producer, value: raw.value };
+  if (raw.kind === "levelLt" && building && typeof raw.value === "number") return { kind: "levelLt", building, value: raw.value };
+  if (raw.kind === "costRatioLt" && building && typeof raw.ratio === "number") {
+    return { kind: "costRatioLt", building, ratio: raw.ratio };
   }
-  if (raw.kind === "costRatioLt" && typeof raw.producer === "string" && isKnownProducer(raw.producer) && typeof raw.ratio === "number") {
-    return { kind: "costRatioLt", producer: raw.producer, ratio: raw.ratio };
+  if (raw.kind === "storageGte" && typeof raw.res === "string" && isStoredResId(raw.res) && typeof raw.ratio === "number") {
+    return { kind: "storageGte", res: raw.res, ratio: raw.ratio };
+  }
+  if (raw.kind === "queueLenLt" && typeof raw.value === "number") return { kind: "queueLenLt", value: raw.value };
+  if (raw.kind === "buildTimeLt" && building && typeof raw.seconds === "number") {
+    return { kind: "buildTimeLt", building, seconds: raw.seconds };
   }
   return null;
 }
 
-function readAction(raw: unknown): ProtocolCard["action"] | null {
+function readAction(raw: unknown): Action | null {
   if (!isRecord(raw) || typeof raw.kind !== "string") return null;
   if (raw.kind === "collect") return { kind: "collect" };
   if (raw.kind === "prestige" && typeof raw.minGain === "number") return { kind: "prestige", minGain: raw.minGain };
-  if (raw.kind === "buy" && typeof raw.producer === "string" && isKnownProducer(raw.producer)) {
-    const amount = raw.amount === "max" || raw.amount === 10 || raw.amount === 1 ? raw.amount : null;
-    if (amount === null) return null;
-    return { kind: "buy", producer: raw.producer, amount };
+  if (raw.kind === "enqueue" && typeof raw.building === "string" && isBuildingId(raw.building)) {
+    return { kind: "enqueue", building: raw.building, levels: 1 };
+  }
+  if (raw.kind === "setProduction" && typeof raw.building === "string" && isProductionId(raw.building)) {
+    const pct = raw.pct;
+    if (typeof pct !== "number" || !Number.isInteger(pct) || pct < 0 || pct > 100 || pct % 10 !== 0) return null;
+    return { kind: "setProduction", building: raw.building, pct };
   }
   return null;
 }
 
-function isKnownProducer(value: string): value is ProducerId {
-  return (PRODUCER_IDS as readonly string[]).includes(value);
-}
-
-function mapResources<T>(values: Record<ResourceId, T>, map: (value: T) => string): Record<ResourceId, string> {
+function mapResources(values: Record<ResourceId, BigNumber>): Record<ResourceId, string> {
   const out = {} as Record<ResourceId, string>;
-  for (const id of RESOURCE_IDS) out[id] = map(values[id]);
-  return out;
-}
-
-function mapProducers<T>(values: Record<ProducerId, T>, map: (value: T) => string): Record<ProducerId, string> {
-  const out = {} as Record<ProducerId, string>;
-  for (const id of PRODUCER_IDS) out[id] = map(values[id]);
+  for (const id of RESOURCE_IDS) out[id] = bigToString(values[id]);
   return out;
 }
 

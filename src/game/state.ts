@@ -1,8 +1,8 @@
 import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
-import { FREE_SOLAR_PLANTS } from "./content";
+import { STARTING_RESOURCES } from "./content";
+import { createPlanet } from "./planet";
 import {
-  PRODUCER_IDS,
   PROTOCOL_SLOT_COUNT,
   RESOURCE_IDS,
   type GameState,
@@ -11,6 +11,8 @@ import {
   type ProtocolSlotState,
 } from "./types";
 
+export { createPlanet };
+
 export function emptyStats(): PlayerStats {
   return {
     scrapes: 0,
@@ -18,6 +20,9 @@ export function emptyStats(): PlayerStats {
     seenEnergyShort: false,
     manualActions: 0,
     automatedLaunches: 0,
+    buildsCompleted: 0,
+    seenStorageFull: false,
+    seenQueueIdle: false,
   };
 }
 
@@ -38,12 +43,19 @@ export function createDefaultProtocols(): ProtocolLoadout {
   };
 }
 
-export function createInitialState(): GameState {
-  const producers = zeros(PRODUCER_IDS);
-  producers.solar_plant = big(FREE_SOLAR_PLANTS);
+/** OGame new-account start: 500 metal, 500 crystal, no buildings. Base production keeps it moving. */
+export function startingResources(): GameState["resources"] {
   return {
-    resources: zeros(RESOURCE_IDS),
-    producers,
+    metal: big(STARTING_RESOURCES.metal),
+    crystal: big(STARTING_RESOURCES.crystal),
+    deuterium: big(STARTING_RESOURCES.deuterium),
+  };
+}
+
+export function createInitialState(): GameState {
+  return {
+    resources: startingResources(),
+    planet: createPlanet(),
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
     curvature: emptyCurvature(),

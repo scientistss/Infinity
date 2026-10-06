@@ -29,20 +29,22 @@ export function passiveCoreBonus(state: GameState): BigNumber {
   return unspentCores(state).mul(CORE_BONUS_PER_CORE);
 }
 
-export function producerOutputScale(state: GameState): number {
+/** "产线翻倍": mine output (incl. base production) and power-plant supply ×2. */
+export function outputScale(state: GameState): number {
   return techRank(state, "output_double") > 0 ? CURVATURE_EFFECTS.outputMultiplier : 1;
 }
 
-export function growthRatio(state: GameState, baseRatio: number): number {
-  const cut = techRank(state, "growth_cut") > 0 ? CURVATURE_EFFECTS.growthReduction : 0;
-  return Math.max(CURVATURE_EFFECTS.minGrowth, baseRatio - cut);
+/** "成本缓和": subtracted from every building cost factor (floor 1.01 in formulas.ts). */
+export function growthCut(state: GameState): number {
+  return techRank(state, "growth_cut") > 0 ? CURVATURE_EFFECTS.growthReduction : 0;
 }
 
 export function protocolSlotBonus(state: GameState): number {
   return techRank(state, "slot_plus") > 0 ? CURVATURE_EFFECTS.slotBonus : 0;
 }
 
-export function manualClickAmount(state: GameState): number {
+/** Multiplier on manual collect (×10 with "手采矿镐"). */
+export function manualClickMultiplier(state: GameState): number {
   return techRank(state, "manual_ten") > 0 ? CURVATURE_EFFECTS.manualAmount : 1;
 }
 
@@ -59,7 +61,7 @@ export function scoreMultiplier(state: GameState): BigNumber {
   return techRank(state, "score_boost") > 0 ? big(CURVATURE_EFFECTS.scoreMultiplier) : big(1);
 }
 
-/** Grant seed stock into the bank, not into this-run score. */
+/** Grant seed stock into the bank on top of the 500/500 start, not into this-run score. */
 export function applySeedStock(state: GameState): GameState {
   if (techRank(state, "seed_stock") <= 0) return state;
   const seed = CURVATURE_EFFECTS.seed;
