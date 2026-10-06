@@ -25,6 +25,12 @@
     "exp": 0.60606,
     "formula": "base × floor(k × e^(20·L/33))"
   },
+  "shipyard": {
+    "note": "Design doc §7.1: unit hours = (metal + crystal) / (2500 × (1 + shipyard) × 2^nanite), × 3600 / S. Orders are batches; one unit at a time.",
+    "maxOrders": 10,
+    "maxBatch": 1000000,
+    "minUnitSeconds": 0.01
+  },
   "queue": {
     "baseCapacity": 2,
     "note": "The research queue has the same length as the build queue (design doc §6.1)."

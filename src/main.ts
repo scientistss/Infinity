@@ -17,6 +17,7 @@ import { big } from "./game/decimal";
 import { formatAmount } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
 import { cancelResearch, enqueueResearch } from "./game/research";
+import { cancelUnits, orderUnits } from "./game/shipyard";
 import { buyPackage, buyShopItem, speedUp, useInventory } from "./game/dark-matter";
 import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
@@ -128,6 +129,17 @@ async function handleAction(action: UiAction): Promise<void> {
     if (result.ok) persist();
   } else if (action.type === "cancelResearch") {
     const result = cancelResearch(state, action.index);
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "build-units") {
+    const amount = action.mode === "max" ? "max" : action.mode === "fill" ? { fillTo: action.count } : action.count;
+    const result = orderUnits(state, action.id, amount, "manual");
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "cancel-units") {
+    const result = cancelUnits(state, action.index);
     state = result.state;
     status = result.reason;
     if (result.ok) persist();
@@ -254,6 +266,7 @@ async function handleAction(action: UiAction): Promise<void> {
     action.type === "scrape" ||
     action.type === "enqueue" ||
     action.type === "enqueueResearch" ||
+    action.type === "build-units" ||
     action.type === "prestige"
   ) {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));

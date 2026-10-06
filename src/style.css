@@ -796,3 +796,28 @@ textarea {
 .arcade-odds td { text-align: left; white-space: normal; }
 .arcade-odds td:nth-child(2), .arcade-odds td:nth-child(3) { text-align: right; white-space: nowrap; }
 .arcade-tile.closed.lit, .arcade-tile.closed.trail, .arcade-tile.closed.attract { opacity: 0.85; filter: none; }
+
+/* ---------- shipyard & defense (P3) ---------- */
+.unit-order { display: grid; grid-template-columns: minmax(4.5rem, 1fr) auto auto auto; gap: 0.35rem; align-items: stretch; margin-top: 0.4rem; }
+.unit-order input {
+  min-width: 0;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.unit-order input:focus { outline: none; border-color: var(--good); box-shadow: 0 0 6px var(--good-glow); }
+.unit-btn { padding: 0.3rem 0.55rem; white-space: nowrap; font-size: 0.85rem; }
+.unit-reason { margin: 0.25rem 0 0; min-height: 1.1em; }
+.unit-card.locked .unit-reason { color: var(--dim); }
+.unit-rf { margin: 0.35rem 0 0; font-size: 0.78rem; color: var(--muted); }
+.unit-rf summary { cursor: pointer; color: var(--ink); }
+.unit-rf p { margin: 0.2rem 0; line-height: 1.35; }
+.icon-shipyard, .icon-defense { background: radial-gradient(circle at 40% 35%, #1d2633, #0b0f15); }
+@media (max-width: 520px) {
+  .unit-order { grid-template-columns: 1fr 1fr 1fr; }
+  .unit-order input { grid-column: 1 / -1; }
+}

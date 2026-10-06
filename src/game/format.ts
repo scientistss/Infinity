@@ -58,3 +58,8 @@ export function formatDm(value: BigNumber | number): string {
   if (!Number.isFinite(n) || Math.abs(n) >= 1e9) return formatAmount(typeof value === "number" ? big(value) : value);
   return Math.floor(n).toLocaleString("en-US");
 }
+
+/** Ship / defense counts: whole numbers with thousands separators, scientific from 1e9. */
+export function formatUnits(value: number): string {
+  return formatDm(value);
+}

@@ -22,10 +22,11 @@ import { completeActive } from "./queue";
 import { completeActiveResearch } from "./research";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "./types";
 import { activeBooster } from "./boosters";
+import { advanceShipyard, shipyardRemaining } from "./shipyard";
 
 export { activeBooster, boosterFactor, nextBoosterExpiry, pruneBoosters, type Booster } from "./boosters";
 
-export type SpeedupTarget = "build" | "research";
+export type SpeedupTarget = "build" | "research" | "shipyard";
 export type SpeedupMode = "halve" | "finish";
 export type PackageKind = ResourceId | "bundle";
 
@@ -97,21 +98,33 @@ export function speedupQuote(remainingSeconds: number, target: SpeedupTarget, mo
 }
 
 function activeRemaining(state: GameState, target: SpeedupTarget): number | null {
+  if (target === "shipyard") return shipyardRemaining(state);
   const head = target === "build" ? state.planet.buildQueue[0] : state.research.queue[0];
   if (!head || head.totalSeconds <= 0) return null;
   return head.remainingSeconds;
 }
 
+const NOTHING_RUNNING: Record<SpeedupTarget, string> = {
+  build: "没有正在建造的项目",
+  research: "没有正在进行的研究",
+  shipyard: "造船厂没有在造的批次",
+};
+
 export function speedUp(state: GameState, target: SpeedupTarget, mode: SpeedupMode): DmResult {
   const remaining = activeRemaining(state, target);
-  if (remaining === null) return fail(state, target === "build" ? "没有正在建造的项目" : "没有正在进行的研究");
+  if (remaining === null) return fail(state, NOTHING_RUNNING[target]);
   const quote = speedupQuote(remaining, target, mode);
   if (!quote.allowed) return fail(state, quote.reason);
   const lack = lacksDm(state, quote.dm);
   if (lack) return fail(state, lack);
   const paid = spend(state, quote.dm);
   const taken = mode === "finish" ? remaining : remaining / 2;
-  const next = target === "build" ? advanceBuild(paid, taken, false) : advanceResearch(paid, taken, false);
+  const next =
+    target === "build"
+      ? advanceBuild(paid, taken, false)
+      : target === "research"
+        ? advanceResearch(paid, taken, false)
+        : advanceShipyard(paid, taken, false).state;
   const verb = mode === "finish" ? "立即完成" : "剩余时间减半";
   return { state: next, ok: true, reason: `花费 ${formatDm(quote.dm)} 暗物质，${verb}` };
 }

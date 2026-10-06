@@ -23,6 +23,8 @@ import type { ResourceId } from "../game/types";
 import { isBetSymbol, type BetSymbol } from "../data/arcade";
 import type { RunResult } from "../game/arcade";
 import { ArcadeAnimator, arcadePanelHtml, readSkipPreference, updateArcadePanel, writeSkipPreference } from "./arcade-panel";
+import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyard-panel";
+import { isUnitId, type UnitId } from "../data/units";
 
 export type UiAction =
   | { type: "scrape" }
@@ -30,6 +32,8 @@ export type UiAction =
   | { type: "cancelQueue"; index: number }
   | { type: "enqueueResearch"; id: ResearchId }
   | { type: "cancelResearch"; index: number }
+  | { type: "build-units"; id: UnitId; mode: "count" | "max" | "fill"; count: number }
+  | { type: "cancel-units"; index: number }
   | { type: "dm-speedup"; target: SpeedupTarget; mode: SpeedupMode }
   | { type: "dm-shop"; id: ShopItemId; res: ResourceId }
   | { type: "dm-package"; kind: PackageKind; fraction: number }
@@ -107,7 +111,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       if (Number.isInteger(index)) onAction({ type: "cancelQueue", index });
     }
     if (action === "dm-speedup") {
-      const target = button.dataset.target === "research" ? "research" : "build";
+      const target = button.dataset.target === "research" ? "research" : button.dataset.target === "shipyard" ? "shipyard" : "build";
       const mode = button.dataset.mode === "finish" ? "finish" : "halve";
       onAction({ type: "dm-speedup", target, mode });
     }
@@ -140,6 +144,15 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "research") {
       const id = button.dataset.id ?? "";
       if (isResearchId(id)) onAction({ type: "enqueueResearch", id });
+    }
+    if (action === "build-units") {
+      const id = button.dataset.id ?? "";
+      const mode = button.dataset.mode === "max" ? "max" : button.dataset.mode === "fill" ? "fill" : "count";
+      if (isUnitId(id)) onAction({ type: "build-units", id, mode, count: unitQuantity(root, id) });
+    }
+    if (action === "cancel-units") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancel-units", index });
     }
     if (action === "cancel-research") {
       const index = Number(button.dataset.index);
@@ -239,6 +252,8 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       setText(root, "status", model.status);
       setText(root, "status-dm", model.status);
       setText(root, "status-arcade", model.status);
+      setText(root, "status-shipyard", model.status);
+      setText(root, "status-defense", model.status);
       setText(root, "offline-cap", model.offlineCap);
       setText(root, "ach-summary", model.achievementSummary);
       setText(root, "unspent-line", model.unspentLine);
@@ -258,6 +273,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
 
       updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue", "build");
       updateResearch(root, model);
+      updateShipyard(root, model);
       updateDarkMatter(root, model);
       updateArcade(root, model, animator);
 
@@ -319,6 +335,8 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         );
         fillList(requiredElement(root, "offline-builds"), model.offline.builds);
         fillList(requiredElement(root, "offline-research"), model.offline.research);
+        fillList(requiredElement(root, "offline-units"), model.offline.units);
+        requiredElement(root, "offline-units-wrap").hidden = model.offline.units.length === 0;
         fillList(requiredElement(root, "offline-arcade"), model.offline.arcade);
         requiredElement(root, "offline-arcade-wrap").hidden = model.offline.arcade.length === 0;
       }
@@ -384,6 +402,24 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
       return skipBox.checked;
     },
   };
+}
+
+function updateShipyard(root: HTMLElement, model: ViewModel): void {
+  const yard = model.shipyard;
+  for (const id of ["tab-shipyard", "tab-defense"]) {
+    const tab = requiredElement(root, id);
+    if (tab.hidden === yard.visible) {
+      tab.hidden = !yard.visible;
+      if (!yard.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
+    }
+  }
+  requiredElement(root, "squeue-wrap-ov").hidden = !yard.visible;
+  updateQueue(root, "squeue", ["", "-def", "-ov"], yard.queue, "cancel-units", "shipyard");
+  const visiblePanel = ["shipyard", "defense"].some((id) => {
+    const panel = root.querySelector<HTMLElement>(`[data-tab-panel="${id}"]`);
+    return panel !== null && !panel.hidden;
+  });
+  if (visiblePanel) updateShipyardCards(root, yard);
 }
 
 function updateArcade(root: HTMLElement, model: ViewModel, animator: ArcadeAnimator): void {
@@ -548,11 +584,15 @@ function fillList(list: HTMLElement, items: readonly string[]): void {
 
 const ICON_BASE = `${import.meta.env.BASE_URL}icons/`;
 const TAB_KEY = "infinity.ui.tab";
+/** Tabs that appear only once unlocked. */
+const HIDDEN_TABS = new Set(["research", "shipyard", "defense", "darkmatter", "arcade"]);
 const DEFAULT_TAB = "facilities";
 const TABS = [
   { id: "overview", label: "概览", icon: "logo" },
   { id: "facilities", label: "建筑", icon: "robotics_factory" },
   { id: "research", label: "研究", icon: "tech" },
+  { id: "shipyard", label: "造船厂", icon: "shipyard" },
+  { id: "defense", label: "防御", icon: "defense" },
   { id: "darkmatter", label: "暗物质", icon: "dark_matter" },
   { id: "arcade", label: "星环机", icon: "ring_machine" },
   { id: "protocol", label: "协议卡", icon: "protocol_card" },
@@ -581,6 +621,8 @@ const ICON_ALT: Record<string, string> = {
   logo: "Infinity 行星标志",
   dark_matter: "暗物质",
   ring_machine: "深空星环机",
+  shipyard: "造船厂",
+  defense: "防御",
 };
 
 /**
@@ -603,7 +645,7 @@ const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
 };
 
 /** Simple self-drawn SVG icons (no painted WebP yet). */
-const SVG_ICONS = new Set(["dark_matter"]);
+const SVG_ICONS = new Set(["dark_matter", "shipyard", "defense"]);
 
 /** Icons that also ship a 256px variant for large or high-DPI rendering. */
 const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core", "ring_machine"]);
@@ -773,7 +815,7 @@ function shellMarkup(): string {
 
   const tabs = TABS.map(
     (tab) =>
-      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${tab.id === "research" || tab.id === "darkmatter" || tab.id === "arcade" ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${HIDDEN_TABS.has(tab.id) ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
   ).join("");
 
   const achievements = ACHIEVEMENTS.map(
@@ -807,6 +849,10 @@ function shellMarkup(): string {
         <ul class="offline-gains offline-builds" data-bind="offline-builds"></ul>
         <h3 class="offline-sub">离线期间完成的研究</h3>
         <ul class="offline-gains offline-builds" data-bind="offline-research"></ul>
+        <div data-bind="offline-units-wrap" hidden>
+          <h3 class="offline-sub">离线期间完成的舰船与防御</h3>
+          <ul class="offline-gains offline-builds" data-bind="offline-units"></ul>
+        </div>
         <div data-bind="offline-arcade-wrap" hidden>
           <h3 class="offline-sub">深空星环机</h3>
           <ul class="offline-gains offline-builds" data-bind="offline-arcade"></ul>
@@ -822,7 +868,7 @@ function shellMarkup(): string {
           <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
           <div>
             <h1>Infinity <span>无限</span></h1>
-            <p class="kicker">Planet surface · v0.3</p>
+            <p class="kicker">Planet surface · v0.4</p>
           </div>
         </div>
         <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
@@ -875,6 +921,16 @@ function shellMarkup(): string {
         </div>
         ${queuePanel("-ov")}
         <div data-bind="rqueue-wrap-ov" hidden>${queuePanel("-ov", "rqueue", "研究队列")}</div>
+        <div data-bind="squeue-wrap-ov" hidden>
+          <div class="queue-panel">
+            <div class="queue-head">
+              <h3>造船队列</h3>
+              <span class="muted" data-bind="squeue-summary-ov">造船队列 0/10</span>
+            </div>
+            <p class="muted queue-idle" data-bind="squeue-idle-ov"></p>
+            <ol class="queue-list" data-bind="squeue-list-ov"></ol>
+          </div>
+        </div>
         <div class="ov-grid">
           <div class="ov-card">
             <h3>产量（每秒）</h3>
@@ -888,7 +944,7 @@ function shellMarkup(): string {
             <p class="muted" data-bind="ov-energy-summary"></p>
             <table class="ov-table">
               <thead><tr><th scope="col">建筑</th><th scope="col">能源</th></tr></thead>
-              <tbody>${tableRows("ov-energy", ["solar", "fusion", "metal_mine", "crystal_mine", "deuterium_synth"], 2)}</tbody>
+              <tbody>${tableRows("ov-energy", ["solar", "fusion", "satellite", "metal_mine", "crystal_mine", "deuterium_synth"], 2)}</tbody>
             </table>
           </div>
         </div>
@@ -924,6 +980,8 @@ function shellMarkup(): string {
         ${queuePanel("", "rqueue", "研究队列")}
         ${researchGroups()}
       </section>
+
+      ${shipyardPanelsHtml(icon)}
 
       ${arcadePanelHtml(icon("ring_machine", "icon-h2", { alt: "" }))}
 
@@ -992,7 +1050,7 @@ function shellMarkup(): string {
       <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
         <div class="panel-head">
           <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
-          <p>自动写入 localStorage。导出的 JSON 形如 { version: 7, savedAt, lastTickAt, state }。测试期只接受 v7：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 8, savedAt, lastTickAt, state }。测试期只接受 v8：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
         </div>
         <div class="actions">
           <button type="button" data-action="save">立即保存</button>

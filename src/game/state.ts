@@ -27,6 +27,7 @@ export function emptyStats(): PlayerStats {
     seenQueueIdle: false,
     researchCompleted: 0,
     darkMatterEarned: 0,
+    unitsBuilt: 0,
   };
 }
 

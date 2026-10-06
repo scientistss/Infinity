@@ -1,6 +1,8 @@
 import balance from "../data/balance.json";
 import { BUILDING_IDS, PRODUCTION_IDS, type BuildingId, type ProductionBuildingId } from "../data/buildings";
 import type { BigNumber } from "./decimal";
+import { emptyUnits, type UnitId } from "../data/units";
+import type { ShipyardOrder } from "./shipyard";
 
 export type OrderSource = "manual" | "protocol";
 
@@ -28,6 +30,10 @@ export interface PlanetState {
   /** 0–100 in steps of 10. */
   productionPct: Record<ProductionBuildingId, number>;
   buildQueue: BuildOrder[];
+  /** Ships and defenses standing on the planet (P3). Whole numbers. */
+  units: Record<UnitId, number>;
+  /** Shipyard batches; index 0 is being built (P3). */
+  shipyardQueue: ShipyardOrder[];
 }
 
 export const HOMEWORLD = balance.universe.homeworld;
@@ -52,6 +58,8 @@ export function createPlanet(): PlanetState {
     buildings: emptyBuildings(),
     productionPct: fullProduction(),
     buildQueue: [],
+    units: emptyUnits(),
+    shipyardQueue: [],
   };
 }
 
@@ -68,5 +76,7 @@ export function clonePlanet(planet: PlanetState): PlanetState {
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),
+    units: { ...planet.units },
+    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order })),
   };
 }

@@ -8,6 +8,7 @@ import { applyAchievementUnlocks, emptyTickLog, tick } from "../game/logic";
 import type { CompletedBuild } from "../game/queue";
 import type { CompletedResearch } from "../game/research";
 import type { ArcadeHistoryEntry } from "../game/arcade";
+import type { CompletedUnits } from "../game/shipyard";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "../game/types";
 import type { BigNumber } from "../game/decimal";
 
@@ -26,6 +27,8 @@ export interface OfflineCatchup {
   completedBuilds: CompletedBuild[];
   /** Research levels finished while away, in completion order. */
   completedResearch: CompletedResearch[];
+  /** Ships and defenses finished while away, per unit type. */
+  completedUnits: CompletedUnits[];
   /** Ring machine runs revealed by the auto-runner card while away. */
   arcadeRuns: ArcadeHistoryEntry[];
   /** Ring machine runs stored now (beacons accrue offline too). */
@@ -76,6 +79,7 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
     protocolEvaluations: offlineProtocolEvaluations(appliedSeconds),
     completedBuilds: log.completedBuilds,
     completedResearch: log.completedResearch,
+    completedUnits: log.completedUnits,
     arcadeRuns: next.arcade.history.filter((entry) => entry.auto && entry.at > state.totalTime.toNumber()),
     arcadeStored: next.arcade.runs.length,
     newAchievementIds: next.unlocked.filter((id) => !before.has(id)),
@@ -93,6 +97,7 @@ export function emptyCatchup(state: GameState): OfflineCatchup {
     protocolEvaluations: 0,
     completedBuilds: [],
     completedResearch: [],
+    completedUnits: [],
     arcadeRuns: [],
     arcadeStored: state.arcade.runs.length,
     newAchievementIds: [],

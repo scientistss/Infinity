@@ -90,7 +90,9 @@ describe("build queue", () => {
   });
 
   it("refuses buildings from later phases", () => {
-    expect(canEnqueue(rich(stateWith({ shipyard: 1 })), "missile_silo").reason).toBe("第 3 阶段开放");
+    expect(canEnqueue(rich(stateWith({ shipyard: 2 })), "space_dock").reason).toBe("第 5 阶段开放");
+    // The missile silo opens with P3.
+    expect(canEnqueue(rich(stateWith({ shipyard: 1 })), "missile_silo").ok).toBe(true);
   });
 
   it("names the missing resources", () => {

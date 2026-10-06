@@ -23,6 +23,7 @@ import { createInitialState } from "./state";
 import { nextBoosterExpiry, pruneBoosters } from "./boosters";
 import { accrueBeacons, cloneArcade, grantRun, nextBeaconIn } from "./arcade";
 import { DM_ACHIEVEMENT_REWARD } from "../data/dark-matter";
+import { advanceShipyard, nextShipyardEvent, type CompletedUnits } from "./shipyard";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export { energyReport, globalMultiplier, productionPerSecond, storageCaps, type EnergyReport } from "./economy";
@@ -33,10 +34,11 @@ export type TickMode = "live" | "offline";
 export interface TickLog {
   completedBuilds: CompletedBuild[];
   completedResearch: CompletedResearch[];
+  completedUnits: CompletedUnits[];
 }
 
 export function emptyTickLog(): TickLog {
-  return { completedBuilds: [], completedResearch: [] };
+  return { completedBuilds: [], completedResearch: [], completedUnits: [] };
 }
 
 const EPS = 1e-9;
@@ -71,10 +73,17 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
     step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
-    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current), nextBeaconIn(current));
+    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current), nextBeaconIn(current), nextShipyardEvent(current));
 
     const moved = integrate(current, step, eco);
     current = pruneBoosters(moved.state);
+
+    // Shipyard: runs on the levels at the start of the step (it pauses while the shipyard / nanite upgrade).
+    const yardBusy = current.planet.shipyardQueue.length > 0;
+    const yard = advanceShipyard(current, step);
+    current = yard.state;
+    if (log) for (const done of yard.completed) addUnits(log.completedUnits, done);
+    const shipyardIdle = yardBusy && current.planet.shipyardQueue.length === 0;
 
     // Queue: count down the active order, finish it, start the next one.
     let queueIdle = false;
@@ -110,7 +119,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     const beacon = accrueBeacons(current, step);
     current = beacon.state;
 
-    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled, runsReady: beacon.granted > 0 };
+    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled, runsReady: beacon.granted > 0, shipyardIdle };
     if (moved.filled.length > 0 && !current.stats.seenStorageFull) {
       current = { ...current, stats: { ...current.stats, seenStorageFull: true } };
     }
@@ -124,6 +133,12 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     t += step;
   }
   return applyAchievementUnlocks(refreshUnlocks(markStorageSeen(current)));
+}
+
+function addUnits(list: CompletedUnits[], done: CompletedUnits): void {
+  const same = list.find((entry) => entry.unit === done.unit);
+  if (same) same.count += done.count;
+  else list.push({ ...done });
 }
 
 /** Seconds until the first resource changes regime (reaches its cap, or deuterium runs dry). */
