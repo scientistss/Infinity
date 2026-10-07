@@ -1,0 +1,91 @@
+name: Assemble reviewed original P4 source
+
+on:
+  push:
+    branches: ['feat/p4-1-original-planets']
+    paths: ['.p4-1-stage/ready.json']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: assemble-original-p4-1
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    if: github.repository == 'scientistss/Infinity' && github.ref == 'refs/heads/feat/p4-1-original-planets'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply reviewed text edits with exact input and output hashes
+        run: |
+          git cat-file -e 0c2dfedaa7de6312451967644a28dbfa0c665ccc || git fetch origin 0c2dfedaa7de6312451967644a28dbfa0c665ccc
+          python - <<'PY'
+          import hashlib, json, pathlib, re, subprocess
+          sha = lambda b: hashlib.sha256(b).hexdigest()
+          plan = json.loads(pathlib.Path('.p4-1-stage/edits.json').read_text())
+          canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
+          assert sha(canonical) == 'fc095776f0ac1c99cd158593c4cd9d88b132c1279411f88150251fdf7ac304d2', 'Edit plan differs from reviewed local plan'
+          refs = {'69eca7107980cce3c4c24ce4736a91993c051fbd', '0c2dfedaa7de6312451967644a28dbfa0c665ccc'}
+          assert len(plan) == 32
+          seen, outputs = set(), []
+          for f in plan:
+              name, ref = f['path'], f['ref']
+              assert ref in refs and re.fullmatch(r'(src/|tests/|scripts/|docs/)[a-zA-Z0-9_./-]+|README.md', name)
+              assert '..' not in name.split('/') and name not in seen
+              seen.add(name)
+              target = pathlib.Path(name)
+              assert not target.is_symlink() and all(not x.is_symlink() for x in target.parents)
+              original = subprocess.check_output(['git', 'show', ref + ':' + name])
+              assert sha(original) == f['before'], 'Input mismatch: ' + name
+              lines = original.decode().splitlines(keepends=True)
+              last = 0
+              for start, end, text in f['edits']:
+                  assert type(start) is int and type(end) is int and 0 <= last <= start <= end <= len(lines) and isinstance(text, str)
+                  last = end
+              for start, end, text in reversed(f['edits']):
+                  lines[start:end] = [text]
+              result = ''.join(lines).encode()
+              assert sha(result) == f['after'], 'Output mismatch: ' + name
+              outputs.append((target, result))
+          new_files = json.loads(pathlib.Path('.p4-1-stage/new-files.json').read_text())
+          assert len(new_files) == 10
+          for name, digest in new_files.items():
+              target = pathlib.Path(name)
+              assert not target.is_symlink() and all(not x.is_symlink() for x in target.parents)
+              assert sha(target.read_bytes()) == digest, 'New file mismatch: ' + name
+          for target, result in outputs:
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(result)
+              print('Verified source:', target)
+          print('All 42 reviewed files match the local source.')
+          PY
+      - run: npm ci
+      - run: node scripts/check-ui-baseline.mjs
+      - run: npm run build
+      - run: npm test
+      - name: Verify original-engine parity
+        run: |
+          mkdir -p "$RUNNER_TEMP/original-p3"
+          git archive 69eca7107980cce3c4c24ce4736a91993c051fbd | tar -x -C "$RUNNER_TEMP/original-p3"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-p3/node_modules"
+          node --import tsx scripts/check-original-parity.mjs "$RUNNER_TEMP/original-p3"
+          npm run sim -- 60
+      - name: Commit readable source to feature branch only
+        run: |
+          git diff --check
+          git config user.name 'scientistss'
+          git config user.email 'scientistss@users.noreply.github.com'
+          git rm -r .p4-1-stage
+          git add src tests scripts docs README.md
+          git commit -m 'P4-1：原版多星球状态、独立队列和共享研究（176 测试）'
+          git push origin HEAD:refs/heads/feat/p4-1-original-planets

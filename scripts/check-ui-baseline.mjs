@@ -1,0 +1,55 @@
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+const expected = {
+  "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264",
+  "src/style.css": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad",
+  "public/apple-touch-icon.png": "239a16008ed6aedb142e185c9875b4e68c0b10f205be837ba88fbe2f1a504a4d",
+  "public/favicon-32.png": "8f21fa12d58f0c908b8ba87783f97d765c37f2d3e19fca925161cbff19ea399f",
+  "public/favicon-64.png": "0129c8fbb389ed27f217ff932a625c54d959a9467bf0d1b304bea8944ba45d0e",
+  "public/icons/achievement.webp": "5e0f18491fa0eea3e3155eb2bab083d10107587a18a18db212d96f45f0355041",
+  "public/icons/card_auto_build.svg": "3e7871b3c38d8718fb8ba208f8deaafb539a873cd4ee8f83d32278a1e02b8511",
+  "public/icons/card_auto_collect.svg": "d1c3afa762f96d598d6de4a2654f4512a165ba4e6ec9b4d0990b9cfa762d7376",
+  "public/icons/card_auto_prestige.svg": "cf310006d5d1ca5acb22d3819c3e4602f1b54af57e389d09405e964571ed870c",
+  "public/icons/card_auto_runner.svg": "38af555ae8c4a53eb671724710667992d1d48c2251625e6f230f4c5d9f001f38",
+  "public/icons/card_cheapest_first.svg": "2a88d8081d4850fcd63e230a0b9eb876b0b9107d8e9d463e5ccddce61c66094a",
+  "public/icons/card_cost_ratio_guard.svg": "b95881adccf8027593be6dc730ff42fa001114f7b8a66984a3400b4b78f08763",
+  "public/icons/card_defense_keeper.svg": "60bb9aaa8bc70205c05f23e922a2b139456016c134180173c0b618875073c4ff",
+  "public/icons/card_energy_eff_gate.svg": "09de56736be5eb55630b72e2cc129ae9d349015ab4b144c61cb78a11db7545b0",
+  "public/icons/card_production_tuner.svg": "a7df4671c89cab92cc85beb9daaf018871c2af277dbe204a4ee4b0e63e91573d",
+  "public/icons/card_queue_scheduler.svg": "9f4e6064845d55bf35083172f1f6f8b8f7d951dada6726f48e4ea798f7203ec3",
+  "public/icons/card_research_scheduler.svg": "0db36b66bc89c535d4436ac121f3e4e46d9729bd816ba8e8d30f9cd1e56d0192",
+  "public/icons/card_resource_gate.svg": "7cc9ca013d4736a0545eb8a4726827072a1c09e3064b8a5f4fe9f9acc465d668",
+  "public/icons/card_satellite_power.svg": "2f57e6d2b8f7126d91aecd80497f37b744f6552cfbccd66f1a578a4b09c5e207",
+  "public/icons/crystal.webp": "b97f0ff65ef99a9fcbfa4520b46609999bf987ad6ce15177be9eb3f3c119252b",
+  "public/icons/crystal_mine-256.webp": "18edbc9054b389eea2814354cc803faa2a410cfd8e0f4824504cdeb5a4bb8efc",
+  "public/icons/crystal_mine.webp": "e31b4b200cc022396047bac8490d51319768f01ec607bd38f1cf706750c2d43d",
+  "public/icons/dark_matter.svg": "2e0f23ca4d48ed9838ea09211dea35238738d6b2918016f08929daa6b5b2b877",
+  "public/icons/defense.svg": "520203a9f9c13b15241178ed1c6d0b7c9bd562b7d2fd311e73ceb132d4e4b006",
+  "public/icons/deuterium.webp": "4fc51d1b3c2111564f4ade6b3f96a95f539f0c1574a8124358aab83027bd0637",
+  "public/icons/deuterium_synth-256.webp": "150a0f9aa11862b3c8b874befe4f2557966122b42c5c8bb5c570e3637a71ccf8",
+  "public/icons/deuterium_synth.webp": "21eb9f08c248a30040e10c5cb147a0d16c559021d4cfd01c54f1f435a77788a4",
+  "public/icons/energy.webp": "c8e72d3a5da94a122251d4bb57b64bf361b45965fbba6852ad9834b5433b77a8",
+  "public/icons/launch-256.webp": "9d493013b1edb6af0dfaf61d7fa67000a44deb0b4fff5afc9aac557d23cc2a39",
+  "public/icons/launch.webp": "94008d2c81d5aeecf560f098ff7d2d63d47bcb0581ebe915aa2c4aac9a714392",
+  "public/icons/logo.webp": "9cb7e7275ff5b68f856aef33115e738c2a9c531735b128023f26fe8261e579fb",
+  "public/icons/metal.webp": "f3b48ec6baef01014509c52a9f3dffc95e38f89bf3fa86821a373273e58d2085",
+  "public/icons/metal_mine-256.webp": "ceaafce8c7bb160d2a5d2d20378d6541f017f5b5a9541120470e8654781b7018",
+  "public/icons/metal_mine.webp": "8ab9f993700d3323fd59f854185d188d32284e4a9ad13887e9c225e8aa8cff60",
+  "public/icons/protocol_card.webp": "e75f31fd4a590cbd3d855af19f7db37626535bfea460b09cd16659c7ae96179a",
+  "public/icons/ring_machine-256.webp": "dd48c2fe96d2bb42b31eb8fc412ae037814b4a0e3f722e68f26ee75657e45f3c",
+  "public/icons/ring_machine.webp": "aff36255f121511a1f089f0537bc3aedd4d33bb4c34e14663b1e751c0dbd89b1",
+  "public/icons/robotics_factory-256.webp": "eaac1c88e67bfb406b785c5a2791cbe1e0e17e262448b565e38e53330592d556",
+  "public/icons/robotics_factory.webp": "6d4f24a934d861162be609f76f27c219f29b53f339ea4a33242199290e6e72c8",
+  "public/icons/save.webp": "ad7a72e961f8fa8bfbb472bf34149c2c327d8e58778cd12ca1ed19135c26bc8e",
+  "public/icons/shipyard.svg": "53a6a3400dd3cb6f739040a1a17db2d8e8ff1252a33abe7a2eab11a4a7aae801",
+  "public/icons/solar_plant-256.webp": "33fe3fa3f78408dfdd7e9171145402fa08cce83f8e9ceacdab568906a9bebb56",
+  "public/icons/solar_plant.webp": "3c8d2b1dcf894f4ca7af85b5acb835e190344b68fc6374ad2f2055d745f9d6dc",
+  "public/icons/tech.webp": "eb7ca4862421bf3d8f3e2e5c2842a03c59f1c01fc38848a0c7cfaef7c7d1eaba",
+  "public/icons/warp_core-256.webp": "7835cccad47495a90a36f117755ff098e2625a979ffeabed9865c4462d913d3f",
+  "public/icons/warp_core.webp": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
+};
+for (const [path, digest] of Object.entries(expected)) {
+  const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
+  if (actual !== digest) throw new Error(`原版 UI 或美术发生未批准的改变：${path}`);
+}
+console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length, result: "passed", scope: "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate" }, null, 2));
