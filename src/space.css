@@ -1,0 +1,28 @@
+/* New space panels only. The original P3/P4-1 stylesheet stays byte-identical. */
+.space-panel { min-width: 0; }
+.space-panel .space-controls { display:flex; flex-wrap:wrap; gap:.6rem; align-items:end; margin:.7rem 0; }
+.space-panel label { display:flex; flex-direction:column; gap:.3rem; color:var(--muted); font-size:.85rem; }
+.space-panel input,.space-panel select { max-width:100%; width:100%; min-width:0; background:var(--bg); color:var(--ink); font:inherit; border:1px solid var(--line-strong); border-radius:4px; padding:.35rem .45rem; }
+.space-panel .space-controls input { width:7rem; }
+.space-panel input:focus-visible,.space-panel select:focus-visible { outline:2px solid var(--good); outline-offset:2px; }
+.space-panel .space-table-scroll { overflow:auto; max-width:100%; }
+.space-panel .space-table { width:100%; min-width:750px; }
+.space-panel .space-table td { text-align:left; padding:.55rem .4rem; }
+.space-panel .space-world small { display:block; color:var(--muted); }
+.space-panel .space-owned { background:rgba(59,227,122,.06); }
+.space-panel .space-actions { display:flex; gap:.35rem; flex-wrap:wrap; }
+.space-panel .space-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; margin:.8rem 0; }
+.space-panel .space-ships { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem .8rem; }
+.space-panel .space-ship { padding:.3rem 0; }
+.space-panel .space-ship span { color:var(--ink); }
+.space-panel .space-ship small { display:block; color:var(--muted); margin-top:.1rem; }
+.space-panel .space-cargo { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; }
+.space-panel .space-quote { min-height:3rem; padding:.65rem; border-left:2px solid var(--good); background:var(--bg); }
+.space-panel .space-flight { display:grid; grid-template-columns:1fr 2fr 1fr auto; align-items:center; gap:.5rem; margin:.5rem 0; }
+.space-panel .space-flight .queue-bar { grid-column:1/-1; }
+.space-panel .space-planet { display:flex; align-items:center; flex-wrap:wrap; gap:.7rem; padding:.65rem 0; border-bottom:1px solid var(--line); font-size:.85rem; }
+.space-panel .space-message { border-bottom:1px solid var(--line); padding:.75rem 0; }
+.space-panel .space-message p { margin:.25rem 0; }
+.space-panel .space-message small,.space-panel .space-range { color:var(--muted); }
+.space-panel .space-error { color:var(--bad); }
+@media(max-width:800px){ .space-panel .space-columns {grid-template-columns:1fr;} .space-panel .space-flight {grid-template-columns:1fr auto;} }

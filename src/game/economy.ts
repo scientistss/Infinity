@@ -1,4 +1,5 @@
 import { positionBonus } from "./galaxy";
+import { HOMEWORLD_ID } from "./planet";
 import { activePlanet } from "./empire";
 /**
  * Planet economy at one instant (design doc §5.2–§5.3). Rates are constant between events,
@@ -101,17 +102,16 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
   const demand = energyDemand(planet);
   const efficiency = demand > 0 ? Math.min(1, supply / demand) : 1;
   const plasma = {
-    metal_mine: (1 + PLASMA_BONUS.metal * tech.plasma_tech) * boosterFactor(state, "metal"),
-    crystal_mine: (1 + PLASMA_BONUS.crystal * tech.plasma_tech) * boosterFactor(state, "crystal"),
-    deuterium_synth: (1 + PLASMA_BONUS.deuterium * tech.plasma_tech) * boosterFactor(state, "deuterium"),
+    metal_mine: (1 + PLASMA_BONUS.metal * tech.plasma_tech) * boosterFactor(state, "metal") * (planet.id === HOMEWORLD_ID ? 1 : positionBonus(planet.coordinates.position,"metal")),
+    crystal_mine: (1 + PLASMA_BONUS.crystal * tech.plasma_tech) * boosterFactor(state, "crystal") * (planet.id === HOMEWORLD_ID ? 1 : positionBonus(planet.coordinates.position,"crystal")),
+    deuterium_synth: (1 + PLASMA_BONUS.deuterium * tech.plasma_tech) * boosterFactor(state, "deuterium") * (planet.id === HOMEWORLD_ID ? 1 : positionBonus(planet.coordinates.position,"deuterium")),
   };
   // Plasma technology and resource boosters scale mine output only, not the planet's base production (OGame).
-  const positionFactor = (res: "metal" | "crystal" | "deuterium") => planet.homeworld ? 1 : positionBonus(planet.coordinates.position, res);
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
     mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * efficiency * plasma[id];
   const gross: ResourceRates = {
-    metal: perSecond(BASE_PRODUCTION.metal + mine("metal_mine") * positionFactor("metal"), ECONOMY_SPEED) * global,
-    crystal: perSecond(BASE_PRODUCTION.crystal + mine("crystal_mine") * positionFactor("crystal"), ECONOMY_SPEED) * global,
+    metal: perSecond(BASE_PRODUCTION.metal + mine("metal_mine"), ECONOMY_SPEED) * global,
+    crystal: perSecond(BASE_PRODUCTION.crystal + mine("crystal_mine"), ECONOMY_SPEED) * global,
     deuterium: perSecond(mine("deuterium_synth"), ECONOMY_SPEED) * global,
   };
   const fusionBurn = perSecond(fusionDeutPerHour(b.fusion_reactor) * pctOf(planet, "fusion_reactor"), ECONOMY_SPEED);

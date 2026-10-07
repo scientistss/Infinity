@@ -1,3 +1,5 @@
+import type { Universe } from "./galaxy";
+import type { Fleet, FleetMessage } from "./fleet";
 import type { BigNumber } from "./decimal";
 import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
 import type { BuildingId, ProductionBuildingId } from "../data/buildings";
@@ -81,12 +83,12 @@ export interface PlayerStats {
 }
 
 export interface GameState {
-  /** Canonical planetary state. No duplicated active-planet or resource aliases. */
+  /** Canonical per-planet inventories and independent local queues (P4-1). */
   planets: PlanetState[];
   activePlanetId: string;
-  universe: { seed: number };
-  fleets: import("./fleet").Fleet[];
-  messages: import("./fleet").FleetMessage[];
+  universe: Universe;
+  fleets: Fleet[];
+  messages: FleetMessage[];
   nextFleetId: number;
   /** Empire research levels and research queue (design doc §6). Levels are kept on launch. */
   research: ResearchState;

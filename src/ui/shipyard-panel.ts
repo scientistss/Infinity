@@ -1,4 +1,3 @@
-import { UNIT_ART } from "./art";
 /**
  * DOM for the shipyard and defense tabs (P3). Static markup is built once; {@link updateShipyardCards} only
  * touches text, classes and button states.
@@ -16,7 +15,8 @@ function rapidFireLine(def: UnitDef): string {
 }
 
 function unitIcon(def: UnitDef): string {
-  return UNIT_ART[def.id];
+  if (def.id === "solar_satellite") return "solar_plant";
+  return def.kind === "ship" ? "shipyard" : "defense";
 }
 
 function unitCard(def: UnitDef, icon: IconFn): string {

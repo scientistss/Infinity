@@ -1,8 +1,8 @@
 import { DRIVE_BONUS, SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { activePlanet, withPlanet } from "./empire";
 import { big, isValidAmount } from "./decimal";
-import { coordinateKey, distance, GALAXY, npcAt, planetProperties, sameCoordinates, validCoordinates, type Coordinates } from "./galaxy";
-import { clonePlanet, createPlanet } from "./planet";
+import { coordinateKey, distance, SPACE, npcAt, planetProperties, sameCoordinates, validCoordinates, type Coordinates } from "./galaxy";
+import { clonePlanet, createPlanet, HOMEWORLD_ID } from "./planet";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 
 export const MISSIONS = ["transport", "deploy", "colonize", "scout"] as const;
@@ -32,13 +32,13 @@ export interface FleetRequest {
 export interface FlightQuote { ok: boolean; reason: string; duration: number; fuel: ReturnType<typeof big>; capacity: ReturnType<typeof big> }
 export interface FleetResult { ok: boolean; reason: string; state: GameState }
 export function emptyCargo(): ResourceAmounts { return { metal: big(0), crystal: big(0), deuterium: big(0) }; }
-export function fleetSlots(state: GameState): number { return Math.min(GALAXY.maxFleetCount, 1 + state.research.levels.computer_tech); }
+export function fleetSlots(state: GameState): number { return Math.min(SPACE.maxFleets, 1 + state.research.levels.computer_tech); }
 export function colonyLimit(state: GameState): number { return Math.ceil(state.research.levels.astrophysics / 2); }
 export function reservedColonies(state: GameState): number { return state.fleets.filter((f) => f.mission === "colonize" && !f.returning).length; }
-export function colonyCount(state: GameState): number { return state.planets.filter((p) => !p.homeworld).length; }
+export function colonyCount(state: GameState): number { return state.planets.filter((p) => p.id !== HOMEWORLD_ID).length; }
 export function flightSeconds(d: number, speed: number, percent: number): number {
   if (!(d > 0) || !(speed > 0) || !Number.isFinite(d + speed) || percent < 10 || percent > 100 || percent % 10) throw new Error("飞行参数无效");
-  return Math.max(GALAXY.minFlightSeconds, (10 + 35000 / percent * Math.sqrt(10 * d / speed)) / GALAXY.fleetSpeed);
+  return Math.max(SPACE.minFlightSeconds, (10 + 35000 / percent * Math.sqrt(10 * d / speed)) / SPACE.fleetSpeed);
 }
 export function shipEngine(state: GameState, id: ShipId): { speed: number; fuel: number } {
   const stages = unitById(id).drives;
@@ -52,7 +52,7 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
   const fail = (reason: string): FlightQuote => ({ ok: false, reason, duration: 0, fuel: big(0), capacity: big(0) });
   if (!request || !MISSIONS.includes(request.mission)) return fail("任务类型无效");
   if (!validCoordinates(request.target)) return fail("目标坐标无效；深空充能尚未开放");
-  if (!Number.isInteger(request.speedPercent) || request.speedPercent % 10 || request.speedPercent < 10 || request.speedPercent > 100) return fail("速度必须为 10–100%，步长 10%");
+  if (!Number.isFinite(request.speedPercent) || !Number.isInteger(request.speedPercent) || request.speedPercent % 10 || request.speedPercent < 10 || request.speedPercent > 100) return fail("速度必须为 10–100%，步长 10%");
   if (state.fleets.length >= fleetSlots(state)) return fail("舰队槽位已满");
   const origin = activePlanet(state);
   if (sameCoordinates(origin.coordinates, request.target)) return fail("不能向当前星球派遣舰队");
@@ -61,7 +61,7 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
   const selected: Array<{ count: number; speed: number; fuel: number }> = [];
   for (const [key, count] of Object.entries(request.ships)) {
     if (!SHIP_IDS.includes(key as ShipId) || key === "solar_satellite") return fail("只能派遣可飞行舰船，不能派遣卫星或防御");
-    if (!Number.isSafeInteger(count) || count < 0 || count > 1e15) return fail("舰船数量必须是安全范围内的非负整数");
+    if (!Number.isSafeInteger(count) || count < 0 || count > SPACE.maxShips) return fail("舰船数量必须是安全范围内的非负整数");
     if (!count) continue;
     const id = key as ShipId;
     if (count > origin.units[id]) return fail(`${unitById(id).nameZh} 数量不足`);
@@ -72,6 +72,7 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
     capacity = capacity.add(big(unitById(id).cargo).mul(count).mul(1 + 0.05 * state.research.levels.hyperspace_tech));
     selected.push({ count, ...engine });
   }
+  if (state.planets.some(p => SHIP_IDS.some(id => !Number.isSafeInteger(p.units[id]) || p.units[id] > SPACE.maxShips))) return fail("舰船数量超过运行安全上限");
   if (!total) return fail("至少选择一艘舰船");
   const targetPlanet = state.planets.find((p) => sameCoordinates(p.coordinates, request.target));
   if ((request.mission === "transport" || request.mission === "deploy") && !targetPlanet) return fail("运输和部署的目标必须是自己的星球");
@@ -79,6 +80,7 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
     if (!request.ships.colony_ship) return fail("殖民任务需要殖民船");
     if (targetPlanet || npcAt(state, request.target)) return fail("目标位置已被占据");
     if (state.fleets.some((f) => f.mission === "colonize" && !f.returning && sameCoordinates(f.target, request.target))) return fail("该位置已有殖民舰队在途");
+    if (state.planets.length + reservedColonies(state) >= SPACE.maxPlanets) return fail("已达到开发版星球安全上限");
     if (colonyCount(state) + reservedColonies(state) >= colonyLimit(state)) return fail("殖民地名额不足，需提升天体物理学");
   }
   if (request.mission === "scout" && !request.ships.espionage_probe) return fail("侦察任务需要间谍卫星");
@@ -117,18 +119,23 @@ export function nextFleetEvent(state: GameState): number {
   return state.fleets.reduce((min, f) => Math.min(min, Math.max(0, f.remaining)), Infinity);
 }
 export function advanceFleets(state: GameState, seconds: number): GameState {
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > nextFleetEvent(state) + 1e-8) throw Error("舰队时间必须停在下一个事件边界");
   const advanced = { ...state, fleets: state.fleets.map((f) => ({ ...f, remaining: Math.max(0, f.remaining - seconds), elapsed: f.elapsed + seconds })) };
   return resolveFleetArrivals(advanced);
 }
 function addMessage(state: GameState, id: string, text: string): GameState {
-  return { ...state, messages: [...state.messages, { id, at: state.totalTime.toNumber(), text }].slice(-GALAXY.maxMessages) };
+  return { ...state, messages: [...state.messages, { id, at: state.totalTime.toNumber(), text }].slice(-SPACE.maxMessages) };
 }
 function unload(state: GameState, planetId: string, fleet: Fleet, ships: boolean): GameState {
   return { ...state, planets: state.planets.map((p) => {
     if (p.id !== planetId) return p;
     const next = clonePlanet(p);
     for (const id of RESOURCE_IDS) next.resources[id] = next.resources[id].add(fleet.cargo[id]);
-    if (ships) for (const id of SHIP_IDS) next.units[id] += fleet.ships[id] ?? 0;
+    if (ships) for (const id of SHIP_IDS) {
+      const total = next.units[id] + (fleet.ships[id] ?? 0);
+      if (!Number.isSafeInteger(total)) throw Error("返航舰船数量超出安全整数范围");
+      next.units[id] = total;
+    }
     return next;
   }) };
 }
@@ -153,9 +160,9 @@ export function resolveFleetArrivals(state: GameState): GameState {
       next = addMessage(next, `arrival-${fleet.id}`, `舰队 #${fleet.id} 已抵达 ${target.name}，${fleet.mission === "deploy" ? "舰船与货物完成部署" : "货物已卸载，舰队开始返航"}。`);
       if (fleet.mission === "deploy") { remove(); continue; }
       cargo = emptyCargo();
-    } else if (fleet.mission === "colonize" && !target && !npcAt(next, fleet.target) && colonyCount(next) < colonyLimit(next) && (ships.colony_ship ?? 0) > 0) {
+    } else if (fleet.mission === "colonize" && !target && !npcAt(next, fleet.target) && next.planets.length < SPACE.maxPlanets && colonyCount(next) < colonyLimit(next) && (ships.colony_ship ?? 0) > 0) {
       const id = `colony-${fleet.id}`;
-      const planet = { ...createPlanet(), ...planetProperties(next.universe.seed, fleet.target), id, name: `殖民地 ${coordinateKey(fleet.target)}`, coordinates: { ...fleet.target }, homeworld: false, resources: { ...fleet.cargo } };
+      const planet = { ...createPlanet(), ...planetProperties(next.universe.seed, fleet.target), id, name: `殖民地 ${coordinateKey(fleet.target)}`, coordinates: { ...fleet.target }, resources: { ...fleet.cargo } };
       next = { ...next, planets: [...next.planets, planet] };
       ships.colony_ship! -= 1;
       cargo = emptyCargo();
@@ -180,7 +187,7 @@ export function recallFleet(state: GameState, id: number): FleetResult {
 }
 export function abandonColony(state: GameState, id: string): FleetResult {
   const planet = state.planets.find((p) => p.id === id);
-  if (!planet || planet.homeworld) return { state, ok: false, reason: "不能放弃母星" };
+  if (!planet || planet.id === HOMEWORLD_ID) return { state, ok: false, reason: "不能放弃母星" };
   if (state.fleets.some((f) => f.originId === id || sameCoordinates(f.target, planet.coordinates)) || state.research.queue.some((q) => q.planetId === id)) return { state, ok: false, reason: "仍有相关舰队或研究订单，不能放弃该星球" };
   const planets = state.planets.filter((p) => p.id !== id);
   return { state: { ...state, planets, activePlanetId: state.activePlanetId === id ? planets[0]!.id : state.activePlanetId }, ok: true, reason: "殖民地已放弃；其库存、建筑与驻留舰船不退款" };

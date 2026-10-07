@@ -121,7 +121,7 @@ function unitCard(state: GameState, def: UnitDef): UnitCardView {
   } else {
     const stage = currentDrive(state, def);
     mobility = stage
-      ? `速度 ${num(shipSpeed(state, def))}（${DRIVE_NAME[stage.drive]}引擎 ${state.research.levels[stage.drive]} 级）· 货舱 ${num(def.cargo * (1 + 0.05 * state.research.levels.hyperspace_tech))} · 油耗 ${stage.fuel}`
+      ? `速度 ${num(shipSpeed(state, def))}（${DRIVE_NAME[stage.drive]}引擎 ${state.research.levels[stage.drive]} 级）· 货舱 ${num(def.cargo)} · 油耗 ${stage.fuel}`
       : "不能飞";
   }
   const queued = queuedUnits(planet, def.id);

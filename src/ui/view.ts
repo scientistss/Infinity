@@ -1,265 +1,1202 @@
-import { mountView as mountLegacy, type GameView, type UiAction } from "./controls-view";
-import type { ViewModel } from "./present";
-import type { EmpireView } from "./empire-present";
-import { activeBuildings } from "../game/content";
-import { RESEARCH, RESEARCH_GROUP_LABEL } from "../data/research";
-import { NAV_GROUPS, PAGE_META, matchesQuery, orbitalPoint, stageFor, slotStatus } from "./command-model";
-import { escapeAttribute as esc, GAME_VERSION } from "./art";
-export type { UiAction } from "./controls-view";
+import { ACHIEVEMENTS } from "../data/achievements";
+import { CURVATURE_TECH, isCurvatureId } from "../data/curvature-tech";
+import { CARD_CATALOG } from "../data/protocol-cards";
+import {
+  PRESTIGE_SCORE_UNIT,
+  PRODUCTION_IDS,
+  RESOURCES,
+  activeBuildings,
+  buildingById,
+  isBuildingId,
+  isProductionId,
+  type BuildingDef,
+  type BuildingId,
+  type ProductionBuildingId,
+} from "../game/content";
+import { PROTOCOL_SLOT_COUNT, type CurvatureId } from "../game/types";
+import { RESEARCH, RESEARCH_GROUP_LABEL, isResearchId, type ResearchDef, type ResearchGroup, type ResearchId } from "../data/research";
+import type { QueueView, TableRowView, ViewModel } from "./present";
+import { INVENTORY_IDS, INVENTORY_LABEL, PACKAGE_FRACTIONS, SHOP_ITEMS, dmClockSeconds, isInventoryId, isShopItemId, type InventoryItemId, type ShopItemId } from "../data/dark-matter";
+import type { PackageKind, SpeedupMode, SpeedupTarget } from "../game/dark-matter";
+import { formatDuration } from "../game/format";
+import type { ResourceId } from "../game/types";
+import { isBetSymbol, type BetSymbol } from "../data/arcade";
+import type { RunResult } from "../game/arcade";
+import { ArcadeAnimator, arcadePanelHtml, readSkipPreference, updateArcadePanel, writeSkipPreference } from "./arcade-panel";
+import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyard-panel";
+import { isUnitId, type UnitId } from "../data/units";
 
-function node<T extends HTMLElement = HTMLElement>(root: ParentNode, selector: string): T {
-  const n = root.querySelector<T>(selector);
-  if (!n) throw new Error(`Missing command UI: ${selector}`);
-  return n;
-}
-function element(tag: string, className: string, markup = ""): HTMLElement {
-  const n = document.createElement(tag); n.className = className; n.innerHTML = markup; return n;
-}
-function text(root: ParentNode, selector: string, value: string): void {
-  const n = node(root, selector); if (n.textContent !== value) n.textContent = value;
-}
-const GLYPHS: Record<string, string> = {
-  overview: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
-  facilities: "M3 21V9l6-4v5l6-4v7l6-3v11H3zM7 17h1m4 0h1m4 0h1",
-  research: "M9 3h6m-5 0v7l-6 9q-1 2 2 2h12q3 0 2-2l-6-9V3M8 15h8",
-  shipyard: "M3 17l9 4 9-4M6 16V6h12v10M9 6V3h6v3M9 11h6",
-  defense: "M12 2l8 4v6q-1 7-8 10-7-3-8-10V6zM8 12l3 3 5-6",
-  fleet: "M3 20L12 3l9 17-9-4-9 4zM12 3v13",
-  empire: "M3 21h18M5 21V9h5v12m4 0V3h5v18M5 13h5m4-6h5m-5 5h5",
-  galaxy: "M12 2a10 10 0 1 0 10 10M8 8c-7 5-7 12-2 11 9-1 19-13 14-15-3-1-8 1-12 4M10 12h4m-2-2v4",
-  messages: "M3 5h18v14H3zM3 5l9 8 9-8",
-  protocol: "M3 4h6v6H3zM15 14h6v6h-6zM6 10v7h9M9 7h9v7",
-  curvature: "M4 12a8 8 0 1 1 8 8M4 12V5m0 7h7M12 7v5l3 3",
-  arcade: "M12 3v4m0 10v4M3 12h4m10 0h4M6 6l3 3m6 6l3 3M6 18l3-3m6-6l3-3M12 9l3 3-3 3-3-3z",
-  darkmatter: "M12 3l8 9-8 9-8-9 8-9zM4 12h16M12 3v18",
-  achievements: "M8 3h8v7q0 6-4 6t-4-6V3M8 5H4v3q0 4 5 4m7-7h4v3q0 4-5 4M12 16v5m-4 0h8",
-  save: "M4 3h13l4 4v14H3V3h1zM7 3v6h10V3M7 21v-7h10v7",
-};
-function glyph(id: string): string {
-  return `<svg class="cc-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${GLYPHS[id] ?? GLYPHS.overview}"/></svg>`;
-}
-interface InspectorRow { id: string; name: string; group: string }
-interface InspectorValue { id: string; level: string; cost: string; time: string; reason: string; locked: boolean; canEnqueue: boolean }
+export type UiAction =
+  | { type: "scrape" }
+  | { type: "enqueue"; id: BuildingId }
+  | { type: "cancelQueue"; index: number }
+  | { type: "enqueueResearch"; id: ResearchId }
+  | { type: "cancelResearch"; index: number }
+  | { type: "build-units"; id: UnitId; mode: "count" | "max" | "fill"; count: number }
+  | { type: "cancel-units"; index: number }
+  | { type: "dm-speedup"; target: SpeedupTarget; mode: SpeedupMode }
+  | { type: "dm-shop"; id: ShopItemId; res: ResourceId }
+  | { type: "dm-package"; kind: PackageKind; fraction: number }
+  | { type: "dm-use"; id: InventoryItemId }
+  | { type: "arcade-run" }
+  | { type: "arcade-all" }
+  | { type: "arcade-topup" }
+  | { type: "arcade-bet"; symbol: BetSymbol; delta: number }
+  | { type: "arcade-bet-clear" }
+  | { type: "setProduction"; id: ProductionBuildingId; pct: number }
+  | { type: "prestige" }
+  | { type: "save" }
+  | { type: "export" }
+  | { type: "import-text"; text: string }
+  | { type: "import-file"; file: File }
+  | { type: "reset" }
+  | { type: "dismiss-offline" }
+  | { type: "dismiss-notice" }
+  | { type: "buy-tech"; id: CurvatureId }
+  | { type: "protocol-equip"; index: number; cardId: string }
+  | { type: "protocol-palette"; cardId: string }
+  | { type: "protocol-toggle"; index: number; enabled: boolean }
+  | { type: "protocol-clear"; index: number }
+  | { type: "protocol-move"; from: number; to: number }
+  | { type: "protocol-param"; index: number; path: string; value: string };
 
-/** Mount once, then retain the existing interactive controls and their action handlers. */
-function inspector(root: HTMLElement, page: string, prefix: string, rows: InspectorRow[]) {
-  const panel = node(root, `[data-tab-panel="${page}"]`);
-  const cards = rows.map(r => node(panel, `[data-bind="${prefix}-${r.id}"]`));
-  const layout = element("div", "cc-inspector", `<div class="cc-index"><label class="cc-search">筛选${page === "facilities" ? "建筑" : "科技"}<input type="search" id="cc-search-${page}" placeholder="输入名称…" autocomplete="off" /></label><div class="cc-filter" role="group" aria-label="分类"></div><div class="cc-index-head"><span>项目 / 等级</span><span>建造状态</span></div><div class="cc-index-list"></div><p class="cc-no-results" hidden>没有匹配项目。请修改名称或分类。</p></div><div class="cc-inspector-detail" id="cc-detail-${page}" role="region" aria-label="所选${page === "facilities" ? "建筑" : "研究"}详情"><p class="cc-eyebrow">详情与操作</p></div>`);
-  const list = node(layout, ".cc-index-list"), detail = node(layout, ".cc-inspector-detail");
-  const groups = ["全部", ...new Set(rows.map(r => r.group))];
-  node(layout, ".cc-filter").innerHTML = groups.map((g,i) => `<button type="button" data-filter="${esc(g)}" aria-pressed="${i === 0}">${esc(g)}</button>`).join("");
-  list.innerHTML = rows.map((r,i) => `<button type="button" class="cc-index-row" data-inspect="${r.id}" aria-controls="cc-detail-${page}" aria-pressed="false"><span class="cc-row-code">${String(i + 1).padStart(2,"0")}</span><span class="cc-row-title"><strong>${esc(r.name)}</strong><small data-row-level></small></span><span class="cc-row-meta"><span data-row-state></span><small data-row-time></small></span></button>`).join("");
-  cards.forEach(c => {
-    detail.append(c);
-    const explanation = c.querySelector(".bld-blurb");
-    const payback = c.querySelector(".bld-payback");
-    if (explanation || payback) {
-      const d = element("details", "cc-technical", "<summary>说明与效率</summary>");
-      if (explanation) d.append(explanation); if (payback) d.append(payback);
-      c.append(d);
+export interface GameView {
+  update(model: ViewModel): void;
+  setTransferText(text: string): void;
+  /** Play the ring machine light for results that were just revealed (state already updated). */
+  playArcade(results: RunResult[]): void;
+  /** Current "skip animation" preference. */
+  arcadeSkip(): boolean;
+}
+
+export function mountView(root: HTMLElement, onAction: (action: UiAction) => void): GameView {
+  root.innerHTML = shellMarkup();
+  selectTab(root, readSavedTab());
+
+  const transfer = requiredTextArea(root, "transfer");
+  const animator = new ArcadeAnimator();
+  const skipBox = requiredInput(root, "arcade-skip");
+  skipBox.checked = readSkipPreference();
+  skipBox.addEventListener("change", () => writeSkipPreference(skipBox.checked));
+  const fileInput = requiredInput(root, "import-file");
+
+  root.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest("button");
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+    if (button.dataset.tab) {
+      selectTab(root, button.dataset.tab);
+      return;
+    }
+    const action = button.dataset.action;
+    if (action === "scrape") onAction({ type: "scrape" });
+    if (action === "prestige") onAction({ type: "prestige" });
+    if (action === "save") onAction({ type: "save" });
+    if (action === "export") onAction({ type: "export" });
+    if (action === "import-text") onAction({ type: "import-text", text: transfer.value });
+    if (action === "reset") onAction({ type: "reset" });
+    if (action === "dismiss-offline") onAction({ type: "dismiss-offline" });
+    if (action === "dismiss-notice") onAction({ type: "dismiss-notice" });
+    if (action === "buy-tech") {
+      const id = button.dataset.id ?? "";
+      if (isCurvatureId(id)) onAction({ type: "buy-tech", id });
+    }
+    if (action === "enqueue") {
+      const id = button.dataset.id ?? "";
+      if (isBuildingId(id)) onAction({ type: "enqueue", id });
+    }
+    if (action === "cancel-queue") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancelQueue", index });
+    }
+    if (action === "dm-speedup") {
+      const target = button.dataset.target === "research" ? "research" : button.dataset.target === "shipyard" ? "shipyard" : "build";
+      const mode = button.dataset.mode === "finish" ? "finish" : "halve";
+      onAction({ type: "dm-speedup", target, mode });
+    }
+    if (action === "dm-shop") {
+      const id = button.dataset.id ?? "";
+      const res = button.dataset.res;
+      const resource: ResourceId = res === "crystal" || res === "deuterium" ? res : "metal";
+      if (isShopItemId(id)) onAction({ type: "dm-shop", id, res: resource });
+    }
+    if (action === "dm-package") {
+      const kind = button.dataset.kind;
+      const fraction = Number(button.dataset.fraction);
+      if ((kind === "metal" || kind === "crystal" || kind === "deuterium" || kind === "bundle") && Number.isFinite(fraction)) {
+        onAction({ type: "dm-package", kind, fraction });
+      }
+    }
+    if (action === "dm-use") {
+      const id = button.dataset.id ?? "";
+      if (isInventoryId(id)) onAction({ type: "dm-use", id });
+    }
+    if (action === "arcade-run") onAction({ type: "arcade-run" });
+    if (action === "arcade-all") onAction({ type: "arcade-all" });
+    if (action === "arcade-topup") onAction({ type: "arcade-topup" });
+    if (action === "arcade-bet-clear") onAction({ type: "arcade-bet-clear" });
+    if (action === "arcade-bet") {
+      const symbol = button.dataset.symbol;
+      const delta = button.dataset.delta === "-1" ? -1 : 1;
+      if (isBetSymbol(symbol)) onAction({ type: "arcade-bet", symbol, delta });
+    }
+    if (action === "research") {
+      const id = button.dataset.id ?? "";
+      if (isResearchId(id)) onAction({ type: "enqueueResearch", id });
+    }
+    if (action === "build-units") {
+      const id = button.dataset.id ?? "";
+      const mode = button.dataset.mode === "max" ? "max" : button.dataset.mode === "fill" ? "fill" : "count";
+      if (isUnitId(id)) onAction({ type: "build-units", id, mode, count: unitQuantity(root, id) });
+    }
+    if (action === "cancel-units") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancel-units", index });
+    }
+    if (action === "cancel-research") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "cancelResearch", index });
+    }
+    if (action === "equip-card") {
+      const cardId = button.dataset.card ?? "";
+      if (cardId) onAction({ type: "protocol-palette", cardId });
+    }
+    if (action === "slot-clear") {
+      const index = Number(button.dataset.index);
+      if (Number.isInteger(index)) onAction({ type: "protocol-clear", index });
+    }
+    if (action === "slot-move") {
+      const index = Number(button.dataset.index);
+      const dir = button.dataset.dir === "-1" ? -1 : 1;
+      if (Number.isInteger(index)) onAction({ type: "protocol-move", from: index, to: index + dir });
     }
   });
-  panel.querySelectorAll(":scope > .bld-grid, :scope > .group-title").forEach(n => n.remove());
-  panel.append(layout);
-  let selected = rows[0]!.id, query = "", group = "全部";
-  try { const saved = localStorage.getItem(`infinity.ui.inspect.${page}`); if (rows.some(r=>r.id===saved)) selected=saved!; } catch { /* Optional UI preference. */ }
-  function apply() {
-    const shown = rows.filter(r => (group === "全部" || r.group === group) && matchesQuery(r.name,r.id,query));
-    if (shown.length && !shown.some(r=>r.id===selected)) selected=shown[0]!.id;
-    for (const [i,r] of rows.entries()) {
-      const b = node<HTMLButtonElement>(list, `[data-inspect="${r.id}"]`);
-      b.hidden=!shown.includes(r); b.setAttribute("aria-pressed",String(r.id===selected));
-      cards[i]!.hidden=r.id!==selected || !shown.length;
-    }
-    node(layout,".cc-no-results").hidden=shown.length>0;
-    detail.hidden=!shown.length;
-    for(const b of layout.querySelectorAll<HTMLElement>("[data-filter]")) b.setAttribute("aria-pressed",String(b.dataset.filter===group));
-  }
-  list.addEventListener("click",event=>{
-    const b=(event.target as Element).closest<HTMLElement>("[data-inspect]"); if(!b)return;
-    selected=b.dataset.inspect!;apply();
-    try{localStorage.setItem(`infinity.ui.inspect.${page}`,selected);}catch{ /* Optional. */ }
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (file) onAction({ type: "import-file", file });
   });
-  list.addEventListener("keydown",event=>{
-    if(!["ArrowDown","ArrowUp","Home","End"].includes(event.key))return;
-    const buttons=Array.from(list.querySelectorAll<HTMLButtonElement>("button:not([hidden])"));
-    const i=buttons.indexOf(document.activeElement as HTMLButtonElement);if(i<0)return;
+
+  root.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target instanceof HTMLSelectElement && target.dataset.prod) {
+      const id = target.dataset.prod;
+      const pct = Number(target.value);
+      if (isProductionId(id) && Number.isInteger(pct)) onAction({ type: "setProduction", id, pct });
+      return;
+    }
+    const slot = target.closest("[data-slot]");
+    if (!(slot instanceof HTMLElement)) return;
+    const index = Number(slot.dataset.slot);
+    if (!Number.isInteger(index)) return;
+    if (target instanceof HTMLInputElement && target.dataset.field === "enabled") {
+      onAction({ type: "protocol-toggle", index, enabled: target.checked });
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.dataset.path) {
+      onAction({ type: "protocol-param", index, path: target.dataset.path, value: target.value });
+    }
+  });
+
+  root.addEventListener("dragstart", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !event.dataTransfer) return;
+    const card = target.closest("[data-card]");
+    if (card instanceof HTMLElement && card.dataset.card) {
+      event.dataTransfer.setData("text/plain", `card:${card.dataset.card}`);
+      event.dataTransfer.effectAllowed = "copy";
+      return;
+    }
+    const handle = target.closest("[data-slot-drag]");
+    if (handle instanceof HTMLElement && handle.dataset.slotDrag) {
+      event.dataTransfer.setData("text/plain", `slot:${handle.dataset.slotDrag}`);
+      event.dataTransfer.effectAllowed = "move";
+    }
+  });
+
+  root.addEventListener("dragover", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.closest("[data-slot]")) event.preventDefault();
+  });
+
+  root.addEventListener("drop", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !event.dataTransfer) return;
+    const slot = target.closest("[data-slot]");
+    if (!(slot instanceof HTMLElement)) return;
     event.preventDefault();
-    const next=event.key==="Home"?0:event.key==="End"?buttons.length-1:(i+(event.key==="ArrowDown"?1:-1)+buttons.length)%buttons.length;
-    buttons[next]?.focus();buttons[next]?.click();
-  });
-  node<HTMLInputElement>(layout,"input").addEventListener("input",event=>{query=(event.target as HTMLInputElement).value;apply();});
-  node(layout,".cc-filter").addEventListener("click",event=>{const b=(event.target as Element).closest<HTMLElement>("[data-filter]");if(b){group=b.dataset.filter!;apply();}});
-  apply();
-  return (values: InspectorValue[])=>{
-    for(const v of values){
-      const b=node(list,`[data-inspect="${v.id}"]`);
-      text(b,"[data-row-level]",`等级 ${v.level}`);
-      text(b,"[data-row-time]",v.time.replace(/^(建造|研究)时间\s*/,""));
-      text(b,"[data-row-state]",v.locked?"待解锁":v.canEnqueue?"可升级":"待资源 / 队列");
-      b.classList.toggle("available",v.canEnqueue);b.classList.toggle("is-locked",v.locked);
-      b.title=`${v.cost} · ${v.reason}`;
+    const index = Number(slot.dataset.slot);
+    if (!Number.isInteger(index)) return;
+    const text = event.dataTransfer.getData("text/plain");
+    if (text.startsWith("card:")) onAction({ type: "protocol-equip", index, cardId: text.slice(5) });
+    if (text.startsWith("slot:")) {
+      const from = Number(text.slice(5));
+      if (Number.isInteger(from)) onAction({ type: "protocol-move", from, to: index });
     }
+  });
+
+  return {
+    update(model) {
+      setText(root, "telemetry", model.telemetry);
+      setText(root, "multiplier", `产量 ${model.multiplier}`);
+      setText(root, "played", `累计 ${model.played}`);
+      setText(root, "score", model.score);
+      setText(root, "gain", model.gain);
+      setText(root, "gain-detail", model.gain);
+      setText(root, "energy-top", model.energy);
+      requiredElement(root, "energy-chip").classList.toggle("short", model.energyShort);
+      setText(root, "status", model.status);
+      setText(root, "status-dm", model.status);
+      setText(root, "status-arcade", model.status);
+      setText(root, "status-shipyard", model.status);
+      setText(root, "status-defense", model.status);
+      setText(root, "offline-cap", model.offlineCap);
+      setText(root, "ach-summary", model.achievementSummary);
+      setText(root, "unspent-line", model.unspentLine);
+      for (const bind of ["action-scrape", "action-scrape-ov"]) setText(root, bind, model.scrapeLabel);
+      for (const bind of ["passive", "passive-ov"]) setText(root, bind, model.passive);
+
+      for (const resource of model.resources) {
+        setText(root, `amount-${resource.id}`, resource.amount);
+        setText(root, `cap-${resource.id}`, resource.cap);
+        setText(root, `rate-${resource.id}`, resource.rate);
+        setText(root, `eta-${resource.id}`, resource.eta);
+        const card = requiredElement(root, `res-${resource.id}`);
+        card.classList.toggle("warn", resource.fill === "warn");
+        card.classList.toggle("full", resource.fill === "full");
+        requiredElement(root, `fill-${resource.id}`).style.width = `${resource.fillPct.toFixed(1)}%`;
+      }
+
+      updateQueue(root, "queue", ["", "-ov"], model.queue, "cancel-queue", "build");
+      updateResearch(root, model);
+      updateShipyard(root, model);
+      updateDarkMatter(root, model);
+      updateArcade(root, model, animator);
+
+      for (const building of model.buildings) {
+        setText(root, `level-${building.id}`, building.level);
+        setText(root, `cost-${building.id}`, building.cost);
+        setText(root, `time-${building.id}`, building.time);
+        setText(root, `effect-${building.id}`, building.effect);
+        setText(root, `payback-${building.id}`, building.payback);
+        setText(root, `requires-${building.id}`, building.requires);
+        setText(root, `upgrade-${building.id}`, building.button);
+        setText(root, `reason-${building.id}`, building.reason);
+        requiredElement(root, `bld-${building.id}`).classList.toggle("locked", building.locked);
+        const button = requiredButton(root, `enqueue-${building.id}`);
+        button.disabled = !building.canEnqueue;
+        button.title = building.reason;
+      }
+
+      for (const setting of model.production) {
+        const select = requiredElement(root, `prod-${setting.id}`);
+        if (select instanceof HTMLSelectElement && select.value !== setting.value && document.activeElement !== select) {
+          select.value = setting.value;
+        }
+        setText(root, `prod-note-${setting.id}`, setting.note);
+      }
+
+      const overview = model.overview;
+      setText(root, "ov-planet", overview.planet);
+      setText(root, "ov-temp", overview.temperature);
+      setText(root, "ov-fields", overview.fields);
+      setText(root, "ov-global", overview.global);
+      setText(root, "ov-energy-summary", overview.energySummary);
+      updateRows(root, "ov-prod", overview.production);
+      updateRows(root, "ov-energy", overview.energy);
+
+      for (const tech of model.techs) {
+        setText(root, `tech-owned-${tech.id}`, tech.owned);
+        setText(root, `tech-detail-${tech.id}`, tech.detail);
+        setText(root, `tech-preview-${tech.id}`, tech.preview);
+        const buy = requiredButton(root, `tech-buy-${tech.id}`);
+        buy.disabled = !tech.canBuy;
+        buy.textContent = tech.button;
+      }
+
+      for (const achievement of model.achievements) {
+        setText(root, `ach-progress-${achievement.id}`, achievement.progress);
+        requiredElement(root, `ach-${achievement.id}`).classList.toggle("unlocked", achievement.unlocked);
+      }
+
+      const modal = requiredElement(root, "offline-modal");
+      modal.hidden = model.offline === null;
+      if (model.offline) {
+        setText(root, "offline-applied", model.offline.applied);
+        setText(root, "offline-detail", model.offline.detail);
+        setText(root, "offline-protocol", model.offline.protocol);
+        fillList(
+          requiredElement(root, "offline-gains"),
+          model.offline.gains.map((gain) => `${gain.name} ${gain.amount}`),
+        );
+        fillList(requiredElement(root, "offline-builds"), model.offline.builds);
+        fillList(requiredElement(root, "offline-research"), model.offline.research);
+        fillList(requiredElement(root, "offline-units"), model.offline.units);
+        requiredElement(root, "offline-units-wrap").hidden = model.offline.units.length === 0;
+        fillList(requiredElement(root, "offline-arcade"), model.offline.arcade);
+        requiredElement(root, "offline-arcade-wrap").hidden = model.offline.arcade.length === 0;
+      }
+
+      const banner = requiredElement(root, "banner");
+      banner.hidden = model.banner === null;
+      banner.textContent = model.banner ?? "";
+      const notice = requiredElement(root, "notice");
+      notice.hidden = model.notice === null;
+      setText(root, "notice-text", model.notice ?? "");
+
+      const prestige = requiredButton(root, "action-prestige");
+      prestige.disabled = !model.canPrestige;
+
+      setText(root, "protocol-energy", model.protocolEnergy);
+      setText(root, "protocol-meta", model.protocolMeta);
+      for (const card of model.catalog) {
+        const button = requiredButton(root, `catalog-${card.id}`);
+        button.disabled = !card.unlocked;
+        button.draggable = card.unlocked;
+        button.title = card.hint;
+      }
+      for (const slot of model.slots) {
+        const locked = requiredElement(root, `slot-lock-${slot.index}`);
+        const controls = requiredElement(root, `slot-controls-${slot.index}`);
+        locked.hidden = slot.unlocked;
+        controls.hidden = !slot.unlocked;
+        locked.textContent = slot.lockHint;
+        setText(root, `slot-sentence-${slot.index}`, slot.sentence);
+        setText(root, `slot-reason-${slot.index}`, slot.unlocked && slot.sentence ? slot.reason : "");
+        const lamp = requiredElement(root, `lamp-${slot.index}`);
+        lamp.className = `lamp lamp-${slot.lamp}`;
+        lamp.title = slot.reason;
+        if (!slot.unlocked) continue;
+        const enabled = requiredInput(root, `slot-enabled-${slot.index}`);
+        enabled.disabled = slot.sentence === "";
+        enabled.checked = slot.enabled;
+        const params = requiredElement(root, `slot-params-${slot.index}`);
+        if (params.dataset.key !== slot.fieldsKey && !params.contains(document.activeElement)) {
+          params.dataset.key = slot.fieldsKey;
+          params.innerHTML = slot.fields
+            .map(
+              (field) =>
+                `<label class="param">${field.label}<select data-path="${field.path}">${field.options
+                  .map((option) => `<option value="${option.value}">${option.label}</option>`)
+                  .join("")}</select></label>`,
+            )
+            .join("");
+        }
+        for (const field of slot.fields) {
+          const select = params.querySelector(`select[data-path="${field.path}"]`);
+          if (select instanceof HTMLSelectElement && select.value !== field.value) select.value = field.value;
+        }
+      }
+    },
+    setTransferText(text) {
+      transfer.value = text;
+    },
+    playArcade(results) {
+      animator.play(results, skipBox.checked, performance.now());
+    },
+    arcadeSkip() {
+      return skipBox.checked;
+    },
   };
 }
 
-function galaxyMap(root: HTMLElement) {
-  const panel=node(root,'[data-tab-panel="galaxy"]');
-  const layout=element("div","cc-galaxy",`<div class="cc-system"><div class="cc-map-heading"><span class="cc-eyebrow">恒星系示意 · 非比例</span><strong id="cc-system-name"></strong></div><div class="cc-orbital" role="group" aria-label="选择行星位置"><div class="cc-orbit cc-orbit-1"></div><div class="cc-orbit cc-orbit-2"></div><div class="cc-orbit cc-orbit-3"></div><div class="cc-star" aria-hidden="true"></div>${Array.from({length:15},(_,i)=>{const p=orbitalPoint(i+1);return `<button type="button" class="cc-world" data-position="${i+1}" style="left:${p.x}%;top:${p.y}%" aria-pressed="false"><span class="cc-world-dot" aria-hidden="true"></span><span class="cc-world-index">${String(i+1).padStart(2,"0")}</span><span class="cc-world-label"></span></button>`;}).join("")}</div><div class="cc-map-key"><span class="own">己方</span><span class="npc">NPC 邻居</span><span class="empty">未占据</span></div></div><aside class="cc-world-detail" aria-label="选中位置详情"><p class="cc-eyebrow">目标情报</p><div class="cc-planet-portrait" aria-hidden="true"></div><p id="cc-world-coordinate"></p><h3 id="cc-world-name"></h3><p id="cc-world-faction"></p><p id="cc-world-note"></p><div id="cc-world-actions"><button type="button" data-action="select-planet">切换星球</button><button type="button" data-route="" data-mission="scout">侦察</button><button type="button" data-route="" data-mission="colonize">殖民</button><button type="button" data-route="" data-mission="transport">运输</button></div></aside>`);
-  const legend=node(panel,".galaxy-legend");legend.hidden=true;
-  legend.after(layout);
-  const table=node(panel,"#galaxy-rows");const d=element("details","cc-coordinate-list","<summary>坐标列表与快捷操作</summary>");table.before(d);d.append(table);
-  let m:EmpireView|null=null, selected=8, system="";
-  function render(){
-    if(!m)return;
-    const r=m.rows.find(r=>r.position===selected)??m.rows[0]!;
-    text(root,"#cc-system-name",`${String(m.cursor.galaxy).padStart(2,"0")} / ${String(m.cursor.system).padStart(3,"0")}`);
-    text(root,"#cc-world-coordinate",`[${r.coordinate}]`);text(root,"#cc-world-name",r.name);text(root,"#cc-world-faction",r.faction);
-    text(root,"#cc-world-note",r.kind==="own"?"独立库存与建造队列。研究成果由帝国共享。":r.kind==="npc"?"可派遣侦察舰获取基础情报；当前版本不会触发战斗。":r.reserved?"殖民任务已出发，抵达后建立新殖民地。":"派遣殖民船建立新据点。可用名额以天体物理研究为准。");
-    node(layout,".cc-planet-portrait").dataset.kind=r.kind;
-    for(const row of m.rows){
-      const b=node<HTMLButtonElement>(layout,`[data-position="${row.position}"]`);
-      text(b,".cc-world-label",row.kind==="empty"?"未占据":row.name);b.dataset.kind=row.kind;b.classList.toggle("reserved",row.reserved);
-      b.setAttribute("aria-pressed",String(row.position===selected));b.setAttribute("aria-label",`${row.position} 号位置：${row.name}，${row.faction}`);b.title=`[${row.coordinate}] ${row.name}`;
-    }
-    for(const b of layout.querySelectorAll<HTMLButtonElement>("#cc-world-actions button")){
-      if(b.dataset.action){b.hidden=r.kind!=="own";b.dataset.planet=r.planetId;b.disabled=r.selected;b.textContent=r.selected?"当前星球":"切换星球";}
-      else{b.dataset.route=r.coordinate;b.hidden=b.dataset.mission==="transport"?r.kind!=="own"||r.selected:b.dataset.mission==="colonize"?r.kind!=="empty":r.kind==="own";b.disabled=b.dataset.mission==="colonize"&&r.reserved;}
+function updateShipyard(root: HTMLElement, model: ViewModel): void {
+  const yard = model.shipyard;
+  for (const id of ["tab-shipyard", "tab-defense"]) {
+    const tab = requiredElement(root, id);
+    if (tab.hidden === yard.visible) {
+      tab.hidden = !yard.visible;
+      if (!yard.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
     }
   }
-  layout.addEventListener("click",event=>{const b=(event.target as Element).closest<HTMLElement>("[data-position]");if(b){selected=Number(b.dataset.position);render();}});
-  return (value:EmpireView)=>{m=value;const key=`${m.cursor.galaxy}:${m.cursor.system}`;if(key!==system){system=key;selected=m.rows.find(r=>r.selected)?.position??8;}render();};
+  requiredElement(root, "squeue-wrap-ov").hidden = !yard.visible;
+  updateQueue(root, "squeue", ["", "-def", "-ov"], yard.queue, "cancel-units", "shipyard");
+  const visiblePanel = ["shipyard", "defense"].some((id) => {
+    const panel = root.querySelector<HTMLElement>(`[data-tab-panel="${id}"]`);
+    return panel !== null && !panel.hidden;
+  });
+  if (visiblePanel) updateShipyardCards(root, yard);
 }
 
-/** Structure and presentation only: all economic actions still use the original view. */
-export function mountView(root: HTMLElement,onAction:(action:UiAction)=>void):GameView {
-  let forcePaint=true,lastPaint=-Infinity;
-  const legacy=mountLegacy(root,action=>{forcePaint=true;onAction(action);});
-  root.classList.add("command-ui");
-  const shell=element("div","cc-shell");
-  const sidebar=element("aside","cc-sidebar",`<div class="cc-brand"><span aria-hidden="true">∞</span><div>INFINITY<small>星际殖民计划</small></div><button type="button" id="cc-nav-close" aria-label="关闭导航">×</button></div>`);sidebar.id="cc-sidebar";
-  const stage=element("div","cc-stage"),work=element("div","cc-workarea");
-  const top=node(root,".topbar"),main=node(root,"main.wrap"),nav=node(root,".tabs"),planet=node(root,".planet-toolbar");
-  sidebar.append(planet);
-  for(const panel of main.querySelectorAll<HTMLElement>("[data-tab-panel]")) panel.id=`page-${panel.dataset.tabPanel}`;
-  const buttons=new Map(Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-tab]")).map(b=>[b.dataset.tab!,b]));
-  nav.innerHTML="";nav.setAttribute("aria-orientation","vertical");
-  for(const group of NAV_GROUPS){
-    const section=element("div","cc-nav-group",`<p>${group.label}</p>`);
-    for(const id of group.tabs){const b=buttons.get(id)!;b.innerHTML=`${glyph(id)}<span>${b.querySelector("span")!.textContent}</span>`;b.setAttribute("aria-controls",`page-${id}`);section.append(b);}
-    nav.append(section);
+function updateArcade(root: HTMLElement, model: ViewModel, animator: ArcadeAnimator): void {
+  const arcade = model.arcade;
+  const tab = requiredElement(root, "tab-arcade");
+  if (tab.hidden === arcade.visible) {
+    tab.hidden = !arcade.visible;
+    if (!arcade.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
   }
-  sidebar.append(nav);
-  sidebar.append(element("footer","cc-sidebar-footer",`<span class="cc-local-dot"></span>本地运行 <span class="release-badge">v${GAME_VERSION}</span><small>指挥界面 v1</small>`));
-  // Destructive prestige action belongs with its explanation, never next to routine controls.
-  node(root,'[data-tab-panel="curvature"] .prestige-panel').append(node(root,".launch-box"));
-  node(top,".brand").remove();
-  const mobile=element("div","cc-mobile-bar",`<button type="button" id="cc-nav-toggle" aria-controls="cc-sidebar" aria-expanded="false">☰ <span>导航</span></button><strong>INFINITY</strong><button type="button" data-open-page="save">存档</button>`);top.prepend(mobile);
-  const hero=node(root,".command-hero"),location=node(hero,"#hero-location");
-  const heading=element("header","cc-pagehead",`<div><p class="cc-breadcrumb" id="cc-breadcrumb"></p><h2 class="cc-page-title" id="hero-title"></h2><p id="cc-page-description"></p></div><div class="cc-location"><span class="cc-local-dot"></span></div>`);
-  hero.remove();node(heading,".cc-location").append(location);main.prepend(heading);
-  const rail=element("aside","cc-rail",`<div class="cc-rail-heading"><h2>运行队列</h2><span id="cc-queue-count"></span></div><p class="cc-rail-planet" id="cc-rail-planet"></p><div class="cc-health"><span id="cc-health-title"></span><p id="cc-health-detail"></p></div>`);
-  rail.append(node(root,'[data-bind="queue-list-ov"]').closest(".queue-panel")!,node(root,'[data-bind="rqueue-wrap-ov"]'),node(root,'[data-bind="squeue-wrap-ov"]'));
-  rail.append(element("div","cc-activity",`<h3>操作反馈</h3><p id="cc-action-status" role="status" aria-live="polite"></p><p class="cc-rail-note">建造与生产持续运行，无需停留在当前页面。</p>`));
-  for(const q of main.querySelectorAll<HTMLElement>(".queue-panel")) q.classList.add("cc-local-queue");
-  work.append(main,rail);stage.append(top,work);shell.append(sidebar,stage);
-  const backdrop=element("button","cc-nav-backdrop");backdrop.id="cc-nav-backdrop";backdrop.setAttribute("aria-label","关闭导航");backdrop.setAttribute("type","button");backdrop.hidden=true;
-  root.append(shell,backdrop);
-  const updateBuildings=inspector(root,"facilities","bld",activeBuildings().map(d=>({id:d.id,name:d.nameZh,group:d.category==="resource"?"资源与能源":"基础设施"})));
-  const updateResearch=inspector(root,"research","rcard",RESEARCH.map(d=>({id:d.id,name:d.nameZh,group:RESEARCH_GROUP_LABEL[d.group]})));
-  // Fold long rules without removing any information or data bindings.
-  for(const page of ["facilities","research","protocol"]){
-    const panel=node(root,`[data-tab-panel="${page}"]`);
-    const prose=page==="facilities"?panel.querySelector(".panel-head p"):panel.querySelector(":scope > .blurb, :scope > .lede");
-    if(prose){const d=element("details","cc-rules","<summary>规则与帮助</summary>");d.append(prose);panel.append(d);}
+  const panel = root.querySelector<HTMLElement>('[data-tab-panel="arcade"]');
+  if (!panel || panel.hidden) return;
+  updateArcadePanel(root, arcade, animator, performance.now());
+}
+
+function updateDarkMatter(root: HTMLElement, model: ViewModel): void {
+  const dm = model.darkMatter;
+  setText(root, "dm-chip", dm.chip);
+  const tab = requiredElement(root, "tab-darkmatter");
+  if (tab.hidden === dm.visible) {
+    tab.hidden = !dm.visible;
+    if (!dm.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
   }
-  const updateGalaxy=galaxyMap(root);
-  const protocol=node(root,'[data-tab-panel="protocol"]'),catalog=node(protocol,".catalog-row"),slots=node(protocol,".protocol-slots");
-  const protocolLayout=element("div","cc-protocol-layout"),library=element("aside","cc-library",`<h3>规则库</h3><p>点击规则，装入首个空槽位。</p><label class="cc-show-locked"><input type="checkbox" id="cc-show-locked" />显示未解锁规则</label>`);
-  library.append(catalog);protocolLayout.append(slots,library);protocol.append(protocolLayout);
-  const lockedSummary=element("p","cc-locked-summary");lockedSummary.id="cc-locked-summary";slots.after(lockedSummary);protocolLayout.append(library);
-  for(const slot of slots.querySelectorAll<HTMLElement>(".protocol-slot")){
-    const feedback=element("span","cc-slot-status");node(slot,".slot-controls").append(feedback);
+  requiredElement(root, "dm-chip-wrap").hidden = !dm.visible;
+  setText(root, "dm-summary", dm.summary);
+  for (const item of dm.shop) {
+    for (const button of item.buttons) {
+      const node = requiredButton(root, `dm-shop-${item.id}${button.res ? `-${button.res}` : ""}`);
+      node.disabled = !button.enabled;
+      node.title = button.title;
+    }
   }
-  let model:ViewModel|null=null,lastTab="",menuOpen=false;
-  const mq=matchMedia("(max-width: 760px)");
-  function menu(open:boolean){
-    menuOpen=mq.matches&&open;shell.classList.toggle("cc-menu-open",menuOpen);sidebar.inert=mq.matches&&!menuOpen;
-    backdrop.hidden=!menuOpen;node(root,"#cc-nav-toggle").setAttribute("aria-expanded",String(menuOpen));
-    if(menuOpen){sidebar.setAttribute("role","dialog");sidebar.setAttribute("aria-modal","true");sidebar.setAttribute("aria-label","主导航");node(sidebar,"#cc-nav-close").focus();stage.inert=true;}
-    else{stage.inert=false;sidebar.removeAttribute("role");sidebar.removeAttribute("aria-modal");}
+  for (const pack of dm.packages) {
+    for (const button of pack.buttons) {
+      const node = requiredButton(root, `dm-pack-${pack.kind}-${Math.round(button.fraction * 100)}`);
+      if (node.textContent !== button.label) node.textContent = button.label;
+      node.disabled = !button.enabled;
+      node.title = button.title;
+    }
   }
-  mq.addEventListener("change",()=>{if(!mq.matches)menu(false);else sidebar.inert=!menuOpen;});menu(false);
-  function pageChanged(){
-    const active=node<HTMLElement>(root,"[data-tab-panel]:not([hidden])").dataset.tabPanel!;
-    const changed=lastTab!==active;
-    if(!changed&&node(root,".cc-page-title").textContent===(PAGE_META[active]??PAGE_META.facilities!)[0])return;
-    lastTab=active;shell.dataset.page=active;
-    const meta=PAGE_META[active]??PAGE_META.facilities!;
-    text(root,".cc-page-title",meta[0]);text(root,"#cc-page-description",meta[1]);text(root,"#cc-breadcrumb",`${NAV_GROUPS.find(g=>(g.tabs as readonly string[]).includes(active))?.label??"帝国"} / ${meta[0]}`);
-    for(const [id,b]of buttons){b.tabIndex=id===active?0:-1;}
-    if(menuOpen&&changed){menu(false);node<HTMLButtonElement>(root,"#cc-nav-toggle").focus();}
+  for (const item of dm.inventory) {
+    setText(root, `dm-inv-count-${item.id}`, item.count);
+    const node = requiredButton(root, `dm-inv-${item.id}`);
+    node.disabled = !item.enabled;
+    node.title = item.title;
   }
-  function updateProtocols(m:ViewModel){
-    const showLocked=node<HTMLInputElement>(root,"#cc-show-locked").checked;
-    for(const c of m.catalog) node(root,`[data-bind="catalog-${c.id}"]`).hidden=!c.unlocked&&!showLocked;
-    let locked=0;
-    for(const s of m.slots){
-      const card=node(root,`[data-slot="${s.index}"]`);card.classList.toggle("cc-slot-locked",!s.unlocked);card.classList.toggle("cc-slot-empty",!s.sentence);
-      if(!s.unlocked){locked++;continue;}
-      text(card,".cc-slot-status",slotStatus(s.enabled,s.sentence,s.lamp));card.dataset.state=!s.enabled?"off":s.lamp;
-      const params=node(card,".slot-params");
-      if(params.dataset.ccKey!==s.fieldsKey || !params.querySelector(".cc-stage-block")){
-        const fields=Array.from(params.querySelectorAll<HTMLElement>(".param"));
-        params.replaceChildren();
-        for(const [id,label]of [["trigger","01 · 触发"],["condition","02 · 条件"],["action","03 · 动作"]]){
-          const block=element("div","cc-stage-block",`<h4>${label}</h4>`);
-          const grouped=fields.filter(f=>stageFor(node<HTMLSelectElement>(f,"select").dataset.path!)===id);
-          if(grouped.length)block.append(...grouped);else block.append(element("p","cc-stage-empty",s.sentence?(id==="condition"?"无需附加条件":"由规则模板定义"):"从规则库装入"));
-          params.append(block);
-        }
-        params.dataset.ccKey=s.fieldsKey;
+  fillList(requiredElement(root, "dm-boosters"), dm.boosters);
+}
+
+function updateResearch(root: HTMLElement, model: ViewModel): void {
+  const research = model.research;
+  const tab = requiredElement(root, "tab-research");
+  if (tab.hidden === research.visible) {
+    tab.hidden = !research.visible;
+    if (!research.visible && tab.classList.contains("active")) selectTab(root, DEFAULT_TAB);
+  }
+  requiredElement(root, "rqueue-wrap-ov").hidden = !research.visible;
+  updateQueue(root, "rqueue", ["", "-ov"], research.queue, "cancel-research", "research");
+  setText(root, "research-summary", research.summary);
+  for (const item of research.items) {
+    setText(root, `rlevel-${item.id}`, item.level);
+    setText(root, `rcost-${item.id}`, item.cost);
+    setText(root, `rtime-${item.id}`, item.time);
+    setText(root, `reffect-${item.id}`, item.effect);
+    setText(root, `rlater-${item.id}`, item.later);
+    setText(root, `rbutton-${item.id}`, item.button);
+    setText(root, `rreason-${item.id}`, item.reason);
+    requiredElement(root, `rcard-${item.id}`).classList.toggle("locked", item.locked);
+    const chain = requiredElement(root, `rchain-${item.id}`);
+    if (chain.dataset.key !== item.chainKey) {
+      chain.dataset.key = item.chainKey;
+      chain.replaceChildren(
+        ...item.chain.map((chip) => {
+          const node = document.createElement("li");
+          node.className = chip.met ? "chip-req met" : "chip-req";
+          node.textContent = `${chip.met ? "✓" : "✗"} ${chip.label}`;
+          return node;
+        }),
+      );
+    }
+    const button = requiredButton(root, `research-${item.id}`);
+    button.disabled = !item.canEnqueue;
+    button.title = item.reason;
+  }
+}
+
+function updateQueue(
+  root: ParentNode,
+  prefix: string,
+  suffixes: readonly string[],
+  queue: QueueView,
+  cancelAction: string,
+  target: SpeedupTarget,
+): void {
+  for (const suffix of suffixes) setText(root, `${prefix}-summary${suffix}`, queue.summary);
+  for (const suffix of suffixes) {
+    const idle = requiredElement(root, `${prefix}-idle${suffix}`);
+    idle.hidden = queue.idleHint === "";
+    if (idle.textContent !== queue.idleHint) idle.textContent = queue.idleHint;
+  }
+  for (const list of suffixes.map((suffix) => requiredElement(root, `${prefix}-list${suffix}`))) {
+    if (list.dataset.sig !== queue.signature) {
+      list.dataset.sig = queue.signature;
+      list.innerHTML = queue.items
+        .map(
+          (item) => `
+          <li class="queue-item${item.active ? " active" : ""}">
+            <div class="queue-text">
+              <strong data-q="label"></strong>
+              <span class="muted" data-q="detail"></span>
+            </div>
+            <div class="queue-bar"><span data-q="fill"></span></div>
+            <span class="queue-dm" data-q="dm"${item.halve ? "" : " hidden"}>
+              <button type="button" class="dm-btn" data-action="dm-speedup" data-target="${target}" data-mode="halve" data-q="halve"></button>
+              <button type="button" class="dm-btn" data-action="dm-speedup" data-target="${target}" data-mode="finish" data-q="finish"></button>
+            </span>
+            <button type="button" class="danger queue-cancel" data-action="${cancelAction}" data-index="${item.index}">取消</button>
+          </li>`,
+        )
+        .join("");
+    }
+    const rows = list.querySelectorAll<HTMLElement>(".queue-item");
+    queue.items.forEach((item, index) => {
+      const row = rows[index];
+      if (!row) return;
+      const label = row.querySelector<HTMLElement>('[data-q="label"]');
+      const detail = row.querySelector<HTMLElement>('[data-q="detail"]');
+      const fill = row.querySelector<HTMLElement>('[data-q="fill"]');
+      if (label && label.textContent !== item.label) label.textContent = item.label;
+      if (detail && detail.textContent !== item.detail) detail.textContent = item.detail;
+      if (fill) fill.style.width = `${item.progressPct.toFixed(1)}%`;
+      const dm = row.querySelector<HTMLElement>('[data-q="dm"]');
+      if (dm) dm.hidden = item.halve === null;
+      for (const [key, view] of [["halve", item.halve], ["finish", item.finish]] as const) {
+        const btn = row.querySelector<HTMLButtonElement>(`[data-q="${key}"]`);
+        if (!btn || !view) continue;
+        if (btn.textContent !== view.label) btn.textContent = view.label;
+        btn.disabled = !view.enabled;
+        btn.title = view.title;
       }
-    }
-    text(root,"#cc-locked-summary",locked?`${locked} 个后续槽位待解锁 · ${m.slots.find(s=>!s.unlocked)?.lockHint??""}`: "所有协议槽位已解锁");
+    });
   }
-  root.addEventListener("click",event=>{
-    const b=(event.target as Element).closest<HTMLElement>("button");if(!b)return;forcePaint=true;
-    if(b.id==="cc-nav-toggle")menu(!menuOpen);
-    if(b.id==="cc-nav-close"||b.id==="cc-nav-backdrop"){menu(false);node<HTMLButtonElement>(root,"#cc-nav-toggle").focus();}
-    if(b.dataset.openPage)buttons.get(b.dataset.openPage)?.click();
-    if(b.dataset.tab&&menuOpen){menu(false);node<HTMLButtonElement>(root,"#cc-nav-toggle").focus();}
-    pageChanged();
-  });
-  root.addEventListener("keydown",event=>{
-    if(event.key==="Escape"&&menuOpen){event.preventDefault();menu(false);node<HTMLButtonElement>(root,"#cc-nav-toggle").focus();}
-    if(event.key==="Tab"&&menuOpen){
-      const focusable=Array.from(sidebar.querySelectorAll<HTMLElement>('button:not([hidden]):not(:disabled),select')).filter(n=>n.getClientRects().length>0 && n.tabIndex>=0);
-      const first=focusable[0],last=focusable.at(-1);
-      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
-      if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
-    }
-    if(["ArrowDown","ArrowUp","Home","End"].includes(event.key)&&nav.contains(document.activeElement)){
-      const visible=Array.from(buttons.values()).filter(b=>!b.hidden);const i=visible.indexOf(document.activeElement as HTMLButtonElement);if(i<0)return;
-      event.preventDefault();const next=event.key==="Home"?0:event.key==="End"?visible.length-1:(i+(event.key==="ArrowDown"?1:-1)+visible.length)%visible.length;
-      visible[next]?.focus();visible[next]?.click();
-    }
-  });
-  node(root,"#cc-show-locked").addEventListener("change",()=>{if(model)updateProtocols(model);});
-  pageChanged();
-  return {...legacy,update(m){
-    const now=performance.now();if(!forcePaint&&now-lastPaint<80)return;lastPaint=now;forcePaint=false;
-    legacy.update(m);model=m;pageChanged();if(lastTab==="facilities")updateBuildings(m.buildings);if(lastTab==="research")updateResearch(m.research.items);
-    text(root,"#cc-rail-planet",`${m.empire.activeName} · [${m.empire.activeCoordinate}]`);
-    const count=m.queue.items.length+m.research.queue.items.length+m.shipyard.queue.items.length;
-    text(root,"#cc-queue-count",String(count).padStart(2,"0"));
-    text(root,"#cc-action-status",m.status);
-    text(root,"#cc-health-title",m.energyShort?"能源供给不足":"能源运行正常");
-    text(root,"#cc-health-detail",m.energyShort?"矿产按能源效率降额。升级供电设施或调整产量。":"当前供给满足需求，可继续扩建产线。");
-    node(root,".cc-health").classList.toggle("warning",m.energyShort);
-    for(const group of nav.querySelectorAll<HTMLElement>(".cc-nav-group"))group.hidden=!group.querySelector("button:not([hidden])");
-    if(lastTab==="galaxy")updateGalaxy(m.empire);
-    if(lastTab==="protocol")updateProtocols(m);
-  }};
+}
+
+function updateRows(root: ParentNode, prefix: string, rows: readonly TableRowView[]): void {
+  for (const row of rows) {
+    row.cells.forEach((cell, index) => setText(root, `${prefix}-${row.key}-${index}`, cell));
+  }
+}
+
+function fillList(list: HTMLElement, items: readonly string[]): void {
+  const signature = items.join("|");
+  if (list.dataset.sig === signature) return;
+  list.dataset.sig = signature;
+  list.replaceChildren(
+    ...items.map((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      return item;
+    }),
+  );
+}
+
+const ICON_BASE = `${import.meta.env.BASE_URL}icons/`;
+const TAB_KEY = "infinity.ui.tab";
+/** Tabs that appear only once unlocked. */
+const HIDDEN_TABS = new Set(["research", "shipyard", "defense", "darkmatter", "arcade"]);
+const DEFAULT_TAB = "facilities";
+const TABS = [
+  { id: "overview", label: "概览", icon: "logo" },
+  { id: "facilities", label: "建筑", icon: "robotics_factory" },
+  { id: "research", label: "研究", icon: "tech" },
+  { id: "shipyard", label: "造船厂", icon: "shipyard" },
+  { id: "defense", label: "防御", icon: "defense" },
+  { id: "darkmatter", label: "暗物质", icon: "dark_matter" },
+  { id: "arcade", label: "星环机", icon: "ring_machine" },
+  { id: "protocol", label: "协议卡", icon: "protocol_card" },
+  { id: "curvature", label: "曲率", icon: "warp_core" },
+  { id: "achievements", label: "成就", icon: "achievement" },
+  { id: "save", label: "存档", icon: "save" },
+] as const;
+
+/** Chinese alt text for each painted icon. */
+const ICON_ALT: Record<string, string> = {
+  metal: "金属",
+  crystal: "晶体",
+  deuterium: "重氢",
+  energy: "能量",
+  metal_mine: "金属矿",
+  crystal_mine: "晶体矿",
+  deuterium_synth: "重氢合成器",
+  solar_plant: "太阳能电站",
+  robotics_factory: "机器人工厂",
+  launch: "殖民舰",
+  warp_core: "曲率核心",
+  tech: "曲率科技",
+  achievement: "成就勋章",
+  protocol_card: "协议卡",
+  save: "存档",
+  logo: "Infinity 行星标志",
+  dark_matter: "暗物质",
+  ring_machine: "深空星环机",
+  shipyard: "造船厂",
+  defense: "防御",
+};
+
+/**
+ * Painted icon per building. P1 adds buildings without their own art yet; they reuse the closest
+ * existing OGame-style WebP (no original OGame art is used).
+ */
+const BUILDING_ICON: Partial<Record<BuildingId, string>> = {
+  metal_mine: "metal_mine",
+  crystal_mine: "crystal_mine",
+  deuterium_synth: "deuterium_synth",
+  solar_plant: "solar_plant",
+  fusion_reactor: "energy",
+  metal_storage: "metal",
+  crystal_storage: "crystal",
+  deuterium_tank: "deuterium",
+  robotics_factory: "robotics_factory",
+  nanite_factory: "robotics_factory",
+  shipyard: "launch",
+  research_lab: "tech",
+};
+
+/** Simple self-drawn SVG icons (no painted WebP yet). */
+const SVG_ICONS = new Set(["dark_matter", "shipyard", "defense"]);
+
+/** Icons that also ship a 256px variant for large or high-DPI rendering. */
+const HI_RES_ICONS = new Set(["metal_mine", "crystal_mine", "deuterium_synth", "solar_plant", "robotics_factory", "launch", "warp_core", "ring_machine"]);
+
+interface IconOptions {
+  /** Defer loading until the image is near the viewport (default true; header icons pass false). */
+  lazy?: boolean;
+  /** Rendered CSS size in px, used for the srcset `sizes` hint on icons with a 256px variant. */
+  size?: number;
+  alt?: string;
+}
+
+/** Painted OGame-style icon (WebP) with a steel-grey rounded frame applied in CSS. */
+function icon(name: string, extra = "", options: IconOptions = {}): string {
+  const { lazy = true, size = 48, alt = ICON_ALT[name] ?? "" } = options;
+  const src = `${ICON_BASE}${name}${SVG_ICONS.has(name) ? ".svg" : ".webp"}`;
+  const srcset = HI_RES_ICONS.has(name) ? ` srcset="${src} 128w, ${ICON_BASE}${name}-256.webp 256w" sizes="${size}px"` : "";
+  return `<img class="icon icon-${name}${extra ? ` ${extra}` : ""}" src="${src}"${srcset} alt="${alt}" width="128" height="128"${lazy ? ' loading="lazy"' : ""} decoding="async" draggable="false" />`;
+}
+
+/** Protocol card art plus the card's own single-color glyph as a small violet badge (CSS mask). */
+function cardIcon(cardId: string, label: string): string {
+  return `<span class="card-art">${icon("protocol_card", "", { alt: `协议卡：${label}` })}<span class="card-badge" style="--glyph:url('${ICON_BASE}card_${cardId}.svg')" aria-hidden="true"></span></span>`;
+}
+
+function readSavedTab(): string {
+  try {
+    return localStorage.getItem(TAB_KEY) ?? DEFAULT_TAB;
+  } catch {
+    return DEFAULT_TAB;
+  }
+}
+
+function selectTab(root: ParentNode, id: string): void {
+  const tab = TABS.some((entry) => entry.id === id) ? id : DEFAULT_TAB;
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  for (const panel of root.querySelectorAll<HTMLElement>("[data-tab-panel]")) {
+    panel.hidden = panel.dataset.tabPanel !== tab;
+  }
+  try {
+    localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    // Storage can be unavailable (private mode); the tab still switches.
+  }
+}
+
+/** Research art reuses the existing WebP set (no original OGame art). */
+const RESEARCH_ICON: Record<ResearchId, string> = {
+  energy_tech: "energy",
+  laser_tech: "tech",
+  ion_tech: "tech",
+  hyperspace_tech: "warp_core",
+  plasma_tech: "tech",
+  combustion_drive: "launch",
+  impulse_drive: "launch",
+  hyperspace_drive: "launch",
+  espionage_tech: "tech",
+  computer_tech: "protocol_card",
+  astrophysics: "logo",
+  intergalactic_research_network: "tech",
+  graviton_tech: "warp_core",
+  weapons_tech: "launch",
+  shielding_tech: "launch",
+  armour_tech: "launch",
+};
+
+function researchCard(def: ResearchDef): string {
+  return `
+      <article class="bld rcard" data-bind="rcard-${def.id}">
+        <div class="bld-head">
+          ${icon(RESEARCH_ICON[def.id], "icon-row", { size: 56, alt: def.nameZh })}
+          <div class="bld-title">
+            <h3>${def.nameZh} <small>${def.nameEn}</small></h3>
+            <p class="bld-level">等级 <strong data-bind="rlevel-${def.id}">0</strong></p>
+          </div>
+        </div>
+        <p class="bld-effect" data-bind="reffect-${def.id}"></p>
+        <p class="bld-blurb" data-bind="rlater-${def.id}"></p>
+        <ul class="req-chain" data-bind="rchain-${def.id}" aria-label="前置条件"></ul>
+        <dl class="bld-facts">
+          <div><dt>下一级成本</dt><dd data-bind="rcost-${def.id}"></dd></div>
+          <div><dt>耗时</dt><dd data-bind="rtime-${def.id}"></dd></div>
+        </dl>
+        <button type="button" class="buy-btn" data-action="research" data-id="${def.id}" data-bind="research-${def.id}">
+          <span class="buy-label" data-bind="rbutton-${def.id}">研究 等级 1</span>
+          <span class="btn-cost" data-bind="rreason-${def.id}"></span>
+        </button>
+      </article>`;
+}
+
+function researchGroups(): string {
+  const groups: ResearchGroup[] = ["basic", "drive", "advanced", "combat"];
+  return groups
+    .map(
+      (group) => `
+        <h3 class="group-title">${RESEARCH_GROUP_LABEL[group]}</h3>
+        <div class="bld-grid">${RESEARCH.filter((def) => def.group === group).map(researchCard).join("")}</div>`,
+    )
+    .join("");
+}
+
+function buildingCard(def: BuildingDef): string {
+  const art = BUILDING_ICON[def.id] ?? "robotics_factory";
+  return `
+      <article class="bld" data-bind="bld-${def.id}">
+        <div class="bld-head">
+          ${icon(art, "icon-row", { size: 56, alt: def.nameZh })}
+          <div class="bld-title">
+            <h3>${def.nameZh} <small>${def.nameEn}</small></h3>
+            <p class="bld-level">等级 <strong data-bind="level-${def.id}">0</strong></p>
+          </div>
+        </div>
+        <p class="bld-blurb">${def.blurb}</p>
+        <p class="bld-effect" data-bind="effect-${def.id}"></p>
+        <p class="bld-payback" data-bind="payback-${def.id}"></p>
+        <p class="bld-requires" data-bind="requires-${def.id}"></p>
+        <dl class="bld-facts">
+          <div><dt>下一级成本</dt><dd data-bind="cost-${def.id}"></dd></div>
+          <div><dt>耗时</dt><dd data-bind="time-${def.id}"></dd></div>
+        </dl>
+        <button type="button" class="buy-btn" data-action="enqueue" data-id="${def.id}" data-bind="enqueue-${def.id}">
+          <span class="buy-label" data-bind="upgrade-${def.id}">升级到 等级 1</span>
+          <span class="btn-cost" data-bind="reason-${def.id}"></span>
+        </button>
+      </article>`;
+}
+
+function queuePanel(suffix: string, prefix = "queue", title = "建造队列"): string {
+  return `
+      <div class="queue-panel">
+        <div class="queue-head">
+          <h3>${title}</h3>
+          <span class="muted" data-bind="${prefix}-summary${suffix}">${title} 0/2</span>
+        </div>
+        <p class="muted queue-idle" data-bind="${prefix}-idle${suffix}"></p>
+        <ol class="queue-list" data-bind="${prefix}-list${suffix}"></ol>
+      </div>`;
+}
+
+function tableRows(prefix: string, keys: readonly string[], columns: number): string {
+  return keys
+    .map(
+      (key) =>
+        `<tr class="row-${key}">${Array.from({ length: columns }, (_, index) =>
+          index === 0 ? `<th scope="row" data-bind="${prefix}-${key}-0"></th>` : `<td data-bind="${prefix}-${key}-${index}"></td>`,
+        ).join("")}</tr>`,
+    )
+    .join("");
+}
+
+function shellMarkup(): string {
+  // Metal, crystal and deuterium share equal status: three identical blocks in the top bar.
+  const resourceCards = RESOURCES.map(
+    (resource) => `
+        <div class="res-card res-${resource.id}" data-bind="res-${resource.id}" title="${resource.blurb}">
+          ${icon(resource.id, "icon-res", { lazy: false })}
+          <span class="res-name">${resource.name} <span class="res-cap" data-bind="cap-${resource.id}">/ 10k</span></span>
+          <strong class="res-amount" data-bind="amount-${resource.id}">0.00</strong>
+          <span class="res-rate"><span data-bind="rate-${resource.id}">+0.00/s</span> <span class="res-eta" data-bind="eta-${resource.id}"></span></span>
+          <span class="res-bar" aria-hidden="true"><span data-bind="fill-${resource.id}"></span></span>
+        </div>`,
+  ).join("");
+
+  const tabs = TABS.map(
+    (tab) =>
+      `<button type="button" class="tab" role="tab" data-tab="${tab.id}" data-bind="tab-${tab.id}"${HIDDEN_TABS.has(tab.id) ? " hidden" : ""} aria-selected="false">${icon(tab.icon, "icon-tab", { lazy: false, alt: "" })}<span>${tab.label}</span></button>`,
+  ).join("");
+
+  const achievements = ACHIEVEMENTS.map(
+    (achievement) => `
+      <li class="ach" data-bind="ach-${achievement.id}" title="${achievement.detail}">
+        ${icon("achievement", "ach-icon")}
+        <strong>${achievement.name}</strong>
+        <p>${achievement.detail}</p>
+        <span class="ach-progress" data-bind="ach-progress-${achievement.id}">0 / 1</span>
+      </li>`,
+  ).join("");
+
+  const active = activeBuildings();
+  const resourceBuildings = active.filter((def) => def.category === "resource").map(buildingCard).join("");
+  const facilities = active.filter((def) => def.category === "facility").map(buildingCard).join("");
+  const productionSelects = PRODUCTION_IDS.map((id) => {
+    const options = Array.from({ length: 11 }, (_, index) => 100 - index * 10)
+      .map((pct) => `<option value="${pct}">${pct}%</option>`)
+      .join("");
+    return `<label class="prod-row"><span>${buildingById(id).nameZh} <small data-bind="prod-note-${id}"></small></span><select data-prod="${id}" data-bind="prod-${id}">${options}</select></label>`;
+  }).join("");
+
+  return `
+    <div class="modal" data-bind="offline-modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="offline-title">
+        <p class="kicker">Welcome back</p>
+        <h2 id="offline-title">欢迎回来</h2>
+        <p class="offline-applied">结算离线 <strong data-bind="offline-applied">0 秒</strong></p>
+        <ul class="offline-gains" data-bind="offline-gains"></ul>
+        <h3 class="offline-sub">离线期间完成的建造</h3>
+        <ul class="offline-gains offline-builds" data-bind="offline-builds"></ul>
+        <h3 class="offline-sub">离线期间完成的研究</h3>
+        <ul class="offline-gains offline-builds" data-bind="offline-research"></ul>
+        <div data-bind="offline-units-wrap" hidden>
+          <h3 class="offline-sub">离线期间完成的舰船与防御</h3>
+          <ul class="offline-gains offline-builds" data-bind="offline-units"></ul>
+        </div>
+        <div data-bind="offline-arcade-wrap" hidden>
+          <h3 class="offline-sub">深空星环机</h3>
+          <ul class="offline-gains offline-builds" data-bind="offline-arcade"></ul>
+        </div>
+        <p class="muted" data-bind="offline-detail"></p>
+        <p class="muted" data-bind="offline-protocol"></p>
+        <button type="button" data-action="dismiss-offline">知道了</button>
+      </div>
+    </div>
+    <header class="topbar">
+      <div class="topbar-main">
+        <div class="brand">
+          <img class="logo" src="${ICON_BASE}logo.webp" alt="${ICON_ALT.logo}" width="128" height="128" />
+          <div>
+            <h1>Infinity <span>无限</span></h1>
+            <p class="kicker">Planet surface · v0.4</p>
+          </div>
+        </div>
+        <div class="res-main" role="group" aria-label="主要资源">${resourceCards}</div>
+        <div class="launch-box">
+          <button type="button" class="btn-prestige" data-action="prestige" data-bind="action-prestige" disabled>
+            ${icon("launch", "", { lazy: false, size: 34 })}
+            <span class="prestige-title">发射殖民舰</span>
+            <span class="prestige-gain">+<span data-bind="gain">0</span> 曲率核心</span>
+          </button>
+        </div>
+      </div>
+      <div class="res-strip">
+        <div class="chip chip-energy" data-bind="energy-chip" title="能量供给 / 需求 · 效率">
+          ${icon("energy", "", { lazy: false })}
+          <span class="chip-name">能量</span>
+          <span class="chip-rate" data-bind="energy-top"></span>
+        </div>
+        <div class="chip chip-warp" title="曲率核心 Warp Core">
+          ${icon("warp_core", "", { lazy: false, size: 22 })}
+          <span class="chip-name">曲率核心</span>
+          <strong data-bind="telemetry">0</strong>
+          <span class="chip-rate" data-bind="multiplier">产量 ×1.00</span>
+          <span class="chip-rate" data-bind="played">累计 0 秒</span>
+        </div>
+        <div class="chip chip-dm" data-bind="dm-chip-wrap" title="暗物质 Dark Matter" hidden>
+          ${icon("dark_matter", "", { lazy: false, size: 22 })}
+          <span class="chip-name">暗物质</span>
+          <strong data-bind="dm-chip">0</strong>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="主菜单">${tabs}</nav>
+    </header>
+
+    <main class="wrap">
+      <div class="notice" data-bind="notice" role="status" hidden>
+        <span data-bind="notice-text"></span>
+        <button type="button" data-action="dismiss-notice">知道了</button>
+      </div>
+      <p class="banner" data-bind="banner" role="status" hidden></p>
+
+      <section class="tab-panel" data-tab-panel="overview" aria-labelledby="overview-title" hidden>
+        <div class="panel-head">
+          <h2 id="overview-title">${icon("logo", "icon-h2", { alt: "" })} <span data-bind="ov-planet">母星</span></h2>
+          <p><span data-bind="ov-temp"></span> · 格子 <strong data-bind="ov-fields">0 / 163</strong></p>
+        </div>
+        <p class="blurb" data-bind="ov-global"></p>
+        <div class="scrape-row">
+          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape-ov">手动采集</button>
+          <span class="muted" data-bind="passive-ov"></span>
+        </div>
+        ${queuePanel("-ov")}
+        <div data-bind="rqueue-wrap-ov" hidden>${queuePanel("-ov", "rqueue", "研究队列")}</div>
+        <div data-bind="squeue-wrap-ov" hidden>
+          <div class="queue-panel">
+            <div class="queue-head">
+              <h3>造船队列</h3>
+              <span class="muted" data-bind="squeue-summary-ov">造船队列 0/10</span>
+            </div>
+            <p class="muted queue-idle" data-bind="squeue-idle-ov"></p>
+            <ol class="queue-list" data-bind="squeue-list-ov"></ol>
+          </div>
+        </div>
+        <div class="ov-grid">
+          <div class="ov-card">
+            <h3>产量（每秒）</h3>
+            <table class="ov-table">
+              <thead><tr><th scope="col">来源</th><th scope="col">金属</th><th scope="col">晶体</th><th scope="col">重氢</th></tr></thead>
+              <tbody>${tableRows("ov-prod", ["base", "metal_mine", "crystal_mine", "deuterium_synth", "fusion", "net", "caps"], 4)}</tbody>
+            </table>
+          </div>
+          <div class="ov-card">
+            <h3>能源明细</h3>
+            <p class="muted" data-bind="ov-energy-summary"></p>
+            <table class="ov-table">
+              <thead><tr><th scope="col">建筑</th><th scope="col">能源</th></tr></thead>
+              <tbody>${tableRows("ov-energy", ["solar", "fusion", "satellite", "metal_mine", "crystal_mine", "deuterium_synth"], 2)}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="facilities" aria-labelledby="facility-title">
+        <div class="panel-head">
+          <h2 id="facility-title">建筑</h2>
+          <p>入队时按目标等级扣费，同时只建 1 项，其余排队；取消全额退还。资源到达仓库上限后对应矿停产。</p>
+        </div>
+        ${queuePanel("")}
+        <div class="scrape-row">
+          <button type="button" class="scrape-btn" data-action="scrape" data-bind="action-scrape">手动采集</button>
+          <span class="muted" data-bind="passive"></span>
+        </div>
+        <details class="prod-settings">
+          <summary>资源设置（产量百分比）</summary>
+          <p class="blurb">设为 0% 时该建筑不产出也不耗电（核聚变不烧重氢）。步长 10%。</p>
+          <div class="prod-grid">${productionSelects}</div>
+        </details>
+        <h3 class="group-title">资源建筑</h3>
+        <div class="bld-grid">${resourceBuildings}</div>
+        <h3 class="group-title">设施</h3>
+        <div class="bld-grid">${facilities}</div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="research" aria-labelledby="research-title" hidden>
+        <div class="panel-head">
+          <h2 id="research-title">${icon("tech", "icon-h2", { alt: "" })} 研究</h2>
+          <p data-bind="research-summary">研究</p>
+        </div>
+        <p class="blurb">整个帝国同一时间只研究 1 项，研究队列长度与建造队列相同。成本 ⌊基础×2^(L−1)⌋（天体物理学 ×1.75 并取整到百位），研究时间 = (金属+晶体)/(1000·(1+研究实验室等级)) 小时 ÷ 研究速度。研究进行中不能升级研究实验室，研究实验室升级中也不能开始研究。前置只看已完成的等级。</p>
+        ${queuePanel("", "rqueue", "研究队列")}
+        ${researchGroups()}
+      </section>
+
+      ${shipyardPanelsHtml(icon)}
+
+      ${arcadePanelHtml(icon("ring_machine", "icon-h2", { alt: "" }))}
+
+      <section class="tab-panel" data-tab-panel="darkmatter" aria-labelledby="dm-title" hidden>
+        <div class="panel-head">
+          <h2 id="dm-title">${icon("dark_matter", "icon-h2", { alt: "" })} 暗物质</h2>
+          <p data-bind="dm-summary"></p>
+        </div>
+        <p class="blurb">暗物质时钟：价格和道具时长里的 1 个 OGame 小时 = 1 分钟游戏时间。正在建造 / 研究的项目和造船厂当前批次可在队列里花暗物质「减半」或「完成」（每开始 30 秒 750，单次上限建筑 72,000、研究 108,000）。克拉肯 / 纽特隆 / 底特律按同一价格卖时间、可顺延到下一项；资源包的价格等于跳过同样产量所需时间的价格。军官、呼叫商人、星球搬迁第 4 阶段开放；更换职业第 7 阶段开放。</p>
+        <h3 class="group-title">生效中的资源加成</h3>
+        <ul class="dm-list" data-bind="dm-boosters"></ul>
+        <h3 class="group-title">背包</h3>
+        <div class="dm-grid">${inventoryCards()}</div>
+        <h3 class="group-title">道具商店</h3>
+        <div class="dm-grid">${shopCards()}</div>
+        <h3 class="group-title">资源包（最多 1 个 OGame 日 = 24 分钟的产量，受仓库空间限制）</h3>
+        <div class="dm-packs">${packageRows()}</div>
+        <p class="status" data-bind="status-dm" role="status"></p>
+      </section>
+
+      <section class="tab-panel protocol-board" data-tab-panel="protocol" aria-labelledby="protocol-title" hidden>
+        <div class="panel-head">
+          <h2 id="protocol-title">协议卡</h2>
+          <p data-bind="protocol-meta">槽位</p>
+        </div>
+        <p class="lede">把协议卡放进槽位。句子是「当…若…则…」。点击卡片装入第一个空槽，或拖到指定槽位。建造类动作只会把一级建筑放进队列。</p>
+        <p class="rates">${icon("energy")} <span data-bind="protocol-energy"></span></p>
+        <div class="catalog-row">${catalogButtons()}</div>
+        <div class="protocol-slots">${protocolSlots()}</div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="curvature" aria-labelledby="prestige-title" hidden>
+        <div class="prestige-panel">
+          <div class="panel-head">
+            <h2 id="prestige-title">${icon("launch", "icon-h2", { size: 32 })} 发射殖民舰</h2>
+            <p>获得量 = ⌊√(扩张分 / ${PRESTIGE_SCORE_UNIT})⌋。扩张分 = 本轮累计 金属 + 3×晶体 + 10×重氢。重置资源、建筑、队列与产量设置（进行中的研究一并取消），保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。每颗未花费核心使全局产量 +2%。</p>
+          </div>
+          <dl class="prestige-stats">
+            <div>
+              <dt>本轮扩张分</dt>
+              <dd data-bind="score">0.00</dd>
+            </div>
+            <div>
+              <dt>预计核心</dt>
+              <dd>${icon("warp_core", "", { size: 28 })} <span data-bind="gain-detail">0</span></dd>
+            </div>
+          </dl>
+        </div>
+        <div class="panel-head">
+          <h2 id="tech-title">${icon("tech", "icon-h2")} 曲率科技</h2>
+          <p data-bind="unspent-line">未花费 0 / 已花费 0 · 被动 +0%</p>
+        </div>
+        <p class="blurb">花费曲率核心购买永久效果。买下后该核心不再提供 +2% 被动。无需确认。</p>
+        <div class="tech-grid">${techCards()}</div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="achievements" aria-labelledby="ach-title" hidden>
+        <div class="panel-head">
+          <h2 id="ach-title">成就</h2>
+          <p data-bind="ach-summary">已解锁 0 / 13 · 全局产出 +0%</p>
+        </div>
+        <p class="blurb">每个已解锁成就 +1% 全局产出，互相加算，再与曲率核心相乘。发射殖民舰不会清空成就。</p>
+        <ul class="ach-list">${achievements}</ul>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="save" aria-labelledby="save-title" hidden>
+        <div class="panel-head">
+          <h2 id="save-title">${icon("save", "icon-h2")} 存档</h2>
+          <p>自动写入 localStorage。导出的 JSON 形如 { version: 8, savedAt, lastTickAt, state }。测试期只接受 v8：其他版本的文件会被拒绝，当前进度不受影响。离线进度最多结算 <strong data-bind="offline-cap">2 小时</strong>。</p>
+        </div>
+        <div class="actions">
+          <button type="button" data-action="save">立即保存</button>
+          <button type="button" data-action="export">导出 JSON</button>
+          <label class="file-button">
+            导入文件
+            <input data-bind="import-file" type="file" accept="application/json,.json" />
+          </label>
+          <button type="button" data-action="reset" class="danger">重置</button>
+        </div>
+        <label class="transfer-label" for="transfer">导入文本</label>
+        <textarea id="transfer" data-bind="transfer" spellcheck="false" placeholder="在此粘贴存档 JSON，或用导出填入此框"></textarea>
+        <button type="button" data-action="import-text">从文本导入</button>
+        <p class="status" data-bind="status" role="status">就绪</p>
+      </section>
+    </main>`;
+}
+
+function inventoryCards(): string {
+  return INVENTORY_IDS.map(
+    (id) => `
+      <article class="dm-card">
+        <h4>${INVENTORY_LABEL[id].name} <strong data-bind="dm-inv-count-${id}">×0</strong></h4>
+        <p class="muted">${INVENTORY_LABEL[id].detail}</p>
+        <button type="button" data-action="dm-use" data-id="${id}" data-bind="dm-inv-${id}">使用</button>
+      </article>`,
+  ).join("");
+}
+
+function shopCards(): string {
+  return SHOP_ITEMS.map((def) => {
+    const buttons =
+      def.kind === "booster"
+        ? (["metal", "crystal", "deuterium"] as const)
+            .map(
+              (res) =>
+                `<button type="button" data-action="dm-shop" data-id="${def.id}" data-res="${res}" data-bind="dm-shop-${def.id}-${res}">${{ metal: "金属", crystal: "晶体", deuterium: "重氢" }[res]}</button>`,
+            )
+            .join("")
+        : `<button type="button" data-action="dm-shop" data-id="${def.id}" data-bind="dm-shop-${def.id}">购买并使用</button>`;
+    const detail =
+      def.kind === "booster"
+        ? `矿产量 +${def.pct}%，${formatDuration(dmClockSeconds((def.ogameDays ?? 7) * 24))}`
+        : `${def.kind === "kraken" ? "建造" : def.kind === "detroit" ? "造船" : "研究"}缩短 ${formatDuration(dmClockSeconds(def.ogameHours ?? 0))}`;
+    return `
+      <article class="dm-card">
+        <h4>${def.nameZh} <small>${def.dm.toLocaleString("zh-CN")} 暗物质</small></h4>
+        <p class="muted">${detail}</p>
+        <div class="dm-buttons">${buttons}</div>
+      </article>`;
+  }).join("");
+}
+
+function packageRows(): string {
+  const kinds = [
+    ["metal", "金属包"],
+    ["crystal", "晶体包"],
+    ["deuterium", "重氢包"],
+    ["bundle", "三资源套餐"],
+  ] as const;
+  return kinds
+    .map(
+      ([kind, label]) => `
+      <div class="dm-pack-row">
+        <span>${label}</span>
+        ${PACKAGE_FRACTIONS.map(
+          (fraction) =>
+            `<button type="button" data-action="dm-package" data-kind="${kind}" data-fraction="${fraction}" data-bind="dm-pack-${kind}-${Math.round(fraction * 100)}">${Math.round(fraction * 100)}%</button>`,
+        ).join("")}
+      </div>`,
+    )
+    .join("");
+}
+
+function techCards(): string {
+  return CURVATURE_TECH.map((node, index) => {
+    const idx = String(index + 1).padStart(2, "0");
+    return `
+      <article class="tech-card">
+        <div class="tech-head">
+          ${icon("tech", "icon-row")}
+          <h3><span class="idx">${idx}</span>${node.name} <small>${node.nameEn}</small></h3>
+          <strong class="tech-owned" data-bind="tech-owned-${node.id}">未购</strong>
+        </div>
+        <p data-bind="tech-detail-${node.id}">${node.effect}</p>
+        <p class="cost" data-bind="tech-preview-${node.id}">花费 ${node.cost} 核心</p>
+        <div class="tech-buy">
+          ${icon("warp_core", "", { size: 22 })}
+          <button type="button" class="buy-btn" data-action="buy-tech" data-id="${node.id}" data-bind="tech-buy-${node.id}">花费 ${node.cost}</button>
+        </div>
+      </article>`;
+  }).join("");
+}
+
+function catalogButtons(): string {
+  return CARD_CATALOG.map(
+    (entry) =>
+      `<button type="button" class="catalog-card" data-action="equip-card" data-card="${entry.id}" data-bind="catalog-${entry.id}" draggable="true">${cardIcon(entry.id, entry.labelZh)}<span>${entry.labelZh}</span></button>`,
+  ).join("");
+}
+
+function protocolSlots(): string {
+  return Array.from({ length: PROTOCOL_SLOT_COUNT }, (_, index) => `
+    <article class="protocol-slot" data-slot="${index}">
+      <p class="lock" data-bind="slot-lock-${index}"></p>
+      <div class="slot-controls" data-bind="slot-controls-${index}">
+        <span class="lamp lamp-gray" data-bind="lamp-${index}" title="空槽位"></span>
+        <span class="drag-handle" draggable="true" data-slot-drag="${index}" title="拖动排序">↕</span>
+        ${icon("protocol_card")}
+        <span class="idx">${String(index + 1).padStart(2, "0")}</span>
+        <label class="check"><input type="checkbox" data-bind="slot-enabled-${index}" data-field="enabled" /> 启用</label>
+        <button type="button" data-action="slot-move" data-index="${index}" data-dir="-1">上移</button>
+        <button type="button" data-action="slot-move" data-index="${index}" data-dir="1">下移</button>
+        <button type="button" data-action="slot-clear" data-index="${index}">卸下</button>
+      </div>
+      <div class="slot-params" data-bind="slot-params-${index}"></div>
+      <p class="sentence" data-bind="slot-sentence-${index}"></p>
+      <p class="slot-reason" data-bind="slot-reason-${index}"></p>
+    </article>`).join("");
+}
+
+function requiredElement(root: ParentNode, bind: string): HTMLElement {
+  const node = root.querySelector(`[data-bind="${bind}"]`);
+  if (!(node instanceof HTMLElement)) throw new Error(`Missing view node ${bind}`);
+  return node;
+}
+
+function requiredButton(root: ParentNode, bind: string): HTMLButtonElement {
+  const node = requiredElement(root, bind);
+  if (!(node instanceof HTMLButtonElement)) throw new Error(`Expected button ${bind}`);
+  return node;
+}
+
+function requiredTextArea(root: ParentNode, bind: string): HTMLTextAreaElement {
+  const node = requiredElement(root, bind);
+  if (!(node instanceof HTMLTextAreaElement)) throw new Error(`Expected textarea ${bind}`);
+  return node;
+}
+
+function requiredInput(root: ParentNode, bind: string): HTMLInputElement {
+  const node = requiredElement(root, bind);
+  if (!(node instanceof HTMLInputElement)) throw new Error(`Expected input ${bind}`);
+  return node;
+}
+
+function setText(root: ParentNode, bind: string, text: string): void {
+  const node = requiredElement(root, bind);
+  if (node.textContent !== text) node.textContent = text;
 }
