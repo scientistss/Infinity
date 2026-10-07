@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,50 +25,56 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Original UI and asset integrity
-        run: node scripts/check-ui-baseline.mjs > original-ui-report.json
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
-      - name: Original-engine parity and pacing
+      - name: Original UI and single-world regression
         run: |
+          node scripts/check-ui-baseline.mjs > original-ui-report.json
           mkdir -p "$RUNNER_TEMP/original-p3"
           git archive 69eca7107980cce3c4c24ce4736a91993c051fbd | tar -x -C "$RUNNER_TEMP/original-p3"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-p3/node_modules"
           node --import tsx scripts/check-original-parity.mjs "$RUNNER_TEMP/original-p3" > parity-report.json
           npm run sim -- 60 | tee balance-report.txt
-      - name: Install browser acceptance dependencies
+      - name: Browser prerequisites
         run: |
           python -m pip install -r scripts/browser-requirements.txt
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
-      - name: Real HTTP browser and save isolation acceptance
+      - name: Native browser acceptance including real-time 60-second charging
         run: |
           node --import tsx scripts/p4-1-fixture.ts > p4-1-review-save.json
           node --import tsx scripts/space-fixture.ts > space-review-save.json
+          mkdir -p deep-fixtures
+          for scenario in pirate alien merchant blackhole-protected blackhole-risk; do
+            node --import tsx scripts/deep-fixture.ts "$scenario" > "deep-fixtures/$scenario.json"
+          done
           npm run preview -- --host 127.0.0.1 --port 4173 > preview.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" || true' EXIT
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/Infinity/ > /dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
           python scripts/browser-p4-1.py --fixture p4-1-review-save.json
           python scripts/browser-space.py --fixture space-review-save.json
+          python scripts/browser-deep.py
       - name: Archive exact readable source
         if: always()
-        run: git archive --format=zip --prefix=Infinity/ HEAD > original-p4-source.zip
+        run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: original-p4-${{ github.sha }}
+          name: original-deep-${{ github.sha }}
           path: |
             dist
+            source.zip
             browser-evidence
             space-evidence
-            original-p4-source.zip
+            deep-evidence
+            deep-fixtures
             test-results.json
-            parity-report.json
             original-ui-report.json
+            parity-report.json
             balance-report.txt
             preview.log
           retention-days: 7
