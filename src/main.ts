@@ -1,3 +1,6 @@
+import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
+import { spaceView } from "./ui/space-present";
+import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
 import { STORAGE_KEY } from "./game/content";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
@@ -36,7 +39,7 @@ import {
 import { createInitialState } from "./game/state";
 import type { GameState } from "./game/types";
 import { present } from "./ui/present";
-import { mountView, type UiAction } from "./ui/planet-selector";
+import { mountView, type UiAction } from "./ui/space-panel";
 import "./style.css";
 
 const AUTOSAVE_MS = 15_000;
@@ -106,11 +109,17 @@ function frame(now: number): void {
 
 function render(): void {
   view.update(present(state, { status, banner, notice, catchup }));
+  view.setOrigin(activePlanet(state).coordinates);
+  view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
 }
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
-  if (action.type === "select-planet") {
+  if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
+    if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
+    const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
+    state=result.state;status=result.reason;if(result.ok)persist();
+  } else if (action.type === "select-planet") {
     const next = selectPlanet(state, action.id);
     if (next !== state) { state = next; status = `已切换至${activePlanet(state).name}，协议卡只作用于当前星球`; persist(); }
   } else if (action.type === "dismiss-offline") {
@@ -240,7 +249,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会清空所有星球的资源、建筑、舰船与队列，只保留新母星，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会清空所有星球的资源、建筑、舰船、在途舰队与队列，只保留新母星，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";

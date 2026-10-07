@@ -2,7 +2,7 @@ name: Verify original P4
 
 on:
   push:
-    branches: ['feat/p4-1-original-planets', 'dev/p4-original-69eca71']
+    branches: ['feat/p4-1-original-planets', 'feat/p4-original-*', 'dev/p4-original-69eca71']
   pull_request:
     branches: ['dev/p4-original-69eca71']
   workflow_dispatch:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   verify:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[p4-1-stage]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[space-stage]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -56,6 +56,8 @@ jobs:
             sleep 1
           done
           python scripts/browser-p4-1.py --fixture p4-1-review-save.json
+          node --import tsx scripts/space-fixture.ts > space-review-save.json
+          python scripts/browser-space.py --fixture space-review-save.json
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > original-p4-source.zip
@@ -66,6 +68,7 @@ jobs:
           path: |
             dist
             browser-evidence
+            space-evidence
             original-p4-source.zip
             test-results.json
             parity-report.json

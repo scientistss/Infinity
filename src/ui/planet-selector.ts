@@ -26,7 +26,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   const saveNote = root.querySelector('[data-tab-panel="save"] p');
   if (saveNote) {
     saveNote.replaceChildren(document.createTextNode(
-      "原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。仅接受 schema=infinity-original-p4 的 v9 存档；v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 ",
+      "原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。仅接受 schema=infinity-original-p4 的 v9 / r2 存档；v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 ",
     ));
     const cap = document.createElement("strong");
     cap.dataset.bind = "offline-cap";

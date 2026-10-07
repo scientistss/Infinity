@@ -22,7 +22,7 @@ const input = { status: "", banner: null, notice: null, catchup: null };
 function twins(): GameState {
   const state = withResearch(rich(stateWith({ metal_mine: 10, crystal_mine: 8, deuterium_synth: 6, solar_plant: 20, robotics_factory: 3, research_lab: 4, shipyard: 4 }), 1e7), { combustion_drive: 6, energy_tech: 4 });
   const home = activePlanet(state);
-  const other = createPlanet("colony-test");
+  const other = createPlanet("colony-test", {galaxy:1,system:1,position:5});
   other.name = "冰海试验站";
   other.buildings = { ...home.buildings, metal_mine: 6, research_lab: 2 };
   other.resources = { metal: big(7e6), crystal: big(6e6), deuterium: big(5e6) };
@@ -105,7 +105,7 @@ describe("P4-1 canonical planets", () => {
 
 describe("P4-1 shared event clock", () => {
   it("advances time only once while summing the real output of both worlds", () => {
-    let s=createInitialState();s.planets.push(createPlanet("colony-test"));s=tick(s,0);
+    let s=createInitialState();s.planets.push(createPlanet("colony-test", {galaxy:1,system:1,position:5}));s=tick(s,0);
     const rates=s.planets.map(p=>economy(selectPlanet(s,p.id)).gross);
     const next=tick(frozen(s),10);
     expect(next.totalTime.sub(s.totalTime).toNumber()).toBe(10);
@@ -150,7 +150,7 @@ describe("P4-1 shared event clock", () => {
     expect(offline.state.totalTime.sub(s.totalTime).toNumber()).toBe(7200);
   });
   it("keeps the resource capacity regimes independent", () => {
-    const s=createInitialState();const p=createPlanet("colony-test");p.resources.metal=big(12500);s.planets.push(p);
+    const s=createInitialState();const p=createPlanet("colony-test", {galaxy:1,system:1,position:5});p.resources.metal=big(12500);s.planets.push(p);
     const next=tick(s,10);expect(next.planets[1]!.resources.metal.toNumber()).toBe(12500);
     expect(next.planets[0]!.resources.metal.gt(500)).toBe(true);
     expect(next.lifetime.metal.toNumber()).toBeLessThan(100);

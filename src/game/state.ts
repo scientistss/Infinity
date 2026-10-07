@@ -1,3 +1,4 @@
+import { homeCoordinates } from "./galaxy";
 import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
 import { STARTING_RESOURCES } from "./content";
@@ -58,15 +59,19 @@ export function startingResources(): ResourceAmounts {
   };
 }
 
-export function createInitialState(): GameState {
+export function createInitialState(seed?: number): GameState {
+  const arcade = createArcade();
+  const worldSeed = seed === undefined ? arcade.seed : seed >>> 0;
   return {
-    planets: [{ ...createPlanet(), resources: startingResources() }],
+    planets: [{ ...createPlanet(HOMEWORLD_ID, homeCoordinates(worldSeed)), resources: startingResources() }],
+    universe: {seed: worldSeed, layout: "ring-v1"},
+    fleets: [], messages: [], nextFleetId: 1,
     activePlanetId: HOMEWORLD_ID,
     research: createResearch(),
     darkMatter: big(0),
     items: { kraken_box: 0, newtron_box: 0, detroit_box: 0, booster_box: 0, supply_pack: 0 },
     boosters: [],
-    arcade: createArcade(),
+    arcade,
     lifetime: zeros(RESOURCE_IDS),
     warpCores: big(0),
     curvature: emptyCurvature(),

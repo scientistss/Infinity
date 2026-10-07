@@ -1,3 +1,4 @@
+import type { Coordinates } from "./galaxy";
 import balance from "../data/balance.json";
 import { BUILDING_IDS, PRODUCTION_IDS, type BuildingId, type ProductionBuildingId } from "../data/buildings";
 import { big, type BigNumber } from "./decimal";
@@ -24,6 +25,7 @@ export interface BuildOrder {
  */
 export interface PlanetState {
   id: string;
+  coordinates: Coordinates;
   resources: ResourceAmounts;
   name: string;
   /** Max temperature in °C. Drives deuterium output. */
@@ -55,10 +57,11 @@ export function fullProduction(): Record<ProductionBuildingId, number> {
 
 export const HOMEWORLD_ID = "homeworld";
 /** Empty local inventory; the new-game factory alone grants starting stock. */
-export function createPlanet(id = HOMEWORLD_ID): PlanetState {
+export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {galaxy:1,system:50,position:8}): PlanetState {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new Error("星球 ID 无效");
   return {
     id,
+    coordinates: { ...coordinates },
     resources: { metal: big(0), crystal: big(0), deuterium: big(0) },
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
@@ -81,6 +84,7 @@ export function usedFields(planet: PlanetState): number {
 export function clonePlanet(planet: PlanetState): PlanetState {
   return {
     ...planet,
+    coordinates: { ...planet.coordinates },
     resources: { ...planet.resources },
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },

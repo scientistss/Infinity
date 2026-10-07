@@ -21,8 +21,8 @@ const [oldState,oldSave,oldLogic,oldQueue,oldResearch,oldYard,oldEngine,oldArcad
 ].map(load));
 function project(current) {
   const s = nowSave.serializeState(current);
-  const { planets, activePlanetId: _active, ...empire } = s;
-  const { id: _id, resources, ...planet } = planets[0];
+  const { planets, activePlanetId: _active, universe: _universe, fleets: _fleets, messages: _messages, nextFleetId: _nextFleetId, ...empire } = s;
+  const { id: _id, coordinates: _coordinates, resources, ...planet } = planets[0];
   return { ...empire, resources, planet, research: { ...s.research, queue: s.research.queue.map(({planetId: _payer, ...o})=>o) } };
 }
 let checked=0;
