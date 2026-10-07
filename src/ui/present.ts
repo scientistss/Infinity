@@ -29,7 +29,6 @@ import {
   ECONOMY_SPEED,
   energyUsePerHour,
   fusionOutputPerHour,
-  mineOutputPerHour,
   perSecond,
   satelliteEnergyPerUnit,
   solarOutputPerHour,
@@ -724,18 +723,13 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
   const planet = activePlanet(state);
   const b = planet.buildings;
   const g = eco.global;
-  const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
   const plasma = state.research.levels.plasma_tech;
-  const plasmaFactor = {
-    metal_mine: 1 + PLASMA_BONUS.metal * plasma,
-    crystal_mine: 1 + PLASMA_BONUS.crystal * plasma,
-    deuterium_synth: 1 + PLASMA_BONUS.deuterium * plasma,
+  const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
+  const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") => {
+    const res = id === "metal_mine" ? "metal" : id === "crystal_mine" ? "crystal" : "deuterium";
+    const base = res === "metal" ? BASE_PRODUCTION.metal : res === "crystal" ? BASE_PRODUCTION.crystal : 0;
+    return eco.gross[res] - perSecond(base, ECONOMY_SPEED) * g;
   };
-  const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
-    perSecond(
-      mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * eco.efficiency * plasmaFactor[id],
-      ECONOMY_SPEED,
-    ) * g;
   const production: TableRowView[] = [
     { key: "base", cells: ["星球基础产出", fmt(perSecond(BASE_PRODUCTION.metal) * g), fmt(perSecond(BASE_PRODUCTION.crystal) * g), "—"] },
     { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, fmt(mine("metal_mine")), "—", "—"] },

@@ -1,3 +1,5 @@
+import type { Universe } from "./galaxy";
+import type { Fleet, FleetMessage } from "./fleet";
 import type { BigNumber } from "./decimal";
 import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
 import type { BuildingId, ProductionBuildingId } from "../data/buildings";
@@ -84,6 +86,10 @@ export interface GameState {
   /** Canonical per-planet inventories and independent local queues (P4-1). */
   planets: PlanetState[];
   activePlanetId: string;
+  universe: Universe;
+  fleets: Fleet[];
+  messages: FleetMessage[];
+  nextFleetId: number;
   /** Empire research levels and research queue (design doc §6). Levels are kept on launch. */
   research: ResearchState;
   /** Dark matter (design doc §8.8). Empire resource, kept on launch, not affected by production multipliers. */

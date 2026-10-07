@@ -1,3 +1,6 @@
+import { readSpaceState, serializeFleets } from "./space-save";
+import { validCoordinates, type Universe, type Coordinates } from "./galaxy";
+import type { FleetMessage } from "./fleet";
 import type { Action, Condition, ProtocolCard, Trigger } from "../data/protocol-cards";
 import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
@@ -55,6 +58,7 @@ export interface SerializedOrder {
 
 export interface SerializedPlanet {
   id: string;
+  coordinates: Coordinates;
   resources: Record<ResourceId, string>;
   name: string;
   tempMax: number;
@@ -80,6 +84,10 @@ export interface SerializedResearchOrder {
 export interface SerializedState {
   planets: SerializedPlanet[];
   activePlanetId: string;
+  universe: Universe;
+  fleets: ReturnType<typeof serializeFleets>;
+  messages: FleetMessage[];
+  nextFleetId: number;
   research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
   darkMatter: string;
   /** Optional (added during v7); missing means empty. */
@@ -110,6 +118,7 @@ export interface SerializedState {
 
 export interface SaveFile {
   schema: typeof SAVE_SCHEMA;
+  revision: 2;
   version: number;
   savedAt: number;
   /** Wall clock of the last simulated tick. */
@@ -142,6 +151,8 @@ export function serializeState(state: GameState): SerializedState {
   return {
     planets: state.planets.map(serializePlanet),
     activePlanetId: state.activePlanetId,
+    universe: { ...state.universe }, fleets: serializeFleets(state.fleets),
+    messages: state.messages.map(m=>({...m})), nextFleetId: state.nextFleetId,
     research: serializeResearch(state.research),
     darkMatter: bigToString(state.darkMatter),
     items: { ...state.items },
@@ -191,6 +202,7 @@ export function deserializeState(raw: unknown): GameState {
   state.unlocked = readAchievements(raw.unlocked);
   state.stats = readStats(raw.stats);
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
+  Object.assign(state, readSpaceState(raw, state));
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
@@ -198,6 +210,7 @@ export function deserializeState(raw: unknown): GameState {
 export function exportSave(state: GameState, savedAt = Date.now()): string {
   const file: SaveFile = {
     schema: SAVE_SCHEMA,
+    revision: 2,
     version: SAVE_VERSION,
     savedAt,
     lastTickAt: savedAt,
@@ -219,6 +232,7 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
+  if (parsed.revision !== 2) throw Error("原版 P4 存档修订不兼容（需要 r2）；原件保留，未导入");
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -226,6 +240,7 @@ export function importSave(json: string): SaveFile {
     typeof parsed.lastTickAt === "number" && Number.isFinite(parsed.lastTickAt) ? parsed.lastTickAt : parsed.savedAt;
   return {
     schema: SAVE_SCHEMA,
+    revision: 2,
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
@@ -279,6 +294,7 @@ export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
 function serializePlanet(planet: PlanetState): SerializedPlanet {
   return {
     id: planet.id,
+    coordinates: { ...planet.coordinates },
     resources: mapResources(planet.resources),
     name: planet.name,
     tempMax: planet.tempMax,
@@ -300,7 +316,8 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
 
 function readPlanet(raw: unknown): PlanetState {
   if (!isRecord(raw)) throw new Error("星球数据格式不正确");
-  const planet = createPlanet(readPlanetId(raw.id));
+  if (!validCoordinates(raw.coordinates)) throw Error("星球坐标无效");
+  const planet = createPlanet(readPlanetId(raw.id), raw.coordinates);
   planet.resources = readResourceMap(raw.resources, "星球资源");
   if (typeof raw.name !== "string" || !raw.name.trim() || raw.name.length > 40) throw new Error("星球名称无效");
   planet.name = raw.name;

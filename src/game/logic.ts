@@ -1,3 +1,4 @@
+import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
 import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
 import { ACHIEVEMENTS } from "../data/achievements";
@@ -52,12 +53,12 @@ const EPS = 1e-9;
  * Pure: the input state is not mutated.
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
-  let current = state;
+  let current = resolveFleetArrivals(state);
   for (const planet of state.planets) current = onPlanet(current, planet.id, startNext);
   current = applyEmpireAchievements(startNextResearch(current));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
-  const limit = Math.ceil(dtSeconds / period) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 256;
+  const limit = Math.ceil(dtSeconds / period) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 4 * state.fleets.length + 256;
   let t = 0, segments = 0;
   while (dtSeconds - t > EPS) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
@@ -67,7 +68,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     let step = dtSeconds - t;
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
-    step = Math.min(step, Math.max(0, period - current.protocols.accumulator), nextBoosterExpiry(current), nextBeaconIn(current));
+    step = Math.min(step, Math.max(0, period - current.protocols.accumulator), nextBoosterExpiry(current), nextBeaconIn(current), nextFleetEvent(current));
     for (const snapshot of snapshots) {
       const local = selectPlanet(current, snapshot.id);
       const head = activePlanet(local).buildQueue[0];
@@ -115,6 +116,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         researchIdle = current.research.queue.length < researchCapacity(current);
       } else current = withResearchRemaining(current, remaining);
     }
+    current = advanceFleets(current, step);
     current = pruneBoosters(current);
     const beacon = accrueBeacons(current, step);
     current = beacon.state;
@@ -271,7 +273,9 @@ export function warpGain(state: GameState): BigNumber {
 export function prestige(state: GameState): GameState {
   const gain = warpGain(state);
   if (gain.lt(1)) return state;
-  const next = createInitialState();
+  const next = createInitialState(state.universe.seed);
+  next.messages = state.messages.slice();
+  next.nextFleetId = state.nextFleetId;
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };
   next.research = { levels: { ...state.research.levels }, queue: [] };

@@ -21,7 +21,7 @@ if (!process.argv.includes("--new-game")) {
     metal_storage: 7, crystal_storage: 7, deuterium_tank: 7,
   });
   home.resources = { metal: big(480000), crystal: big(360000), deuterium: big(200000) };
-  const colony = createPlanet("colony-review");
+  const colony = createPlanet("colony-review", {galaxy:1,system:1,position:1});
   colony.name = "冰海试验站";
   colony.tempMax = -30;
   Object.assign(colony.buildings, {
