@@ -1,3 +1,5 @@
+import { activePlanet, selectPlanet } from "./game/empire";
+import { STORAGE_KEY } from "./game/content";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
 import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
@@ -23,6 +25,7 @@ import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
 import {
   clearSave,
+  backupRawSave,
   deserializeState,
   exportSave,
   importSave,
@@ -33,7 +36,7 @@ import {
 import { createInitialState } from "./game/state";
 import type { GameState } from "./game/types";
 import { present } from "./ui/present";
-import { mountView, type UiAction } from "./ui/view";
+import { mountView, type UiAction } from "./ui/planet-selector";
 import "./style.css";
 
 const AUTOSAVE_MS = 15_000;
@@ -46,6 +49,7 @@ if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 const store = localStorageSafe();
 let loaded: OfflineCatchup = emptyCatchup(createInitialState());
 let notice: string | null = null;
+let storageLocked = false;
 let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
 if (store) {
   try {
@@ -54,7 +58,9 @@ if (store) {
     notice = result.notice;
   } catch {
     loaded = emptyCatchup(createInitialState());
-    status = "存档无法读取，已重新开始";
+    storageLocked = true;
+    notice = "存档无法读取：原件已保留，自动保存暂停。导出可取回原件；导入有效存档或明确重新开始才会解除保护。";
+    status = "存档保护模式，当前为临时新局";
   }
 }
 
@@ -104,7 +110,10 @@ function render(): void {
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
-  if (action.type === "dismiss-offline") {
+  if (action.type === "select-planet") {
+    const next = selectPlanet(state, action.id);
+    if (next !== state) { state = next; status = `已切换至${activePlanet(state).name}，协议卡只作用于当前星球`; persist(); }
+  } else if (action.type === "dismiss-offline") {
     catchup = null;
   } else if (action.type === "dismiss-notice") {
     notice = null;
@@ -191,7 +200,7 @@ async function handleAction(action: UiAction): Promise<void> {
     persist();
   } else if (action.type === "setProduction") {
     state = setProductionPct(state, action.id, action.pct);
-    status = `${buildingById(action.id).nameZh}产量设为 ${state.planet.productionPct[action.id]}%`;
+    status = `${buildingById(action.id).nameZh}产量设为 ${activePlanet(state).productionPct[action.id]}%`;
     persist();
   } else if (action.type === "protocol-palette") {
     const result = equipFirstEmpty(state, action.cardId);
@@ -231,7 +240,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会重置资源、建筑、建造队列和产量设置，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会清空所有星球的资源、建筑、舰船与队列，只保留新母星，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";
@@ -243,7 +252,7 @@ async function handleAction(action: UiAction): Promise<void> {
   } else if (action.type === "save") {
     persist("已保存到本地");
   } else if (action.type === "export") {
-    const json = exportSave(state);
+    const json = storageLocked && store ? store.getItem(STORAGE_KEY) ?? exportSave(state) : exportSave(state);
     view.setTransferText(json);
     download(json);
     status = "已导出 JSON";
@@ -254,7 +263,9 @@ async function handleAction(action: UiAction): Promise<void> {
     applyImport(await action.file.text());
   } else if (action.type === "reset") {
     if (!window.confirm("清空本地存档并重新开始？")) return;
-    if (store) clearSave(store);
+    try { if (store) { backupRawSave(store); clearSave(store); } }
+    catch { status = "备份失败，未重置"; render(); return; }
+    storageLocked = false;
     state = createInitialState();
     catchup = null;
     banner = null;
@@ -278,7 +289,10 @@ async function handleAction(action: UiAction): Promise<void> {
 function applyImport(json: string): void {
   try {
     const file = importSave(json);
-    state = deserializeState(file.state);
+    const replacement = deserializeState(file.state);
+    if (store) backupRawSave(store);
+    state = replacement;
+    storageLocked = false;
     catchup = null;
     banner = null;
     notice = null;
@@ -292,6 +306,7 @@ function applyImport(json: string): void {
 }
 
 function persist(nextStatus?: string): void {
+  if (storageLocked) { if (nextStatus) status = "存档保护模式，未覆盖原件"; return; }
   if (!store) {
     if (nextStatus) status = "无法写入本地存储";
     return;

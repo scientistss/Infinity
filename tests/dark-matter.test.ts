@@ -1,3 +1,4 @@
+import { activePlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { DM_ACHIEVEMENT_REWARD } from "../src/data/dark-matter";
 import {
@@ -46,13 +47,13 @@ describe("halve / finish prices (OGame 750 DM per half hour, 1 OGame hour = 1 ga
   it("finishes or halves the running build and charges dark matter", () => {
     let state = withDm(rich(stateWith({ metal_mine: 8 })), 1e6);
     state = enqueue(state, "metal_mine", "manual").state;
-    const remaining = state.planet.buildQueue[0]!.remainingSeconds;
+    const remaining = activePlanet(state).buildQueue[0]!.remainingSeconds;
     const halved = speedUp(state, "build", "halve");
     expect(halved.ok).toBe(true);
-    expect(halved.state.planet.buildQueue[0]!.remainingSeconds).toBeCloseTo(remaining / 2, 9);
+    expect(activePlanet(halved.state).buildQueue[0]!.remainingSeconds).toBeCloseTo(remaining / 2, 9);
     const done = speedUp(state, "build", "finish");
     expect(done.ok).toBe(true);
-    expect(done.state.planet.buildings.metal_mine).toBe(9);
+    expect(activePlanet(done.state).buildings.metal_mine).toBe(9);
     expect(done.state.darkMatter.toNumber()).toBe(1e6 - speedupQuote(remaining, "build", "finish").dm);
   });
 
@@ -69,12 +70,12 @@ describe("item shop", () => {
     let state = withDm(rich(stateWith({ metal_mine: 5 })), 1e5);
     state = enqueue(state, "metal_mine", "manual").state;
     state = enqueue(state, "metal_mine", "manual").state;
-    const first = state.planet.buildQueue[0]!.remainingSeconds;
+    const first = activePlanet(state).buildQueue[0]!.remainingSeconds;
     const result = buyShopItem(state, "kraken_gold");
     expect(result.ok).toBe(true);
     // 6 OGame hours = 6 game minutes, more than both small orders; same rate as the button (9,000 DM).
     expect(first).toBeLessThan(360);
-    expect(result.state.planet.buildings.metal_mine).toBe(7);
+    expect(activePlanet(result.state).buildings.metal_mine).toBe(7);
     expect(result.state.darkMatter.toNumber()).toBe(1e5 - 9000);
     expect(result.reason).toContain("6 分");
   });
@@ -95,7 +96,7 @@ describe("item shop", () => {
     let short = bought.state;
     for (let i = 0; i < 110; i += 1) short = tick(short, 100);
     expect(long.boosters).toHaveLength(0);
-    expect(long.resources.metal.sub(short.resources.metal).abs().div(long.resources.metal).toNumber()).toBeLessThan(1e-9);
+    expect(activePlanet(long).resources.metal.sub(activePlanet(short).resources.metal).abs().div(activePlanet(long).resources.metal).toNumber()).toBeLessThan(1e-9);
     // A weaker booster is refused while a stronger one runs.
     const gold = buyShopItem(base, "booster_gold", "crystal").state;
     expect(buyShopItem(gold, "booster_bronze", "crystal").reason).toContain("+30%");
@@ -130,12 +131,12 @@ describe("inventory and sources", () => {
   it("supply-box items work and are consumed", () => {
     let state = rich(stateWith({ metal_mine: 20 }));
     state = enqueue(state, "metal_mine", "manual").state;
-    const before = state.planet.buildQueue[0]!.remainingSeconds;
+    const before = activePlanet(state).buildQueue[0]!.remainingSeconds;
     state = addInventory(state, "kraken_box", 2);
     const used = useInventory(state, "kraken_box");
     expect(used.ok).toBe(true);
     expect(used.state.items.kraken_box).toBe(1);
-    expect(used.state.planet.buildQueue[0]!.remainingSeconds).toBeCloseTo(before * 0.7, 9);
+    expect(activePlanet(used.state).buildQueue[0]!.remainingSeconds).toBeCloseTo(before * 0.7, 9);
     expect(useInventory(stateWith(), "newtron_box").ok).toBe(false);
     const boosted = useInventory(addInventory(stateWith({ metal_mine: 5 }), "booster_box"), "booster_box");
     expect(boosted.state.boosters).toHaveLength(3);
@@ -143,8 +144,8 @@ describe("inventory and sources", () => {
     const pack = useInventory(addInventory(empty, "supply_pack"), "supply_pack");
     expect(pack.ok).toBe(true);
     // The merchant's 10% package: 2.4 game minutes of gross production.
-    expect(pack.state.resources.metal.toNumber()).toBe(Math.floor(dailyProduction(empty, "metal") / 10));
-    expect(pack.state.resources.deuterium.toNumber()).toBe(10000);
+    expect(activePlanet(pack.state).resources.metal.toNumber()).toBe(Math.floor(dailyProduction(empty, "metal") / 10));
+    expect(activePlanet(pack.state).resources.deuterium.toNumber()).toBe(10000);
   });
 
   it("every new achievement grants dark matter once", () => {

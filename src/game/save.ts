@@ -3,12 +3,12 @@ import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
 import { isCatalogId, isResId, isStoredResId, refreshUnlocks } from "../automation/engine";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
-import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, STORAGE_KEY } from "./content";
+import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, SAVE_SCHEMA, STORAGE_KEY } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
 import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
 import { emptyCurvature, offlineHoursFromTech } from "../prestige/tree";
-import { createPlanet, type BuildOrder, type PlanetState } from "./planet";
+import { createPlanet, HOMEWORLD_ID, type BuildOrder, type PlanetState } from "./planet";
 import { UNIT_IDS, isUnitId, type UnitId } from "../data/units";
 import { SHIPYARD, type ShipyardOrder } from "./shipyard";
 import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
@@ -54,6 +54,8 @@ export interface SerializedOrder {
 }
 
 export interface SerializedPlanet {
+  id: string;
+  resources: Record<ResourceId, string>;
   name: string;
   tempMax: number;
   fieldsMax: number;
@@ -66,6 +68,7 @@ export interface SerializedPlanet {
 }
 
 export interface SerializedResearchOrder {
+  planetId: string;
   tech: ResearchId;
   targetLevel: number;
   paid: Record<ResourceId, string>;
@@ -75,8 +78,8 @@ export interface SerializedResearchOrder {
 }
 
 export interface SerializedState {
-  resources: Record<ResourceId, string>;
-  planet: SerializedPlanet;
+  planets: SerializedPlanet[];
+  activePlanetId: string;
   research: { levels: Record<ResearchId, number>; queue: SerializedResearchOrder[] };
   darkMatter: string;
   /** Optional (added during v7); missing means empty. */
@@ -106,6 +109,7 @@ export interface SerializedState {
 }
 
 export interface SaveFile {
+  schema: typeof SAVE_SCHEMA;
   version: number;
   savedAt: number;
   /** Wall clock of the last simulated tick. */
@@ -136,8 +140,8 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
-    resources: mapResources(state.resources),
-    planet: serializePlanet(state.planet),
+    planets: state.planets.map(serializePlanet),
+    activePlanetId: state.activePlanetId,
     research: serializeResearch(state.research),
     darkMatter: bigToString(state.darkMatter),
     items: { ...state.items },
@@ -161,9 +165,16 @@ export function serializeState(state: GameState): SerializedState {
 export function deserializeState(raw: unknown): GameState {
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
-  state.resources = readResourceMap(raw.resources, "资源");
-  state.planet = readPlanet(raw.planet);
+  if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
+  if (!Array.isArray(raw.planets) || raw.planets.length < 1 || raw.planets.length > 100) throw new Error("星球列表必须包含 1–100 颗星球");
+  state.planets = raw.planets.map(readPlanet);
+  const ids = new Set(state.planets.map(p => p.id));
+  if (ids.size !== state.planets.length) throw new Error("星球 ID 重复");
+  if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
+  state.activePlanetId = readPlanetId(raw.activePlanetId);
+  if (!ids.has(state.activePlanetId)) throw new Error("当前星球不存在");
   state.research = readResearch(raw.research);
+  if (state.research.queue.some(o => !ids.has(o.planetId))) throw new Error("研究出资星球不存在");
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
   state.items = readItems(raw.items);
   state.boosters = readBoosters(raw.boosters);
@@ -186,6 +197,7 @@ export function deserializeState(raw: unknown): GameState {
 
 export function exportSave(state: GameState, savedAt = Date.now()): string {
   const file: SaveFile = {
+    schema: SAVE_SCHEMA,
     version: SAVE_VERSION,
     savedAt,
     lastTickAt: savedAt,
@@ -194,7 +206,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only the current version (v8) is accepted; anything else throws without touching the current game. */
+/** Validate a file. Only the current version and original-P4 schema is accepted; anything else throws without touching the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -206,12 +218,14 @@ export function importSave(json: string): SaveFile {
   const version = parsed.version;
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
+  if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
   const lastTickAt =
     typeof parsed.lastTickAt === "number" && Number.isFinite(parsed.lastTickAt) ? parsed.lastTickAt : parsed.savedAt;
   return {
+    schema: SAVE_SCHEMA,
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
@@ -254,6 +268,7 @@ export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
   if (!raw) return { ...emptyCatchup(createInitialState()), notice: null };
   const version = storedVersion(raw);
   if (version !== null && version < SAVE_VERSION) {
+    backupRawSave(store);
     return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
   }
   const file = importSave(raw);
@@ -263,6 +278,8 @@ export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
 
 function serializePlanet(planet: PlanetState): SerializedPlanet {
   return {
+    id: planet.id,
+    resources: mapResources(planet.resources),
     name: planet.name,
     tempMax: planet.tempMax,
     fieldsMax: planet.fieldsMax,
@@ -283,9 +300,12 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
 
 function readPlanet(raw: unknown): PlanetState {
   if (!isRecord(raw)) throw new Error("星球数据格式不正确");
-  const planet = createPlanet();
-  if (typeof raw.name === "string" && raw.name.trim()) planet.name = raw.name.slice(0, 40);
-  if (typeof raw.tempMax === "number" && Number.isFinite(raw.tempMax)) planet.tempMax = raw.tempMax;
+  const planet = createPlanet(readPlanetId(raw.id));
+  planet.resources = readResourceMap(raw.resources, "星球资源");
+  if (typeof raw.name !== "string" || !raw.name.trim() || raw.name.length > 40) throw new Error("星球名称无效");
+  planet.name = raw.name;
+  if (typeof raw.tempMax !== "number" || !Number.isFinite(raw.tempMax) || Math.abs(raw.tempMax) > 1000) throw new Error("星球温度无效");
+  planet.tempMax = raw.tempMax;
   if (raw.fieldsMax !== undefined) planet.fieldsMax = readInteger(raw.fieldsMax, "星球格子", 1, 10000);
 
   if (!isRecord(raw.buildings)) throw new Error("建筑等级格式不正确");
@@ -495,6 +515,7 @@ function serializeResearch(research: ResearchState): SerializedState["research"]
   return {
     levels: { ...research.levels },
     queue: research.queue.map((order) => ({
+      planetId: order.planetId,
       tech: order.tech,
       targetLevel: order.targetLevel,
       paid: mapResources(order.paid),
@@ -533,7 +554,21 @@ function readResearchOrder(raw: unknown, index: number): ResearchOrder {
   const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
   if (!source) throw new Error(`${label}来源无效`);
   const paid = readResourceMap(raw.paid, `${label}已付`);
-  return { tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
+  return { planetId: readPlanetId(raw.planetId), tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
+}
+
+/** Retain the exact previous bytes before an explicit replacement. Read-back failure aborts. */
+export function backupRawSave(store: KeyValueStore): void {
+  const raw = store.getItem(STORAGE_KEY);
+  if (raw === null) return;
+  const key = `${STORAGE_KEY}.backup`;
+  store.setItem(key, raw);
+  if (store.getItem(key) !== raw) throw new Error("原存档备份失败，已停止替换");
+}
+
+function readPlanetId(raw: unknown): string {
+  if (typeof raw !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(raw)) throw new Error("星球 ID 无效");
+  return raw;
 }
 
 function readInteger(raw: unknown, label: string, min: number, max: number): number {
@@ -552,6 +587,8 @@ function readAmount(raw: unknown, label: string): BigNumber {
   if (typeof raw !== "string" && typeof raw !== "number") {
     throw new Error(`${label} 必须是数字`);
   }
+  if (typeof raw === "number" && !Number.isFinite(raw)) throw new Error(`${label} 无效`);
+  if (typeof raw === "string" && !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(raw.trim())) throw new Error(`${label} 无效`);
   const value = big(raw);
   if (!isValidAmount(value)) throw new Error(`${label} 无效`);
   return value;

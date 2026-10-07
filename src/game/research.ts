@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 /**
  * Research queue (design doc §6.1). Empire-wide, one research at a time, same queue length as the
  * build queue. Cost is charged on enqueue at the target level and refunded in full on cancel.
@@ -16,6 +17,8 @@ import { missingRequirements } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export interface ResearchOrder {
+  /** Paying planet also supplies the primary lab; UI selection is irrelevant. */
+  planetId: string;
   tech: ResearchId;
   targetLevel: number;
   paid: { metal: BigNumber; crystal: BigNumber; deuterium: BigNumber };
@@ -71,9 +74,9 @@ export function researchCapacity(state: GameState): number {
   return queueCapacity(state);
 }
 
-/** Effective lab level for research time. One planet in P2; the research network joins labs from P4. */
+/** P4-1 uses the paying planet's lab. Network aggregation is a separate increment. */
 export function effectiveLabLevel(state: GameState): number {
-  return state.planet.buildings.research_lab;
+  return activePlanet(state).buildings.research_lab;
 }
 
 export function nextResearchLevel(research: ResearchState, id: ResearchId): number {
@@ -90,7 +93,7 @@ export function researchSecondsFor(state: GameState, def: ResearchDef, level: nu
 }
 
 export function labBusyReason(state: GameState): string {
-  return state.planet.buildQueue.some((order) => order.building === "research_lab") ? "研究实验室正在升级，暂不能研究" : "";
+  return state.planets.some(p => p.buildQueue.some(order => order.building === "research_lab")) ? "研究实验室正在升级，暂不能研究" : "";
 }
 
 export function canEnqueueResearch(state: GameState, id: ResearchId): ResearchCheck {
@@ -119,6 +122,7 @@ export function enqueueResearch(state: GameState, id: ResearchId, source: OrderS
   if (!check.ok) return { state, ok: false, reason: check.reason };
   const research = cloneResearch(state.research);
   research.queue.push({
+    planetId: state.activePlanetId,
     tech: id,
     targetLevel: check.targetLevel,
     paid: { metal: check.cost.metal, crystal: check.cost.crystal, deuterium: check.cost.deuterium },
@@ -126,10 +130,10 @@ export function enqueueResearch(state: GameState, id: ResearchId, source: OrderS
     remainingSeconds: 0,
     source,
   });
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   for (const res of RESOURCE_IDS) resources[res] = resources[res].sub(check.cost[res]);
   const stats = source === "manual" ? { ...state.stats, manualActions: state.stats.manualActions + 1 } : state.stats;
-  const next = startNextResearch({ ...state, research, resources, stats });
+  const next = startNextResearch({ ...withPlanet(state, { resources }), research, stats });
   return { state: next, ok: true, reason: `${researchById(id).nameZh} → 等级 ${check.targetLevel} 已加入研究队列` };
 }
 
@@ -139,7 +143,7 @@ export function startNextResearch(state: GameState): GameState {
   const research = cloneResearch(state.research);
   const order = research.queue[0];
   if (!order) return state;
-  const seconds = researchSecondsFor(state, researchById(order.tech), order.targetLevel, order.paid);
+  const seconds = researchSecondsFor(selectPlanet(state, order.planetId), researchById(order.tech), order.targetLevel, order.paid);
   order.totalSeconds = seconds;
   order.remainingSeconds = seconds;
   return { ...state, research };
@@ -168,22 +172,27 @@ export function cancelResearch(state: GameState, index: number): ResearchResult 
   if (!Number.isInteger(index) || !target) return { state, ok: false, reason: "研究队列中没有这一项" };
   const research = cloneResearch(state.research);
   research.queue.splice(index, 1);
-  const resources = { ...state.resources };
-  for (const res of RESOURCE_IDS) resources[res] = resources[res].add(target.paid[res]);
+  let refunded = onPlanet(state, target.planetId, (local) => {
+    const resources = { ...activePlanet(local).resources };
+    for (const res of RESOURCE_IDS) resources[res] = resources[res].add(target.paid[res]);
+    return withPlanet(local, { resources });
+  });
   for (let i = index; i < research.queue.length; i += 1) {
     const order = research.queue[i];
     if (!order || order.tech !== target.tech) continue;
     order.targetLevel -= 1;
     const repriced = researchCostFor(order.tech, order.targetLevel);
-    for (const res of RESOURCE_IDS) {
-      const diff = order.paid[res].sub(repriced[res]);
-      if (diff.gt(0)) {
-        resources[res] = resources[res].add(diff);
-        order.paid[res] = repriced[res];
+    refunded = onPlanet(refunded, order.planetId, (local) => {
+      const resources = { ...activePlanet(local).resources };
+      for (const res of RESOURCE_IDS) {
+        const diff = order.paid[res].sub(repriced[res]);
+        if (diff.gt(0)) resources[res] = resources[res].add(diff);
       }
-    }
+      return withPlanet(local, { resources });
+    });
+    order.paid = repriced;
   }
-  const next = startNextResearch({ ...state, research, resources });
+  const next = startNextResearch({ ...refunded, research });
   return {
     state: next,
     ok: true,

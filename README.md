@@ -1,3 +1,5 @@
+> **原版续作 P4-1**：本分支是从原始 `69eca71` 继续的 P4-1 多星球基础；保留原版 UI，尚未实现派舰殖民或深空充能。使用独立开发存档键，不覆盖现有线上存档。实现与测试见 [P4-1 说明](docs/P4_ORIGINAL_01.md)。
+
 # Infinity
 
 **English.** Infinity is a sci-fi idle game about expanding from a barren planet toward the multiverse. Automation is visual protocol cards, not scripts. This repository is the planet-surface slice: OGame-style buildings upgraded by level through a build queue, storage caps, energy, and a colony-ship launch that banks curvature cores.

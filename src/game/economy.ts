@@ -1,3 +1,4 @@
+import { activePlanet } from "./empire";
 /**
  * Planet economy at one instant (design doc §5.2–§5.3). Rates are constant between events,
  * which is what lets tick() integrate exactly (§5.10).
@@ -55,7 +56,7 @@ export function globalMultiplier(state: GameState): number {
 }
 
 export function storageCaps(state: GameState): ResourceRates {
-  const b = state.planet.buildings;
+  const b = activePlanet(state).buildings;
   return {
     metal: storageCapacity(b.metal_storage),
     crystal: storageCapacity(b.crystal_storage),
@@ -87,7 +88,7 @@ interface Flow {
 }
 
 function flow(state: GameState, fusionFactor: number, global: number): Flow {
-  const planet = state.planet;
+  const planet = activePlanet(state);
   const b = planet.buildings;
   const doubled = outputScale(state);
   const tech = state.research.levels;
@@ -122,7 +123,7 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
 export function economy(state: GameState): EconomySnapshot {
   const global = globalMultiplier(state);
   const caps = storageCaps(state);
-  const stock = state.resources;
+  const stock = activePlanet(state).resources;
 
   let fusionFactor = 1;
   let current = flow(state, 1, global);

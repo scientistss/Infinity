@@ -1,6 +1,7 @@
 import balance from "../data/balance.json";
 import { BUILDING_IDS, PRODUCTION_IDS, type BuildingId, type ProductionBuildingId } from "../data/buildings";
-import type { BigNumber } from "./decimal";
+import { big, type BigNumber } from "./decimal";
+import type { ResourceAmounts } from "./types";
 import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
 
@@ -19,9 +20,11 @@ export interface BuildOrder {
 }
 
 /**
- * The single planet of P1. Resources stay on GameState until P4 moves everything into planets[].
+ * Local state of one world; empire-wide systems stay in GameState.
  */
 export interface PlanetState {
+  id: string;
+  resources: ResourceAmounts;
   name: string;
   /** Max temperature in °C. Drives deuterium output. */
   tempMax: number;
@@ -50,8 +53,13 @@ export function fullProduction(): Record<ProductionBuildingId, number> {
   return out;
 }
 
-export function createPlanet(): PlanetState {
+export const HOMEWORLD_ID = "homeworld";
+/** Empty local inventory; the new-game factory alone grants starting stock. */
+export function createPlanet(id = HOMEWORLD_ID): PlanetState {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new Error("星球 ID 无效");
   return {
+    id,
+    resources: { metal: big(0), crystal: big(0), deuterium: big(0) },
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
     fieldsMax: HOMEWORLD.fields,
@@ -73,6 +81,7 @@ export function usedFields(planet: PlanetState): number {
 export function clonePlanet(planet: PlanetState): PlanetState {
   return {
     ...planet,
+    resources: { ...planet.resources },
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),

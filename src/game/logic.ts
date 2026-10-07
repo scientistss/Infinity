@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
 import { ACHIEVEMENTS } from "../data/achievements";
 import type { StoredResId } from "../data/protocol-cards";
@@ -32,9 +33,9 @@ export type TickMode = "live" | "offline";
 
 /** Optional sink for things that happened inside one tick (offline summary). */
 export interface TickLog {
-  completedBuilds: CompletedBuild[];
+  completedBuilds: Array<CompletedBuild & { planetId?: string }>;
   completedResearch: CompletedResearch[];
-  completedUnits: CompletedUnits[];
+  completedUnits: Array<CompletedUnits & { planetId?: string }>;
 }
 
 export function emptyTickLog(): TickLog {
@@ -51,56 +52,58 @@ const EPS = 1e-9;
  * Pure: the input state is not mutated.
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
-  let current = applyAchievementUnlocks(startNextResearch(startNext(state)));
+  let current = state;
+  for (const planet of state.planets) current = onPlanet(current, planet.id, startNext);
+  current = applyEmpireAchievements(startNextResearch(current));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
-  const limit = Math.ceil(dtSeconds / period) + 4 * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 64;
-
-  let t = 0;
-  let segments = 0;
+  const limit = Math.ceil(dtSeconds / period) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 256;
+  let t = 0, segments = 0;
   while (dtSeconds - t > EPS) {
-    segments += 1;
-    const eco = economy(current);
-    const left = dtSeconds - t;
-    if (segments > limit) {
-      // Safety valve: integrate the rest in one piece rather than spin.
-      current = integrate(current, left, eco).state;
-      break;
-    }
-    let step = left;
-    const head = current.planet.buildQueue[0];
-    if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
+    if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
+    const selectedId = current.activePlanetId;
+    // Freeze all local rates at the same time. Later completions must not boost earlier intervals.
+    const snapshots = current.planets.map((p) => ({ id: p.id, eco: economy(selectPlanet(current, p.id)) }));
+    let step = dtSeconds - t;
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
-    step = Math.min(step, Math.max(0, period - current.protocols.accumulator));
-    step = Math.min(step, nextBoundary(current, eco), nextBoosterExpiry(current), nextBeaconIn(current), nextShipyardEvent(current));
-
-    const moved = integrate(current, step, eco);
-    current = pruneBoosters(moved.state);
-
-    // Shipyard: runs on the levels at the start of the step (it pauses while the shipyard / nanite upgrade).
-    const yardBusy = current.planet.shipyardQueue.length > 0;
-    const yard = advanceShipyard(current, step);
-    current = yard.state;
-    if (log) for (const done of yard.completed) addUnits(log.completedUnits, done);
-    const shipyardIdle = yardBusy && current.planet.shipyardQueue.length === 0;
-
-    // Queue: count down the active order, finish it, start the next one.
-    let queueIdle = false;
-    const active = current.planet.buildQueue[0];
-    if (active && active.totalSeconds > 0) {
-      const remaining = active.remainingSeconds - step;
-      if (remaining <= EPS) {
-        const done = completeActive(current);
-        current = done.state;
-        if (done.completed) log?.completedBuilds.push(done.completed);
-        queueIdle = current.planet.buildQueue.length < queueCapacity(current);
-      } else {
-        current = withHeadRemaining(current, remaining);
-      }
+    step = Math.min(step, Math.max(0, period - current.protocols.accumulator), nextBoosterExpiry(current), nextBeaconIn(current));
+    for (const snapshot of snapshots) {
+      const local = selectPlanet(current, snapshot.id);
+      const head = activePlanet(local).buildQueue[0];
+      if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
+      step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local));
     }
-
-    // Research: same countdown on the empire research queue.
+    let filled: StoredResId[] = [];
+    for (const snapshot of snapshots) {
+      current = onPlanet(current, snapshot.id, (local) => {
+        const moved = integrate(local, step, snapshot.eco);
+        if (snapshot.id === selectedId) filled = moved.filled;
+        return moved.filled.length > 0 ? { ...moved.state, stats: { ...moved.state.stats, seenStorageFull: true } } : moved.state;
+      });
+    }
+    current = { ...current, totalTime: current.totalTime.add(step) };
+    let queueIdle = false, shipyardIdle = false;
+    for (const snapshot of snapshots) {
+      current = onPlanet(current, snapshot.id, (local) => {
+        const wasBusy = activePlanet(local).shipyardQueue.length > 0;
+        const yard = advanceShipyard(local, step);
+        let result = yard.state;
+        if (log) for (const done of yard.completed) addUnits(log.completedUnits, current.planets.length > 1 ? { ...done, planetId: snapshot.id } : done);
+        if (snapshot.id === selectedId) shipyardIdle = wasBusy && activePlanet(result).shipyardQueue.length === 0;
+        const head = activePlanet(result).buildQueue[0];
+        if (head && head.totalSeconds > 0) {
+          const remaining = head.remainingSeconds - step;
+          if (remaining <= EPS) {
+            const done = completeActive(result);
+            result = done.state;
+            if (done.completed) log?.completedBuilds.push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
+            if (snapshot.id === selectedId) queueIdle = activePlanet(result).buildQueue.length < queueCapacity(result);
+          } else result = withHeadRemaining(result, remaining);
+        }
+        return result;
+      });
+    }
     let researchIdle = false;
     const studying = current.research.queue[0];
     if (studying && studying.totalSeconds > 0) {
@@ -110,33 +113,32 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         current = done.state;
         if (done.completed) log?.completedResearch.push(done.completed);
         researchIdle = current.research.queue.length < researchCapacity(current);
-      } else {
-        current = withResearchRemaining(current, remaining);
-      }
+      } else current = withResearchRemaining(current, remaining);
     }
-
-    // Ring machine: beacons accrue on game time (offline too, within the offline cap).
+    current = pruneBoosters(current);
     const beacon = accrueBeacons(current, step);
     current = beacon.state;
-
-    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: moved.filled, runsReady: beacon.granted > 0, shipyardIdle };
-    if (moved.filled.length > 0 && !current.stats.seenStorageFull) {
-      current = { ...current, stats: { ...current.stats, seenStorageFull: true } };
-    }
+    // P4 foundation: the one protocol rack follows the selected planet. It is not cloned per colony.
+    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: filled, runsReady: beacon.granted > 0, shipyardIdle };
     current = evaluateEvents(refreshUnlocks(current), events);
-
     const accrued = current.protocols.accumulator + step;
-    if (accrued >= period - EPS) current = evaluateLoadout(setAccumulator(current, 0), period);
-    else current = setAccumulator(current, accrued);
-
-    current = applyAchievementUnlocks(refreshUnlocks(current));
+    current = accrued >= period - EPS ? evaluateLoadout(setAccumulator(current, 0), period) : setAccumulator(current, accrued);
+    current = applyEmpireAchievements(refreshUnlocks(current));
     t += step;
   }
-  return applyAchievementUnlocks(refreshUnlocks(markStorageSeen(current)));
+  return applyEmpireAchievements(refreshUnlocks(markStorageSeen(current)));
+}
+function applyEmpireAchievements(state: GameState): GameState {
+  let result = state;
+  for (const planet of state.planets) result = onPlanet(result, planet.id, local => {
+    const next = applyAchievementUnlocks(local);
+    return state.planets.length > 1 ? refreshUnlocks(next) : next;
+  });
+  return result;
 }
 
-function addUnits(list: CompletedUnits[], done: CompletedUnits): void {
-  const same = list.find((entry) => entry.unit === done.unit);
+function addUnits(list: TickLog["completedUnits"], done: CompletedUnits & { planetId?: string }): void {
+  const same = list.find((entry) => entry.unit === done.unit && entry.planetId === done.planetId);
   if (same) same.count += done.count;
   else list.push({ ...done });
 }
@@ -145,7 +147,7 @@ function addUnits(list: CompletedUnits[], done: CompletedUnits): void {
 function nextBoundary(state: GameState, eco: EconomySnapshot): number {
   let soonest = Number.POSITIVE_INFINITY;
   for (const id of RESOURCE_IDS) {
-    const stock = state.resources[id].toNumber();
+    const stock = activePlanet(state).resources[id].toNumber();
     const cap = eco.caps[id];
     const rate = eco.net[id];
     if (stock < cap && rate > 0) soonest = Math.min(soonest, (cap - stock) / rate);
@@ -157,7 +159,7 @@ function nextBoundary(state: GameState, eco: EconomySnapshot): number {
 
 /** Integrate `dt` seconds at constant rates. Clamps at caps and zero; lifetime counts real output only. */
 function integrate(state: GameState, dt: number, eco: EconomySnapshot): { state: GameState; filled: StoredResId[] } {
-  const resources = { ...state.resources };
+  const resources = { ...activePlanet(state).resources };
   const lifetime = { ...state.lifetime };
   const filled: StoredResId[] = [];
   if (dt <= 0) return { state, filled };
@@ -178,18 +180,15 @@ function integrate(state: GameState, dt: number, eco: EconomySnapshot): { state:
     if (produced.gt(0)) lifetime[id] = lifetime[id].add(produced);
   }
   return {
-    state: { ...state, resources, lifetime, totalTime: state.totalTime.add(dt) },
+    state: { ...withPlanet(state, { resources }), lifetime },
     filled,
   };
 }
 
 function withHeadRemaining(state: GameState, remaining: number): GameState {
-  const [head, ...rest] = state.planet.buildQueue;
+  const [head, ...rest] = activePlanet(state).buildQueue;
   if (!head) return state;
-  return {
-    ...state,
-    planet: { ...state.planet, buildQueue: [{ ...head, remainingSeconds: remaining }, ...rest] },
-  };
+  return { ...withPlanet(state, { planet: { ...activePlanet(state), buildQueue: [{ ...head, remainingSeconds: remaining }, ...rest] } }) };
 }
 
 function setAccumulator(state: GameState, accumulator: number): GameState {
@@ -198,8 +197,10 @@ function setAccumulator(state: GameState, accumulator: number): GameState {
 
 function markStorageSeen(state: GameState): GameState {
   if (state.stats.seenStorageFull) return state;
-  const caps = economy(state).caps;
-  const full = RESOURCE_IDS.some((id) => state.resources[id].gte(caps[id]));
+  const full = state.planets.some(p => {
+    const caps = economy(selectPlanet(state, p.id)).caps;
+    return RESOURCE_IDS.some(id => p.resources[id].gte(caps[id]));
+  });
   return full ? { ...state, stats: { ...state.stats, seenStorageFull: true } } : state;
 }
 
@@ -310,16 +311,10 @@ export function scrapeAmount(state: GameState): number {
 export function scrape(state: GameState): GameState {
   const gain = big(scrapeAmount(state));
   return applyAchievementUnlocks(
-    refreshUnlocks({
-      ...state,
-      manualClicks: state.manualClicks + 1,
-      resources: { ...state.resources, metal: state.resources.metal.add(gain) },
-      lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) },
-      stats: {
+    refreshUnlocks({ ...withPlanet(state, { resources: { ...activePlanet(state).resources, metal: activePlanet(state).resources.metal.add(gain) } }), manualClicks: state.manualClicks + 1, lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) }, stats: {
         ...state.stats,
         scrapes: state.stats.scrapes + 1,
         manualActions: state.stats.manualActions + 1,
-      },
-    }),
+      } }),
   );
 }

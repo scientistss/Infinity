@@ -81,9 +81,9 @@ export interface PlayerStats {
 }
 
 export interface GameState {
-  resources: Record<ResourceId, BigNumber>;
-  /** Buildings, build queue, production settings. Resources move into the planet in P4. */
-  planet: PlanetState;
+  /** Canonical per-planet inventories and independent local queues (P4-1). */
+  planets: PlanetState[];
+  activePlanetId: string;
   /** Empire research levels and research queue (design doc §6). Levels are kept on launch. */
   research: ResearchState;
   /** Dark matter (design doc §8.8). Empire resource, kept on launch, not affected by production multipliers. */

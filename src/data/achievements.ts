@@ -1,3 +1,4 @@
+import { activePlanet } from "../game/empire";
 import { big, type BigNumber } from "../game/decimal";
 import type { GameState } from "../game/types";
 import { DEFENSE_IDS, SHIP_IDS } from "./units";
@@ -29,8 +30,8 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "first_metal_mine",
     name: "金属矿 1 级",
     detail: "金属矿达到 1 级",
-    met: (state) => state.planet.buildings.metal_mine >= 1,
-    progress: (state) => count(state.planet.buildings.metal_mine, 1),
+    met: (state) => activePlanet(state).buildings.metal_mine >= 1,
+    progress: (state) => count(activePlanet(state).buildings.metal_mine, 1),
   },
   {
     id: "energy_short",
@@ -50,29 +51,29 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "mines_10",
     name: "金属矿 10 级",
     detail: "金属矿达到 10 级",
-    met: (state) => state.planet.buildings.metal_mine >= 10,
-    progress: (state) => count(state.planet.buildings.metal_mine, 10),
+    met: (state) => activePlanet(state).buildings.metal_mine >= 10,
+    progress: (state) => count(activePlanet(state).buildings.metal_mine, 10),
   },
   {
     id: "first_crystal",
     name: "晶体开采",
     detail: "晶体矿达到 1 级",
-    met: (state) => state.planet.buildings.crystal_mine >= 1,
-    progress: (state) => count(state.planet.buildings.crystal_mine, 1),
+    met: (state) => activePlanet(state).buildings.crystal_mine >= 1,
+    progress: (state) => count(activePlanet(state).buildings.crystal_mine, 1),
   },
   {
     id: "first_deuterium",
     name: "重氢合成",
     detail: "重氢合成器达到 1 级",
-    met: (state) => state.planet.buildings.deuterium_synth >= 1,
-    progress: (state) => count(state.planet.buildings.deuterium_synth, 1),
+    met: (state) => activePlanet(state).buildings.deuterium_synth >= 1,
+    progress: (state) => count(activePlanet(state).buildings.deuterium_synth, 1),
   },
   {
     id: "first_robotics",
     name: "机器上线",
     detail: "机器人工厂达到 1 级",
-    met: (state) => state.planet.buildings.robotics_factory >= 1,
-    progress: (state) => count(state.planet.buildings.robotics_factory, 1),
+    met: (state) => activePlanet(state).buildings.robotics_factory >= 1,
+    progress: (state) => count(activePlanet(state).buildings.robotics_factory, 1),
   },
   {
     id: "metal_1e9",
@@ -106,22 +107,22 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "fusion_ignition",
     name: "核聚变点火",
     detail: "核聚变反应堆达到 1 级",
-    met: (state) => state.planet.buildings.fusion_reactor >= 1,
-    progress: (state) => count(state.planet.buildings.fusion_reactor, 1),
+    met: (state) => activePlanet(state).buildings.fusion_reactor >= 1,
+    progress: (state) => count(activePlanet(state).buildings.fusion_reactor, 1),
   },
   {
     id: "nanite_age",
     name: "纳米时代",
     detail: "纳米机器人工厂达到 1 级",
-    met: (state) => state.planet.buildings.nanite_factory >= 1,
-    progress: (state) => count(state.planet.buildings.nanite_factory, 1),
+    met: (state) => activePlanet(state).buildings.nanite_factory >= 1,
+    progress: (state) => count(activePlanet(state).buildings.nanite_factory, 1),
   },
   {
     id: "first_lab",
     name: "研究实验室落成",
     detail: "研究实验室达到 1 级",
-    met: (state) => state.planet.buildings.research_lab >= 1,
-    progress: (state) => count(state.planet.buildings.research_lab, 1),
+    met: (state) => activePlanet(state).buildings.research_lab >= 1,
+    progress: (state) => count(activePlanet(state).buildings.research_lab, 1),
   },
   {
     id: "first_research",
@@ -155,8 +156,8 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "first_shipyard",
     name: "造船厂",
     detail: "造船厂达到 1 级（打开造船厂与防御标签）",
-    met: (state) => state.planet.buildings.shipyard >= 1,
-    progress: (state) => count(state.planet.buildings.shipyard, 1),
+    met: (state) => activePlanet(state).buildings.shipyard >= 1,
+    progress: (state) => count(activePlanet(state).buildings.shipyard, 1),
   },
   {
     id: "first_ship",
@@ -169,8 +170,8 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
     id: "first_satellite",
     name: "轨道电站",
     detail: "造出第一颗太阳能卫星",
-    met: (state) => state.planet.units.solar_satellite >= 1,
-    progress: (state) => count(Math.min(1, state.planet.units.solar_satellite), 1),
+    met: (state) => activePlanet(state).units.solar_satellite >= 1,
+    progress: (state) => count(Math.min(1, activePlanet(state).units.solar_satellite), 1),
   },
   {
     id: "first_defense",
@@ -183,13 +184,13 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
 
 function flyingShips(state: GameState): number {
   let total = 0;
-  for (const id of SHIP_IDS) if (id !== "solar_satellite") total += state.planet.units[id];
+  for (const id of SHIP_IDS) if (id !== "solar_satellite") total += activePlanet(state).units[id];
   return total;
 }
 
 function defenseCount(state: GameState): number {
   let total = 0;
-  for (const id of DEFENSE_IDS) total += state.planet.units[id];
+  for (const id of DEFENSE_IDS) total += activePlanet(state).units[id];
   return total;
 }
 
@@ -200,7 +201,7 @@ function researchTotal(state: GameState): number {
 }
 
 function storageLevel(state: GameState): number {
-  const b = state.planet.buildings;
+  const b = activePlanet(state).buildings;
   return Math.max(b.metal_storage, b.crystal_storage, b.deuterium_tank);
 }
 

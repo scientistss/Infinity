@@ -28,9 +28,10 @@ export interface ResourceDef {
  * v8 (P3): planet.units (ships and defenses) and planet.shipyardQueue (design doc §17).
  * Test-phase policy: no migration. Older saves start a fresh game with a one-time notice.
  */
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
+export const SAVE_SCHEMA = "infinity-original-p4";
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
-export const STORAGE_KEY = "infinity.save.v1";
+export const STORAGE_KEY = "infinity.original-p4.save.v1";
 
 /** Base offline cap. Curvature tech adds {@link OFFLINE_TECH_STEP_HOURS} up to the max. */
 export const OFFLINE_BASE_HOURS = balance.offline.baseCapHours;

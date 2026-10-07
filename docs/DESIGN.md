@@ -1,3 +1,5 @@
+> **原版续作 P4-1**：P4-1 已把本地资源与队列移入 planets[]；研究与总时钟共享。当前阶段开关仍为 3；银河/舰队/充能按后续步骤开放。详见 P4_ORIGINAL_01.md。
+
 # Infinity — 游戏设计大纲 v0.4
 
 **English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file is the design source of truth. The repository today is the planet-surface slice described at the end: OGame-style buildings by level with a build queue, storage caps and planet fields (port phase 1), plus a running protocol-card engine.
