@@ -1,5 +1,5 @@
 {
-  "version": "0.5-p4-foundation",
+  "version": "0.3-p2",
   "resources": {
     "metal": { "id": "metal", "labelZh": "金属", "accumulating": true },
     "crystal": { "id": "crystal", "labelZh": "晶体", "accumulating": true },
@@ -125,32 +125,5 @@
     "turbulencePct": 50,
     "tailwindPct": 50,
     "autoCardManualRuns": 10
-  },
-  "galaxy": {
-    "galaxies": 5,
-    "systems": 100,
-    "positions": 15,
-    "deepSpacePosition": 16,
-    "npcDensity": 0.25,
-    "fleetSpeed": 120,
-    "minFlightSeconds": 1,
-    "maxMessages": 100,
-    "maxFleetCount": 1000,
-    "colonyFields": [
-      120,
-      240
-    ],
-    "crystalBonus": [
-      0.4,
-      0.3,
-      0.2
-    ],
-    "metalBonus": [
-      0.17,
-      0.23,
-      0.35,
-      0.23,
-      0.17
-    ]
   }
 }

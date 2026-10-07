@@ -34,9 +34,9 @@ export type TickMode = "live" | "offline";
 
 /** Optional sink for things that happened inside one tick (offline summary). */
 export interface TickLog {
-  completedBuilds: CompletedBuild[];
+  completedBuilds: Array<CompletedBuild & { planetId?: string }>;
   completedResearch: CompletedResearch[];
-  completedUnits: CompletedUnits[];
+  completedUnits: Array<CompletedUnits & { planetId?: string }>;
 }
 
 export function emptyTickLog(): TickLog {
@@ -53,9 +53,9 @@ const EPS = 1e-9;
  * Pure: the input state is not mutated.
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
-  let current = state;
+  let current = resolveFleetArrivals(state);
   for (const planet of state.planets) current = onPlanet(current, planet.id, startNext);
-  current = applyEmpireAchievements(startNextResearch(resolveFleetArrivals(current)));
+  current = applyEmpireAchievements(startNextResearch(current));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
   const limit = Math.ceil(dtSeconds / period) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 4 * state.fleets.length + 256;
@@ -90,7 +90,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         const wasBusy = activePlanet(local).shipyardQueue.length > 0;
         const yard = advanceShipyard(local, step);
         let result = yard.state;
-        if (log) for (const done of yard.completed) addUnits(log.completedUnits, done);
+        if (log) for (const done of yard.completed) addUnits(log.completedUnits, current.planets.length > 1 ? { ...done, planetId: snapshot.id } : done);
         if (snapshot.id === selectedId) shipyardIdle = wasBusy && activePlanet(result).shipyardQueue.length === 0;
         const head = activePlanet(result).buildQueue[0];
         if (head && head.totalSeconds > 0) {
@@ -98,7 +98,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
           if (remaining <= EPS) {
             const done = completeActive(result);
             result = done.state;
-            if (done.completed) log?.completedBuilds.push(done.completed);
+            if (done.completed) log?.completedBuilds.push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
             if (snapshot.id === selectedId) queueIdle = activePlanet(result).buildQueue.length < queueCapacity(result);
           } else result = withHeadRemaining(result, remaining);
         }
@@ -116,7 +116,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         researchIdle = current.research.queue.length < researchCapacity(current);
       } else current = withResearchRemaining(current, remaining);
     }
-    current = pruneBoosters(advanceFleets(current, step));
+    current = advanceFleets(current, step);
+    current = pruneBoosters(current);
     const beacon = accrueBeacons(current, step);
     current = beacon.state;
     // P4 foundation: the one protocol rack follows the selected planet. It is not cloned per colony.
@@ -131,12 +132,15 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
 }
 function applyEmpireAchievements(state: GameState): GameState {
   let result = state;
-  for (const planet of state.planets) result = onPlanet(result, planet.id, applyAchievementUnlocks);
+  for (const planet of state.planets) result = onPlanet(result, planet.id, local => {
+    const next = applyAchievementUnlocks(local);
+    return state.planets.length > 1 ? refreshUnlocks(next) : next;
+  });
   return result;
 }
 
-function addUnits(list: CompletedUnits[], done: CompletedUnits): void {
-  const same = list.find((entry) => entry.unit === done.unit);
+function addUnits(list: TickLog["completedUnits"], done: CompletedUnits & { planetId?: string }): void {
+  const same = list.find((entry) => entry.unit === done.unit && entry.planetId === done.planetId);
   if (same) same.count += done.count;
   else list.push({ ...done });
 }
@@ -195,8 +199,10 @@ function setAccumulator(state: GameState, accumulator: number): GameState {
 
 function markStorageSeen(state: GameState): GameState {
   if (state.stats.seenStorageFull) return state;
-  const caps = economy(state).caps;
-  const full = RESOURCE_IDS.some((id) => activePlanet(state).resources[id].gte(caps[id]));
+  const full = state.planets.some(p => {
+    const caps = economy(selectPlanet(state, p.id)).caps;
+    return RESOURCE_IDS.some(id => p.resources[id].gte(caps[id]));
+  });
   return full ? { ...state, stats: { ...state.stats, seenStorageFull: true } } : state;
 }
 
@@ -267,10 +273,9 @@ export function warpGain(state: GameState): BigNumber {
 export function prestige(state: GameState): GameState {
   const gain = warpGain(state);
   if (gain.lt(1)) return state;
-  const next = createInitialState();
-  next.universe = { ...state.universe };
-  next.nextFleetId = state.nextFleetId;
+  const next = createInitialState(state.universe.seed);
   next.messages = state.messages.slice();
+  next.nextFleetId = state.nextFleetId;
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };
   next.research = { levels: { ...state.research.levels }, queue: [] };

@@ -74,14 +74,9 @@ export function researchCapacity(state: GameState): number {
   return queueCapacity(state);
 }
 
-/** Effective lab level for research time. One planet in P2; the research network joins labs from P4. */
-export function effectiveLabLevel(state: GameState, requiredLevel = 0): number {
-  const primary = activePlanet(state);
-  const extra = state.planets.filter((p) => p.id !== primary.id && p.buildings.research_lab >= requiredLevel
-    && !p.buildQueue.some((o) => o.building === "research_lab"))
-    .map((p) => p.buildings.research_lab).sort((a, b) => b - a)
-    .slice(0, state.research.levels.intergalactic_research_network);
-  return primary.buildings.research_lab + extra.reduce((sum, level) => sum + level, 0);
+/** P4-1 uses the paying planet's lab. Network aggregation is a separate increment. */
+export function effectiveLabLevel(state: GameState): number {
+  return activePlanet(state).buildings.research_lab;
 }
 
 export function nextResearchLevel(research: ResearchState, id: ResearchId): number {
@@ -94,11 +89,11 @@ export function researchCostFor(id: ResearchId, level: number): ResourceCost {
 
 /** Seconds a research of `def` at `level` would take if it started now. */
 export function researchSecondsFor(state: GameState, def: ResearchDef, level: number, cost?: ResourceCost): number {
-  return researchSeconds(cost ?? researchCostFor(def.id, level), effectiveLabLevel(state, def.requires.find((r) => r.kind === "building" && r.id === "research_lab")?.level ?? 0));
+  return researchSeconds(cost ?? researchCostFor(def.id, level), effectiveLabLevel(state));
 }
 
 export function labBusyReason(state: GameState): string {
-  return activePlanet(state).buildQueue.some((order) => order.building === "research_lab") ? "研究实验室正在升级，暂不能研究" : "";
+  return state.planets.some(p => p.buildQueue.some(order => order.building === "research_lab")) ? "研究实验室正在升级，暂不能研究" : "";
 }
 
 export function canEnqueueResearch(state: GameState, id: ResearchId): ResearchCheck {

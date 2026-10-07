@@ -1,6 +1,8 @@
-import { sendFleet, quoteFlight, recallFleet, abandonColony } from "./game/fleet";
-import { validCoordinates } from "./game/galaxy";
+import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
+import { spaceView } from "./ui/space-present";
+import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
+import { STORAGE_KEY } from "./game/content";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
 import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
@@ -17,7 +19,7 @@ import {
 } from "./automation/engine";
 import { buildingById } from "./data/buildings";
 import { big } from "./game/decimal";
-import { formatAmount, formatDuration } from "./game/format";
+import { formatAmount } from "./game/format";
 import { cancel, enqueue } from "./game/queue";
 import { cancelResearch, enqueueResearch } from "./game/research";
 import { cancelUnits, orderUnits } from "./game/shipyard";
@@ -26,8 +28,7 @@ import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
 import {
   clearSave,
-  preserveSave,
-  readBackup,
+  backupRawSave,
   deserializeState,
   exportSave,
   importSave,
@@ -35,13 +36,11 @@ import {
   writeSave,
   type KeyValueStore,
 } from "./game/save";
-import { STORAGE_KEY } from "./game/content";
 import { createInitialState } from "./game/state";
 import type { GameState } from "./game/types";
 import { present } from "./ui/present";
-import { mountView, type UiAction } from "./ui/view";
+import { mountView, type UiAction } from "./ui/space-panel";
 import "./style.css";
-import "./visual.css";
 
 const AUTOSAVE_MS = 15_000;
 const BACKGROUND_NOTICE_SECONDS = 5;
@@ -53,32 +52,30 @@ if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 const store = localStorageSafe();
 let loaded: OfflineCatchup = emptyCatchup(createInitialState());
 let notice: string | null = null;
-let saveBlocked = false;
+let storageLocked = false;
 let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
 if (store) {
   try {
     const result = loadGame(store);
     loaded = result;
     notice = result.notice;
-    saveBlocked = result.saveBlocked === true;
   } catch {
     loaded = emptyCatchup(createInitialState());
-    saveBlocked = true;
-    notice = "原存档读取失败，自动保存已暂停。请先导出原件，当前只运行临时游戏。";
-    status = "原存档未覆盖";
+    storageLocked = true;
+    notice = "存档无法读取：原件已保留，自动保存暂停。导出可取回原件；导入有效存档或明确重新开始才会解除保护。";
+    status = "存档保护模式，当前为临时新局";
   }
 }
 
 let state: GameState = loaded.state;
-let galaxyCursor = { galaxy: activePlanet(state).coordinates.galaxy, system: activePlanet(state).coordinates.system };
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
 let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
-// Only verified migrations may be written immediately.
-if (notice && !saveBlocked) persist();
+// Write the fresh game right away so the "save format updated" notice only shows once.
+if (notice) persist();
 render();
 
 let lastFrame = performance.now();
@@ -111,38 +108,20 @@ function frame(now: number): void {
 }
 
 function render(): void {
-  view.update(present(state, { status, banner, notice, catchup, galaxyCursor }));
-  const protection = document.querySelector("#save-protection");
-  if (protection) protection.textContent = saveBlocked
-    ? "保护模式：自动保存已暂停。原存档仍保留在本地，请先导出原件。当前临时游戏可单独导出。"
-    : "自动保存已启用。v8 升级原件和导入前的进度会保留为本地备份。";
+  view.update(present(state, { status, banner, notice, catchup }));
+  view.setOrigin(activePlanet(state).coordinates);
+  view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
 }
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
-  if (action.type === "select-planet") {
-    state = selectPlanet(state, action.id);
-    status = `已切换至 ${activePlanet(state).name}，库存和建筑均为该星球独立数据`;
-    persist();
-  } else if (action.type === "galaxy-browse") {
-    if (validCoordinates({ galaxy: action.galaxy, system: action.system, position: 1 })) galaxyCursor = { galaxy: action.galaxy, system: action.system };
-    else status = "银河或恒星系编号超出范围";
-  } else if (action.type === "preview-flight") {
-    const quote = quoteFlight(state, action.request);
-    status = quote.ok ? `单程 ${formatDuration(quote.duration)} · 往返燃料 ${formatAmount(quote.fuel)} 重氢 · 货舱 ${formatAmount(quote.capacity)}（含燃料）` : quote.reason;
-  } else if (action.type === "send-fleet") {
-    const result = sendFleet(state, action.request);
-    state = result.state; status = result.reason;
-    if (result.ok) persist();
-  } else if (action.type === "recall-fleet") {
-    const result = recallFleet(state, action.id);
-    state = result.state; status = result.reason;
-    if (result.ok) persist();
-  } else if (action.type === "abandon-colony") {
-    if (!window.confirm("放弃当前殖民地会永久删除其资源、建筑、队列及驻留舰船，不退款。确定继续？")) return;
-    const result = abandonColony(state, state.activePlanetId);
-    state = result.state; status = result.reason;
-    if (result.ok) persist();
+  if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
+    if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
+    const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
+    state=result.state;status=result.reason;if(result.ok)persist();
+  } else if (action.type === "select-planet") {
+    const next = selectPlanet(state, action.id);
+    if (next !== state) { state = next; status = `已切换至${activePlanet(state).name}，协议卡只作用于当前星球`; persist(); }
   } else if (action.type === "dismiss-offline") {
     catchup = null;
   } else if (action.type === "dismiss-notice") {
@@ -270,7 +249,7 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会清空全部殖民地、在途舰队和所有星球资源、建筑、舰船、防御及队列，只保留新母星；进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
+    if (!window.confirm("发射殖民舰会清空所有星球的资源、建筑、舰船、在途舰队与队列，只保留新母星，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
     const next = prestige(state);
     if (next === state) {
       status = "扩张分还不够发射";
@@ -282,31 +261,20 @@ async function handleAction(action: UiAction): Promise<void> {
   } else if (action.type === "save") {
     persist("已保存到本地");
   } else if (action.type === "export") {
-    const json = exportSave(state);
+    const json = storageLocked && store ? store.getItem(STORAGE_KEY) ?? exportSave(state) : exportSave(state);
     view.setTransferText(json);
     download(json);
     status = "已导出 JSON";
     persist();
-  } else if (action.type === "export-backup") {
-    try {
-      const raw = store ? (saveBlocked ? store.getItem(STORAGE_KEY) : readBackup(store)) : null;
-      if (!raw) status = "当前没有保留的原存档";
-      else { view.setTransferText(raw); download(raw, "infinity-original-save.json"); status = "已导出原存档原件，未修改当前进度"; }
-    } catch { status = "无法读取原存档，请检查浏览器本地存储权限"; }
   } else if (action.type === "import-text") {
     applyImport(action.text);
   } else if (action.type === "import-file") {
     applyImport(await action.file.text());
   } else if (action.type === "reset") {
     if (!window.confirm("清空本地存档并重新开始？")) return;
-    if (store) {
-      try {
-        const original = store.getItem(STORAGE_KEY);
-        if (original) preserveSave(store, original);
-        clearSave(store);
-      } catch { status = "备份失败，未清空原存档。请先导出原件并释放浏览器空间"; render(); return; }
-    }
-    saveBlocked = false;
+    try { if (store) { backupRawSave(store); clearSave(store); } }
+    catch { status = "备份失败，未重置"; render(); return; }
+    storageLocked = false;
     state = createInitialState();
     catchup = null;
     banner = null;
@@ -330,14 +298,10 @@ async function handleAction(action: UiAction): Promise<void> {
 function applyImport(json: string): void {
   try {
     const file = importSave(json);
-    const restored = deserializeState(file.state);
-    // Back up current in-memory progress, not a stale autosave.
-    if (store) {
-      const original = saveBlocked ? store.getItem(STORAGE_KEY) : exportSave(state);
-      if (original) preserveSave(store, original);
-    }
-    state = restored;
-    saveBlocked = false;
+    const replacement = deserializeState(file.state);
+    if (store) backupRawSave(store);
+    state = replacement;
+    storageLocked = false;
     catchup = null;
     banner = null;
     notice = null;
@@ -351,10 +315,7 @@ function applyImport(json: string): void {
 }
 
 function persist(nextStatus?: string): void {
-  if (saveBlocked) {
-    if (nextStatus) status = "原存档保护中，未写入。请在存档页导出原件或当前临时游戏";
-    return;
-  }
+  if (storageLocked) { if (nextStatus) status = "存档保护模式，未覆盖原件"; return; }
   if (!store) {
     if (nextStatus) status = "无法写入本地存储";
     return;
@@ -367,22 +328,22 @@ function persist(nextStatus?: string): void {
   }
 }
 
-function download(json: string, filename = "infinity-save.json"): void {
+function download(json: string): void {
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = filename;
+  link.download = "infinity-save.json";
   link.click();
   URL.revokeObjectURL(url);
 }
 
 function localStorageSafe(): KeyValueStore | null {
   try {
-    // Read access still enables recovery when writes fail due to quota.
-    const storage = window.localStorage;
-    storage.getItem(STORAGE_KEY);
-    return storage;
+    const probe = "__infinity_probe__";
+    window.localStorage.setItem(probe, "1");
+    window.localStorage.removeItem(probe);
+    return window.localStorage;
   } catch {
     return null;
   }

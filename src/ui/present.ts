@@ -1,7 +1,4 @@
-import { positionBonus } from "../game/galaxy";
-import { boosterFactor } from "../game/boosters";
-import { presentEmpire, type EmpireView, type GalaxyCursor } from "./empire-present";
-import { activePlanet, withPlanet } from "../game/empire";
+import { activePlanet, withPlanet, selectPlanet } from "../game/empire";
 import { CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
 import { arcadeSymbolDef } from "../data/arcade";
 import { arcadeView, type ArcadeView } from "./arcade-present";
@@ -32,7 +29,6 @@ import {
   ECONOMY_SPEED,
   energyUsePerHour,
   fusionOutputPerHour,
-  mineOutputPerHour,
   perSecond,
   satelliteEnergyPerUnit,
   solarOutputPerHour,
@@ -273,7 +269,8 @@ export interface TechView {
 }
 
 export interface ViewModel {
-  empire: EmpireView;
+  planets: Array<{ id: string; name: string }>;
+  activePlanetId: string;
   telemetry: string;
   multiplier: string;
   played: string;
@@ -309,7 +306,6 @@ export interface ViewModel {
 }
 
 export interface PresentInput {
-  galaxyCursor?: GalaxyCursor;
   status: string;
   banner: string | null;
   notice: string | null;
@@ -321,7 +317,8 @@ export function present(state: GameState, input: PresentInput): ViewModel {
   const open = unlockedSlotCount(state);
   const unspent = unspentCores(state);
   return {
-    empire: presentEmpire(state, input.galaxyCursor),
+    planets: state.planets.map(p => ({ id: p.id, name: p.name })),
+    activePlanetId: state.activePlanetId,
     telemetry: formatCount(state.warpCores),
     multiplier: `全局 ${formatMultiplier(big(eco.global))}`,
     played: formatPlayed(state.totalTime),
@@ -534,11 +531,11 @@ function researchQueueView(state: GameState): QueueView {
     const def = researchById(order.tech);
     const active = index === 0 && order.totalSeconds > 0;
     const progress = active ? (1 - order.remainingSeconds / order.totalSeconds) * 100 : 0;
-    const estimate = researchSecondsFor(state, def, order.targetLevel, order.paid);
+    const estimate = researchSecondsFor(selectPlanet(state, order.planetId), def, order.targetLevel, order.paid);
     return {
       index,
-      key: `${order.tech}:${order.targetLevel}:${index}`,
-      label: `${def.nameZh} → 等级 ${order.targetLevel}`,
+      key: `${order.planetId}:${order.tech}:${order.targetLevel}:${index}`,
+      label: `${def.nameZh} → 等级 ${order.targetLevel}${state.planets.length > 1 ? ` · ${state.planets.find(p => p.id === order.planetId)?.name ?? order.planetId}` : ""}`,
       detail: active
         ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
         : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
@@ -547,7 +544,8 @@ function researchQueueView(state: GameState): QueueView {
       ...speedupButtons(state, active ? order.remainingSeconds : null, "research"),
     };
   });
-  const lab = effectiveLabLevel(state);
+  const payer = state.research.queue[0]?.planetId;
+  const lab = effectiveLabLevel(payer ? selectPlanet(state, payer) : state);
   const busy = labBusyReason(state);
   let idleHint = "";
   if (items.length === 0) {
@@ -623,7 +621,7 @@ function researchEffect(state: GameState, def: ResearchDef, target: number): str
 // ---------- building cards ----------
 
 function withLevel(state: GameState, id: BuildingId, level: number): GameState {
-  return { ...withPlanet(state, { planet: { ...activePlanet(state), buildings: { ...activePlanet(state).buildings, [id]: level } } }) };
+  return withPlanet(state, { planet: { ...activePlanet(state), buildings: { ...activePlanet(state).buildings, [id]: level } } });
 }
 
 function costLine(cost: ReturnType<typeof canEnqueue>["cost"]): string {
@@ -725,18 +723,13 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
   const planet = activePlanet(state);
   const b = planet.buildings;
   const g = eco.global;
-  const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
   const plasma = state.research.levels.plasma_tech;
-  const plasmaFactor = {
-    metal_mine: (1 + PLASMA_BONUS.metal * plasma) * boosterFactor(state,"metal") * (planet.homeworld ? 1 : positionBonus(planet.coordinates.position,"metal")),
-    crystal_mine: (1 + PLASMA_BONUS.crystal * plasma) * boosterFactor(state,"crystal") * (planet.homeworld ? 1 : positionBonus(planet.coordinates.position,"crystal")),
-    deuterium_synth: (1 + PLASMA_BONUS.deuterium * plasma) * boosterFactor(state,"deuterium"),
+  const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
+  const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") => {
+    const res = id === "metal_mine" ? "metal" : id === "crystal_mine" ? "crystal" : "deuterium";
+    const base = res === "metal" ? BASE_PRODUCTION.metal : res === "crystal" ? BASE_PRODUCTION.crystal : 0;
+    return eco.gross[res] - perSecond(base, ECONOMY_SPEED) * g;
   };
-  const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") =>
-    perSecond(
-      mineOutputPerHour(id, b[id], planet.tempMax) * pctOf(planet, id) * eco.efficiency * plasmaFactor[id],
-      ECONOMY_SPEED,
-    ) * g;
   const production: TableRowView[] = [
     { key: "base", cells: ["星球基础产出", fmt(perSecond(BASE_PRODUCTION.metal) * g), fmt(perSecond(BASE_PRODUCTION.crystal) * g), "—"] },
     { key: "metal_mine", cells: [`金属矿（${b.metal_mine} 级）`, fmt(mine("metal_mine")), "—", "—"] },
@@ -874,7 +867,13 @@ function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
   const applied = formatDuration(catchup.appliedSeconds);
   const raw = formatDuration(catchup.rawSeconds);
   const limit = catchup.capped ? `已触顶，超出 ${cap} 的部分不结算。` : "未触顶。";
-  const builds = summarizeBuilds(catchup.completedBuilds);
+  const names = new Map(catchup.state.planets.map(p => [p.id, p.name]));
+  const groups = new Map<string, typeof catchup.completedBuilds>();
+  for (const done of catchup.completedBuilds) {
+    const key = done.planetId ?? "";
+    groups.set(key, [...(groups.get(key) ?? []), done]);
+  }
+  const builds = [...groups].flatMap(([id, entries]) => summarizeBuilds(entries).map(line => id ? `${names.get(id) ?? id} · ${line}` : line));
   return {
     applied,
     detail: `离开 ${raw}，结算 ${applied}。当前上限 ${cap}。${limit}`,
@@ -885,7 +884,7 @@ function presentOffline(catchup: OfflineCatchup | null): OfflineView | null {
     })),
     builds: builds.length > 0 ? builds : ["离线期间没有完成的建造"],
     research: summarizeResearch(catchup.completedResearch),
-    units: catchup.completedUnits.map((done) => `${unitById(done.unit).nameZh} +${formatUnits(done.count)}`),
+    units: catchup.completedUnits.map((done) => `${done.planetId ? `${names.get(done.planetId) ?? done.planetId} · ` : ""}${unitById(done.unit).nameZh} +${formatUnits(done.count)}`),
     arcade: summarizeArcadeOffline(catchup),
     protocol: `协议卡已按每 ${PROTOCOL_OFFLINE_EVAL_SECONDS} 秒求值 ${catchup.protocolEvaluations} 次（建造完成、满仓时也会触发）。`,
   };

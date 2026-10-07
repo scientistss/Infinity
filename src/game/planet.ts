@@ -1,8 +1,8 @@
+import type { Coordinates } from "./galaxy";
 import balance from "../data/balance.json";
 import { BUILDING_IDS, PRODUCTION_IDS, type BuildingId, type ProductionBuildingId } from "../data/buildings";
 import { big, type BigNumber } from "./decimal";
 import type { ResourceAmounts } from "./types";
-import type { Coordinates } from "./galaxy";
 import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
 
@@ -21,12 +21,11 @@ export interface BuildOrder {
 }
 
 /**
- * A planet owns its stock, buildings and queues; research belongs to the empire.
+ * Local state of one world; empire-wide systems stay in GameState.
  */
 export interface PlanetState {
   id: string;
   coordinates: Coordinates;
-  homeworld: boolean;
   resources: ResourceAmounts;
   name: string;
   /** Max temperature in °C. Drives deuterium output. */
@@ -56,12 +55,14 @@ export function fullProduction(): Record<ProductionBuildingId, number> {
   return out;
 }
 
-export function createPlanet(): PlanetState {
+export const HOMEWORLD_ID = "homeworld";
+/** Empty local inventory; the new-game factory alone grants starting stock. */
+export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {galaxy:1,system:50,position:8}): PlanetState {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new Error("星球 ID 无效");
   return {
-    id: "home",
-    coordinates: { galaxy: 1, system: 50, position: 8 },
-    homeworld: true,
-    resources: { metal: big(500), crystal: big(500), deuterium: big(0) },
+    id,
+    coordinates: { ...coordinates },
+    resources: { metal: big(0), crystal: big(0), deuterium: big(0) },
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
     fieldsMax: HOMEWORLD.fields,

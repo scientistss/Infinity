@@ -1,0 +1,29 @@
+{
+  "galaxies": 5,
+  "systems": 100,
+  "positions": 15,
+  "deepSpacePosition": 16,
+  "fleetSpeed": 120,
+  "npcDensity": 0.25,
+  "maxFleets": 1000,
+  "maxMessages": 150,
+  "maxPlanets": 100,
+  "maxShips": 1000000000000,
+  "minFlightSeconds": 1,
+  "colonyFields": [
+    120,
+    240
+  ],
+  "crystalBonus": [
+    0.4,
+    0.3,
+    0.2
+  ],
+  "metalBonus": [
+    0.17,
+    0.23,
+    0.35,
+    0.23,
+    0.17
+  ]
+}

@@ -1,4 +1,4 @@
-import { activePlanet } from "../game/empire";
+import { empireResources } from "../game/empire";
 import { big } from "../game/decimal";
 import {
   OFFLINE_BASE_SECONDS,
@@ -25,11 +25,11 @@ export interface OfflineCatchup {
   /** Regular protocol passes in this window (event cards also run when builds finish). */
   protocolEvaluations: number;
   /** Build orders finished while away, in completion order. */
-  completedBuilds: CompletedBuild[];
+  completedBuilds: Array<CompletedBuild & { planetId?: string }>;
   /** Research levels finished while away, in completion order. */
   completedResearch: CompletedResearch[];
   /** Ships and defenses finished while away, per unit type. */
-  completedUnits: CompletedUnits[];
+  completedUnits: Array<CompletedUnits & { planetId?: string }>;
   /** Ring machine runs revealed by the auto-runner card while away. */
   arcadeRuns: ArcadeHistoryEntry[];
   /** Ring machine runs stored now (beacons accrue offline too). */
@@ -60,14 +60,14 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
   const rawSeconds = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
   const appliedSeconds = Math.min(rawSeconds, capSeconds);
   const before = new Set(state.unlocked);
-  const beforeResources = activePlanet(state).resources;
+  const beforeResources = empireResources(state);
   const log = emptyTickLog();
   const next = tick(state, appliedSeconds, "offline", log);
   // Production while away. Builds spend resources, so prefer this-run lifetime output unless a launch reset it.
   const sameRun = next.stats.launches === state.stats.launches;
   const gains = emptyGains();
   for (const id of RESOURCE_IDS) {
-    const delta = sameRun ? next.lifetime[id].sub(state.lifetime[id]) : activePlanet(next).resources[id].sub(beforeResources[id]);
+    const delta = sameRun ? next.lifetime[id].sub(state.lifetime[id]) : empireResources(next)[id].sub(beforeResources[id]);
     gains[id] = delta.gt(0) ? delta : big(0);
   }
   return {

@@ -1,8 +1,10 @@
-# Infinity — 游戏设计大纲（P1–P3 基线与 P4 扩展）
+> **原版 P4 银河与舰队 v1**：已接通银河、运输、部署、殖民与基础侦察。独立开发存档为 v9 / r2；此前 r1 原件会被保护而不会自动迁移。深空充能、回收、商人和战斗尚未开放。详见 `docs/P4_SPACE.md`。
 
-> **当前实现状态：v0.5.0-alpha.2 / 存档 v9。** 下文保留原有分阶段设计和 P1–P3 数值说明，不代表每项规划都已经实现。P4 的多星球、银河、运输/部署/殖民/侦察与消息已经接入；尚未实现的 P4 内容、数值取舍、状态结构和验收结果以 [P4_IMPLEMENTATION.md](P4_IMPLEMENTATION.md) 为准。原文中“舰队待 P4”“单星球”等旧切片描述被该实现说明取代；没有开放战斗或更高层重置。
+> **原版续作 P4-1**：P4-1 已把本地资源与队列移入 planets[]；研究与总时钟共享。当前阶段开关仍为 3；银河/舰队/充能按后续步骤开放。详见 P4_ORIGINAL_01.md。
 
-**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file preserves the design baseline. P4_IMPLEMENTATION.md records the current implementation and its limits. The earlier planet-surface slice uses: OGame-style buildings by level with a build queue, storage caps and planet fields (port phase 1), plus a running protocol-card engine.
+# Infinity — 游戏设计大纲 v0.4
+
+**English.** Infinity is a web idle game about expanding from one barren planet toward the multiverse. Automation is visual protocol cards, not scripts. The name means unbounded expansion, not an Antimatter Dimensions infinity layer. This file is the design source of truth. The repository today is the planet-surface slice described at the end: OGame-style buildings by level with a build queue, storage caps and planet fields (port phase 1), plus a running protocol-card engine.
 
 > 类型：网页放置/增量 · Vite + TypeScript + break_infinity.js（大数走 `src/game/decimal.ts`）
 > 核心卖点：**可视化协议卡** × **OGame 式星际扩张**
@@ -160,7 +162,7 @@ P3：暗物质「减半 / 完成」也作用于造船厂正在造的那一批（
 - **显示**：卡片列出拥有 / 排队数量、单价、单个耗时、攻击 / 护盾 / 结构（含武器 / 护盾 / 装甲技术 +10% 每级）、航速（当前引擎 × (1 + 0.1/0.2/0.3 × 引擎等级)）、货舱、前置链和快速射击（克制 / 被克制）。航行（P4）、战斗与导弹（P5）还没有。
 - **积分**：已造单位的资源计入帝国积分（星环机奖池阶梯）。
 - **成就**：造船厂、第一艘舰船（不含太阳能卫星）、轨道电站（第一颗卫星）、设防（第一座防御），共 22 个。
-- **P3 当时的存档 v8（现支持迁移至 v9）**：星球新增 `units`（每种单位的整数数量）和 `shipyardQueue`（`{ unit, count, progress, source }`）。P3 当时对 v7 及更早版本重置；当前版本已改为保留原件的保护模式。
+- **存档 v8**：星球新增 `units`（每种单位的整数数量）和 `shipyardQueue`（`{ unit, count, progress, source }`）。v7 及更早的本地存档重置并提示一次。
 - **节奏（`npm run sim`）**：贪心玩家 6.9 分钟造船厂 1 级，8.6 分钟燃烧引擎 1 级，9.8 分钟第一艘轻型战斗机，11.6 分钟第一颗太阳能卫星，12.3 分钟造船厂 2 级，12.6 分钟第一艘小型运输舰；30 分钟约 18 颗卫星、60 分钟约 52 颗。
 - **底特律与漂流舰**：见暗物质表与星环机一节。
 - **协议卡（P3）**：触发 `shipyardIdle`（造船队列为空，最后一批完成时即时触发），条件 `unitCountLt`（含排队）/ `energyDeficitGte`（计入排队卫星），动作 `buildUnits { unit, count | "max" | { fillTo } | "deficit" }`；目录卡 12「卫星供电」（第一颗卫星解锁）、13「防御维护」（第一座防御解锁）。文档写的是 11 / 12 号，11 号已被「自动跑灯」占用，顺延一位。
@@ -241,7 +243,7 @@ type Action =
 
 - 离线：与在线同一个分段积分 `tick`（在建项目完成、协议评估、满仓 / 见底都会切段），基础上限 **2 小时**，科技可到 8 小时。离线时协议卡每 60 秒评估。回归时汇总资源与“离线期间完成的建造”。
 - 成就 22 个已实装（P2 新增研究实验室、首项研究、计算机 4 级、天体物理学、等离子技术；P3 新增造船厂、第一艘舰船、轨道电站、设防），每个 +1% 全局产出。
-- 存档：localStorage；当前导出 v9 多星球 JSON。大数为十进制字符串，等级为整数。alpha.2 支持有效 v8 → v9，先备份后升级。损坏/不支持的存档保持原件并暂停保存，导入失败不覆盖当前局。详见 VISUAL_RELEASE.md。
+- 存档：localStorage；导出为带 `version` 的 JSON（当前 v8：P2 的 `research { levels, queue }`、`darkMatter`、可选的 `items` / `boosters` / `arcade`，P3 的 `planet.units` / `planet.shipyardQueue`）。导入失败不得覆盖当前局。大数用十进制字符串，建筑等级为整数。测试期不写迁移：版本号变化时旧存档重置并提示一次。
 - 目标目录：`src/core/`、`src/automation/`、`src/prestige/`、`src/save/`、`src/ui/`、`src/data/`。当前代码仍在 `src/game/` 与 `src/ui/`。
 
 ## 8. UX

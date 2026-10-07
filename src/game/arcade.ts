@@ -7,7 +7,7 @@ import { activePlanet, withPlanet, selectPlanet } from "./empire";
  * uniform numbers. Pity changes where a run lands, never the public odds table.
  */
 import { unitMissing, unitSpend } from "./shipyard";
-import { DRIFTER_LADDER, unitById, type ShipId, type UnitId } from "../data/units";
+import { DRIFTER_LADDER, unitById, type ShipId } from "../data/units";
 import {
   ARCADE,
   ARCADE_PHASE,
@@ -346,10 +346,6 @@ export function empirePoints(state: GameState): number {
     }
   }
   for (const planet of state.planets) spent += unitSpend(planet);
-  for (const fleet of state.fleets) for (const [id, count] of Object.entries(fleet.ships)) {
-    const cost = unitById(id as UnitId).cost;
-    spent += (cost.metal + cost.crystal + cost.deuterium) * count;
-  }
   return Math.floor(spent / 1000);
 }
 
