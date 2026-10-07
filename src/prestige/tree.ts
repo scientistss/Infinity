@@ -1,3 +1,4 @@
+import { withPlanet, activePlanet } from "../game/empire";
 import { CURVATURE_EFFECTS, CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
 import { big, type BigNumber } from "../game/decimal";
 import { CORE_BONUS_PER_CORE } from "../game/content";
@@ -65,14 +66,11 @@ export function scoreMultiplier(state: GameState): BigNumber {
 export function applySeedStock(state: GameState): GameState {
   if (techRank(state, "seed_stock") <= 0) return state;
   const seed = CURVATURE_EFFECTS.seed;
-  return {
-    ...state,
-    resources: {
-      metal: state.resources.metal.add(seed.metal),
-      crystal: state.resources.crystal.add(seed.crystal),
-      deuterium: state.resources.deuterium.add(seed.deuterium),
-    },
-  };
+  return { ...withPlanet(state, { resources: {
+      metal: activePlanet(state).resources.metal.add(seed.metal),
+      crystal: activePlanet(state).resources.crystal.add(seed.crystal),
+      deuterium: activePlanet(state).resources.deuterium.add(seed.deuterium),
+    } }) };
 }
 
 export function offlineHoursFromTech(state: GameState): number {

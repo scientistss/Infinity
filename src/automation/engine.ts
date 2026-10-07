@@ -1,3 +1,4 @@
+import { activePlanet, withPlanet } from "../game/empire";
 import {
   CARD_CATALOG,
   SLOT_RULES,
@@ -126,7 +127,7 @@ export function isStoredResId(value: string): value is StoredResId {
 
 /** 1 + ⌊robotics/2⌋ + ⌊computer technology/2⌋ + curvature bonus, hard cap 12 (design doc §8.6). */
 export function unlockedSlotCount(state: GameState): number {
-  const robotics = Math.max(0, Math.min(1000, state.planet.buildings.robotics_factory));
+  const robotics = Math.max(0, Math.min(1000, activePlanet(state).buildings.robotics_factory));
   const computer = Math.max(0, Math.min(1000, state.research.levels.computer_tech));
   const extra =
     Math.floor(robotics / SLOT_RULES.roboticsPerLevels) + Math.floor(computer / SLOT_RULES.computerPerLevels);
@@ -161,7 +162,7 @@ export function unlockProgress(state: GameState, id: CardCatalogId): string {
   const unlock = catalogEntry(id).unlock;
   if (unlock.kind === "manualClicks") return `${unlockHint(state, id)}（${state.manualClicks}/${unlock.count}）`;
   if (unlock.kind === "levelGte") {
-    return `${unlockHint(state, id)}（${state.planet.buildings[unlock.building]}/${unlock.value}）`;
+    return `${unlockHint(state, id)}（${activePlanet(state).buildings[unlock.building]}/${unlock.value}）`;
   }
   if (unlock.kind === "researchGte") {
     return `${unlockHint(state, id)}（${state.research.levels[unlock.tech]}/${unlock.value}）`;
@@ -173,11 +174,11 @@ export function unlockProgress(state: GameState, id: CardCatalogId): string {
     return `${unlockHint(state, id)}（${state.warpCores.toFixed(0)}/${relaxedWarpCoreCount(state, unlock.count)}）`;
   }
   if (unlock.kind === "unitGte") {
-    return `${unlockHint(state, id)}（${Math.min(state.planet.units[unlock.unit], unlock.value)}/${unlock.value}）`;
+    return `${unlockHint(state, id)}（${Math.min(activePlanet(state).units[unlock.unit], unlock.value)}/${unlock.value}）`;
   }
   if (unlock.kind === "firstQueueIdle") {
     const idle = state.stats.seenQueueIdle ? "已跑空" : "未跑空";
-    return `${unlockHint(state, id)}（${idle}，机器人 ${state.planet.buildings.robotics_factory}/${unlock.roboticsLevel}）`;
+    return `${unlockHint(state, id)}（${idle}，机器人 ${activePlanet(state).buildings.robotics_factory}/${unlock.roboticsLevel}）`;
   }
   return unlockHint(state, id);
 }
@@ -558,7 +559,7 @@ function triggerReady(state: GameState, trigger: Trigger): string | null {
   if (trigger.kind === "onResource") return amountOf(state, trigger.res).lt(trigger.gte) ? "资源未达触发" : null;
   if (trigger.kind === "queueIdle") {
     const capacity = queueCapacity(state);
-    return state.planet.buildQueue.length >= capacity ? `队列已满（${state.planet.buildQueue.length}/${capacity}）` : null;
+    return activePlanet(state).buildQueue.length >= capacity ? `队列已满（${activePlanet(state).buildQueue.length}/${capacity}）` : null;
   }
   if (trigger.kind === "researchIdle") {
     const capacity = researchCapacity(state);
@@ -569,13 +570,13 @@ function triggerReady(state: GameState, trigger: Trigger): string | null {
     return state.arcade.runs.length > 0 ? null : "没有可用开奖次数";
   }
   if (trigger.kind === "shipyardIdle") {
-    if (state.planet.buildings.shipyard < 1) return "还没有造船厂";
-    const batches = state.planet.shipyardQueue.length;
+    if (activePlanet(state).buildings.shipyard < 1) return "还没有造船厂";
+    const batches = activePlanet(state).shipyardQueue.length;
     return batches === 0 ? null : `造船厂忙（${batches} 批）`;
   }
   if (trigger.kind === "storageFull") {
     const cap = storageCaps(state)[trigger.res];
-    return state.resources[trigger.res].lt(cap) ? `${RES_LABEL[trigger.res]}未满仓` : null;
+    return activePlanet(state).resources[trigger.res].lt(cap) ? `${RES_LABEL[trigger.res]}未满仓` : null;
   }
   return null;
 }
@@ -625,11 +626,7 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
     return {
       ok: true,
       reason: `自动采集 +${formatAmount(gain)} 金属`,
-      state: {
-        ...state,
-        resources: { ...state.resources, metal: state.resources.metal.add(gain) },
-        lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) },
-      },
+      state: { ...withPlanet(state, { resources: { ...activePlanet(state).resources, metal: activePlanet(state).resources.metal.add(gain) } }), lifetime: { ...state.lifetime, metal: state.lifetime.metal.add(gain) } },
     };
   }
   if (action.kind === "prestige") {
@@ -641,7 +638,7 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
   }
   if (action.kind === "setProduction") {
     const name = buildingById(action.building).nameZh;
-    if (state.planet.productionPct[action.building] === action.pct) {
+    if (activePlanet(state).productionPct[action.building] === action.pct) {
       return { state, ok: true, reason: `${name}产量已是 ${action.pct}%` };
     }
     return {
@@ -686,7 +683,7 @@ function countMode(count: BuildUnitsCount): string {
 export function satellitesForDeficit(state: GameState): number {
   const deficit = deficitAfterQueued(state);
   if (deficit <= 0) return 0;
-  const per = satelliteEnergy(state.planet) * outputScale(state);
+  const per = satelliteEnergy(activePlanet(state)) * outputScale(state);
   return per > 0 ? Math.ceil(deficit / per - 1e-9) : 0;
 }
 
@@ -766,11 +763,8 @@ export function enqueueCheapest(state: GameState, group: CheapestGroup): { state
 /** Production setting 0–100 in steps of 10. Invalid values are ignored. */
 export function setProductionPct(state: GameState, id: string, pct: number): GameState {
   if (!isProductionId(id) || !Number.isInteger(pct) || pct < 0 || pct > 100 || pct % 10 !== 0) return state;
-  if (state.planet.productionPct[id] === pct) return state;
-  return {
-    ...state,
-    planet: { ...state.planet, productionPct: { ...state.planet.productionPct, [id]: pct } },
-  };
+  if (activePlanet(state).productionPct[id] === pct) return state;
+  return { ...withPlanet(state, { planet: { ...activePlanet(state), productionPct: { ...activePlanet(state).productionPct, [id]: pct } } }) };
 }
 
 function failedCondition(state: GameState, card: ProtocolCard): string | null {
@@ -790,16 +784,16 @@ function conditionFails(state: GameState, condition: Condition): string | null {
     case "energyEffLt":
       return energyReport(state).efficiency.lt(condition.value) ? null : `能源效率不低于 ${condition.value * 100}%`;
     case "levelLt": {
-      const level = state.planet.buildings[condition.building];
+      const level = activePlanet(state).buildings[condition.building];
       return level < condition.value ? null : `${buildingById(condition.building).nameZh}等级不低于 ${condition.value}`;
     }
     case "storageGte": {
       const cap = storageCaps(state)[condition.res];
-      const ratio = state.resources[condition.res].div(cap);
+      const ratio = activePlanet(state).resources[condition.res].div(cap);
       return ratio.gte(condition.ratio) ? null : `${RES_LABEL[condition.res]}仓库占比低于 ${Math.round(condition.ratio * 100)}%`;
     }
     case "queueLenLt":
-      return state.planet.buildQueue.length < condition.value ? null : `队列项数不少于 ${condition.value}`;
+      return activePlanet(state).buildQueue.length < condition.value ? null : `队列项数不少于 ${condition.value}`;
     case "researchLevelLt": {
       const level = state.research.levels[condition.tech];
       return level < condition.value ? null : `${researchById(condition.tech).nameZh}等级不低于 ${condition.value}`;
@@ -813,7 +807,7 @@ function conditionFails(state: GameState, condition: Condition): string | null {
     }
     case "buildTimeLt": {
       const def = buildingById(condition.building);
-      const seconds = secondsFor(state, def, nextTargetLevel(state.planet, def.id));
+      const seconds = secondsFor(state, def, nextTargetLevel(activePlanet(state), def.id));
       return seconds < condition.seconds ? null : `${def.nameZh}建造时间 ${formatDuration(seconds)} 不低于 ${formatDuration(condition.seconds)}`;
     }
     case "runsGte":
@@ -824,7 +818,7 @@ function conditionFails(state: GameState, condition: Condition): string | null {
       return count >= condition.value ? null : `${name} ${count} < ${condition.value}`;
     }
     case "unitCountLt": {
-      const total = unitTotal(state.planet, condition.unit);
+      const total = unitTotal(activePlanet(state), condition.unit);
       const name = unitById(condition.unit).nameZh;
       return total < condition.value ? null : `${name} ${total.toLocaleString("zh-CN")}（含排队）不少于 ${condition.value.toLocaleString("zh-CN")}`;
     }
@@ -834,10 +828,10 @@ function conditionFails(state: GameState, condition: Condition): string | null {
     }
     case "costRatioLt": {
       const name = buildingById(condition.building).nameZh;
-      const costs = costFor(state, condition.building, nextTargetLevel(state.planet, condition.building));
+      const costs = costFor(state, condition.building, nextTargetLevel(activePlanet(state), condition.building));
       for (const id of STORED_IDS) {
         if (costs[id].lte(0)) continue;
-        const stock = state.resources[id];
+        const stock = activePlanet(state).resources[id];
         if (stock.lte(0) || !costs[id].div(stock).lt(condition.ratio)) {
           return `${name}花费达到库存的 ${Math.round(condition.ratio * 100)}%`;
         }
@@ -853,7 +847,7 @@ function amountOf(state: GameState, res: ResId): BigNumber {
     return big(eco.supply - eco.demand);
   }
   if (res === "warp_core") return state.warpCores;
-  return state.resources[res];
+  return activePlanet(state).resources[res];
 }
 
 function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["unlock"]): boolean {
@@ -861,13 +855,13 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
     case "manualClicks":
       return state.manualClicks >= unlock.count;
     case "levelGte":
-      return state.planet.buildings[unlock.building] >= unlock.value;
+      return activePlanet(state).buildings[unlock.building] >= unlock.value;
     case "firstEnergyShortage":
       return state.seenEnergyShortage;
     case "firstPrestige":
       return protocolsRelaxed(state) || state.hasPrestiged;
     case "firstQueueIdle":
-      return state.stats.seenQueueIdle && state.planet.buildings.robotics_factory >= unlock.roboticsLevel;
+      return state.stats.seenQueueIdle && activePlanet(state).buildings.robotics_factory >= unlock.roboticsLevel;
     case "firstStorageFull":
       return state.stats.seenStorageFull;
     case "researchGte":
@@ -877,9 +871,9 @@ function meetsUnlock(state: GameState, unlock: (typeof CARD_CATALOG)[number]["un
     case "arcadeManualRuns":
       return state.arcade.stats.manualRuns >= unlock.count;
     case "unitGte":
-      return state.planet.units[unlock.unit] >= unlock.value;
+      return activePlanet(state).units[unlock.unit] >= unlock.value;
     case "firstDefense":
-      return DEFENSE_IDS.some((id) => state.planet.units[id] > 0);
+      return DEFENSE_IDS.some((id) => activePlanet(state).units[id] > 0);
   }
 }
 

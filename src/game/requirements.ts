@@ -1,3 +1,4 @@
+import { activePlanet } from "./empire";
 /**
  * Prerequisite checks shared by buildings and research. Only finished levels count (OGame rule):
  * an order still in a queue does not satisfy a requirement.
@@ -19,7 +20,7 @@ export function requirementName(req: Requirement): string {
 }
 
 export function requirementLevel(state: GameState, req: Requirement): number {
-  if (req.kind === "building" && isBuildingId(req.id)) return state.planet.buildings[req.id];
+  if (req.kind === "building" && isBuildingId(req.id)) return activePlanet(state).buildings[req.id];
   if (req.kind === "research" && isResearchId(req.id)) return state.research.levels[req.id];
   return 0;
 }
