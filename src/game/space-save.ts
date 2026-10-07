@@ -1,3 +1,5 @@
+import { DEEP } from "../data/deep-space";
+import { readCharge } from "./deep-save";
 import { SHIP_IDS, type ShipId } from "../data/units";
 import { big, isValidAmount } from "./decimal";
 import { MISSIONS, type Fleet, type FleetMessage, type Mission } from "./fleet";
@@ -5,7 +7,7 @@ import { coordinateKey, SPACE, validCoordinates, type Universe } from "./galaxy"
 import type { GameState, ResourceAmounts } from "./types";
 
 export function serializeFleets(fleets: Fleet[]) {
-  return fleets.map(f=>({...f, target:{...f.target}, ships:{...f.ships}, cargo:{metal:f.cargo.metal.toString(),crystal:f.cargo.crystal.toString(),deuterium:f.cargo.deuterium.toString()}}));
+  return fleets.map(f=>({...f, ...(f.charge?{charge:structuredClone(f.charge)}:{}), target:{...f.target}, ships:{...f.ships}, cargo:{metal:f.cargo.metal.toString(),crystal:f.cargo.crystal.toString(),deuterium:f.cargo.deuterium.toString()}}));
 }
 function record(x:unknown): x is Record<string,unknown> { return !!x && typeof x === "object" && !Array.isArray(x); }
 function integer(x:unknown,min:number,max:number): number {
@@ -36,7 +38,7 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi
     if(!record(f) || typeof f.originId !== "string" || !state.planets.some(p=>p.id===f.originId)) throw Error("舰队出发星球不存在");
     const id=integer(f.id,1,Number.MAX_SAFE_INTEGER-1);
     if(fleetIds.has(id)) throw Error("舰队编号重复");fleetIds.add(id);
-    if(!validCoordinates(f.target) || !(MISSIONS as readonly unknown[]).includes(f.mission) || typeof f.returning !== "boolean") throw Error("舰队任务或目标无效");
+    if(!validCoordinates(f.target,f.mission==="charge"||f.mission==="recycle") || !(MISSIONS as readonly unknown[]).includes(f.mission) || typeof f.returning !== "boolean") throw Error("舰队任务或目标无效");
     if(!record(f.ships)) throw Error("舰队舰船缺失");
     const ships:Partial<Record<ShipId,number>>={};
     for(const [key,value] of Object.entries(f.ships)){
@@ -45,16 +47,21 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi
     }
     if(!Object.values(ships).some(n=>n>0)) throw Error("舰队不能为空");
     const duration=seconds(f.duration,SPACE.minFlightSeconds),remaining=seconds(f.remaining),elapsed=seconds(f.elapsed);
-    if(remaining>duration+1e-8 || remaining+elapsed>duration+1e-6) throw Error("舰队计时超出单程时长");
+    const charge=f.mission==="charge"?readCharge(f.charge):undefined;
+    if(f.mission!=="charge"&&f.charge!==undefined)throw Error("普通任务不能夹带充能状态");
+    if(charge&&(f.target.position!==16 || (charge.phase==="return")!==f.returning))throw Error("充能任务阶段与目标无效");
+    if(f.mission==="recycle"&&!ships.recycler)throw Error("回收舰队缺少回收船");
+    const leg=charge?.phase==="holding"?charge.slots*DEEP.segmentSeconds:charge?.phase==="return"?1.5*duration:duration;
+    if(remaining>leg+1e-8 || remaining+elapsed>leg+1e-6) throw Error("舰队计时超出当前航段");
     if(!f.returning){
-      if(Math.abs(remaining+elapsed-duration)>1e-6) throw Error("出航计时不一致");
+      if(Math.abs(remaining+elapsed-(charge?.phase==="holding"?leg:duration))>1e-6) throw Error("出航计时不一致");
       if(f.mission==="colonize"){
         if(!ships.colony_ship)throw Error("殖民舰队缺少殖民船");
         const key=coordinateKey(f.target);if(reservations.has(key))throw Error("殖民目标重复预留");reservations.add(key);
       }
       if(f.mission==="scout" && !ships.espionage_probe)throw Error("侦察舰队缺少间谍卫星");
     }
-    return {id,originId:f.originId,target:{...f.target},mission:f.mission as Mission,ships,cargo:cargo(f.cargo),duration,remaining,elapsed,returning:f.returning};
+    return {id,originId:f.originId,target:{...f.target},mission:f.mission as Mission,ships,cargo:cargo(f.cargo),duration,remaining,elapsed,returning:f.returning,...(charge?{charge}:{})};
   });
   const nextFleetId=integer(raw.nextFleetId,1,Number.MAX_SAFE_INTEGER-1);
   if(fleets.some(f=>f.id>=nextFleetId)) throw Error("下一舰队编号不能重复");

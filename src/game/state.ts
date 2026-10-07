@@ -1,3 +1,4 @@
+import { createDeepState } from "./deep-state";
 import { homeCoordinates } from "./galaxy";
 import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
@@ -66,6 +67,7 @@ export function createInitialState(seed?: number): GameState {
     planets: [{ ...createPlanet(HOMEWORLD_ID, homeCoordinates(worldSeed)), resources: startingResources() }],
     universe: {seed: worldSeed, layout: "ring-v1"},
     fleets: [], messages: [], nextFleetId: 1,
+    deepSpace: createDeepState(worldSeed),
     activePlanetId: HOMEWORLD_ID,
     research: createResearch(),
     darkMatter: big(0),

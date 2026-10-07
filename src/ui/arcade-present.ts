@@ -28,6 +28,7 @@ import {
   topUpReason,
   totalBetUnits,
 } from "../game/arcade";
+import { storedRunLimit } from "../game/deep-state";
 import { big } from "../game/decimal";
 import { formatAmount, formatDuration } from "../game/format";
 import type { GameState } from "../game/types";
@@ -193,7 +194,7 @@ export function arcadeView(state: GameState): ArcadeView {
   return {
     visible,
     runsCount,
-    runs: `${runsCount} / ${ARCADE.storedMax}`,
+    runs: `${runsCount} / ${storedRunLimit(state)}`,
     beacon,
     pity: `保底 ${arcade.pity.empty}/${ARCADE.emptyPity}`,
     jackpot: `大奖 ${arcade.pity.jackpot}/${ARCADE.jackpotPity}`,
@@ -207,7 +208,7 @@ export function arcadeView(state: GameState): ArcadeView {
     tiles: BOARD.map((symbol, index) => {
       const def = arcadeSymbolDef(symbol);
       const cell = boardCell(index);
-      return { index, symbol, glyph: def.glyph, name: def.nameZh, open: tileOpen(index), row: cell.row, col: cell.col, title: tileTitle(index, ranges) };
+      return { index, symbol, glyph: def.glyph, name: def.nameZh, open: tileOpen(index) || state.deepSpace.completed>0, row: cell.row, col: cell.col, title: tileTitle(index, ranges)+(state.deepSpace.completed>0?"\n舰队充能可出现不同事件；完整概率与战报见深空页":"") };
     }),
     odds,
     luckyRows,

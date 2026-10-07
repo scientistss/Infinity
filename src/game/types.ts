@@ -1,3 +1,4 @@
+import type { DeepState } from "./deep-state";
 import type { Universe } from "./galaxy";
 import type { Fleet, FleetMessage } from "./fleet";
 import type { BigNumber } from "./decimal";
@@ -87,6 +88,7 @@ export interface GameState {
   planets: PlanetState[];
   activePlanetId: string;
   universe: Universe;
+  deepSpace: DeepState;
   fleets: Fleet[];
   messages: FleetMessage[];
   nextFleetId: number;

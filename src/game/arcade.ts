@@ -1,3 +1,4 @@
+import { storedRunLimit, chargeReservations, type ChargeReceipt } from "./deep-state";
 import { activePlanet, withPlanet, selectPlanet } from "./empire";
 /**
  * Deep-space ring machine, beacon version (design doc §8.6, P2; P3 opens the drifting-ships tile).
@@ -36,7 +37,7 @@ import { big } from "./decimal";
 import { Rng, freshSeed } from "./rng";
 import type { GameState, ResourceId } from "./types";
 
-export type RunSource = "beacon" | "topup" | "bonus";
+export type RunSource = "beacon" | "topup" | "bonus" | "charge";
 export type RevealMode = "manual" | "auto";
 
 export interface LightRoll {
@@ -57,6 +58,8 @@ export interface RunOutcome {
 export interface PendingRun {
   source: RunSource;
   outcome: RunOutcome;
+  /** Already resolved into a fleet. Revealing never grants its rewards twice. */
+  receipt?: ChargeReceipt;
 }
 
 export interface ArcadeHistoryEntry {
@@ -244,10 +247,10 @@ function pickLucky(r: number): LuckyKind {
 }
 
 /** Roll one run from the stored seed. Pure: returns the outcome and the arcade after the draw. */
-export function rollOutcome(arcade: ArcadeState, minBig = false): { outcome: RunOutcome; arcade: ArcadeState } {
+export function rollOutcome(arcade: ArcadeState, minBig = false, customWeights?: readonly number[]): { outcome: RunOutcome; arcade: ArcadeState } {
   const rng = new Rng(arcade.seed);
   let forced: RunOutcome["forced"] = null;
-  let weights: readonly number[] = TILE_WEIGHTS;
+  let weights: readonly number[] = customWeights ?? TILE_WEIGHTS;
   if (arcade.rollPity.jackpot >= ARCADE.jackpotPity - 1) {
     forced = "jackpot";
     weights = JACKPOT_WEIGHTS;
@@ -287,7 +290,7 @@ export function rollOutcome(arcade: ArcadeState, minBig = false): { outcome: Run
 
 /** Grant and pre-roll one run. Refused when the store is full. */
 export function grantRun(state: GameState, source: RunSource, minBig = false): { state: GameState; granted: boolean } {
-  if (state.arcade.runs.length >= ARCADE.storedMax) return { state, granted: false };
+  if (source === "charge" || state.arcade.runs.length + chargeReservations(state) >= storedRunLimit(state)) return { state, granted: false };
   const rolled = rollOutcome(state.arcade, minBig);
   const arcade = { ...rolled.arcade, runs: [...state.arcade.runs, { source, outcome: rolled.outcome }] };
   return { state: { ...state, arcade }, granted: true };
@@ -612,6 +615,15 @@ function settleBets(state: GameState, ctx: { unit: number; active: boolean }, sy
 export function revealRun(state: GameState, mode: RevealMode): ArcadeResult & { result: RunResult | null } {
   const run = state.arcade.runs[0];
   if (!run) return { state, ok: false, reason: "没有可用开奖次数", result: null };
+  if (run.source === "charge") {
+    if (!run.receipt) throw Error("充能回放缺少已结算凭证");
+    const symbol=BOARD[run.outcome.main.tile]!,r=run.receipt;
+    const lines=["深空事件回放：损失已结算，奖励随舰队返航；此处不会再次发奖。",...r.lines];
+    const a=state.arcade;
+    const stats={...a.stats,runs:a.stats.runs+1,manualRuns:a.stats.manualRuns+(mode==="manual"?1:0),autoRuns:a.stats.autoRuns+(mode==="auto"?1:0),hits:{...a.stats.hits,[symbol]:a.stats.hits[symbol]+1}};
+    const next=withArcade(state,{runs:a.runs.slice(1),stats,position:run.outcome.main.tile,history:[...a.history,{symbol,big:run.outcome.main.big,at:state.totalTime.toNumber(),auto:mode==="auto",summary:lines.join("；")}].slice(-ARCADE.historySize)});
+    return {state:next,ok:true,reason:lines.join("；"),result:{source:"charge",startTile:a.position,mainTile:run.outcome.main.tile,symbol,big:run.outcome.main.big,luckyKind:run.outcome.lucky?.kind??null,lights:r.lights,lines,forced:run.outcome.forced}};
+  }
   let current = withArcade(state, { runs: state.arcade.runs.slice(1) });
   const lines: string[] = [];
 
@@ -703,7 +715,7 @@ export function revealRun(state: GameState, mode: RevealMode): ArcadeResult & { 
 export function revealAll(state: GameState, mode: RevealMode): ArcadeResult & { results: RunResult[] } {
   let current = state;
   const results: RunResult[] = [];
-  for (let guard = 0; guard < ARCADE.storedMax + 4 && current.arcade.runs.length > 0; guard += 1) {
+  for (let guard = 0; guard < storedRunLimit(state) + 4 && current.arcade.runs.length > 0; guard += 1) {
     const step = revealRun(current, mode);
     if (!step.result) break;
     current = step.state;
@@ -735,7 +747,7 @@ export function topUpPrice(state: GameState): number {
 
 export function topUpReason(state: GameState): string {
   if (!arcadeUnlocked(state)) return "需要天体物理学 1 级";
-  if (state.arcade.runs.length >= ARCADE.storedMax) return `开奖次数已存满（${ARCADE.storedMax}）`;
+  if (state.arcade.runs.length + chargeReservations(state) >= storedRunLimit(state)) return `开奖次数与在途预留已存满（${storedRunLimit(state)}）`;
   const price = topUpPrice(state);
   if (activePlanet(state).resources.deuterium.lt(price)) return `重氢不足（需要 ${formatAmount(big(price))}）`;
   return "";

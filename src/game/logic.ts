@@ -116,12 +116,13 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         researchIdle = current.research.queue.length < researchCapacity(current);
       } else current = withResearchRemaining(current, remaining);
     }
+    const previousChargeCount=current.deepSpace.completed;
     current = advanceFleets(current, step);
     current = pruneBoosters(current);
     const beacon = accrueBeacons(current, step);
     current = beacon.state;
     // P4 foundation: the one protocol rack follows the selected planet. It is not cloned per colony.
-    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: filled, runsReady: beacon.granted > 0, shipyardIdle };
+    const events: ProtocolEvents = { queueIdle, researchIdle, storageFull: filled, runsReady: beacon.granted > 0 || current.deepSpace.completed > previousChargeCount, shipyardIdle };
     current = evaluateEvents(refreshUnlocks(current), events);
     const accrued = current.protocols.accumulator + step;
     current = accrued >= period - EPS ? evaluateLoadout(setAccumulator(current, 0), period) : setAccumulator(current, accrued);
@@ -274,6 +275,7 @@ export function prestige(state: GameState): GameState {
   const gain = warpGain(state);
   if (gain.lt(1)) return state;
   const next = createInitialState(state.universe.seed);
+  next.deepSpace = {...structuredClone(state.deepSpace), offers:[], debris:[]};
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
   next.warpCores = state.warpCores.add(gain);
