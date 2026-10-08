@@ -1,17 +1,18 @@
 import { DEEP, chargeChances } from "../data/deep-space";
-import { BOARD, BET_SYMBOLS, type ArcadeSymbol } from "../data/arcade";
+import { ARCADE, BOARD, BET_SYMBOLS, arcadeSymbolDef, type BetSymbol, type ArcadeSymbol } from "../data/arcade";
 import { SHIP_IDS, unitById } from "../data/units";
 import { INVENTORY_IDS, INVENTORY_LABEL } from "../data/dark-matter";
 import { rollOutcome, prizeCap, productionMe, drifterShips, shipValueMe, type RunOutcome, type RunLight } from "./arcade";
 import { grantDarkMatter, addInventory } from "./dark-matter";
 import { fightEncounter } from "./encounter-combat";
-import { createOffer } from "./merchant";
+import { createOffer, merchantCreationReason } from "./merchant";
+import { selectPlanet } from "./empire";
 import { coordinateKey, SPACE, type Coordinates } from "./galaxy";
 import { big, type BigNumber } from "./decimal";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 import type { Fleet } from "./fleet";
 import type { ChargeOrder, ChargeReport, ShipCounts } from "./deep-state";
-import { storedRunLimit } from "./deep-state";
+import { storedRunLimit, retainChargeReports } from "./deep-state";
 
 const zeroCargo=():ResourceAmounts=>({metal:big(0),crystal:big(0),deuterium:big(0)});
 const count=(ships:ShipCounts)=>Object.values(ships).reduce((n,v)=>n+(v??0),0);
@@ -89,8 +90,13 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
   const outcome=rolled.outcome,symbol=BOARD[outcome.main.tile]!,main=outcome.main;
   const lines:string[]=[],lights:RunLight[]=[];
   if(rolled.protection)lines.push(`黑洞改判引力乱流：${rolled.protection}`);
-  const cap=Math.min(prizeCap(state),productionMe(state)*600);
-  const prize=(u:number,isBig:boolean)=>Math.floor(Math.max(0,cap)*(isBig?.5+.5*u:.2+.3*u));
+  const cap = prizeCap(state), production = productionMe(state);
+  const rangeValue = (range: readonly number[], u: number) => range[0]! + (range[1]! - range[0]!) * u;
+  // Apply the tier to the ladder cap BEFORE the production-window ceiling, as in beacon rewards.
+  const prize = (u: number, isBig: boolean) => Math.floor(Math.max(0, Math.min(
+    cap * rangeValue(isBig ? ARCADE.tiers.big : ARCADE.tiers.normal, u),
+    production * ARCADE.prizeWindowSeconds,
+  )));
   let battle:ChargeReport["battle"]=null;
   const giveResource=(id:typeof RESOURCE_IDS[number],value:number)=>{
     const room=cargoCapacity(fleet).sub(cargoTotal(fleet.cargo)).max(0),desired=big(Math.floor(Math.max(0,value))),amount=desired.min(room).floor();
@@ -98,7 +104,7 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
     lines.push(`${id==="metal"?"金属":id==="crystal"?"晶体":"重氢"} +${amount.toString()} 装入返航货舱${amount.lt(desired)?"（超舱部分放弃）":""}`);
   };
   const giveShips=(value:number,u:number)=>{
-    const result=drifterShips(state,value,u);
+    const result=drifterShips(selectPlanet(state, live.originId),value,u);
     for(const entry of result.ships){
       const existing=state.planets.reduce((s,p)=>s+p.units[entry.id],0)+state.fleets.reduce((s,f)=>s+(f.ships[entry.id]??0),0)+(fleet.ships[entry.id]??0)-(live.ships[entry.id]??0);
       const n=Math.min(entry.count,Math.max(0,SPACE.maxShips-existing));
@@ -135,13 +141,27 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
     lines.push(`战后残骸：金属 ${m.floor().toString()}、晶体 ${c.floor().toString()}，可派回收船`);
     if(battle.winner==="attacker")giveResource("metal",prize(main.u,true));
   } else if(symbol==="merchant"){
-    if(next.deepSpace.offers.filter(o=>o.startsAt<0||o.expiresAt>next.totalTime.toNumber()).length<DEEP.offerLimit){
+    if(!merchantCreationReason(next, live.originId)){
       const offer=createOffer(next,live.originId,Math.floor(main.v*4294967296),false);next=offer.state;charge.offerId=offer.id;
       lines.push("获得商人联络；返航到母港后报价生效 10 分钟");
-    } else lines.push("商人报价已满，本次保留联络记录但不新增报价");
+    } else lines.push(`无法新增商人报价：${merchantCreationReason(next, live.originId)}；舰队正常返航`);
   } else if(symbol==="turbulence") {fleet.remaining=live.duration*1.5;lines.push("引力乱流：返航时间增加 50%，舰船未损失");}
   else if(symbol==="empty")lines.push("空域：未发现物资，按原计划返航");
-  else if(symbol==="jackpot") {giveResource("metal",cap*(1+main.u));charge.dm+=Math.round(1000+800*main.v);lines.push(`JACKPOT：暗物质 +${charge.dm}，返航后领取`);}
+  else if(symbol==="jackpot") {
+    // Use the paid departure contract; editing current standing bets cannot redirect this jackpot.
+    let kind: BetSymbol | null = null;
+    for (const candidate of BET_SYMBOLS) if (charge.bets[candidate] > 0
+      && (kind === null || charge.bets[candidate] > charge.bets[kind])) kind = candidate;
+    if (kind === null) {
+      const weights = ARCADE.jackpotKinds, pick = main.v * (weights.metal + weights.crystal + weights.deuterium);
+      kind = pick < weights.metal ? "metal" : pick < weights.metal + weights.crystal ? "crystal" : "deuterium";
+    }
+    const value = Math.min(cap * rangeValue(ARCADE.tiers.jackpot, main.u), production * ARCADE.jackpotWindowSeconds);
+    if (kind === "drifter") giveShips(value / 2, main.v);
+    else giveResource(kind, value / (kind === "metal" ? 1 : kind === "crystal" ? 2 : 3));
+    charge.dm += Math.round(rangeValue(ARCADE.darkMatter.jackpot, main.v));
+    lines.push(`JACKPOT：${arcadeSymbolDef(kind).nameZh}大奖，暗物质 +${charge.dm}，返航后领取`);
+  }
   else reward(main.tile,main.u,main.v,main.big,false);
   if(!lights.length)lights.push({tile:main.tile,symbol,big:main.big,paid:true});
   if(outcome.lucky){lines.push(`LUCKY：额外揭晓 ${outcome.lucky.lights.length} 盏灯`);for(const l of outcome.lucky.lights)reward(l.tile,l.u,l.v,l.big,true);}
@@ -150,7 +170,7 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
     for(const light of lights){if(!light.paid||!BET_SYMBOLS.includes(light.symbol as typeof BET_SYMBOLS[number]))continue;
       const s=light.symbol as typeof BET_SYMBOLS[number],bets=charge.bets[s];if(!bets)continue;
       const value=bets*charge.betUnit*3*.9/(chances[s]/100);
-      lines.push(`充能押中 ${s}，按出发时的注数与驻留赔率结算`);
+      lines.push(`充能押中${arcadeSymbolDef(s).nameZh}，按出发时的注数与驻留赔率结算`);
       if(s==="drifter")giveShips(value,main.v);else giveResource(s,value/(s==="metal"?1:s==="crystal"?2:3));
     }
   }
@@ -159,7 +179,7 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
   else lines.push(`舰船和货物返回出发星球；切换界面不改变归属。剩余返航 ${Math.ceil(fleet.remaining)} 秒`);
   const report:ChargeReport={id:charge.reportId!,fleetId:live.id,originId:live.originId,at:state.totalTime.toNumber(),target:{...live.target},slots:charge.slots,rawSymbol:rolled.rawSymbol,symbol,protection:rolled.protection,outcome,lines:lines.slice(0,DEEP.maxReceiptLines),returned:false,destroyed,battle};
   if(next.arcade.runs.length>=storedRunLimit(next))throw Error("充能预留开奖槽失效，停止以防丢失结果");
-  next={...next,deepSpace:{...next.deepSpace,reports:[...next.deepSpace.reports,report].slice(-DEEP.reportLimit)},arcade:{...next.arcade,runs:[...next.arcade.runs,{source:"charge",outcome,receipt:{reportId:report.id,originId:live.originId,lines:report.lines,lights}}]}};
+  next={...next,deepSpace:{...next.deepSpace,reports:retainChargeReports([...next.deepSpace.reports,report], next.fleets)},arcade:{...next.arcade,runs:[...next.arcade.runs,{source:"charge",outcome,receipt:{reportId:report.id,originId:live.originId,lines:report.lines,lights}}]}};
   next={...next,fleets:destroyed?next.fleets.filter(f=>f.id!==live.id):next.fleets.map(f=>f.id===live.id?fleet:f)};
   return {state:next,fleet:destroyed?null:fleet};
 }

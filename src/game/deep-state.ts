@@ -39,3 +39,24 @@ export function chargeReservations(state:GameState):number {
 export function storedRunLimit(state:GameState):number {
   return Math.min(DEEP.maxStoredRuns,5+expeditionSlots(state));
 }
+
+/** Keep pending return reports even while many faster fleets complete behind them. */
+export function retainChargeReports(reports: ChargeReport[], fleets: GameState["fleets"]): ChargeReport[] {
+  const pinned = new Set(fleets.flatMap(f => f.charge?.reportId ? [f.charge.reportId] : []));
+  // Include a just-completed report: its fleet's phase may not yet have been replaced by the caller.
+  const activeIds = new Set(fleets.map(f => f.id));
+  for (const report of reports) if (!report.returned && !report.destroyed && activeIds.has(report.fleetId)) pinned.add(report.id);
+  const required = reports.filter(r => pinned.has(r.id));
+  const room = Math.max(0, DEEP.reportLimit - required.length);
+  const recent = reports.filter(r => !pinned.has(r.id));
+  const kept = new Set([...required, ...(room ? recent.slice(-room) : [])].map(r => r.id));
+  return reports.filter(r => kept.has(r.id));
+}
+
+/** An absent fleet is not "still returning" after the player has reset the lower layer. */
+export function chargeDeliveryStatus(state: GameState, report: ChargeReport): string {
+  if (report.destroyed) return "舰队全损";
+  if (report.returned) return "已返航入库";
+  if (state.fleets.some(f => f.id === report.fleetId && f.charge?.reportId === report.id)) return "返航中";
+  return "任务已结束（未入港奖励不保留）";
+}

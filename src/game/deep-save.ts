@@ -1,3 +1,4 @@
+import { assertDeepLinks } from "./deep-integrity";
 import { DEEP } from "../data/deep-space";
 import { BOARD, BET_SYMBOLS, isArcadeSymbol, LUCKY_TABLE } from "../data/arcade";
 import { SHIP_IDS, type ShipId } from "../data/units";
@@ -66,5 +67,7 @@ export function readDeepState(x:unknown,state:GameState):DeepState {
  const nextOfferId=int(r.nextOfferId,Number.MAX_SAFE_INTEGER-1,1);
  if(offers.some(o=>!/^merchant-\d+$/.test(o.id)||Number(o.id.slice(9))>=nextOfferId))throw Error("商人编号可能重复");
  const debris=unique(list(r.debris,DEEP.debrisLimit).map(x=>{const d=obj(x);if(!validCoordinates(d.target,true))throw Error("残骸坐标无效");return {target:{...d.target},metal:money(d.metal),crystal:money(d.crystal)};}),d=>coordinateKey(d.target));
- return {seed:int(r.seed,0xffffffff),completed,lastBlackhole,emptyStreak:int(r.emptyStreak,1000000),jackpotStreak:int(r.jackpotStreak,1000000),nextOfferId,reports,offers,debris};
+ const result = {seed:int(r.seed,0xffffffff),completed,lastBlackhole,emptyStreak:int(r.emptyStreak,1000000),jackpotStreak:int(r.jackpotStreak,1000000),nextOfferId,reports,offers,debris};
+ assertDeepLinks({ ...state, deepSpace: result });
+ return result;
 }

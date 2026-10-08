@@ -1,6 +1,6 @@
 import { deepPanelHtml, installDeepPanel, type DeepAction } from "./deep-panel";
 import { mountView as mountOriginal, type UiAction as OriginalAction } from "./planet-selector";
-import { SPACE, wrap, type Coordinates } from "../game/galaxy";
+import { SPACE, wrap, coordinateKey, type Coordinates } from "../game/galaxy";
 import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
@@ -34,12 +34,12 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <div class="space-controls">${entry("目标银河","flight-galaxy",1,5,1)}${entry("恒星系","flight-system",1,100,50)}${entry("位置","flight-position",1,16,9)}</div>
     <div id="charge-options" class="ov-card"><label>深空驻留（1 段 = 60 游戏秒）<select id="charge-slots"><option value="1">1 段 · 60 秒</option><option value="2">2 段 · 120 秒</option><option value="3">3 段 · 180 秒</option></select></label><label><span><input type="checkbox" id="charge-bets" /> 复制星环机当前常驻押注，出发时扣除</span></label><p class="muted">可能遭遇海盗/异星战损。未受保护的黑洞会摧毁整支舰队。取消未完成充能会返还押注，不返还燃料。</p></div>
     <h3>3 · 装载货物</h3><div class="space-cargo">${[["metal","金属"],["crystal","晶体"],["deuterium","重氢"]].map(([id,label])=>`<label>${label}<input type="text" inputmode="decimal" id="cargo-${id}" value="0" aria-label="装载${label}" /></label>`).join("")}</div>
-    <p id="space-quote" class="space-quote" aria-live="polite"></p><button type="button" id="space-send" data-space="send">派遣舰队</button><p class="space-status" role="status"></p>
+    <p id="charge-risk-preview" class="muted"></p><p id="charge-capacity-preview" class="muted"></p><p id="space-quote" class="space-quote" aria-live="polite"></p><button type="button" id="space-send" data-space="send">派遣舰队</button><p class="space-status" role="status"></p>
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
   `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml()));
-  const updateDeep=installDeepPanel(root,onAction);
+  const updateDeep=installDeepPanel(root,onAction,()=>target(coordinateKey({...origin,position:16}),"charge"));
   let cursor:Coordinates={galaxy:1,system:50,position:8},selected:string|null=null,initialized=false,origin:Coordinates=cursor;
   let model:SpaceView|null=null;
   function choose(id:string){
@@ -75,6 +75,10 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     updateSpace(value:SpaceView,status:string){
       model=value;
       el(root,"#charge-options").hidden=!model.isCharge;
+      put(root,"#charge-risk-preview",model.chargePreview.risk);
+      put(root,"#charge-capacity-preview",model.chargePreview.capacity);
+      el(root,"#charge-risk-preview").hidden=!model.isCharge;
+      el(root,"#charge-capacity-preview").hidden=!model.isCharge;
       if(selected)choose(selected);
       for(const n of root.querySelectorAll<HTMLElement>(".space-location"))if(n.textContent!==model.origin)n.textContent=model.origin;
       for(const n of root.querySelectorAll<HTMLElement>(".space-status"))if(n.textContent!==status)n.textContent=status;
@@ -84,8 +88,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       const route=(key:string,m:string,label:string)=>`<button type="button" data-space="route" data-coordinate="${key}" data-mission="${m}">${label}</button>`;
       html(root,"#space-worlds",model.rows.map(row=>`<tr class="space-world ${row.planetId?"space-owned":""}"><td>${row.position}</td><td>${enc(row.name)}<small>[${row.key}]</small></td><td>${row.kind}</td><td>${row.properties}</td><td>${row.bonus}</td><td><div class="space-actions">${row.planetId?`<button type="button" data-space="select" data-planet="${enc(row.planetId)}">切换</button>`:""}${row.canColonize?route(row.key,"colonize","殖民"):""}${row.canScout?route(row.key,"scout","侦察"):""}${row.canTransport?route(row.key,"transport","运输"):""}${row.position===16?route(row.key,"charge","深空充能"):""}</div></td></tr>`).join(""));
       const signature=model.fleets.map(f=>`${f.id}:${f.canRecall}`).join("|");const list=el(root,"#space-fleets");
-      if(list.dataset.fleetSignature!==signature){list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';}
-      for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);el(row,".flight-progress").style.width=`${f.progress}%`;}
+      if(list.dataset.fleetSignature!==signature){list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div><small class="flight-detail muted" style="grid-column:1/-1"></small></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';}
+      for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
       const planets=el(root,"#space-planets");
       const planetSignature=JSON.stringify(model.planets.map(p=>[p.id,p.name,p.coordinate,p.selected]));
       if(planets.dataset.planets!==planetSignature){

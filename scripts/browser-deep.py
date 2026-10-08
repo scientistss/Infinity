@@ -51,11 +51,11 @@ with sync_playwright() as p:
   expect(page.locator('#space-send')).to_be_enabled();check('correct charge target',page.locator('#flight-position').input_value()=='16')
   check('three hold options',page.locator('#charge-slots option').count()==3)
   page.locator('#charge-slots').select_option('3');advance(page);check('3 segments shown in quote','3分' in page.locator('#space-quote').inner_text() or '180' in page.locator('#space-quote').inner_text())
-  page.locator('#charge-slots').select_option('1');advance(page);snap(page,'charge-compose.png')
+  page.locator('#charge-slots').select_option('1');advance(page);check('preflight risk is honest','海盗与异星仍可造成战损' in page.locator('#charge-risk-preview').inner_text());check('preflight free cargo displayed','余舱' in page.locator('#charge-capacity-preview').inner_text());snap(page,'charge-compose.png')
   page.locator('#space-send').click();advance(page);dispatched=read(page);f=dispatched['state']['fleets'][0];check('charge persisted before travel',f['mission']=='charge' and f['charge']['phase']=='outbound')
   snap(page,'charge-outbound.png');advance(page,f['duration']+.2);s=save(page)
   check('arrived and holding',s['state']['fleets'][0]['charge']['phase']=='holding');check('no premature roll',s['state']['deepSpace']['completed']==0)
-  tab(page,'fleet');visible(page,'#space-fleets');snap(page,'charge-holding.png');advance(page,61)
+  tab(page,'fleet');visible(page,'#space-fleets');check('actual fleet content displayed','大型运输舰' in page.locator('#space-fleets').inner_text() or '小型运输舰' in page.locator('#space-fleets').inner_text());snap(page,'charge-holding.png');advance(page,61)
   s=save(page);check('charge completed once',s['state']['deepSpace']['completed']==1);r=s['state']['deepSpace']['reports'][0]
   check('pirate is actual battle',r['symbol']=='pirate' and r['battle'] is not None);check('six-round limit',0<len(r['battle']['rounds'])<=6);check('real wreckage generated',len(s['state']['deepSpace']['debris'])>0)
   if s['state']['fleets']:advance(page,s['state']['fleets'][0]['remaining']+.2)
@@ -82,7 +82,7 @@ with sync_playwright() as p:
   page.locator('[data-deep="export-legacy"]').click();check('can export old bytes',page.locator('[data-bind="transfer"]').input_value()=='RETAIN ORIGINAL LIVE SAVE')
   if not a.inline:
    before=read(page);page.reload(wait_until='networkidle');after=save(page);check('native refresh retains deep reports',after['state']['deepSpace']['reports']==before['state']['deepSpace']['reports']);check('native refresh retains ships',after['state']['planets'][0]['units']==before['state']['planets'][0]['units'])
-  c.close()
+  tab(page,'deep');page.locator('[data-deep="charge"]').click();advance(page);check('deep shortcut directly opens correct fleet target',page.locator('#space-fleet').is_visible() and page.locator('#flight-position').input_value()=='16');c.close()
   for mode,symbol in [('alien','alien'),('merchant','merchant'),('blackhole-protected','turbulence'),('blackhole-risk','blackhole')]:
    c,page=boot(mode);advance(page,2);s=save(page);r=s['state']['deepSpace']['reports'][0];check(mode+' actual result',r['symbol']==symbol)
    if mode=='blackhole-protected':check('blackhole changed to turbulence',bool(r['protection']) and not r['destroyed'])

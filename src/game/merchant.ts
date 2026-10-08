@@ -5,7 +5,20 @@ import { big, isValidAmount } from "./decimal";
 import { Rng } from "./rng";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "./types";
 import type { MerchantOffer } from "./deep-state";
+/** Checked before charging a player or creating an encounter contact. */
+export function merchantCreationReason(state: GameState, planetId: string): string {
+  if (!state.planets.some(p => p.id === planetId)) return "商人停靠星球不存在";
+  if (!Number.isSafeInteger(state.deepSpace.nextOfferId) || state.deepSpace.nextOfferId < 1
+    || state.deepSpace.nextOfferId >= Number.MAX_SAFE_INTEGER - 1) return "商人编号达到安全上限";
+  const now = state.totalTime.toNumber();
+  if (!Number.isFinite(now) || now < 0 || now > 1e200 - DEEP.merchantSeconds) return "商人时钟超出安全上限";
+  if (state.deepSpace.offers.filter(o => o.startsAt < 0 || o.expiresAt > now).length >= DEEP.offerLimit) return "商人报价数量已满";
+  return "";
+}
 export function createOffer(state:GameState,planetId:string,seed:number,active:boolean):{state:GameState;id:string} {
+  const reason = merchantCreationReason(state, planetId);
+  if (reason) throw Error(reason);
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw Error("商人随机种子无效");
   const now=state.totalTime.toNumber(),rng=new Rng(seed);
   const offers=state.deepSpace.offers.filter(o=>o.startsAt<0||o.expiresAt>now);
   if(offers.length>=DEEP.offerLimit)throw Error("商人报价数量已满");
@@ -17,6 +30,8 @@ export function createOffer(state:GameState,planetId:string,seed:number,active:b
 export function summonMerchant(state:GameState) {
   const fail=(reason:string)=>({state,ok:false,reason});
   if(state.research.levels.astrophysics<1)return fail("需要天体物理学 1 级");
+  const creationReason = merchantCreationReason(state, state.activePlanetId);
+  if (creationReason) return fail(creationReason);
   const now=state.totalTime.toNumber();
   if(state.deepSpace.offers.some(o=>o.planetId===state.activePlanetId&&o.startsAt>=0&&o.expiresAt>now&&big(o.remainingMe).gt(0)))return fail("当前星球已有有效商人，先使用其报价");
   if(state.darkMatter.lt(DEEP.merchantCallDm))return fail(`暗物质不足，需要 ${DEEP.merchantCallDm}`);
@@ -28,7 +43,7 @@ export function summonMerchant(state:GameState) {
 export function tradeQuote(state:GameState,id:string,sell:ResourceId,buy:ResourceId,amount:string) {
   const fail=(reason:string)=>({ok:false,reason,received:big(0),spent:big(0),volume:big(0)});
   const offer=state.deepSpace.offers.find(o=>o.id===id),now=state.totalTime.toNumber();
-  if(!offer||offer.startsAt<0||offer.expiresAt<=now)return fail("报价不存在、未到港或已过期");
+  if(!offer||offer.startsAt<0||offer.startsAt>now||offer.expiresAt<=now)return fail("报价不存在、未到港或已过期");
   if(offer.planetId!==state.activePlanetId)return fail("请先切换到商人停靠的星球");
   if(!RESOURCE_IDS.includes(sell)||!RESOURCE_IDS.includes(buy)||sell===buy)return fail("需要两种不同的资源");
   if(typeof amount!=="string"||amount.length>100||!/^\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(amount))return fail("数量格式无效");

@@ -14,10 +14,20 @@ const count=(s:ShipCounts)=>Object.values(s).reduce((n,v)=>n+(v??0),0);
  * Damage is distributed by surviving target count; residual hull damage persists per ship type.
  * Runtime is proportional to ship TYPES, never total fleet count. */
 export function fightEncounter(a:ShipCounts,b:ShipCounts,ta:CombatTech,tb:CombatTech,seed:number):BattleResult {
-  for (const ships of [a,b]) for (const [id,n] of Object.entries(ships)) {
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw Error("战斗随机种子无效");
+  for (const ships of [a,b]) {
+    if (!ships || typeof ships !== "object" || Array.isArray(ships)) throw Error("交战舰队格式无效");
+    for (const [id,n] of Object.entries(ships)) {
     if(!SHIP_IDS.includes(id as ShipId)||id==="solar_satellite"||!Number.isSafeInteger(n)||n<0||n>1e12) throw Error("交战舰船数量无效");
+    }
   }
-  for(const t of [ta,tb])for(const v of Object.values(t))if(!Number.isFinite(v)||v<0||v>1002)throw Error("战斗科技无效");
+  for (const t of [ta, tb]) {
+    if (!t || typeof t !== "object") throw Error("战斗科技无效");
+    for (const key of ["weapons", "shields", "armour"] as const) {
+      const value = t[key];
+      if (!Number.isInteger(value) || value < 0 || value > 1002) throw Error("战斗科技无效");
+    }
+  }
   const rng=new Rng(seed), rounds:BattleRound[]=[];
   let sa={...a},sb={...b};
   const hull=(s:ShipCounts,t:CombatTech)=>Object.fromEntries(Object.entries(s).map(([id,n])=>[id,n*unitById(id as ShipId).structure/10*(1+.1*t.armour)]));
