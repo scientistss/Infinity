@@ -36,10 +36,8 @@ jobs:
           node --import tsx scripts/check-original-parity.mjs "$RUNNER_TEMP/original-p3" > parity-report.json
           npm run sim -- 60 | tee balance-report.txt
       - name: Browser prerequisites
-        run: |
-          python -m pip install -r scripts/browser-requirements.txt
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
       - name: Native browser acceptance including real-time charging and ring interactions
         run: |
           node --import tsx scripts/p4-1-fixture.ts > p4-1-review-save.json
@@ -60,6 +58,8 @@ jobs:
           python scripts/browser-deep.py
           node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
           python scripts/browser-ring.py
+          node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
+          python scripts/browser-deep-dashboard.py
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
@@ -74,6 +74,7 @@ jobs:
             space-evidence
             deep-evidence
             ring-evidence
+            dashboard-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json

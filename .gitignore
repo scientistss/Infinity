@@ -9,3 +9,6 @@ dist-ssr
 *.log
 coverage
 .cache
+
+__pycache__/
+*.pyc

@@ -1,3 +1,4 @@
+import { installDeepDashboard } from "./deep-dashboard";
 import { installRingVisual } from "./ring-visual";
 import pkg from "../../package.json";
 import type { GameState, ResourceId } from "../game/types";
@@ -33,6 +34,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
  const arcade=root.querySelector('[data-tab-panel="arcade"]');
  arcade?.insertAdjacentHTML('afterbegin','<p class="muted">信标规则保持原样；舰队充能请到“深空”或“舰队”页。充能回放不再次发奖，奖励在舰队返航后进入出发星球。统计含两类回放，不应直接与信标概率对比。</p>');
  const updateRing=installRingVisual(root);
+ const updateDashboard=installDeepDashboard(root);
  root.addEventListener('click',e=>{
   const b=e.target instanceof Element?e.target.closest<HTMLButtonElement>('[data-deep]'):null;if(!b||b.disabled)return;
   const a=b.dataset.deep;
@@ -55,5 +57,6 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
   html(root,'#deep-offers',d.offers.filter(o=>o.startsAt<0||o.expiresAt>now).map(o=>`<p>${enc(o.id)} · ${enc(state.planets.find(p=>p.id===o.planetId)?.name??o.planetId)} · ${o.ratios.metal.toFixed(3)} : ${o.ratios.crystal.toFixed(3)} : ${o.ratios.deuterium.toFixed(3)} · 余额 ${formatAmount(big(o.remainingMe))} 金属当量 · ${o.startsAt<0?'等待舰队返航':`剩余 ${formatDuration(Math.ceil(o.expiresAt-now))}`}</p>`).join('')||'<p class="muted">尚无商人联络。深空商船事件可免费获得，也可花暗物质呼叫。</p>');
   html(root,'#deep-debris',d.debris.map(f=>`<div class="space-planet"><strong>[${coordinateKey(f.target)}]</strong><span>金属 ${formatAmount(big(f.metal))} · 晶体 ${formatAmount(big(f.crystal))}</span><button type="button" data-space="route" data-coordinate="${coordinateKey(f.target)}" data-mission="recycle">派遣回收船</button></div>`).join('')||'<p class="muted">暂无残骸。只有真实遭遇战造成的舰船损失才会生成残骸。</p>');
   html(root,'#deep-reports',d.reports.slice().reverse().map(r=>`<details class="ov-card" data-report="${r.id}"><summary>#${r.fleetId} · ${arcadeSymbolDef(r.symbol).nameZh} · [${coordinateKey(r.target)}] · ${r.slots} 段 · ${chargeDeliveryStatus(state,r)}</summary><ul>${r.lines.map(t=>`<li>${enc(t)}</li>`).join('')}</ul>${r.battle?`<div class="space-table-scroll"><table class="ov-table"><thead><tr><th>回合</th><th>己方剩余</th><th>敌方剩余</th><th>己方输出</th><th>敌方输出</th></tr></thead><tbody>${r.battle.rounds.map(b=>`<tr><td>${b.round}</td><td>${b.attacker}</td><td>${b.defender}</td><td>${formatAmount(big(b.attackDamage))}</td><td>${formatAmount(big(b.defendDamage))}</td></tr>`).join('')}</tbody></table></div>`:''}</details>`).join('')||'<p class="muted">派出第一支充能舰队后，这里会记录实际结果、保护判定与战报。</p>');
+  updateDashboard(state);
  };
 }

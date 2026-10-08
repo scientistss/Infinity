@@ -27,8 +27,13 @@ with sync_playwright() as p:
    script="""(()=>{const data=new Map(Object.entries(SEED));Object.defineProperty(window,'localStorage',{value:{getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)}});let frames=[],time=1000;const origin=Date.now();Date.now=()=>origin+time-1000;Object.defineProperty(performance,'now',{value:()=>time});window.requestAnimationFrame=cb=>(frames.push(cb),frames.length);window.cancelAnimationFrame=()=>{};window.__advance=ms=>{time+=ms;const f=frames;frames=[];f.forEach(cb=>cb(time));};})();""".replace('SEED',json.dumps(seed,ensure_ascii=False))
    page.add_script_tag(content=script);page.add_script_tag(content=next((dist/'assets').glob('*.js')).read_text(),type='module')
   else:
-   c.add_init_script("if(!sessionStorage.getItem('ring-test-seeded')){for(const[k,v]of Object.entries(SEED))localStorage.setItem(k,v);sessionStorage.setItem('ring-test-seeded','1');}".replace('SEED',json.dumps(seed,ensure_ascii=False)))
+   c.add_init_script("if(!sessionStorage.getItem('ring-test-seeded')){for(const[k,v]of Object.entries(SEED)){let value=v;if(k==='infinity.original-p4.save.v1'){const f=JSON.parse(v);f.savedAt=f.lastTickAt=Date.now();value=JSON.stringify(f);}localStorage.setItem(k,value);}sessionStorage.setItem('ring-test-seeded','1');}".replace('SEED',json.dumps(seed,ensure_ascii=False)))
    response=page.goto(a.url,wait_until='networkidle');check('actual HTTP 200',response.status==200)
+  def dismiss_offline():
+   modal=page.locator('[data-bind="offline-modal"]')
+   if modal.is_visible():
+    page.locator('[data-action="dismiss-offline"]').click();expect(modal).to_be_hidden()
+  dismiss_offline()
   expect(page.locator('.ring-visual')).to_be_visible()
   def advance(ms=100):
    if a.inline:page.evaluate('(t)=>window.__advance(t)',ms)
@@ -37,8 +42,8 @@ with sync_playwright() as p:
    page.evaluate("Promise.all([...document.images].filter(i=>i.getClientRects().length).map(i=>i.decode().catch(()=>null)))")
    page.evaluate('scrollTo(0,0)');page.screenshot(path=str(out/name),full_page=True)
   def save():
-   page.locator('[data-tab="save"]').click();page.locator('[data-action="save"]').click();return json.loads(page.evaluate('(k)=>localStorage.getItem(k)',key))
-  def ring():page.locator('[data-tab="arcade"]').click();advance()
+   dismiss_offline();page.locator('[data-tab="save"]').click();page.locator('[data-action="save"]').click();return json.loads(page.evaluate('(k)=>localStorage.getItem(k)',key))
+  def ring():dismiss_offline();page.locator('[data-tab="arcade"]').click();advance()
   check('original UI retained',page.locator('.command-ui').count()==0)
   check('24 individually imaged tiles',page.locator('[data-tile] img.ring-art').count()==24)
   check('15 distinct tile art files',len(set(page.locator('[data-tile] img').evaluate_all('(els)=>els.map(e=>e.src)')))==15)
@@ -89,5 +94,8 @@ with sync_playwright() as p:
    save();page.reload(wait_until='networkidle');ring();check('native reload restores prior history',page.locator('[data-ring-history]').count()>=7)
   check('no uncaught JS error',not errors);check('no failed resource requests',not failed);done=True
  finally:
+  if not done:
+   try:page.screenshot(path=str(out/'failure.png'),full_page=True)
+   except Exception:pass
   report={'completed':done,'mode':'inline DOM / memory Storage / controlled clock' if a.inline else 'HTTP / native localStorage / real-time','url':a.url,'passed':sum(x['passed']for x in checks),'checks':checks,'errors':errors,'failedRequests':failed,'fixture':'Explicitly pre-funded; results produced by real rules with fixture-only seed selection. Not normal progression or user save.'}
   (out/'ring-browser-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False));b.close()

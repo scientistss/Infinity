@@ -28,15 +28,19 @@ with sync_playwright() as p:
    code="""(()=>{const data=new Map(Object.entries(SEED));Object.defineProperty(window,'localStorage',{value:{getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,String(v)),removeItem:k=>data.delete(k)}});let frames=[],time=1000;const origin=Date.now();Date.now=()=>origin+time-1000;Object.defineProperty(performance,'now',{value:()=>time});window.requestAnimationFrame=cb=>(frames.push(cb),frames.length);window.cancelAnimationFrame=()=>{};window.__advance=ms=>{time+=ms;const fs=frames;frames=[];fs.forEach(f=>f(time));};})();""".replace('SEED',json.dumps(seed,ensure_ascii=False))
    page.add_script_tag(content=code);page.add_script_tag(content=next((dist/'assets').glob('*.js')).read_text(),type='module')
   else:
-   c.add_init_script("if(!sessionStorage.getItem('deep-seed')){for(const [k,v]of Object.entries(SEED))localStorage.setItem(k,v);sessionStorage.setItem('deep-seed','1');}".replace('SEED',json.dumps(seed,ensure_ascii=False)))
+   c.add_init_script("if(!sessionStorage.getItem('deep-seed')){for(const[k,v]of Object.entries(SEED)){let value=v;if(k==='infinity.original-p4.save.v1'){const f=JSON.parse(v);f.savedAt=f.lastTickAt=Date.now();value=JSON.stringify(f);}localStorage.setItem(k,value);}sessionStorage.setItem('deep-seed','1');}".replace('SEED',json.dumps(seed,ensure_ascii=False)))
    r=page.goto(a.url,wait_until='networkidle',timeout=30000);check(name+': HTTP 200',r.status==200)
-  page.locator('[data-bind="amount-metal"]').wait_for();return c,page
+  page.locator('[data-bind="amount-metal"]').wait_for();dismiss_offline(page);return c,page
  def advance(page,seconds=.12):
   if a.inline:page.evaluate('(n)=>window.__advance(n)',seconds*1000)
   else:page.wait_for_timeout(seconds*1000)
   dismiss=page.locator('[data-action="dismiss-offline"]')
   if dismiss.count() and dismiss.is_visible():dismiss.click()
- def tab(page,t):page.locator('[data-tab="'+t+'"]').click();advance(page);expect(page.locator('[data-tab-panel="'+t+'"]').first).to_be_visible()
+ def dismiss_offline(page):
+  modal=page.locator('[data-bind="offline-modal"]')
+  if modal.is_visible():
+   page.locator('[data-action="dismiss-offline"]').click();expect(modal).to_be_hidden()
+ def tab(page,t):dismiss_offline(page);page.locator('[data-tab="'+t+'"]').click();advance(page);expect(page.locator('[data-tab-panel="'+t+'"]').first).to_be_visible()
  def read(page):return json.loads(page.evaluate('(k)=>localStorage.getItem(k)',key))
  def save(page):tab(page,'save');page.locator('[data-action="save"]').click();return read(page)
  def snap(page,name):
@@ -95,5 +99,8 @@ with sync_playwright() as p:
    tab(page,'deep');page.locator('#deep-reports summary').first.click();visible(page,'#deep-reports');snap(page,mode+'.png');check(mode+' old save retained',page.evaluate("localStorage.getItem('infinity.save.v1')")=='RETAIN ORIGINAL LIVE SAVE');c.close()
   check('no JS exceptions',not errors);check('no failed requests',not failures);complete=True
  finally:
+  if not complete:
+   try:page.screenshot(path=str(out/'failure.png'),full_page=True)
+   except Exception:pass
   report={'completed':complete,'mode':'inline DOM / memory Storage / controlled clock' if a.inline else 'HTTP / native localStorage / real-time','url':a.url,'passed':sum(x['passed'] for x in checks),'checks':checks,'errors':errors,'failedRequests':failures,'fixture':'Prepared one-homeworld fixtures. Main pirate run dispatched via UI and held for 60 game seconds. Other scenarios are real rule-engine snapshots one second before hold completion; not normal new games.'}
   (out/'deep-browser-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False));b.close()
