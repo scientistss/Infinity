@@ -40,7 +40,7 @@ jobs:
           python -m pip install -r scripts/browser-requirements.txt
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
-      - name: Native browser acceptance including real-time 60-second charging
+      - name: Native browser acceptance including real-time charging and ring interactions
         run: |
           node --import tsx scripts/p4-1-fixture.ts > p4-1-review-save.json
           node --import tsx scripts/space-fixture.ts > space-review-save.json
@@ -58,6 +58,8 @@ jobs:
           python scripts/browser-p4-1.py --fixture p4-1-review-save.json
           python scripts/browser-space.py --fixture space-review-save.json
           python scripts/browser-deep.py
+          node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
+          python scripts/browser-ring.py
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
@@ -71,6 +73,7 @@ jobs:
             browser-evidence
             space-evidence
             deep-evidence
+            ring-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json
