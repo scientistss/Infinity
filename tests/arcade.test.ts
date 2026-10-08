@@ -1,3 +1,4 @@
+import { storedRunLimit } from "../src/game/deep-state";
 import { activePlanet, withPlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
 import { ARCADE, ARCADE_SYMBOL_DEFS, BOARD, EMPTY_SYMBOLS, GOOD_SYMBOLS, LUCKY_EXCLUDED } from "../src/data/arcade";
@@ -288,16 +289,16 @@ describe("bets and top-up", () => {
     expect(state.arcade.bets.crystal).toBe(2);
   });
 
-  it("top-up price doubles within 24 h of game time and the store holds 5 runs", () => {
+  it("top-up price doubles within 24 h of game time and the store obeys 3 + expedition slots + 2", () => {
     let state = { ...withPlanet(opened(), { resources: { ...activePlanet(opened()).resources, deuterium: big(1e9) } }) };
     const p0 = topUpPrice(state);
     state = topUp(state).state;
     expect(topUpPrice(state)).toBe(p0 * 2);
-    for (let i = 0; i < 4; i += 1) state = topUp(state).state;
-    expect(state.arcade.runs).toHaveLength(5);
+    for (let i = 1; i < storedRunLimit(state); i += 1) state = topUp(state).state;
+    expect(state.arcade.runs).toHaveLength(storedRunLimit(state));
     expect(topUp(state).ok).toBe(false);
     const all = revealAll(state, "manual");
-    expect(all.results).toHaveLength(5);
+    expect(all.results).toHaveLength(storedRunLimit(state));
     expect(all.state.arcade.runs).toHaveLength(0);
   });
 });

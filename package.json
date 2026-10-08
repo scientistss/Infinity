@@ -1,12 +1,12 @@
 {
   "name": "infinity",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.6.0-alpha.1",
   "type": "module",
-  "description": "Sci-fi idle game scaffold: expand from a planet surface toward the multiverse.",
+  "description": "Single-player space idle: original UI, fleets, deep-space encounters, merchants and salvage.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/check-ui-baseline.mjs && tsc --noEmit && vite build && node scripts/write-release.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "sim": "tsx scripts/balance-sim.ts"

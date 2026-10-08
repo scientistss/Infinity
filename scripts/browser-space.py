@@ -43,7 +43,7 @@ with sync_playwright() as p:
  def read():return json.loads(page.evaluate('(k)=>localStorage.getItem(k)',key))
  try:
   load(seed);check('prepared fixture contains only one homeworld',len(fixture['state']['planets'])==1);check('no command UI redesign',page.locator('.command-ui').count()==0)
-  snap('original-facilities.png');tab('galaxy');check('16 target positions',page.locator('#space-worlds tr').count()==16);check('deep-space locked honestly','充能待开放' in page.locator('#space-worlds tr').last.inner_text());snap('galaxy-desktop.png')
+  snap('original-facilities.png');tab('galaxy');check('16 target positions',page.locator('#space-worlds tr').count()==16);check('deep-space charging is available',page.locator('#space-worlds tr').last.locator('[data-mission="charge"]').count()==1);snap('galaxy-desktop.png')
   page.locator('#browse-system').fill('1');page.locator('[data-space="prev"]').click();advance();check('system wrap backward',page.locator('#browse-system').input_value()=='100');page.locator('[data-space="next"]').click();advance();check('system wrap forward',page.locator('#browse-system').input_value()=='1');page.locator('[data-space="home"]').click();advance()
   page.locator('[data-space="route"][data-mission="colonize"]').first.click();advance();expect(page.locator('#space-fleet')).to_be_visible()
   page.locator('[data-ship="colony_ship"]').fill('1');page.locator('[data-ship="small_cargo"]').fill('2');page.locator('#cargo-metal').fill('-1');advance();check('invalid cargo blocks dispatch',page.locator('#space-send').is_disabled())

@@ -1,3 +1,4 @@
+import { summonMerchant, trade } from "./game/merchant";
 import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
 import { spaceView } from "./ui/space-present";
 import "./space.css";
@@ -111,11 +112,19 @@ function render(): void {
   view.update(present(state, { status, banner, notice, catchup }));
   view.setOrigin(activePlanet(state).coordinates);
   view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
+  view.updateDeep(state);
 }
 
 async function handleAction(action: UiAction): Promise<void> {
   const before = state.unlocked;
-  if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
+  if(action.type==="summon-merchant"||action.type==="trade"){
+    const result=action.type==="summon-merchant"?summonMerchant(state):trade(state,action.offer,action.sell,action.buy,action.amount);
+    state=result.state;status=result.reason;if(result.ok)persist();
+  } else if(action.type==="export-legacy"){
+    const raw=store?.getItem("infinity.save.v1");
+    if(raw){view.setTransferText(raw);status="旧站原始存档已放入文本框，请复制另存，不会自动导入本版本";}
+    else status="未找到旧站原始存档";
+  } else if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
     if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
     const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
     state=result.state;status=result.reason;if(result.ok)persist();

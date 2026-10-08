@@ -1,3 +1,6 @@
+import { DEEP } from "../data/deep-space";
+import { readDeepState, readReceipt } from "./deep-save";
+import { createDeepState, storedRunLimit, chargeReservations, type DeepState } from "./deep-state";
 import { readSpaceState, serializeFleets } from "./space-save";
 import { validCoordinates, type Universe, type Coordinates } from "./galaxy";
 import type { FleetMessage } from "./fleet";
@@ -85,6 +88,7 @@ export interface SerializedState {
   planets: SerializedPlanet[];
   activePlanetId: string;
   universe: Universe;
+  deepSpace: DeepState;
   fleets: ReturnType<typeof serializeFleets>;
   messages: FleetMessage[];
   nextFleetId: number;
@@ -118,7 +122,7 @@ export interface SerializedState {
 
 export interface SaveFile {
   schema: typeof SAVE_SCHEMA;
-  revision: 2;
+  revision: 3;
   version: number;
   savedAt: number;
   /** Wall clock of the last simulated tick. */
@@ -151,6 +155,7 @@ export function serializeState(state: GameState): SerializedState {
   return {
     planets: state.planets.map(serializePlanet),
     activePlanetId: state.activePlanetId,
+    deepSpace: structuredClone(state.deepSpace),
     universe: { ...state.universe }, fleets: serializeFleets(state.fleets),
     messages: state.messages.map(m=>({...m})), nextFleetId: state.nextFleetId,
     research: serializeResearch(state.research),
@@ -203,6 +208,10 @@ export function deserializeState(raw: unknown): GameState {
   state.stats = readStats(raw.stats);
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
   Object.assign(state, readSpaceState(raw, state));
+  state.deepSpace=readDeepState(raw.deepSpace,state);
+  if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
+  const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
+  if(new Set(receipts).size!==receipts.length)throw Error("充能回放凭证重复");
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
@@ -210,7 +219,7 @@ export function deserializeState(raw: unknown): GameState {
 export function exportSave(state: GameState, savedAt = Date.now()): string {
   const file: SaveFile = {
     schema: SAVE_SCHEMA,
-    revision: 2,
+    revision: 3,
     version: SAVE_VERSION,
     savedAt,
     lastTickAt: savedAt,
@@ -232,7 +241,12 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2) throw Error("原版 P4 存档修订不兼容（需要 r2）；原件保留，未导入");
+  if (parsed.revision !== 2 && parsed.revision !== 3) throw Error("原版 P4 存档修订不兼容（需要 r2/r3）；原件保留，未导入");
+  if(parsed.revision===2){
+    if(!isRecord(parsed.state)||!isRecord(parsed.state.universe))throw Error("r2 宇宙数据缺失");
+    if("deepSpace" in parsed.state || (Array.isArray(parsed.state.fleets)&&parsed.state.fleets.some(f=>isRecord(f)&&(f.mission==="charge"||f.mission==="recycle"||"charge" in f))))throw Error("r2 不能夹带深空数据");
+    parsed.state={...parsed.state,deepSpace:createDeepState(Number(parsed.state.universe.seed))};
+  }
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -240,7 +254,7 @@ export function importSave(json: string): SaveFile {
     typeof parsed.lastTickAt === "number" && Number.isFinite(parsed.lastTickAt) ? parsed.lastTickAt : parsed.savedAt;
   return {
     schema: SAVE_SCHEMA,
-    revision: 2,
+    revision: 3,
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
@@ -287,6 +301,7 @@ export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
     return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
   }
   const file = importSave(raw);
+  if(JSON.parse(raw).revision===2)backupRawSave(store);
   const elapsed = (now - file.lastTickAt) / 1000;
   return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
 }
@@ -431,7 +446,7 @@ function readPendingRun(raw: unknown, index: number): PendingRun {
   const label = `星环机开奖第 ${index + 1} 次`;
   if (!isRecord(raw) || !isRecord(raw.outcome)) throw new Error(`${label}格式不正确`);
   const source = raw.source;
-  if (source !== "beacon" && source !== "topup" && source !== "bonus") throw new Error(`${label}来源无效`);
+  if (source !== "beacon" && source !== "topup" && source !== "bonus" && source !== "charge") throw new Error(`${label}来源无效`);
   const outcome = raw.outcome;
   const forced = outcome.forced === "empty" || outcome.forced === "jackpot" ? outcome.forced : null;
   let lucky: PendingRun["outcome"]["lucky"] = null;
@@ -446,7 +461,9 @@ function readPendingRun(raw: unknown, index: number): PendingRun {
       lights: rawLucky.lights.map((light, i) => readLight(light, `${label}送灯 ${i + 1}`)),
     };
   }
-  return { source, outcome: { main: readLight(outcome.main, label), lucky, forced } };
+  const receipt=source==="charge"?readReceipt(raw.receipt):undefined;
+  if(source!=="charge"&&raw.receipt!==undefined)throw Error("信标不能夹带充能凭证");
+  return { source, outcome: { main: readLight(outcome.main, label), lucky, forced }, ...(receipt?{receipt}:{}) };
 }
 
 function readFinite(raw: unknown, label: string, fallback: number): number {
@@ -461,7 +478,7 @@ function readArcade(raw: unknown): ArcadeState {
   if (!isRecord(raw)) throw new Error("星环机数据格式不正确");
   const arcade = createArcade(readInteger(raw.seed, "星环机随机数状态", 0, 0xffffffff));
   if (raw.runs !== undefined) {
-    if (!Array.isArray(raw.runs) || raw.runs.length > ARCADE.storedMax) throw new Error("星环机开奖次数无效");
+    if (!Array.isArray(raw.runs) || raw.runs.length > DEEP.maxStoredRuns) throw new Error("星环机开奖次数无效");
     arcade.runs = raw.runs.map(readPendingRun);
   }
   arcade.beaconRequired = Math.min(
@@ -504,7 +521,7 @@ function readArcade(raw: unknown): ArcadeState {
         big: entry.big === true,
         at: readFinite(entry.at, "星环机历史时间", 0),
         auto: entry.auto === true,
-        summary: entry.summary.slice(0, 600),
+        summary: entry.summary.slice(0, 8000),
       };
     });
   }
