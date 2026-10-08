@@ -46,6 +46,8 @@ jobs:
           python scripts/browser-deep.py
           node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
           python scripts/browser-ring.py
+          node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
+          python scripts/browser-deep-dashboard.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -53,6 +55,7 @@ jobs:
           path: |
             deep-evidence
             ring-evidence
+            dashboard-evidence
             test-results.json
             preview.log
           retention-days: 7
@@ -98,6 +101,8 @@ jobs:
           python scripts/browser-deep.py --url https://scientistss.github.io/Infinity/
           node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
           python scripts/browser-ring.py --url https://scientistss.github.io/Infinity/
+          node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
+          python scripts/browser-deep-dashboard.py --url https://scientistss.github.io/Infinity/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -105,6 +110,7 @@ jobs:
           path: |
             deep-evidence
             ring-evidence
+            dashboard-evidence
             live-hashes.json
             dist
           retention-days: 7

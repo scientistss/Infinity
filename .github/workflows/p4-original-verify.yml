@@ -60,6 +60,8 @@ jobs:
           python scripts/browser-deep.py
           node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
           python scripts/browser-ring.py
+          node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
+          python scripts/browser-deep-dashboard.py
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
@@ -74,6 +76,7 @@ jobs:
             space-evidence
             deep-evidence
             ring-evidence
+            dashboard-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json
