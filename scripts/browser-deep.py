@@ -41,10 +41,12 @@ with sync_playwright() as p:
  def save(page):tab(page,'save');page.locator('[data-action="save"]').click();return read(page)
  def snap(page,name):
   page.evaluate("Promise.all([...document.images].filter(i=>i.getClientRects().length).map(i=>i.decode().catch(()=>null)))")
+  page.evaluate("window.scrollTo(0,0)")
   page.screenshot(path=str(out/name),full_page=True)
  def visible(page,selector):page.locator(selector).scroll_into_view_if_needed()
  try:
   c,page=boot('pirate');check('original UI retained',page.locator('.command-ui').count()==0)
+  check('visible version is current and offline heading is preserved',page.locator('.brand .kicker').text_content().endswith('v'+json.loads(Path('package.json').read_text())['version']) and page.locator('[data-bind="offline-modal"] .kicker').text_content()=='Welcome back')
   tab(page,'galaxy');check('16th-position charging button',page.locator('[data-mission="charge"]').count()==1)
   page.locator('[data-mission="charge"]').click();advance(page)
   page.locator('[data-ship="small_cargo"]').fill('5');page.locator('[data-ship="light_fighter"]').fill('30');page.locator('[data-ship="cruiser"]').fill('8');advance(page)

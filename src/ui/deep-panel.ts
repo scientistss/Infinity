@@ -26,7 +26,7 @@ function put(r:ParentNode,s:string,t:string){const n=el(r,s);if(n.textContent!==
 function html(r:ParentNode,s:string,t:string){const n=el(r,s);if(n.dataset.signature===t)return;const open=[...n.querySelectorAll<HTMLDetailsElement>('details[open]')].map(d=>d.dataset.report);n.innerHTML=t;n.dataset.signature=t;for(const d of n.querySelectorAll<HTMLDetailsElement>('details'))if(open.includes(d.dataset.report))d.open=true;}
 export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void, openCharge:()=>void){
  el<HTMLSelectElement>(root,"#deep-buy").value="crystal";
- const kicker=root.querySelector(".kicker");if(kicker)kicker.textContent=`Planet surface · v${pkg.version}`;
+ const kicker=root.querySelector(".brand .kicker");if(kicker)kicker.textContent=`Planet surface · v${pkg.version}`;
  const save=root.querySelector('[data-tab-panel="save"]');
  save?.insertAdjacentHTML('beforeend','<p class="muted">以前指挥界面版本的存档仍保存在原键中，不会自动清除或混合导入。</p><button type="button" data-deep="export-legacy">导出旧站原始存档</button>');
  const arcade=root.querySelector('[data-tab-panel="arcade"]');
