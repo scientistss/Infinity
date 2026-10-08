@@ -1,3 +1,4 @@
+import { installRingVisual } from "./ring-visual";
 import pkg from "../../package.json";
 import type { GameState, ResourceId } from "../game/types";
 import { DEEP, chargeChances } from "../data/deep-space";
@@ -31,6 +32,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
  save?.insertAdjacentHTML('beforeend','<p class="muted">以前指挥界面版本的存档仍保存在原键中，不会自动清除或混合导入。</p><button type="button" data-deep="export-legacy">导出旧站原始存档</button>');
  const arcade=root.querySelector('[data-tab-panel="arcade"]');
  arcade?.insertAdjacentHTML('afterbegin','<p class="muted">信标规则保持原样；舰队充能请到“深空”或“舰队”页。充能回放不再次发奖，奖励在舰队返航后进入出发星球。统计含两类回放，不应直接与信标概率对比。</p>');
+ const updateRing=installRingVisual(root);
  root.addEventListener('click',e=>{
   const b=e.target instanceof Element?e.target.closest<HTMLButtonElement>('[data-deep]'):null;if(!b||b.disabled)return;
   const a=b.dataset.deep;
@@ -41,6 +43,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
   if(a==="charge")openCharge();
  });
  return (state:GameState)=>{
+  updateRing(state);
   if(el(root,'#space-deep').hidden)return;
   const d=state.deepSpace,now=state.totalTime.toNumber();
   put(root,'#deep-status',`已完成充能 ${d.completed} 次 · 远征 ${state.fleets.filter(f=>f.mission==="charge").length}/${expeditionSlots(state)} · 待揭晓 ${state.arcade.runs.length} + 预留 ${chargeReservations(state)}/${storedRunLimit(state)}`);

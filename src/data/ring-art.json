@@ -1,0 +1,77 @@
+{
+  "metal": {
+    "file": "icons/ring-v1/metal.aa9b20b977.svg",
+    "alt": "金属陨石",
+    "sha256": "aa9b20b977f3ea81c5f7453b7a2bee9ed344337e2167ee2979bf5726f46f9e2f"
+  },
+  "crystal": {
+    "file": "icons/ring-v1/crystal.2adcb5ed14.svg",
+    "alt": "晶簇",
+    "sha256": "2adcb5ed1482dc201ddc9e15e1ce65949e3039730067f1b9a6fa3c285675ad7c"
+  },
+  "deuterium": {
+    "file": "icons/ring-v1/deuterium.909cfc200e.svg",
+    "alt": "重氢云",
+    "sha256": "909cfc200ea0e925ce3df8f868f8ad1bcff44b5b5b2c6647d4cadc8cf6bb2c0c"
+  },
+  "drifter": {
+    "file": "icons/ring-v1/drifter.50ea60aac1.svg",
+    "alt": "漂流舰",
+    "sha256": "50ea60aac19996e98b6cf3c7bef047f9d07dc01f700ad6007d69b9186872f1db"
+  },
+  "dark_matter": {
+    "file": "icons/ring-v1/dark_matter.527b74f95b.svg",
+    "alt": "暗物质",
+    "sha256": "527b74f95bdeccef7f461c72a5960d9a12f877eb47e8fadc65bb08c49b06c862"
+  },
+  "supply": {
+    "file": "icons/ring-v1/supply.e7d03627e3.svg",
+    "alt": "补给箱",
+    "sha256": "e7d03627e31a66c0cb8758f5c5a00d11b5576520e7b6bdeb5f1494c3cf55cdc2"
+  },
+  "empty": {
+    "file": "icons/ring-v1/empty.0bb9887319.svg",
+    "alt": "空域",
+    "sha256": "0bb9887319cbc8c47ceb8b8f51ca4ad020200380524edabd7d2524c02b38131e"
+  },
+  "turbulence": {
+    "file": "icons/ring-v1/turbulence.8ead5b5ff4.svg",
+    "alt": "引力乱流",
+    "sha256": "8ead5b5ff422c7ce3cb1ab8aedcec057b70392cf9769595be45184450795149b"
+  },
+  "tailwind": {
+    "file": "icons/ring-v1/tailwind.68d76a24f4.svg",
+    "alt": "曲速顺流",
+    "sha256": "68d76a24f4ea10063c41eee4048a27412712c9875c56bb960620f065ce10dc23"
+  },
+  "pirate": {
+    "file": "icons/ring-v1/pirate.694604e49f.svg",
+    "alt": "海盗旗",
+    "sha256": "694604e49f018ee9a556f7e0a7696a56ae8248f3cbc6fa7f6cd22ba5ee3ac97b"
+  },
+  "alien": {
+    "file": "icons/ring-v1/alien.65535645ff.svg",
+    "alt": "异星眼",
+    "sha256": "65535645ffa5d6f21df7cd2785dc7ffe3dbacbbcdb2bfbb7287713cedbeeca03"
+  },
+  "merchant": {
+    "file": "icons/ring-v1/merchant.b4df961886.svg",
+    "alt": "商船",
+    "sha256": "b4df961886b26da68deb3c822ec0f601da99fea4d0b82a1710e473f478f96f34"
+  },
+  "blackhole": {
+    "file": "icons/ring-v1/blackhole.e046f8cdb8.svg",
+    "alt": "黑洞",
+    "sha256": "e046f8cdb858d2976dc385a643e3759b0a4a8eb493a561f5484c78dd1d6e4378"
+  },
+  "lucky": {
+    "file": "icons/ring-v1/lucky.c9b1d3600b.svg",
+    "alt": "LUCKY 送灯",
+    "sha256": "c9b1d3600ba5498c969ac2712fd1961f2def549d55c640bd60d7410368969ab8"
+  },
+  "jackpot": {
+    "file": "icons/ring-v1/jackpot.7f56d06845.svg",
+    "alt": "JACKPOT 曲率大奖",
+    "sha256": "7f56d0684550516bf406c38d405f1d9a0e7459e135fdf4d941f80945514ac031"
+  }
+}

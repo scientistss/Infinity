@@ -30,7 +30,7 @@ jobs:
           python -m pip install -r scripts/browser-requirements.txt
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
-      - name: Pre-deployment real-time deep-space acceptance
+      - name: Pre-deployment real-time deep-space and ring acceptance
         run: |
           mkdir -p deep-fixtures
           for scenario in pirate alien merchant blackhole-protected blackhole-risk; do
@@ -44,12 +44,15 @@ jobs:
             sleep 1
           done
           python scripts/browser-deep.py
+          node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
+          python scripts/browser-ring.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: deep-preflight-${{ github.sha }}
           path: |
             deep-evidence
+            ring-evidence
             test-results.json
             preview.log
           retention-days: 7
@@ -93,12 +96,15 @@ jobs:
             node --import tsx scripts/deep-fixture.ts "$scenario" > "deep-fixtures/$scenario.json"
           done
           python scripts/browser-deep.py --url https://scientistss.github.io/Infinity/
+          node --import tsx scripts/ring-fixture.mjs > ring-review-save.json
+          python scripts/browser-ring.py --url https://scientistss.github.io/Infinity/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: deep-live-${{ github.sha }}
           path: |
             deep-evidence
+            ring-evidence
             live-hashes.json
             dist
           retention-days: 7
