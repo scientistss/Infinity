@@ -1,3 +1,4 @@
+import { installExpansionNavigation } from "./expansion-navigation";
 import { installPrestigePreview } from "./prestige-preview";
 import { formationsPanelHtml, installFormationsPanel, type FormationUiAction } from "./formations-panel";
 import type { FleetFormation } from "../game/formation-state";
@@ -51,6 +52,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   const templatePanel=installResearchTemplatesPanel(root,onAction);
   const formationPanel=installFormationsPanel(root,onAction);
   const prestigePreview=installPrestigePreview(root);
+  const expansionNavigation=installExpansionNavigation(root);
   let filledFormation: Pick<FleetFormation,"id" | "revision" | "name"> | null = null;
   function clearFormationFill(){if(!filledFormation)return;for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value="0";filledFormation=null;put(root,"#formation-dispatch-source","");el(root,"#formation-dispatch-source").hidden=true;}
   // Each surface owns its rendered capabilities; rebuilding the fleet tab must
@@ -96,9 +98,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
-  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction, updateFormations:formationPanel.update, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate,
+  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction, updateFormations:formationPanel.update, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
     fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;},
-    invalidateOrderAuthority(){prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

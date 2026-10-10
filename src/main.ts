@@ -114,6 +114,7 @@ function render(): void {
   view.updateResearchTemplates(state, saveSession.mode === "ready");
   view.updateFormations(state, saveSession.mode === "ready");
   view.updatePrestigePreview(state, saveSession.mode === "ready");
+  view.updateExpansionNavigation(state, view.cursor());
 }
 
 async function handleAction(action: UiAction): Promise<void> {

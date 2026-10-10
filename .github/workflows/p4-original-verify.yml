@@ -78,6 +78,8 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/expansion-navigation-fixture.ts > expansion-navigation-review-save.json
+          python scripts/browser-expansion-navigation.py --fixture expansion-navigation-review-save.json
           node --import tsx scripts/prestige-preview-fixture.ts > prestige-preview-review-save.json
           python scripts/browser-prestige-preview.py --fixture prestige-preview-review-save.json
           node --import tsx scripts/formations-fixture.ts > formations-review-save.json
@@ -122,6 +124,8 @@ jobs:
             formations-evidence
             prestige-preview-evidence
             prestige-preview-review-save.json
+            expansion-navigation-evidence
+            expansion-navigation-review-save.json
             deep-fixtures
             test-results.json
             original-ui-report.json

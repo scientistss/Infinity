@@ -1,3 +1,4 @@
+import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION } from "../game/content";
 import type { CancelPaidJobRequest, OrderAction, OrderKind } from "../game/order-state";
 import type { QueueView } from "./present";
 import { mountView as mountSurfaceView, type GameView, type UiAction as SurfaceAction } from "./view";
@@ -90,7 +91,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   const saveNote = root.querySelector('[data-tab-panel="save"] p');
   if (saveNote) {
     saveNote.replaceChildren(document.createTextNode(
-      "原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r5 存档；有效 r2 / r3 / r4 先备份后升级，仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 ",
+      `原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=${SAVE_SCHEMA} 的 v${SAVE_VERSION} / r${SAVE_REVISION} 存档；有效 r2–r${SAVE_REVISION - 1} 先备份后升级，仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 `,
     ));
     const cap = document.createElement("strong");
     cap.dataset.bind = "offline-cap";
