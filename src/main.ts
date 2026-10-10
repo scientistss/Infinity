@@ -9,7 +9,7 @@ import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
 import { catchUp, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
-import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
+import { evaluatePrestige, scrape, scrapeAmount, tick } from "./game/logic";
 import { curvatureById } from "./data/curvature-tech";
 import { buyCurvature } from "./prestige/tree";
 import {
@@ -36,6 +36,7 @@ import type { KeyValueStore } from "./game/save";
 import { SaveSession, type ReplacementResult } from "./game/save-session";
 import type { GameState } from "./game/types";
 import { present } from "./ui/present";
+import { prestigeConfirmation } from "./ui/prestige-preview-model";
 import { mountView, type UiAction } from "./ui/space-panel";
 import "./style.css";
 
@@ -112,6 +113,7 @@ function render(): void {
   view.updateOrders(ordersView(state), saveSession.mode === "ready");
   view.updateResearchTemplates(state, saveSession.mode === "ready");
   view.updateFormations(state, saveSession.mode === "ready");
+  view.updatePrestigePreview(state, saveSession.mode === "ready");
 }
 
 async function handleAction(action: UiAction): Promise<void> {
@@ -122,6 +124,7 @@ async function handleAction(action: UiAction): Promise<void> {
     render();
     return;
   }
+  const actionSource = state;
   const before = state.unlocked;
   if (action.type === "formation-fill") {
     const formation = state.formations.entries.find(item => item.id === action.formationId && item.revision === action.expectedRevision);
@@ -297,15 +300,32 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
-    if (!window.confirm("发射殖民舰会清空所有星球的资源、建筑、舰船、在途舰队与队列，只保留新母星，进行中的研究也会取消（不退款）。保留曲率核心、曲率科技、研究等级、暗物质、成就和协议卡。继续？")) return;
-    const next = prestige(state);
-    if (next === state) {
+    const source = state;
+    // A visible preview is information, never execution authority. Confirm a fresh
+    // candidate from the exact same rule that manual and automated launches use.
+    const evaluation = evaluatePrestige(source);
+    if (evaluation.next === source) {
       status = "扩张分还不够发射";
-      return;
+    } else {
+      if (!window.confirm(prestigeConfirmation(source, evaluation))) return;
+      if (state !== source || saveSession.mode !== "ready") {
+        status = "进度或存档会话已改变，未采用发射结果；请重新查看";
+        notice = saveSession.notice;
+      } else {
+        // Do not use persist(): it observes/adopts the global world before saving.
+        // Read-back success is required before changing visible state or retiring
+        // old-world controls. An uncertain write remains protected by SaveSession.
+        const saved = saveSession.save(evaluation.next);
+        if (saved.ok) {
+          state = evaluation.next;
+          status = "已发射殖民舰并存入本地";
+          observeWorldAdoption();
+        } else {
+          status = `发射结果未采用，当前可见进度保持原样：${saved.message}`;
+          notice = saveSession.notice;
+        }
+      }
     }
-    state = next;
-    status = "已发射殖民舰";
-    persist();
   } else if (action.type === "save") {
     persist("已保存到本地");
   } else if (action.type === "export") {
@@ -336,6 +356,7 @@ async function handleAction(action: UiAction): Promise<void> {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (note) banner = note;
   }
+  if (state !== actionSource) view.invalidatePrestigePreview();
   render();
 }
 

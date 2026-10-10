@@ -55,6 +55,10 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r2/node_modules"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r3/node_modules"
           node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > order-migration-report.json
+          mkdir -p "$RUNNER_TEMP/original-r8"
+          git archive 6016391ed947e72b6e53d5307091c152c0c69079 | tar -x -C "$RUNNER_TEMP/original-r8"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-r8/node_modules"
+          node --import tsx scripts/check-prestige-parity.mjs "$RUNNER_TEMP/original-r8" > prestige-parity-report.json
           npm run sim -- 60 | tee balance-report.txt
       - name: Browser prerequisites
         timeout-minutes: 4
@@ -74,6 +78,8 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/prestige-preview-fixture.ts > prestige-preview-review-save.json
+          python scripts/browser-prestige-preview.py --fixture prestige-preview-review-save.json
           node --import tsx scripts/formations-fixture.ts > formations-review-save.json
           python scripts/browser-formations.py --fixture formations-review-save.json
           node --import tsx scripts/research-templates-fixture.ts > research-templates-review-save.json
@@ -114,10 +120,13 @@ jobs:
             orders-transport-evidence
             research-templates-evidence
             formations-evidence
+            prestige-preview-evidence
+            prestige-preview-review-save.json
             deep-fixtures
             test-results.json
             original-ui-report.json
             parity-report.json
+            prestige-parity-report.json
             save-revision-report.json
             transport-save-revision-report.json
             templates-save-revision-report.json

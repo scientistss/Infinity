@@ -1,0 +1,13 @@
+/* Additive curvature preview; inherit the original flat dark art and typography. */
+.prestige-preview { min-width:0; margin:16px 0 24px; padding:14px; border:1px solid var(--line,#2b2b33); border-radius:8px; background:var(--panel,#141418); overflow-wrap:anywhere; }
+.prestige-preview h3 { margin:0 0 10px; font-size:1rem; }
+.prestige-preview p { margin:8px 0; line-height:1.65; font-size:.85rem; }
+.prestige-preview [hidden], .prestige-preview[hidden] { display:none !important; }
+.prestige-preview details { margin-top:12px; border-top:1px solid var(--line,#2b2b33); padding-top:10px; }
+.prestige-preview summary { cursor:pointer; font-size:.85rem; font-weight:700; padding:4px 0; }
+.prestige-preview summary:focus-visible { outline:2px solid var(--good,#3be37a); outline-offset:4px; }
+.prestige-preview ul { padding-left:20px; margin:12px 0; }
+.prestige-preview li { font-size:.8rem; line-height:1.7; margin:8px 0; }
+#prestige-preview-status, #prestige-preview-omitted, #prestige-preview-accounting { color:var(--muted,#8b8b95); }
+#prestige-preview-gain { font-variant-numeric:tabular-nums; }
+@media(max-width:420px) { .prestige-preview { padding:10px; } .prestige-preview p { font-size:.8rem; } }

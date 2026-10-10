@@ -271,16 +271,23 @@ export function warpGain(state: GameState): BigNumber {
   return bigFloor(bigSqrt(score.div(PRESTIGE_SCORE_UNIT)));
 }
 
+export interface PrestigeEvaluation {
+  gain: BigNumber;
+  /** The unchanged input reference when the existing launch threshold is not met. */
+  next: GameState;
+}
+
 /**
  * Launch the colony ship. Resets buildings, queue, production settings and resources to the 500/500 start.
  * Protocol cards, unlocks, achievements, the tech tree, research levels, dark matter, items, the ring machine and manual-click
  * progress stay (design doc §14.3). Research still in the queue is dropped with the rest of the run.
- * Returns the same state when the gain would be zero.
+ * Evaluates without external entropy or mutating the input. The candidate may advance its own saved
+ * ring seed to grant a real achievement reward. Returns the input as next when gain would be zero.
  */
-export function prestige(state: GameState): GameState {
+export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   const gain = warpGain(state);
-  if (gain.lt(1)) return state;
-  const next = createInitialState(state.universe.seed);
+  if (gain.lt(1)) return { gain, next: state };
+  const next = createInitialState(state.universe.seed, state.arcade.seed);
   next.deepSpace = {...structuredClone(state.deepSpace), offers:[], debris:[]};
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
@@ -314,7 +321,11 @@ export function prestige(state: GameState): GameState {
       card: slot.card ? structuredClone(slot.card) : null,
     })),
   };
-  return applyAchievementUnlocks(refreshUnlocks(applySeedStock(stopRingBatch(next, "重置后需要重新授权自动批次"))));
+  return { gain, next: applyAchievementUnlocks(refreshUnlocks(applySeedStock(stopRingBatch(next, "重置后需要重新授权自动批次")))) };
+}
+
+export function prestige(state: GameState): GameState {
+  return evaluatePrestige(state).next;
 }
 
 /** Metal from one manual collect: max(10, one second of metal output), ×10 with the curvature tech. */

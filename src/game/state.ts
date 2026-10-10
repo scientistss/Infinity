@@ -63,8 +63,9 @@ export function startingResources(): ResourceAmounts {
   };
 }
 
-export function createInitialState(seed?: number): GameState {
-  const arcade = createArcade();
+/** Supplying arcadeSeed avoids fresh entropy for deterministic replacements; ordinary starts keep it. */
+export function createInitialState(seed?: number, arcadeSeed?: number): GameState {
+  const arcade = createArcade(arcadeSeed);
   const worldSeed = seed === undefined ? arcade.seed : seed >>> 0;
   return {
     orders: createOrderState(),
