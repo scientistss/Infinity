@@ -202,8 +202,8 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     return context,page
 
 
-def snapshot(page):
-    return page.evaluate('''() => {
+def snapshot(page, omit_building_addition=False):
+    return page.evaluate('''omitBuilding => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
         // Chromium may return geometry for closed-details content. Its first
@@ -218,10 +218,20 @@ def snapshot(page):
         const visibility=getComputedStyle(e).visibility;
         return e.getClientRects().length>0&&visibility!=='hidden'&&visibility!=='collapse';
       };
-      return {tab:panel?.dataset.tabPanel,text:panel?.innerText,
+      let text=panel?.innerText;
+      if(omitBuilding){
+        const addition=panel.querySelector('#building-templates');
+        const summary='建筑意图模板 · 保存目标，按需创建有限计划';
+        if(panel.dataset.tabPanel!=='orders'||!addition||addition.parentElement!==panel||panel.lastElementChild!==addition||addition.open||addition.innerText!==summary)
+          throw Error('New building-library parity exception must be the exact closed final region');
+        const suffix='\\n'+summary;
+        if(!text.endsWith(suffix)||text.indexOf(summary)!==text.lastIndexOf(summary))throw Error('Unexpected new-region text boundary');
+        text=text.slice(0,-suffix.length);
+      }
+      return {tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:[...panel.querySelectorAll('input,select,textarea,button')].filter(visible).map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
-    }''')
+    }''',omit_building_addition)
 
 
 def differential_trace(name,url):
@@ -394,9 +404,12 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.12-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.12-alpha.2'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else 9))
+        check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
+        if label=='after':
+            check('new building region is last and folded with original explanatory text',page.locator('#building-templates').evaluate('(node)=>node.parentElement.id==="space-orders"&&node.parentElement.lastElementChild===node&&!node.open') and page.locator('#building-templates > summary').text_content()=='建筑意图模板 · 保存目标，按需创建有限计划')
         # Observe the new reader's migration above, then perform the same genuine
         # manual save on both bundles. This sets the same status through real UI
         # work; no status text or other visible field is projected away.
@@ -404,7 +417,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders')
             if name=='galaxy':
                 # The intentional package version change is the only parity
                 # exception. Restrict normalization to the exact #space-range
@@ -438,7 +451,7 @@ def run_cases():
                 click(page,f'#{details_id} > summary')
                 check('native summary opens library for full visible parity: '+details_id,
                       page.locator('#'+details_id).evaluate('(element)=>element.open'))
-                opened=snapshot(page)
+                opened=snapshot(page, label=='after' and name=='orders')
                 check('opened library controls enter the complete paired snapshot: '+details_id,
                       any(control['id']==new_id for control in opened['inputs']) and
                       len(opened['inputs'])>=len(snapshots[label][name]['inputs'])+4)
@@ -447,7 +460,7 @@ def run_cases():
                 check('library returns to folded state after parity observation: '+details_id,
                       not page.locator('#'+details_id).evaluate('(element)=>element.open'))
                 click(page,f'#{details_id} > summary')
-                reopened=snapshot(page)
+                reopened=snapshot(page, label=='after' and name=='orders')
                 check('closed then reopened library retains complete visible snapshot: '+details_id,reopened==opened)
                 snapshots[label][name+'-library-reopened']=reopened
                 click(page,f'#{details_id} > summary')
@@ -656,7 +669,7 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact and only empty buildingTemplates is added. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.12-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. Complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.12-alpha.2) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Complete paragraph boundaries, all other visible text, status, and controls remain exact.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},

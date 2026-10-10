@@ -1,5 +1,6 @@
 import { applyFormationAction } from "./game/formations";
 import { applyResearchTemplateAction } from "./game/research-templates";
+import { applyBuildingTemplateAction } from "./game/building-templates";
 import { applyOrderAction } from "./game/orders";
 import { ordersView } from "./ui/orders-present";
 import { summonMerchant, trade } from "./game/merchant";
@@ -159,6 +160,7 @@ function render(urgent = true, now = performance.now()): void {
   view.updateDeep(state);
   if (tab === "orders") view.updateOrders(ordersView(state), ready);
   view.updateResearchTemplates(state, ready);
+  view.updateBuildingTemplates(state, ready);
   view.updateFormations(state, ready);
   // Their hidden paths are cheap and must observe leaving their surfaces.
   view.updatePrestigePreview(state, ready);
@@ -196,6 +198,12 @@ async function handleAction(action: UiAction): Promise<void> {
     state = result.state; status = result.reason;
     if (changed) persist();
     view.completeResearchTemplateAction(status, result.ok && saveSession.mode === "ready");
+  } else if (action.type === "building-template-create" || action.type === "building-template-edit" || action.type === "building-template-delete" || action.type === "building-template-apply") {
+    const result = applyBuildingTemplateAction(state, action);
+    const changed = result.state !== state;
+    state = result.state; status = result.reason;
+    if (changed) persist();
+    view.completeBuildingTemplateAction(status, result.ok && saveSession.mode === "ready");
   } else if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "order-retry-dock" || action.type === "cancel-paid-job") {
     const result = applyOrderAction(state, action);
     const changed = result.state !== state;

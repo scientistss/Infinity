@@ -1,0 +1,103 @@
+--- a/src/ui/building-templates-panel.ts
++++ b/src/ui/building-templates-panel.ts
+@@ -75,6 +75,9 @@
+   }
+   const observer = new MutationObserver(retireRemoved);
+   observer.observe(panel, { childList: true, subtree: true });
++  // Removing the whole panel must revoke its controls too. The stable parent
++  // needs only childList observation, never unrelated descendant projection.
++  if (panel.parentNode) observer.observe(panel.parentNode, { childList: true });
+   function renewButtons(scope: ParentNode) {
+     retireRemoved(observer.takeRecords());
+     for (const old of scope.querySelectorAll<HTMLButtonElement>("button[data-building-template-action]")) {
+@@ -220,21 +223,34 @@
+     payer.disabled = !ready || !valid(selected);
+     for (const input of get(panel, "#building-template-budgets").querySelectorAll<HTMLInputElement>("input")) input.disabled = !ready || !valid(selected);
+   }
+-  // Observation never projects lists or grants draft/review authority. Explicit
+-  // handlers read this reference even when the next scheduled paint is skipped.
++  // Observation never projects lists or grants draft/review authority. Active
++  // capabilities are checked even when folded/hidden so A→B→A cannot revive A.
+   function observe(state: GameState, writable: boolean) {
+     const maskChanged = latest === null || ready !== writable;
++    const becameProtected = ready && !writable;
+     latest = state; ready = writable;
+-    // Protection must reach mounted controls even while their details/tab or the
+-    // document is hidden. Ordinary observations still do no DOM/list/quote work.
++    if (becameProtected) {
++      edit = null; pendingDelete = null; selected = null;
++      retireReview("保存已进入保护状态，旧草稿与核对已失效。恢复后请明确重新打开模板。");
++      renewButtons(editor);
++      renewButtons(get(panel, "#building-template-delete-dialog"));
++      get(panel, "#building-template-apply").hidden = true;
++      get(panel, "#building-template-delete-dialog").hidden = true;
++    } else if (edit || pendingDelete || selected || review) refreshAuthority();
++    // Protection reaches mounted controls immediately. With no active draft or
++    // review, an ordinary observation only replaces these two references.
+     if (maskChanged) syncDisabled();
+   }
+   function refreshAuthority() {
+     if (!latest) return;
+-    if (edit?.template && !valid(edit.template)) edit = null;
+-    if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; get(panel, "#building-template-delete-dialog").hidden = true; }
+-    if (selected && !valid(selected)) { selected = null; retireReview("模板已修改或删除，请重新选择后核对。"); get(panel, "#building-template-apply").hidden = true; }
+-    if (review && (!selected || review.draftSignature !== localDraftSignature() || review.signature !== buildingTemplateAuthoritySignature(latest, selected.id, payer.value))) retireReview("目标、预算、队列或计划状态已改变，请明确重新核对后创建。");
++    let retired = false;
++    if (edit && (edit.template ? !valid(edit.template) : edit.nextId !== latest.buildingTemplates.nextTemplateId)) { edit = null; retired = true; }
++    if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; retired = true; get(panel, "#building-template-delete-dialog").hidden = true; }
++    if (selected && !valid(selected)) { selected = null; retired = true; retireReview("模板已修改或删除，请重新选择后核对。"); get(panel, "#building-template-apply").hidden = true; }
++    if (review && (!selected || review.draftSignature !== localDraftSignature() || review.signature !== buildingTemplateAuthoritySignature(latest, selected.id, payer.value))) {
++      retired = true; retireReview("目标、预算、队列或计划状态已改变，请明确重新核对后创建。");
++    }
++    if (retired) syncDisabled();
+   }
+   function authorized(item: HTMLButtonElement | null): ButtonAuthority | null {
+     refreshAuthority();
+@@ -249,8 +265,9 @@
+     event.preventDefault();
+     refreshAuthority();
+     if (!ready || !latest || !edit || edit.generation !== generation || !editor.isConnected || !panel.contains(editor)) return;
+-    if (event.submitter && (!(event.submitter instanceof HTMLButtonElement) || authorized(event.submitter)?.action !== "save")) return;
+-    // Keyboard submission is also scoped to a live, explicitly opened editor.
++    // Genuine implicit Enter uses the form's default Save submitter. Synthetic
++    // no-submitter events cannot bypass a removed form/button's retired scope.
++    if (!(event.submitter instanceof HTMLButtonElement) || authorized(event.submitter)?.action !== "save") return;
+     const draft = normalizeBuildingTemplateDraft(currentDraft());
+     if (!draft) { status("名称需为 1–64 个字符，建筑不得重复，目标需为 1–1000 的整数。请修正当前草稿。"); return; }
+     const authority = edit; edit = null; retireReview(); syncDisabled();
+--- a/tests/building-templates-present.test.ts
++++ b/tests/building-templates-present.test.ts
+@@ -2,7 +2,7 @@
+ import { activeBuildings } from "../src/data/buildings";
+ import type { BuildingGoal } from "../src/game/building-template-state";
+ import { createBuildingTemplate, quoteBuildingTemplate } from "../src/game/building-templates";
+-import { advanceOrderPlans, createOrderTask, pauseOrderTask } from "../src/game/orders";
++import { advanceOrderPlans, createOrderTask, pauseOrderTask, resumeOrderTask } from "../src/game/orders";
+ import { createPlanet } from "../src/game/planet";
+ import * as queue from "../src/game/queue";
+ import { createInitialState } from "../src/game/state";
+@@ -67,6 +67,24 @@
+     expect(buildingTemplateRowText(state, local.rows[0]!)).not.toContain("合成第二星球");
+   });
+ 
++  it("distinguishes an intervening covered-plan pause even if resume later restores the same signature", () => {
++    const initial = template([{building: "metal_mine", targetLevel: 3}, {building: "crystal_mine", targetLevel: 2}]);
++    const created = createOrderTask(initial, {kind: "building", building: "metal_mine", targetLevel: 3,
++      planetId: "homeworld", budget: money(), expectedNextTaskId: initial.orders.nextTaskId});
++    expect(created.ok, created.reason).toBe(true);
++    const running = created.state;
++    const paused = pauseOrderTask(running, 1).state;
++    const resumed = resumeOrderTask(paused, 1).state;
++    const original = buildingTemplateAuthoritySignature(running, 1, "homeworld");
++    expect(buildingTemplateAuthoritySignature(paused, 1, "homeworld")).not.toBe(original);
++    expect(buildingTemplateAuthoritySignature(resumed, 1, "homeworld")).toBe(original);
++    // The panel must observe the intervening signature while hidden, rather
++    // than compare only after a later visible paint has returned to A.
++    const price = vi.spyOn(queue, "costFor");
++    for (const state of [running, paused, resumed]) buildingTemplateAuthoritySignature(state, 1, "homeworld");
++    expect(price).not.toHaveBeenCalled();
++  });
++
+   it("shows paused original authorization and paid job provenance without claiming that payment again", () => {
+     let state = template([{building: "metal_mine", targetLevel: 3}]);
+     const created = createOrderTask(state, {kind: "building", building: "metal_mine", targetLevel: 3,

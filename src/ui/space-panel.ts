@@ -4,6 +4,8 @@ import { formationsPanelHtml, installFormationsPanel, type FormationUiAction } f
 import type { FleetFormation } from "../game/formation-state";
 import { researchTemplatesPanelHtml, installResearchTemplatesPanel } from "./research-templates-panel";
 import type { ResearchTemplateAction } from "../game/research-template-state";
+import { buildingTemplatesPanelHtml, installBuildingTemplatesPanel } from "./building-templates-panel";
+import type { BuildingTemplateAction } from "../game/building-template-state";
 import { ordersPanelHtml, installOrdersPanel } from "./orders-panel";
 import type { OrderAction } from "../game/order-state";
 import { deepPanelHtml, installDeepPanel, type DeepAction } from "./deep-panel";
@@ -14,7 +16,7 @@ import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
 import type { GameState } from "../game/types";
-export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
+export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {const n=root.querySelector<T>(sel);if(!n)throw Error(`缺少界面节点 ${sel}`);return n;}
@@ -48,9 +50,10 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
-  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()));
+  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()+buildingTemplatesPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
   const templatePanel=installResearchTemplatesPanel(root,onAction);
+  const buildingTemplatePanel=installBuildingTemplatesPanel(root,onAction);
   const formationPanel=installFormationsPanel(root,onAction);
   const prestigePreview=installPrestigePreview(root);
   const expansionNavigation=installExpansionNavigation(root);
@@ -134,13 +137,16 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates(state:GameState,writable:boolean){
       templatePanel.observe(state,writable);
       if(!el(root,"#space-orders").hidden&&el<HTMLDetailsElement>(root,"#research-templates").open)templatePanel.update(state,writable);
-    }, completeResearchTemplateAction:templatePanel.completeAction, updateFormations(state:GameState,writable:boolean){
+    }, completeResearchTemplateAction:templatePanel.completeAction, updateBuildingTemplates(state:GameState,writable:boolean){
+      buildingTemplatePanel.observe(state,writable);
+      if(!el(root,"#space-orders").hidden&&el<HTMLDetailsElement>(root,"#building-templates").open)buildingTemplatePanel.update(state,writable);
+    }, completeBuildingTemplateAction:buildingTemplatePanel.completeAction, updateFormations(state:GameState,writable:boolean){
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
     }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean){orderPanel.observe(state,writable);templatePanel.observe(state,writable);formationPanel.observe(state,writable);},
+    observeContexts(state:GameState,writable:boolean){orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);},
     fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;},
-    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

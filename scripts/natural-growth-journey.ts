@@ -17,6 +17,8 @@ declare const process: {
 import type { BuildingId } from "../src/data/buildings";
 import type { ResearchId } from "../src/data/research";
 import { nextBeaconIn } from "../src/game/arcade";
+import type { BuildingGoal, BuildingTemplateApplyRequest } from "../src/game/building-template-state";
+import { applyBuildingTemplate, createBuildingTemplate, mapBuildingTemplate, quoteBuildingTemplate } from "../src/game/building-templates";
 import { PRESTIGE_SCORE_UNIT } from "../src/game/content";
 import { big, bigFloor, bigSqrt } from "../src/game/decimal";
 import { economy } from "../src/game/economy";
@@ -43,6 +45,17 @@ const ARCADE_SEED = 20261010;
 const FIRST_CYCLE_LIMIT = 120 * 60;
 const SECOND_CYCLE_LIMIT = 60 * 60;
 const SAVE_EPOCH = Date.UTC(2026, 9, 10);
+const COLONY_BUILDING_GOALS: BuildingGoal[] = [
+  { building: "metal_mine", targetLevel: 3 }, { building: "crystal_mine", targetLevel: 2 },
+  { building: "solar_plant", targetLevel: 3 },
+];
+// Independent from the quote implementation: sum the real, floored level 1..N costs.
+const COLONY_BUILDING_PRICES: Partial<Record<BuildingId, OrderMoney>> = {
+  metal_mine: { metal: "285", crystal: "70", deuterium: "0" },
+  crystal_mine: { metal: "124", crystal: "62", deuterium: "0" },
+  solar_plant: { metal: "355", crystal: "142", deuterium: "0" },
+};
+const COLONY_BUILDING_TOTAL: OrderMoney = { metal: "764", crystal: "274", deuterium: "0" };
 let state = createInitialState(WORLD_SEED, ARCADE_SEED);
 let elapsed = 0;
 let secondCycleStartedAt: number | null = null;
@@ -61,6 +74,7 @@ const paidJobs = new Map<number, PaidJobEvidence>();
 const researchGoalsByTask = new Map<number, { tech: ResearchId; targetLevel: number }>();
 const researchRequestsByTemplate = new Map<number, ResearchTemplateApplyRequest>();
 const paymentAudits: Array<Record<string, unknown>> = [];
+const buildingTemplateApplications: Array<{ request: BuildingTemplateApplyRequest; taskIds: number[]; authorizedAt: number }> = [];
 let researchPaymentWatch: { taskId: number; planetId: string; selectedPlanetId: string; tech: ResearchId; targetLevel: number; price: OrderMoney; label: string; zeroDeuteriumProduction: boolean } | null = null;
 let researchPaymentProved = false;
 let historicalTasks: GameState["orders"]["tasks"] | null = null;
@@ -433,6 +447,121 @@ function researchTemplate(name: string, payerId: string, goals: Array<{ tech: Re
   });
   return result.createdTaskIds;
 }
+/** Only the intent library may change when creating the reusable colony design. */
+function createColonyBuildingTemplate(): number {
+  const templateId = state.buildingTemplates.nextTemplateId;
+  const draft = { name: "殖民地基础生产工位", goals: COLONY_BUILDING_GOALS };
+  const before = serializeState(state);
+  const result = action("createBuildingTemplate", { draft, expectedNextTemplateId: templateId },
+    () => createBuildingTemplate(state, draft, templateId));
+  const after = serializeState(state);
+  check(result.createdTaskIds.length === 0 && !firstDifference({ ...before, buildingTemplates: {
+    nextTemplateId: templateId + 1,
+    templates: [...before.buildingTemplates.templates, { id: templateId, revision: 1, ...draft }],
+  } }, after), "creating building intent changed anything beyond its exact library entry/counter");
+  event("building-template-create-no-spend-proof", { templateId, revision: 1, goals: draft.goals,
+    allNonLibraryStateUnchanged: true, tasksCreated: 0, paidJobsCreated: 0 });
+  return templateId;
+}
+/** Both generations explicitly map, review, budget, and authorize the same retained design. */
+function applyColonyBuildingTemplate(templateId: number, planetId: string, oldRequest?: BuildingTemplateApplyRequest) {
+  const before = serializeState(state);
+  const mapping = mapBuildingTemplate(state, templateId, planetId);
+  const quote = quoteBuildingTemplate(state, templateId, planetId);
+  const repeat = quoteBuildingTemplate(state, templateId, planetId);
+  check(!firstDifference(before, serializeState(state)) && !firstDifference(quote, repeat),
+    "building mapping/repeated explicit review changed state or quote");
+  check(mapping.ok && mapping.newCount === 3 && quote.ok && quote.templateRevision === 1
+    && quote.planetId === planetId && quote.rows.length === 3 && quote.nextTaskId === state.orders.nextTaskId
+    && !firstDifference(quote.rows.map(row => ({ building: row.building, targetLevel: row.targetLevel })), COLONY_BUILDING_GOALS)
+    && quote.rows.every(row => row.status === "new" && row.currentLevel === 0 && row.nextUnpaidLevel === 1
+      && row.existingTask === null && row.paidJobs.length === 0),
+  "building template did not freshly map exactly the three zero-level, unpaid local goals");
+  exactMoney(quote.totalQuote, COLONY_BUILDING_TOTAL, "colony building golden total");
+  const budgets = quote.rows.map(row => {
+    const expected = COLONY_BUILDING_PRICES[row.building];
+    check(expected && row.quote, `missing independent building golden for ${row.building}`);
+    exactMoney(row.quote, expected, `colony ${row.building} golden quote`);
+    return { building: row.building, budget: { ...row.quote } };
+  });
+  event("building-template-explicit-review-no-spend-proof", { mapping, quote, entireStateUnchanged: true,
+    repeatedQuoteIdentical: true, independentlyCheckedTotal: COLONY_BUILDING_TOTAL });
+  if (oldRequest) {
+    check(oldRequest.templateId === templateId && oldRequest.expectedTemplateRevision === quote.templateRevision
+      && oldRequest.planetId !== planetId && oldRequest.expectedReviewKey !== quote.reviewKey
+      && !firstDifference(oldRequest.budgets, budgets), "second generation did not reuse the same exact intent and separately reviewed budgets");
+    // Keep the current task counter, valid new payer, and unchanged intent/budgets.
+    // Only the first-generation review remains stale. This cannot pass merely
+    // because the old request's task counter or removed colony was rejected.
+    const staleReview = { ...oldRequest, planetId, expectedNextTaskId: quote.nextTaskId };
+    rejected("applyBuildingTemplate/stale-review-remapped-to-new-colony", staleReview,
+      () => applyBuildingTemplate(state, staleReview));
+  }
+  const request: BuildingTemplateApplyRequest = { templateId, expectedTemplateRevision: quote.templateRevision,
+    planetId, expectedNextTaskId: quote.nextTaskId, expectedReviewKey: quote.reviewKey, budgets };
+  const result = action("applyBuildingTemplate", request, () => applyBuildingTemplate(state, request));
+  const after = serializeState(state);
+  check(result.createdTaskIds.length === 3 && result.createdTaskIds.every((id, index) => id === before.orders.nextTaskId + index)
+    && after.orders.tasks.length === before.orders.tasks.length + 3,
+  "building template did not atomically create exactly three new contiguous finite task identities");
+  const createdTasks = after.orders.tasks.slice(before.orders.tasks.length);
+  check(!firstDifference({ ...before, orders: { ...before.orders,
+    nextTaskId: before.orders.nextTaskId + 3, tasks: [...before.orders.tasks, ...createdTasks],
+  } }, after), "building application changed wallets, queues, paid/work counters, old tasks, library, clock, or another subsystem");
+  result.createdTaskIds.forEach((id, index) => {
+    const task = state.orders.tasks.find(value => value.id === id), goal = COLONY_BUILDING_GOALS[index]!;
+    check(task?.kind === "building" && task.building === goal.building && task.targetLevel === goal.targetLevel
+      && task.planetId === planetId && task.status === "running" && task.activeJob === null && task.currentWork === null
+      && task.transport === null && task.formationOrigin === null && task.completedUnits === 0,
+    `building template task #${id} differs from the reviewed finite goal/local payer or inherited authority`);
+    exactMoney(task.budget, budgets[index]!.budget, `building template task #${id} independent budget`);
+    exactMoney(task.charged, { metal: "0", crystal: "0", deuterium: "0" }, `building template task #${id} unpaid charge`);
+    exactMoney(task.refunded, { metal: "0", crystal: "0", deuterium: "0" }, `building template task #${id} no refund`);
+  });
+  const application = { request, taskIds: result.createdTaskIds, authorizedAt: elapsed };
+  buildingTemplateApplications.push(application);
+  event("building-template-application-no-spend-proof", { ...application, exactlyThreeFiniteTasks: true,
+    onlyNewTasksAndNextTaskIdChanged: true, paidJobCounterUnchanged: true, walletsAndQueuesUnchanged: true });
+  rejected("applyBuildingTemplate/repeated-used-review", request, () => applyBuildingTemplate(state, request));
+  return application;
+}
+function observeBuildingTemplatePayment(application: typeof buildingTemplateApplications[number], milestone: string): void {
+  until("observe real template-owned colony building payment", () => state.planets.find(planet => planet.id === application.request.planetId)!
+    .buildQueue.some(job => job.taskId !== null && application.taskIds.includes(job.taskId)),
+  () => "waiting for normal live-tick finite-order scheduling and real local payment");
+  check(elapsed > application.authorizedAt, "building template was paid without a later live tick");
+  const jobs = state.planets.find(planet => planet.id === application.request.planetId)!.buildQueue
+    .filter(job => job.taskId !== null && application.taskIds.includes(job.taskId));
+  check(jobs.length > 0 && jobs.every(job => job.source === "plan" && seenJobs.has(job.jobId)),
+    "building template payment has no observed real plan-owned paid identity");
+  event("building-template-later-paid-queue-proof", { templateId: application.request.templateId,
+    planetId: application.request.planetId, authorizedAt: application.authorizedAt, paidAt: elapsed,
+    taskIds: application.taskIds, paidJobs: jobs });
+  checkpoint(milestone);
+}
+function proveBuildingTemplateCompleted(application: typeof buildingTemplateApplications[number]): void {
+  const planet = state.planets.find(value => value.id === application.request.planetId)!;
+  for (const id of application.taskIds) {
+    const task = state.orders.tasks.find(value => value.id === id)!;
+    check(task.kind === "building" && task.status === "completed" && task.activeJob === null && task.currentWork === null
+      && planet.buildings[task.building] === task.targetLevel && task.transport === null,
+    `building template task #${id} did not finish its actual local building target`);
+    const jobs = [...paidJobs.values()].filter(job => job.taskId === id);
+    check(jobs.length === task.targetLevel && jobs.every(job => job.kind === "building" && job.source === "plan"
+      && job.planetId === planet.id) && !firstDifference(jobs.map(job => job.target),
+        Array.from({ length: task.targetLevel }, (_, index) => ({ building: task.building, targetLevel: index + 1 }))),
+    `building template task #${id} lacks exactly one real paid identity for every intended level`);
+    exactMoney(task.charged, COLONY_BUILDING_PRICES[task.building]!, `completed building template task #${id} golden paid total`);
+  }
+  const before = serializeState(state), completed = mapBuildingTemplate(state, application.request.templateId, planet.id);
+  check(!firstDifference(before, serializeState(state)) && completed.ok && completed.newCount === 0
+    && completed.rows.length === 3 && completed.rows.every(row => row.status === "achieved"),
+  "completed building template still asks for finite work or its mapping changed state");
+  event("building-template-real-completion-proof", { ...application, completedAt: elapsed,
+    actualLevels: COLONY_BUILDING_GOALS.map(goal => ({ building: goal.building, level: planet.buildings[goal.building] })),
+    paidJobIds: [...paidJobs.values()].filter(job => job.taskId !== null && application.taskIds.includes(job.taskId)).map(job => job.jobId),
+    completedMapping: completed });
+}
 function nearestEmpty(): Coordinates {
   const home = state.planets.find(planet => planet.id === homeId)!;
   const candidates = Array.from({ length: 15 }, (_, index) => ({ ...home.coordinates, position: index + 1 }))
@@ -579,9 +708,13 @@ try {
   checkpoint("08-colony-established-by-fleet-arrival");
 
   stage = "two-planet-finite-division-of-labor";
-  const colonyBuilds = [finiteBuilding(colony.id, "metal_mine", 3), finiteBuilding(colony.id, "crystal_mine", 2),
-    finiteBuilding(colony.id, "solar_plant", 3), finiteBuilding(colony.id, "research_lab", 1)];
+  const buildingTemplateId = createColonyBuildingTemplate();
+  const firstBuildingApplication = applyColonyBuildingTemplate(buildingTemplateId, colony.id);
+  checkpoint("08a1-colony-building-template-authorized-without-payment");
+  const colonyBuilds = [...firstBuildingApplication.taskIds, finiteBuilding(colony.id, "research_lab", 1)];
+  observeBuildingTemplatePayment(firstBuildingApplication, "08a2-colony-building-template-paid-and-in-progress");
   waitTasks(colonyBuilds);
+  proveBuildingTemplateCompleted(firstBuildingApplication);
   const colonyResearch = researchTemplate("首轮殖民地科研职责", colony.id,
     [{ tech: "computer_tech", targetLevel: 2 }], { metal: "0", crystal: "800", deuterium: "1200" });
   // Keep the other planet selected throughout payment: payer is the authorization.
@@ -697,7 +830,10 @@ try {
   exactMoney(money(activePlanet(state).resources), { metal: "500", crystal: "500", deuterium: "0" }, "actual reset home");
   check(!firstDifference(beforeCurvature.research.levels, state.research.levels)
     && !firstDifference(beforeCurvature.formations, state.formations)
-    && !firstDifference(beforeCurvature.researchTemplates, state.researchTemplates), "curvature changed retained research/design/template intent");
+    && !firstDifference(beforeCurvature.researchTemplates, state.researchTemplates)
+    && !firstDifference(beforeCurvature.buildingTemplates, state.buildingTemplates), "curvature changed retained research/design/template intent");
+  event("curvature-retained-building-library-proof", { before: beforeCurvature.buildingTemplates,
+    after: state.buildingTemplates, exactLibraryAndCounterRetained: true });
   for (const task of completedHistory) check(!firstDifference(task, state.orders.tasks.find(value => value.id === task.id)),
     `completed task/trip history #${task.id} was reset or refunded`);
   const retired = state.orders.tasks.find(task => task.id === retiredTaskId)!;
@@ -706,10 +842,21 @@ try {
   historicalTasks = structuredClone(state.orders.tasks);
   historicalFleetIds = historicalTasks.flatMap(task => task.transport?.trips.map(trip => trip.fleetId) ?? []);
   secondCycleStartedAt = elapsed;
+  const beforeRemovedPayerReviews = serializeState(state);
+  const oldBuildingMapping = mapBuildingTemplate(state, buildingTemplateId, colony.id);
+  const oldBuildingQuote = quoteBuildingTemplate(state, buildingTemplateId, colony.id);
   const oldPayerMapping = mapResearchTemplate(state, 2, colony.id);
   const oldPayerFormation = previewFormationReplenishment(state, { formationId, formationRevision: 1, planetId: colony.id });
-  check(!oldPayerMapping.ok && !oldPayerFormation.ok && oldPayerFormation.request === null, "old colony ID remained a valid template/formation payer");
-  event("removed-payer-mappings-rejected", { oldColonyId: colony.id, research: oldPayerMapping, formation: oldPayerFormation });
+  check(!oldBuildingMapping.ok && !oldBuildingQuote.ok && oldBuildingQuote.rows.length === 0
+    && !oldPayerMapping.ok && !oldPayerFormation.ok && oldPayerFormation.request === null
+    && !firstDifference(beforeRemovedPayerReviews, serializeState(state)), "old colony ID remained a valid template/formation payer or review mutated state");
+  event("removed-payer-mappings-rejected", { oldColonyId: colony.id, building: oldBuildingMapping,
+    buildingQuote: oldBuildingQuote, research: oldPayerMapping, formation: oldPayerFormation, entireStateUnchanged: true });
+  rejected("applyBuildingTemplate/first-generation-used-request", firstBuildingApplication.request,
+    () => applyBuildingTemplate(state, firstBuildingApplication.request));
+  const removedPayerRequest = { ...firstBuildingApplication.request, expectedNextTaskId: state.orders.nextTaskId };
+  rejected("applyBuildingTemplate/removed-colony-with-current-task-counter", removedPayerRequest,
+    () => applyBuildingTemplate(state, removedPayerRequest));
   rejected("resumeOrderTask", { taskId: retiredTaskId }, () => resumeOrderTask(state, retiredTaskId));
   rejected("createOrderTask", retireRequest, () => createOrderTask(state, retireRequest));
   rejected("applyResearchTemplate", oldResearchRequest, () => applyResearchTemplate(state, oldResearchRequest));
@@ -822,10 +969,15 @@ try {
   waitTasks([motherResearchId]);
 
   stage = "second-cycle-finite-colony-manufacturing";
-  const secondColonyBuilds = [finiteBuilding(secondColony.id, "metal_mine", 3), finiteBuilding(secondColony.id, "crystal_mine", 2),
-    finiteBuilding(secondColony.id, "solar_plant", 3), finiteBuilding(secondColony.id, "robotics_factory", 2),
+  check(!firstDifference(beforeCurvature.buildingTemplates, state.buildingTemplates),
+    "retained building library changed during natural second-cycle rebuilding");
+  const secondBuildingApplication = applyColonyBuildingTemplate(buildingTemplateId, secondColony.id, firstBuildingApplication.request);
+  checkpoint("17a-new-colony-retained-building-template-freshly-authorized");
+  const secondColonyBuilds = [...secondBuildingApplication.taskIds, finiteBuilding(secondColony.id, "robotics_factory", 2),
     finiteBuilding(secondColony.id, "shipyard", 2)];
+  observeBuildingTemplatePayment(secondBuildingApplication, "17b-new-colony-building-template-paid-and-in-progress");
   waitTasks(secondColonyBuilds);
+  proveBuildingTemplateCompleted(secondBuildingApplication);
   const secondFormation = previewFormationReplenishment(state, { formationId, formationRevision: 1, planetId: secondColony.id });
   check(secondFormation.ok && secondFormation.request && secondFormation.rows.length === 2
     && secondFormation.rows.every(row => row.localStock === 0 && row.paidQueueRemaining === 0)
@@ -869,17 +1021,24 @@ try {
     && state.orders.tasks.filter(task => task.id > retiredTaskId).every(task => task.transport === null),
   "old colony identity or logistics authorization was reused in the rebuilt world");
   auditFinitePayments(23, retiredTaskId);
+  check(buildingTemplateApplications.length === 2
+    && !firstDifference(beforeCurvature.buildingTemplates, state.buildingTemplates),
+  "two-cycle building intent was reapplied extra times, revised, or replaced");
   observe();
   event("second-cycle-completed-role-swap", { mother: { planetId: homeId, taskId: motherResearchId, computerTech: 3 },
     manufacturing: { planetId: secondColony.id, taskIds: secondFormed.createdTaskIds, actualUnits: finalColony.units },
     oldColonyId: colony.id, oldTaskHistoryUnchanged: true, oldReturnedTripsUnchanged: historicalFleetIds,
     naturalLocalManufacturingWithoutResupply: true, covered: secondCovered });
   checkpoint("19-second-cycle-role-swap-complete-and-reloaded");
-  outcome = { status: "passed", completedScope: "natural first-cycle economy, research template, mixed formation, colonization, two-planet roles, finite single-source logistics, exact curvature preview/reset, retired authorization, natural second-cycle rebuild and newly funded role swap, whole-state save/reload continuation",
+  outcome = { status: "passed", completedScope: "natural first-cycle economy, retained local building template with fresh two-cycle reviews, research template, mixed formation, colonization, two-planet roles, finite single-source logistics, exact curvature preview/reset, retired authorization, natural second-cycle rebuild and newly funded role swap, whole-state save/reload continuation",
     firstSliceGameSeconds, firstCycleGameSeconds: secondCycleStartedAt, firstCycleGameMinutes: secondCycleStartedAt / 60,
     secondCycleGameSeconds: elapsed - secondCycleStartedAt, secondCycleGameMinutes: (elapsed - secondCycleStartedAt) / 60,
     totalGameSeconds: elapsed, curvatureGain: expectedGain.toString(), retiredTaskId,
     firstColonyId: colony.id, secondColonyId: secondColony.id, paidJobIdentities: seenJobs.size,
+    retainedBuildingTemplateId: buildingTemplateId, retainedBuildingTemplateRevision: firstBuildingApplication.request.expectedTemplateRevision,
+    buildingTemplateApplications: buildingTemplateApplications.map(application => ({ planetId: application.request.planetId,
+      templateId: application.request.templateId, revision: application.request.expectedTemplateRevision,
+      taskIds: application.taskIds, authorizedAt: application.authorizedAt })),
     settledFiniteOrders: state.orders.tasks.filter(task => task.status === "completed").length,
     cancelledUnpaidOrders: state.orders.tasks.filter(task => task.status === "cancelled").length };
 } catch (error) {

@@ -1,0 +1,38 @@
+{
+  "base_commit": "f62f7857ea3ef1218b39235bd7cb9b06deae3564",
+  "base_tree": "a97e969dfd1f1174fe7ba41294413fad7670d48a",
+  "provenance": "Before snapshot reconstructed by exact inverse of recorded source authority-repair patch; no historical failure execution is claimed. Unchanged four UI integration/presentation files copied byte-for-byte. After snapshot copied from current six-file candidate.",
+  "files": [
+    {
+      "path": "src/main.ts",
+      "before_sha256": "323939974e14f5e93bdb14106619ddee19b4a95a9009906cd1063feaf88efa2f",
+      "after_sha256": "323939974e14f5e93bdb14106619ddee19b4a95a9009906cd1063feaf88efa2f"
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before_sha256": "2ad0288de1dac41443dd30b73810437a96046cae5bdb07850e79231a750de135",
+      "after_sha256": "2ad0288de1dac41443dd30b73810437a96046cae5bdb07850e79231a750de135"
+    },
+    {
+      "path": "src/ui/building-templates-panel.ts",
+      "before_sha256": "c916a7704457c3df2425a2034757856c1bb9c9381d20aa67c396c1292a29b1c1",
+      "after_sha256": "e2c20b28382acd2b45e647e16a05d2bd91b74c000ce9ca3f6bd3501510478006"
+    },
+    {
+      "path": "src/ui/building-templates-present.ts",
+      "before_sha256": "fd23ffcbd818851f19fe07f9ecadebf7b7115c8c3e1c22045ddb14601c50d53f",
+      "after_sha256": "fd23ffcbd818851f19fe07f9ecadebf7b7115c8c3e1c22045ddb14601c50d53f"
+    },
+    {
+      "path": "src/ui/building-templates.css",
+      "before_sha256": "d17a764e6adff3ca8b1264a473719c5f08df7e75b80dfdd3667e6706519a0b9d",
+      "after_sha256": "d17a764e6adff3ca8b1264a473719c5f08df7e75b80dfdd3667e6706519a0b9d"
+    },
+    {
+      "path": "tests/building-templates-present.test.ts",
+      "before_sha256": "788590a037087f2f5864b71023326d45e2f5a2e7ced95478dca5b0e49765507e",
+      "after_sha256": "05caf237353446a036833e1e54ba854ecce0f01bb2165ec77981b8e22dabea9d"
+    }
+  ],
+  "patch_sha256": "051c1f486e92e98689b5f02736ae8951d832d7071315f97b0cfedf3fda525054"
+}
