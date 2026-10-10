@@ -143,7 +143,19 @@ def boot(which='base',url=None,initial_tab='overview'):
 def snapshot(page):
     return page.evaluate('''() => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
-      const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+      const visible=e=>{
+        // Chromium may return geometry for closed-details content. Its first
+        // summary remains visible; all other descendants are actually hidden.
+        for(let ancestor=e;ancestor;ancestor=ancestor.parentElement){
+          if(ancestor.hidden||getComputedStyle(ancestor).display==='none')return false;
+          if(ancestor instanceof HTMLDetailsElement&&!ancestor.open){
+            const summary=[...ancestor.children].find(child=>child.tagName==='SUMMARY');
+            if(!summary?.contains(e))return false;
+          }
+        }
+        const visibility=getComputedStyle(e).visibility;
+        return e.getClientRects().length>0&&visibility!=='hidden'&&visibility!=='collapse';
+      };
       return {tab:panel?.dataset.tabPanel,text:panel?.innerText,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:[...panel.querySelectorAll('input,select,textarea,button')].filter(visible).map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
@@ -231,6 +243,27 @@ def run_cases():
                 check('visible galaxy snapshot contains exact phase paragraph once',snapshots[label][name]['text'].count(range_text)==1)
                 normalized=range_text.replace(token,'v<verified-release-version>',1)
                 snapshots[label][name]['text']=snapshots[label][name]['text'].replace(range_text,normalized,1)
+            if name in ('orders','fleet'):
+                details_id='research-templates' if name=='orders' else 'fleet-formations'
+                new_id='template-new' if name=='orders' else 'formation-new'
+                check('folded library controls are absent from actual-visible snapshot: '+details_id,
+                      not any(control['id']==new_id for control in snapshots[label][name]['inputs']))
+                click(page,f'#{details_id} > summary')
+                check('native summary opens library for full visible parity: '+details_id,
+                      page.locator('#'+details_id).evaluate('(element)=>element.open'))
+                opened=snapshot(page)
+                check('opened library controls enter the complete paired snapshot: '+details_id,
+                      any(control['id']==new_id for control in opened['inputs']) and
+                      len(opened['inputs'])>=len(snapshots[label][name]['inputs'])+4)
+                snapshots[label][name+'-library-open']=opened
+                click(page,f'#{details_id} > summary')
+                check('library returns to folded state after parity observation: '+details_id,
+                      not page.locator('#'+details_id).evaluate('(element)=>element.open'))
+                click(page,f'#{details_id} > summary')
+                reopened=snapshot(page)
+                check('closed then reopened library retains complete visible snapshot: '+details_id,reopened==opened)
+                snapshots[label][name+'-library-reopened']=reopened
+                click(page,f'#{details_id} > summary')
         whole(page,'base.initial','read-only navigation leaves complete engine state unchanged');context.close()
     check('both bundles expose the same unlocked panels',set(snapshots['before'])==set(snapshots['after']))
     for name in snapshots['before']:
