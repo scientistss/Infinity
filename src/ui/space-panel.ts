@@ -1,3 +1,5 @@
+import { formationsPanelHtml, installFormationsPanel, type FormationUiAction } from "./formations-panel";
+import type { FleetFormation } from "../game/formation-state";
 import { researchTemplatesPanelHtml, installResearchTemplatesPanel } from "./research-templates-panel";
 import type { ResearchTemplateAction } from "../game/research-template-state";
 import { ordersPanelHtml, installOrdersPanel } from "./orders-panel";
@@ -9,7 +11,7 @@ import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
 import type { SpaceView } from "./space-present";
-export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
+export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {const n=root.querySelector<T>(sel);if(!n)throw Error(`缺少界面节点 ${sel}`);return n;}
@@ -33,6 +35,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <p class="muted">NPC 当前仅提供基础侦察，不会反击；第 16 位可派舰充能，也可回收战斗残骸。殖民地属性使用当前开发版生成曲线。</p>
   `)+make("fleet","舰队指挥",`
     <p id="space-slots" class="chip"></p>
+    <p id="formation-dispatch-source" class="muted" hidden></p>${formationsPanelHtml()}
     <div class="space-columns"><div class="ov-card"><h3>1 · 编成舰队</h3><div class="space-ships">${SHIP_IDS.filter(id=>id!=="solar_satellite").map(id=>`<label class="space-ship"><span>${unitById(id).nameZh}<small id="available-${id}"></small></span><input type="number" min="0" max="${SPACE.maxShips}" step="1" value="0" data-ship="${id}" aria-label="${unitById(id).nameZh}派遣数量" /></label>`).join("")}</div></div>
     <div class="ov-card"><h3>2 · 任务与航程</h3><div class="space-controls"><label>任务<select id="flight-mission"><option value="colonize">殖民</option><option value="transport">运输</option><option value="deploy">部署</option><option value="scout">侦察</option><option value="charge">深空充能</option><option value="recycle">残骸回收</option></select></label><label>速度<select id="flight-speed">${[100,90,80,70,60,50,40,30,20,10].map(n=>`<option value="${n}">${n}%</option>`).join("")}</select></label></div>
     <div class="space-controls">${entry("目标银河","flight-galaxy",1,5,1)}${entry("恒星系","flight-system",1,100,50)}${entry("位置","flight-position",1,16,9)}</div>
@@ -45,6 +48,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
   const templatePanel=installResearchTemplatesPanel(root,onAction);
+  const formationPanel=installFormationsPanel(root,onAction);
+  let filledFormation: Pick<FleetFormation,"id" | "revision" | "name"> | null = null;
+  function clearFormationFill(){if(!filledFormation)return;for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value="0";filledFormation=null;put(root,"#formation-dispatch-source","");el(root,"#formation-dispatch-source").hidden=true;}
   // Each surface owns its rendered capabilities; rebuilding the fleet tab must
   // not retire the deep dashboard's stable, focused timer controls.
   let deepFleetButtons = new WeakMap<HTMLButtonElement, number>();
@@ -88,8 +94,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
-  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction,
-    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction, updateFormations:formationPanel.update, completeFormationAction:formationPanel.completeAction,
+    fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;},
+    invalidateOrderAuthority(){clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

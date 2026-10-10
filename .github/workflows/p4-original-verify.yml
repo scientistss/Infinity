@@ -44,13 +44,17 @@ jobs:
           git archive bc6f5a475336dca1bb02d4f1061ee01ba9c5d9c4 | tar -x -C "$RUNNER_TEMP/pre-templates"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-templates/node_modules"
           node --import tsx "$RUNNER_TEMP/pre-templates/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-transport" > transport-save-revision-report.json
-          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-templates" > save-revision-report.json
+          mkdir -p "$RUNNER_TEMP/pre-formations"
+          git archive 090d3124f799f4dadb890922268c2cc1d32e9ad8 | tar -x -C "$RUNNER_TEMP/pre-formations"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-formations/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-formations/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-templates" > templates-save-revision-report.json
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-formations" > save-revision-report.json
           mkdir -p "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3"
           git archive 3d29c3942225e161977f4f298d970413738553f2 | tar -x -C "$RUNNER_TEMP/source-r2"
           git archive ebf75a755aa87f0b452bf427eb6cda833e26990d | tar -x -C "$RUNNER_TEMP/source-r3"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r2/node_modules"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r3/node_modules"
-          node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" > order-migration-report.json
+          node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > order-migration-report.json
           npm run sim -- 60 | tee balance-report.txt
       - name: Browser prerequisites
         timeout-minutes: 4
@@ -70,11 +74,13 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/formations-fixture.ts > formations-review-save.json
+          python scripts/browser-formations.py --fixture formations-review-save.json
           node --import tsx scripts/research-templates-fixture.ts > research-templates-review-save.json
           python scripts/browser-research-templates.py --fixture research-templates-review-save.json
           node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
           python scripts/browser-deep-dashboard.py
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" > save-session-review-save.json
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > save-session-review-save.json
           python scripts/browser-save-session.py --fixture save-session-review-save.json
           node --import tsx scripts/orders-transport-fixture.ts > orders-transport-review-save.json
           python scripts/browser-orders-transport.py --fixture orders-transport-review-save.json
@@ -107,12 +113,14 @@ jobs:
             orders-evidence
             orders-transport-evidence
             research-templates-evidence
+            formations-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json
             parity-report.json
             save-revision-report.json
             transport-save-revision-report.json
+            templates-save-revision-report.json
             order-migration-report.json
             balance-report.txt
             preview.log

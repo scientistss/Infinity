@@ -1,3 +1,4 @@
+import type { FormationOrigin } from "./formation-state";
 import type { BuildingId } from "../data/buildings";
 import type { ResearchId } from "../data/research";
 import type { UnitId } from "../data/units";
@@ -32,6 +33,7 @@ export type OrderTask = OrderTarget & {
   completedUnits: number;
   transport: OrderTransportState | null;
   currentWork: OrderCurrentWork | null;
+  formationOrigin: FormationOrigin | null;
 };
 export interface OrderState {
   nextTaskId: number;

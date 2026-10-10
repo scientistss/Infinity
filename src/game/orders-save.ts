@@ -13,6 +13,7 @@ import { addOrderAmounts, compareOrderAmounts, isOrderAmount, multiplyOrderAmoun
 import { big } from "./decimal";
 import { sameCoordinates, SPACE, validCoordinates } from "./galaxy";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
+import { readFormationOrigin } from "./formations-save";
 
 const MAX_ID = Number.MAX_SAFE_INTEGER - 1;
 const live = (task: OrderTask) => task.status === "running" || task.status === "paused";
@@ -24,7 +25,9 @@ function integer(raw: unknown, label: string, min: number, max: number): number 
   return raw;
 }
 function keys(raw: Record<string, unknown>, expected: readonly string[], label: string): void {
-  if (Object.keys(raw).length !== expected.length || expected.some(key => !(key in raw))) throw Error(`${label}字段无效`);
+  const prototype = Object.getPrototypeOf(raw), own = Reflect.ownKeys(raw);
+  if ((prototype !== Object.prototype && prototype !== null) || own.length !== expected.length ||
+      own.some(key => typeof key !== "string" || !expected.includes(key))) throw Error(`${label}字段无效`);
 }
 function planetId(raw: unknown): string {
   if (typeof raw !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(raw)) throw Error("计划星球 ID 无效");
@@ -145,10 +148,10 @@ function tripFuel(task: OrderTask): string {
   return total;
 }
 
-function task(raw: unknown, revision: 5 | 6): OrderTask {
+function task(raw: unknown, revision: 5 | 6 | 8): OrderTask {
   if (!record(raw)) throw Error("计划数据格式不正确");
   let target: OrderTarget;
-  const common = ["kind", "planetId", "id", "status", "reason", "budget", "charged", "refunded", "activeJob", "completedUnits", ...(revision === 6 ? ["transport", "currentWork"] : [])];
+  const common = ["kind", "planetId", "id", "status", "reason", "budget", "charged", "refunded", "activeJob", "completedUnits", ...(revision >= 6 ? ["transport", "currentWork"] : []), ...(revision === 8 ? ["formationOrigin"] : [])];
   if (raw.kind === "building" && typeof raw.building === "string" && isBuildingId(raw.building)) {
     keys(raw, [...common, "building", "targetLevel"], "建筑计划");
     target = { kind: "building", planetId: planetId(raw.planetId), building: raw.building,
@@ -167,7 +170,8 @@ function task(raw: unknown, revision: 5 | 6): OrderTask {
   if (typeof raw.reason !== "string" || raw.reason.length > MAX_ORDER_REASON_LENGTH) throw Error("计划状态说明无效");
   const result: OrderTask = { ...target, id: integer(raw.id, "计划 ID", 1, MAX_ID), status, reason: raw.reason,
     budget: money(raw.budget, "计划预算"), charged: money(raw.charged, "计划已支付"), refunded: money(raw.refunded, "计划已退款"),
-    transport: revision === 6 ? transport(raw.transport) : null, currentWork: revision === 6 ? currentWork(raw.currentWork) : null,
+    transport: revision >= 6 ? transport(raw.transport) : null, currentWork: revision >= 6 ? currentWork(raw.currentWork) : null,
+    formationOrigin: revision === 8 ? readFormationOrigin(raw.formationOrigin) : null,
     activeJob: receipt(raw.activeJob), completedUnits: integer(raw.completedUnits, "计划已完成数量", 0, target.kind === "shipyard" ? target.quantity : 0) };
   for (const res of RESOURCE_IDS) {
     const net = subtractOrderAmounts(result.charged[res], result.refunded[res]);
@@ -180,19 +184,19 @@ function task(raw: unknown, revision: 5 | 6): OrderTask {
 }
 
 export function serializeOrders(orders: OrderState): OrderState {
-  // All authorization, work and receipt data consists of plain immutable save values.
-  return structuredClone(orders);
+  // Parse and clone all fields so unknown live authority cannot disappear silently.
+  return readOrders(orders);
 }
 
-/** Current authorization fields are mandatory; only the explicit r5 migration reads old keys. */
-export function readOrders(raw: unknown, revision: 5 | 6 = 6): OrderState {
+/** Order subformats differ from envelopes: both r6 and r7 envelopes contain subformat 6. */
+export function readOrders(raw: unknown, revision: 5 | 6 | 8 = 8): OrderState {
   if (!record(raw)) throw Error(`r${revision} 有限计划数据缺失`);
-  keys(raw, ["nextTaskId", "nextJobId", ...(revision === 6 ? ["nextWorkId"] : []), "accumulator", "tasks"], "有限计划");
+  keys(raw, ["nextTaskId", "nextJobId", ...(revision >= 6 ? ["nextWorkId"] : []), "accumulator", "tasks"], "有限计划");
   if (!Array.isArray(raw.tasks) || raw.tasks.length > MAX_ORDER_TASKS) throw Error("计划列表过长或无效");
   const tasks = raw.tasks.map(entry => task(entry, revision));
   const nextTaskId = integer(raw.nextTaskId, "下一计划 ID", 1, Number.MAX_SAFE_INTEGER);
   const nextJobId = integer(raw.nextJobId, "下一付款 ID", 1, Number.MAX_SAFE_INTEGER);
-  const nextWorkId = revision === 6 ? integer(raw.nextWorkId, "下一工作 ID", 1, Number.MAX_SAFE_INTEGER) : 1;
+  const nextWorkId = revision >= 6 ? integer(raw.nextWorkId, "下一工作 ID", 1, Number.MAX_SAFE_INTEGER) : 1;
   if (new Set(tasks.map(entry => entry.id)).size !== tasks.length || tasks.some(entry => entry.id >= nextTaskId)) throw Error("计划 ID 重复或计数器过期");
   if (tasks.filter(live).length > MAX_LIVE_ORDER_TASKS) throw Error("进行中的计划过多");
   if (typeof raw.accumulator !== "number" || !Number.isFinite(raw.accumulator) || raw.accumulator < 0 || raw.accumulator >= ORDER_PASS_SECONDS) throw Error("计划计时无效");

@@ -1,3 +1,4 @@
+import { applyFormationAction } from "./game/formations";
 import { applyResearchTemplateAction } from "./game/research-templates";
 import { applyOrderAction } from "./game/orders";
 import { ordersView } from "./ui/orders-present";
@@ -110,6 +111,7 @@ function render(): void {
   view.updateDeep(state);
   view.updateOrders(ordersView(state), saveSession.mode === "ready");
   view.updateResearchTemplates(state, saveSession.mode === "ready");
+  view.updateFormations(state, saveSession.mode === "ready");
 }
 
 async function handleAction(action: UiAction): Promise<void> {
@@ -121,7 +123,20 @@ async function handleAction(action: UiAction): Promise<void> {
     return;
   }
   const before = state.unlocked;
-  if (action.type === "research-template-create" || action.type === "research-template-edit" || action.type === "research-template-delete" || action.type === "research-template-apply") {
+  if (action.type === "formation-fill") {
+    const formation = state.formations.entries.find(item => item.id === action.formationId && item.revision === action.expectedRevision);
+    if (formation) {
+      view.fillFormationShips(formation);
+      status = `已填入 #${formation.id} ${formation.name} 的派遣数量；任务与其他输入保持原值，尚未派遣或付款`;
+    } else status = "编成已改变，请重新选择后填入";
+    view.completeFormationAction(status, !!formation);
+  } else if (action.type === "formation-create" || action.type === "formation-edit" || action.type === "formation-delete" || action.type === "formation-replenish") {
+    const result = applyFormationAction(state, action);
+    const changed = result.state !== state;
+    state = result.state; status = result.reason;
+    if (changed) persist();
+    view.completeFormationAction(status, result.ok && saveSession.mode === "ready");
+  } else if (action.type === "research-template-create" || action.type === "research-template-edit" || action.type === "research-template-delete" || action.type === "research-template-apply") {
     const result = applyResearchTemplateAction(state, action);
     const changed = result.state !== state;
     state = result.state; status = result.reason;

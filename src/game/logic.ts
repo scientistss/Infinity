@@ -1,3 +1,4 @@
+import { cloneFormation } from "./formation-state";
 import { accrueOrderPlanTime, runDueOrderPass, nextOrderPassIn, terminateOrdersForPrestige } from "./orders";
 import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
 import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
@@ -284,6 +285,7 @@ export function prestige(state: GameState): GameState {
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
   next.orders = terminateOrdersForPrestige(state);
+  next.formations = { nextFormationId: state.formations.nextFormationId, entries: state.formations.entries.map(cloneFormation) };
   next.researchTemplates = { nextTemplateId: state.researchTemplates.nextTemplateId, templates: state.researchTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };

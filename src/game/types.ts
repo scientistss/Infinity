@@ -1,3 +1,4 @@
+import type { FleetFormationState } from "./formation-state";
 import type { OrderState } from "./order-state";
 import type { ResearchTemplateState } from "./research-template-state";
 import type { DeepState } from "./deep-state";
@@ -88,6 +89,8 @@ export interface PlayerStats {
 export interface GameState {
   /** Finite local plans and globally stable paid queue identities. */
   orders: OrderState;
+  /** Named ship-count intentions; replenishment is separately authorized and finite. */
+  formations: FleetFormationState;
   /** Reusable research goals; authorization is created separately through finite plans. */
   researchTemplates: ResearchTemplateState;
   /** Canonical per-planet inventories and independent local queues (P4-1). */

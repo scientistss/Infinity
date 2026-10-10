@@ -78,7 +78,7 @@ export function ordersView(state: GameState): OrdersView {
       const work = task.currentWork;
       return {
         id: task.id, status: task.status,
-        title: `#${task.id} ${orderTargetName(task)} · ${STATUS[task.status]}`,
+        title: `#${task.id} ${orderTargetName(task)} · ${STATUS[task.status]}${task.formationOrigin ? ` · 编成 #${task.formationOrigin.formation.id} ${task.formationOrigin.formation.name} / r${task.formationOrigin.formation.revision}（创建时版本）` : ""}`,
         location: `固定付款 / 执行星球：${planet?.name ?? task.planetId}`,
         progress: task.kind === "shipyard" ? `本计划已完成 ${current} / 额外 ${goal} 个` : `当前 ${current} / 目标 ${goal} 级`,
         progressPct: Math.max(0, Math.min(100, goal > 0 ? current / goal * 100 : 0)),

@@ -1,7 +1,7 @@
 {
   "name": "infinity",
   "private": true,
-  "version": "0.6.4-alpha.1",
+  "version": "0.6.4-alpha.2",
   "type": "module",
   "description": "Single-player space idle: original UI, fleets, deep-space encounters, merchants and salvage.",
   "scripts": {

@@ -13,7 +13,7 @@ const input = {status:"",banner:null,notice:null,catchup:null};
 const money = {metal:"0",crystal:"0",deuterium:"0"};
 
 function task(overrides: Partial<OrderTask> = {}): OrderTask {
-  return {kind:"shipyard",planetId:"home",unit:"light_fighter",quantity:7,id:1,status:"running",reason:"等待资源",budget:{metal:"100",crystal:"200",deuterium:"0"},charged:{metal:"90.5",crystal:"40",deuterium:"0"},refunded:{metal:"10.25",crystal:"0",deuterium:"0"},activeJob:{jobId:9,quantity:4,credited:2},completedUnits:3,transport:null,currentWork:null,...overrides} as OrderTask;
+  return {kind:"shipyard",planetId:"home",unit:"light_fighter",quantity:7,id:1,status:"running",reason:"等待资源",budget:{metal:"100",crystal:"200",deuterium:"0"},charged:{metal:"90.5",crystal:"40",deuterium:"0"},refunded:{metal:"10.25",crystal:"0",deuterium:"0"},activeJob:{jobId:9,quantity:4,credited:2},completedUnits:3,transport:null,currentWork:null,formationOrigin:null,...overrides} as OrderTask;
 }
 
 describe("finite plan presentation", () => {
@@ -49,6 +49,16 @@ describe("finite plan presentation", () => {
     expect(rows[0]!.location).toContain("removed-world");
     expect(rows[0]!.activeJob).toBe("暂无已付款工作");
     expect(rows[1]!.progressPct).toBe(100);
+  });
+  it("shows the immutable creation-time formation name and revision", () => {
+    const state = createInitialState();
+    state.formations.entries = [{id:1,revision:2,name:"未来编成",ships:{light_fighter:20}}];
+    state.formations.nextFormationId = 2;
+    state.orders.tasks = [task({formationOrigin:{formation:{id:1,revision:1,name:"<舰&🚀>",ships:{light_fighter:10}},quotedUnitCost:{metal:"3000",crystal:"1000",deuterium:"0"}}})];
+    const before = JSON.stringify(state);
+    expect(ordersView(state).rows[0]!.title).toContain("编成 #1 <舰&🚀> / r1（创建时版本）");
+    expect(ordersView(state).rows[0]!.title).not.toContain("未来编成");
+    expect(JSON.stringify(state)).toBe(before);
   });
   it("lists original build, research, ship and defense targets", () => {
     expect(orderChoices("building").some(x=>x.id==="metal_mine")).toBe(true);

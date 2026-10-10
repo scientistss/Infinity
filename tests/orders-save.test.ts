@@ -13,7 +13,7 @@ function paidFile(kind: "building" | "research" | "shipyard" = "building") {
   const file = emptyFile(), state = file.state;
   const task = { id: 1, kind, planetId: state.activePlanetId, status: "running", reason: "",
     budget: price("100000", "100000", "100000"), charged: price("60", "15"), refunded: zero(),
-    activeJob: { jobId: 1, quantity: 1, credited: 0 }, completedUnits: 0, transport: null, currentWork: null } as any;
+    activeJob: { jobId: 1, quantity: 1, credited: 0 }, completedUnits: 0, transport: null, currentWork: null, formationOrigin: null } as any;
   const job = { jobId: 1, taskId: 1, source: "plan" };
   if (kind === "building") {
     Object.assign(task, { building: "metal_mine", targetLevel: 3 });
@@ -53,6 +53,7 @@ function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
   file.revision = revision;
   delete file.state.researchTemplates;
+  delete file.state.formations;
   delete file.state.orders;
   for (const planet of file.state.planets) {
     for (const job of [...planet.buildQueue, ...planet.shipyardQueue]) {

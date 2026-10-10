@@ -142,6 +142,7 @@ function legacyFile(revision: 2 | 3) {
   const file = JSON.parse(exportSave(state, 123));
   file.revision = revision;
   delete file.state.researchTemplates;
+  delete file.state.formations;
   delete file.state.orders;
   if (revision === 2) delete file.state.deepSpace;
   delete file.state.arcade.nextRunId;

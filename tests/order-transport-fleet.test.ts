@@ -25,7 +25,7 @@ function dispatched(): GameState {
   const fleet = state.fleets[0]!;
   const task: OrderTask = {
     id: 1, kind: "building", planetId: target.id, building: "metal_mine", targetLevel: 1,
-    status: "running", reason: "", budget: { metal: "10000", crystal: "10000", deuterium: "10000" }, charged: { ...zero(), deuterium: quote.fuel.toString() }, refunded: zero(), activeJob: null, completedUnits: 0,
+    status: "running", reason: "", budget: { metal: "10000", crystal: "10000", deuterium: "10000" }, charged: { ...zero(), deuterium: quote.fuel.toString() }, refunded: zero(), activeJob: null, completedUnits: 0, formationOrigin: null,
     currentWork: { workId: 1, stage: "pending", shipmentFleetId: fleet.id, reserved: { ...cargo }, spec: { kind: "building", building: "metal_mine", targetLevel: 1, price: { ...cargo } } },
     transport: { authorization: { donorPlanetId: donor.id, ship: "small_cargo", count: 2, speedPercent: 100, maxTrips: 3, grossCargoCap: { metal: "10000", crystal: "10000", deuterium: "10000" } }, trips: [{ fleetId: fleet.id, workId: 1, targetPlanetId: target.id, target: { ...fleet.target }, cargo: { ...cargo }, fuel: quote.fuel.toString(), duration: fleet.duration, phase: { kind: "outbound" } }] },
   };

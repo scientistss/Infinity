@@ -23,6 +23,8 @@ function legacy(revision: 2 | 3 | 4 | 5 | 6): any {
   const value = JSON.parse(exportSave(createInitialState(71), 1000));
   value.revision = revision;
   delete value.state.researchTemplates;
+  delete value.state.formations;
+  for (const task of value.state.orders.tasks) delete task.formationOrigin;
   if (revision < 6) { delete value.state.orders.nextWorkId; }
   if (revision < 5) delete value.state.orders;
   if (revision < 4) { delete value.state.arcade.nextRunId; delete value.state.arcade.autoBatch; }
@@ -33,7 +35,7 @@ function legacy(revision: 2 | 3 | 4 | 5 | 6): any {
 describe("r7 pure research-intent persistence", () => {
   it("round-trips the complete library and every unchanged world field", () => {
     const original = file(), imported = read(original);
-    expect(imported.revision).toBe(7); expect(imported.revision).toBe(SAVE_REVISION);
+    expect(imported.revision).toBe(8); expect(imported.revision).toBe(SAVE_REVISION);
     expect(imported.state).toEqual(original.state);
     expect(serializeState(deserializeState(imported.state))).toEqual(original.state);
     expect(read(imported)).toEqual(imported);
@@ -128,7 +130,8 @@ describe("r7 additive migration boundaries", () => {
     expect(imported.state.researchTemplates).toEqual(createResearchTemplateState());
     expect(imported.state.orders.tasks).toEqual([]);
     if (revision === 6) {
-      const { researchTemplates: _templates, ...projection } = imported.state;
+      const { researchTemplates: _templates, formations, ...projection } = imported.state;
+      expect(formations).toEqual({ nextFormationId: 1, entries: [] });
       expect(projection).toEqual(source.state);
     }
     expect(read(imported)).toEqual(imported);

@@ -1,3 +1,5 @@
+import { unitCost } from "./unit-cost";
+export { unitCost } from "./unit-cost";
 import { activePlanet, withPlanet } from "./empire";
 /**
  * Shipyard queue (design doc §7.1, P3). Ships and defenses are ordered in batches (unit × count) and built one
@@ -67,14 +69,6 @@ export interface UnitCheck {
   count: number;
   cost: ResourceCost;
   onlyResources?: boolean;
-}
-
-export function unitCost(def: UnitDef, count = 1): ResourceCost {
-  return {
-    metal: big(def.cost.metal).mul(count),
-    crystal: big(def.cost.crystal).mul(count),
-    deuterium: big(def.cost.deuterium).mul(count),
-  };
 }
 
 /** Seconds per unit at the current shipyard and nanite levels. */

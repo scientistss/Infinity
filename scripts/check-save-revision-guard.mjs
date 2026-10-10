@@ -10,12 +10,15 @@ const root = process.argv[2];
 if (!root) throw Error("Provide the verified preceding source directory");
 const previous = await import(pathToFileURL(resolve(root, "src/game/save.ts")).href);
 const previousContent = await import(pathToFileURL(resolve(root, "src/game/content.ts")).href);
-assert.equal(SAVE_REVISION, 7, "This boundary protects r7 research intent");
-assert.equal(previousContent.SAVE_REVISION, 6, "Guard must load the actual preceding r6 reader");
+assert.equal(SAVE_REVISION, 8, "This boundary protects r8 fleet formations and immutable order origins");
+assert.equal(previousContent.SAVE_REVISION, 7, "Guard must load the actual preceding r7 reader");
 assert.equal(previousContent.SAVE_VERSION, 9);
 const state = createInitialState(42);
 state.researchTemplates = { nextTemplateId: 2, templates: [
   { id: 1, revision: 1, name: "Synthetic retained intent", goals: [{ tech: "energy_tech", targetLevel: 3 }] },
+] };
+state.formations = { nextFormationId: 2, entries: [
+  { id: 1, revision: 1, name: "Synthetic retained fleet design", ships: { small_cargo: 4, light_fighter: 8 } },
 ] };
 const candidate = exportSave(state, 1_000_000);
 assert.throws(() => previous.importSave(candidate), /修订不兼容/, "Old readers must reject rather than discard new authority fields");

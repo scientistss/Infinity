@@ -1,18 +1,21 @@
 /** Compare migrations of real preceding serializers and paid-queue primitives.
  * Inputs are synthetic, pre-funded states; this is not natural player progression.
- * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root r6-root
+ * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root r6-root r7-root
  */
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { importSave } from "../src/game/save.ts";
 import { createLegacyR6Fixtures } from "./legacy-r6-fixture.ts";
+import { createLegacyR7Fixtures } from "./legacy-r7-fixture.ts";
 
 const roots = process.argv.slice(2);
-if (roots.length !== 5) throw Error("Provide verified source directories for r2, r3, r4, r5 and r6");
+if (roots.length !== 6) throw Error("Provide verified source directories for r2, r3, r4, r5, r6 and r7");
 function priorProjection(state, revision) {
   const s = structuredClone(state);
   delete s.researchTemplates;
+  delete s.formations;
+  for (const task of s.orders?.tasks ?? []) delete task.formationOrigin;
   for (const fleet of s.fleets ?? []) delete fleet.orderTransport;
   if (revision < 5) {
     delete s.orders;
@@ -91,6 +94,8 @@ for (let index = 0; index < 4; index++) {
   const old = save.importSave(raw).state;
   const migrated = importSave(raw).state;
   assert.deepEqual(priorProjection(migrated, revision), priorProjection(old, revision), `r${revision} economic/timing state changed`);
+  assert.deepEqual(migrated.formations,{nextFormationId:1,entries:[]},"Migration cannot invent fleet formations");
+  assert.ok(migrated.orders.tasks.every(task=>task.formationOrigin===null),"Migration cannot invent formation order origins");
   assert.deepEqual(migrated.researchTemplates,{nextTemplateId:1,templates:[]},"Migration cannot invent research intent");
   assert.equal(migrated.orders.nextWorkId,1,"Migration cannot invent pending-work authorizations");
   assert.ok(migrated.orders.tasks.every(t=>t.transport===null && t.currentWork===null),"Old plans do not authorize new logistics");
@@ -121,10 +126,12 @@ const r6Save = await import(pathToFileURL(resolve(roots[4], "src/game/save.ts"))
 for (const [phase, actual] of Object.entries(await createLegacyR6Fixtures(resolve(roots[4]), 1_000_000))) {
   const raw = JSON.stringify(actual), old = r6Save.importSave(raw).state;
   const migrated = importSave(raw).state;
-  const { researchTemplates, ...fullR6Projection } = migrated;
+  const { researchTemplates, formations, ...fullR6Projection } = structuredClone(migrated);
+  assert.deepEqual(formations, { nextFormationId: 1, entries: [] });
+  for (const task of fullR6Projection.orders.tasks) { assert.equal(task.formationOrigin, null); delete task.formationOrigin; }
   assert.deepEqual(researchTemplates, { nextTemplateId: 1, templates: [] });
   assert.deepEqual(fullR6Projection, old, `r6 ${phase}: complete old state changed`);
-  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r7 round trip changed migrated r6 work");
+  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r8 round trip changed migrated r6 work");
   assert.equal(migrated.orders.tasks.length, 2);
   assert.ok(migrated.orders.tasks.every(task => task.status === "paused"));
   assert.equal(migrated.orders.tasks[0].currentWork.stage, "pending");
@@ -138,4 +145,20 @@ for (const [phase, actual] of Object.entries(await createLegacyR6Fixtures(resolv
   });
   reports.push({sourceRevision:6,phase,pausedPlans:2,paidResearchJobs:1,pendingTransportWork:1,ownedFleets:1,fullPriorProjection:"unchanged",result:"passed"});
 }
-console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport; complete real r6 outbound/returning transport and paid research",synthetic:true,revisions:reports,result:"passed"}, null, 2));
+// Actual r7 has nonempty research intent as well as the same transport subformat 6.
+const r7Save = await import(pathToFileURL(resolve(roots[5], "src/game/save.ts")).href);
+for (const [phase, actual] of Object.entries(await createLegacyR7Fixtures(resolve(roots[5]), 1_000_000))) {
+  const raw = JSON.stringify(actual), old = r7Save.importSave(raw).state, migrated = importSave(raw).state;
+  const { formations, ...fullR7Projection } = structuredClone(migrated);
+  assert.deepEqual(formations, { nextFormationId: 1, entries: [] });
+  for (const task of fullR7Projection.orders.tasks) { assert.equal(task.formationOrigin, null); delete task.formationOrigin; }
+  assert.deepEqual(fullR7Projection, old, `r7 ${phase}: complete old state changed`);
+  assert.equal(migrated.researchTemplates.templates.length, 2);
+  assert.equal(migrated.orders.tasks[0].transport.trips[0].phase.kind, phase);
+  assert.equal(migrated.research.queue.length, 1);
+  assert.equal(migrated.planets[0].shipyardQueue[0].count, 5);
+  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r8 round trip changed migrated r7 work");
+  assert.throws(() => r7Save.importSave(JSON.stringify(importSave(raw))), /修订不兼容/, "Actual r7 reader must reject r8");
+  reports.push({sourceRevision:7,phase,researchTemplates:2,paidResearchJobs:1,remainingPaidShips:5,ownedFleets:1,fullPriorProjection:"unchanged",oldReader:"r8 rejected",result:"passed"});
+}
+console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport; complete real r6/r7 outbound/returning transport and paid research, plus retained nonempty r7 templates and a real paid ship remainder",synthetic:true,revisions:reports,result:"passed"}, null, 2));

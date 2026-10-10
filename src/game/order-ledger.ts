@@ -1,6 +1,8 @@
+import { hasFormationFields, isFlyableShipId, normalizeFormationDraft } from "./formation-state";
+import { unitCost } from "./unit-cost";
 import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
-import { isUnitId } from "../data/units";
+import { isUnitId, unitById } from "../data/units";
 import { big, isValidAmount } from "./decimal";
 import {
   MAX_ORDER_LEVEL, MAX_ORDER_QUANTITY, MAX_ORDER_REASON_LENGTH,
@@ -16,6 +18,7 @@ export type { NewPaidJob, OrderResult } from "./order-state";
 export const ORDER_PRECISION_REASON = "金额精度不足，计划已暂停；请调整库存后再继续";
 export const ORDER_IDENTITY_REASON = "计划或付费任务身份不一致，已暂停";
 export const ORDER_BUDGET_REASON = "计划预算不足，等待取消或另建计划";
+export const FORMATION_PRICE_REASON = "编成补船目录价格已变化，未付款部分已暂停；请取消旧计划并重新预览";
 export const ORDER_EXHAUSTED_REASON = "任务编号已耗尽，不能继续入队";
 
 export function zeroOrderMoney(): OrderMoney { return { metal: "0", crystal: "0", deuterium: "0" }; }
@@ -60,6 +63,25 @@ export function remainingOrderWorkMoney(task: OrderTask): OrderMoney | null {
 }
 function equalMoney(a: OrderMoney, b: OrderMoney): boolean {
   return RESOURCE_IDS.every(id => compareOrderAmounts(a[id], b[id]) === 0);
+}
+/** Only new payments read today's catalog. Paid queue completion/refund uses its historical price. */
+export function formationPaymentReason(task: OrderTask): string {
+  const origin = task.formationOrigin;
+  if (origin === null) return "";
+  if (!hasFormationFields(origin, ["formation", "quotedUnitCost"]) || task.kind !== "shipyard" || !isFlyableShipId(task.unit)
+    || task.transport !== null || task.currentWork !== null || !hasFormationFields(origin.formation, ["id", "revision", "name", "ships"])
+    || !hasFormationFields(origin.quotedUnitCost, RESOURCE_IDS) || !isOrderMoney(origin.quotedUnitCost)) return ORDER_IDENTITY_REASON;
+  const formation = origin.formation;
+  const draft = normalizeFormationDraft({ name: formation.name, ships: formation.ships });
+  if (!draft || !validId(formation.id) || !Number.isSafeInteger(formation.revision) || formation.revision < 1 || draft.name !== formation.name
+    || JSON.stringify(draft.ships) !== JSON.stringify(formation.ships) || !Number.isSafeInteger(task.quantity) || task.quantity < 1
+    || task.quantity > (formation.ships[task.unit] ?? 0) || !isOrderMoney(task.budget)) return ORDER_IDENTITY_REASON;
+  for (const id of RESOURCE_IDS) {
+    const expected = multiplyOrderAmountInteger(origin.quotedUnitCost[id], task.quantity);
+    if (expected === null || compareOrderAmounts(expected, task.budget[id]) !== 0) return ORDER_IDENTITY_REASON;
+  }
+  const current = quoteOrderMoney(unitCost(unitById(task.unit)));
+  return current && equalMoney(current, origin.quotedUnitCost) ? "" : FORMATION_PRICE_REASON;
 }
 function matchesWork(task: OrderTask, job: NewPaidJob, credited = 0): boolean {
   const work = task.currentWork;
@@ -116,6 +138,15 @@ export function preparePaidJob(state: GameState, job: NewPaidJob, quotedCost: Re
   if (job.source === "plan") {
     owner = state.orders.tasks.find(value => value.id === job.taskId);
     if (!owner || owner.status !== "running" || owner.activeJob !== null || !matchesTarget(owner, job)) return failure(state, job, ORDER_IDENTITY_REASON, true);
+    const formationReason = formationPaymentReason(owner);
+    if (formationReason) return failure(state, job, formationReason, true);
+    if (owner.formationOrigin) {
+      if (!exactCost || !hasFormationFields(exactCost, RESOURCE_IDS) || !isOrderMoney(exactCost)) return failure(state, job, ORDER_IDENTITY_REASON, true);
+      for (const id of RESOURCE_IDS) {
+        const expected = multiplyOrderAmountInteger(owner.formationOrigin.quotedUnitCost[id], job.quantity);
+        if (expected === null || compareOrderAmounts(expected, exactCost[id]) !== 0) return failure(state, job, ORDER_IDENTITY_REASON, true);
+      }
+    }
     // Exact ship batch products must be supplied by the primitive's immutable per-unit price.
     const money = exactCost ?? (job.kind === "shipyard" ? null : quoteOrderMoney(quotedCost));
     const committed = committedOrderMoney(owner);

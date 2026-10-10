@@ -1,0 +1,20 @@
+/* Additive fleet design library. Original art, dispatch form and navigation stay intact. */
+.fleet-formations { margin:16px 0 24px; padding:14px; border:1px solid var(--border,#2b3547); border-radius:12px; overflow-wrap:anywhere; }
+.fleet-formations > summary { cursor:pointer; font-weight:700; }
+.formation-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:18px; align-items:start; }
+.formation-layout > *, .formation-ship-grid > * { min-width:0; }
+.formation-library { display:grid; gap:10px; }
+.formation-library article { display:grid; gap:8px; }
+.formation-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.formation-actions button { max-width:100%; white-space:normal; }
+.formation-editor > label, .formation-selection > label { display:flex; flex-direction:column; gap:6px; margin:12px 0; }
+.formation-editor input, .formation-selection select { box-sizing:border-box; width:100%; min-width:0; }
+.formation-ship-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.formation-ship-grid label { display:flex; flex-direction:column; gap:5px; }
+.formation-note, .formation-review p { line-height:1.65; }
+.formation-review { padding:12px; border:1px solid var(--border,#2b3547); border-radius:8px; margin-top:12px; }
+.formation-review-rows { display:grid; gap:10px; }
+.formation-review-rows article { border-bottom:1px solid var(--border,#2b3547); }
+.fleet-formations [hidden] { display:none !important; }
+@media(max-width:900px) { .formation-layout { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:420px) { .fleet-formations { padding:10px; } .formation-ship-grid { grid-template-columns:minmax(0,1fr); } }

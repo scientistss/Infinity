@@ -60,9 +60,10 @@ export class SaveSession {
         const committed = this.writeCandidate(candidate, true);
         if (!committed.ok) return;
         this.notice = `同源 v9/r${sourceRevision} 存档已备份并升级为 r${SAVE_REVISION}；` +
-          (sourceRevision === 6 ? "已有有限计划、运输授权、回执、付款队列与舰队保持原授权。" :
+          (sourceRevision >= 6 ? "已有有限计划、运输授权、回执、付款队列与舰队保持原授权。" :
             sourceRevision === 5 ? "已有有限计划、付款队列与舰队保持原授权，单源运输授权为空。" : "有限计划与单源运输授权为空，已有付款队列已保留。") +
-          "研究模板为空。" +
+          (sourceRevision >= 7 ? "已有研究模板完整保留。" : "研究模板为空。") +
+          "命名编成为空，已有计划不新增编成来源。" +
           "按原规则离线推进。" +
           (sourceRevision < 4 ? "旧星环自动卡已停用，请重新确认有限批次。" : "已有星环有限批次授权保持不变。");
         this.message = "已升级并保存本地存档";
