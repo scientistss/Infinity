@@ -7,7 +7,9 @@ read happened to take 15 seconds. Native browser localStorage is initially seede
 with explicitly synthetic, unmodified engine-state fixtures via storage_state;
 no runtime storage/engine writes are injected. Real HTTP and set_input_files(path)
 are required. The old fixed build is a separate known-limitation reproduction,
-never an import-success gate. Total native wall-clock budget is 90 seconds.
+never an import-success gate. Browser HTTP cache is explicitly disabled so native
+reloads revalidate complete executed script bytes; no cache-performance claim is
+made. Total native wall-clock budget is 90 seconds.
 """
 import argparse
 import asyncio
@@ -42,10 +44,11 @@ out.mkdir(parents=True, exist_ok=True)
 started = time.monotonic()
 report = {
     'completed': False, 'startedAt': int(time.time() * 1000),
-    'classification': 'HTTP / native clocks, RAF, interval, confirm and localStorage / gated native File.text result',
+    'classification': 'Cold HTTP reload / native clocks, RAF, interval, confirm and localStorage / gated native File.text result',
     'scope': 'Deterministic file-result timing across a real >=15s autosave; not an uninjected natural disk race, OS suspension, or atomic cross-tab CAS proof.',
     'fileSelection': 'Playwright locator.set_input_files with a real on-disk synthetic JSON file; input/change isTrusted observations are recorded, not assumed.',
-    'nativeExecution': 'Headless Chromium under Playwright defaults. No page clock/timer/visibility API emulation. This is not native hidden-tab throttling evidence.',
+    'nativeExecution': 'Headless Chromium under Playwright with explicitly disabled HTTP cache. No page clock/timer/visibility API emulation. This is not native hidden-tab throttling evidence.',
+    'httpEvidence': 'CDP Network cache disabled before each HTTP page boot and before reload. Every script response records HTTP metadata first. Intermediate redirects have no body read and must close to an actual final executed HTTP 200 response whose complete bytes match the pinned release SHA256. No cache or performance conclusion.',
     'storageEvidence': 'Native CDP DOMStorage mutation events plus passive native storage reads, including the first terminal-status MutationObserver microtask. Modal handlers issue no renderer/CDP read. Import event oldValue is independently compared to the preserved backup. Events prove observable mutations, not attempted identical-value setItem calls.',
     'operationCorrelation': 'Case/operation IDs are harness scope tags for one native file selection. Native events are independently matched by origin, localStorage, current key, and exact terminal bytes; these IDs are not browser-supplied transaction IDs.',
     'boundsSeconds': {'work': 76, 'evidence': 5, 'browserCleanup': 3, 'whole': 90},
@@ -96,8 +99,33 @@ def compact(value):
 def tracked(coro):
     task = asyncio.create_task(coro)
     background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    def finished(done):
+        background_tasks.discard(done)
+        if not done.cancelled():
+            error = done.exception()
+            if error is not None:
+                report['errors'].append({'category': 'background-observation', 'error': repr(error)})
+    task.add_done_callback(finished)
     return task
+
+
+async def drain_background_tasks():
+    deadline = time.monotonic() + 4
+    empty_turns = 0
+    while empty_turns < 2:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError('Script observation tasks did not drain within four seconds')
+        pending = tuple(background_tasks)
+        if pending:
+            empty_turns = 0
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), remaining)
+        else:
+            empty_turns += 1
+        # Dispatch completion callbacks and tasks spawned while the prior batch ran.
+        await asyncio.sleep(0)
+        if background_tasks:
+            empty_turns = 0
 
 
 PROBE = r"""(() => {
@@ -182,12 +210,19 @@ class Case:
         self.storage_events = []
         self.storage_changed = asyncio.Event()
         self.operation_id = None
+        self.asset_requests = {}
+        self.script_requests = {}
+        self.asset_rows = []
+        self.page_navigations = {}
+        self.navigations = []
+        self.network_sessions = []
         self.dialogs = []
         self.dialog_tasks = []
         self.dialog_done = asyncio.Event()
         self.release_info = None
         self.data = {'name': name, 'gateGroup': gate_group, 'mode': mode, 'seeded': seeded,
-                     'snapshots': [], 'dialogs': self.dialogs, 'storageMutations': self.storage_events}
+                     'snapshots': [], 'dialogs': self.dialogs, 'storageMutations': self.storage_events,
+                     'httpNavigations': self.navigations, 'scriptRequests': []}
         cases.append(self)
         report['cases'].append(self.data)
 
@@ -254,28 +289,160 @@ class Case:
         self.storage_changed.set()
 
     def attach(self, page):
+        self.page_navigations[page] = {'pageId': self.name + ':page:' + str(len(self.page_navigations) + 1),
+                                       'count': 0, 'current': None}
         page.set_default_timeout(5000)
         page.set_default_navigation_timeout(10000)
+        page.on('request', lambda request: self.record_script_request(page, request))
         page.on('pageerror', lambda error: report['errors'].append({'case': self.name, 'error': str(error)}))
         page.on('requestfailed', lambda request: report['failedRequests'].append({
             'case': self.name, 'url': request.url, 'type': request.resource_type, 'failure': request.failure}))
         page.on('response', lambda response: tracked(self.asset(response)))
         page.on('dialog', lambda dialog: self.dialog_tasks.append(tracked(self.on_dialog(dialog))))
 
-    async def asset(self, response):
-        if response.request.resource_type != 'script':
-            return
+    def begin_navigation(self, page, label):
+        owner = self.page_navigations[page]
+        owner['count'] += 1
+        navigation = {'pageId': owner['pageId'],
+            'navigationId': owner['pageId'] + ':navigation:' + str(owner['count']),
+            'label': label, 'hostWall': int(time.time() * 1000), 'scriptRequestIds': []}
+        owner['current'] = navigation
+        self.navigations.append(navigation)
+
+    def record_script_request(self, page, request):
         try:
+            if request.resource_type != 'script':
+                return
+            navigation = self.page_navigations[page]['current']
+            if navigation is None or request in self.script_requests:
+                raise RuntimeError('Script request has no navigation or was observed twice')
+            record = {'requestId': self.asset_request_id(request), 'pageId': navigation['pageId'],
+                'navigationId': navigation['navigationId'], 'url': request.url,
+                'method': request.method, 'hostWall': int(time.time() * 1000)}
+            # Capture attribution synchronously at request time, never at response/body completion.
+            self.script_requests[request] = record
+            navigation['scriptRequestIds'].append(record['requestId'])
+            self.data['scriptRequests'].append(record)
+        except Exception as error:
+            report['errors'].append({'case': self.name, 'category': 'script-request-observation',
+                'error': repr(error)})
+
+    def asset_request_id(self, request):
+        if request not in self.asset_requests:
+            self.asset_requests[request] = self.name + ':script-request:' + str(len(self.asset_requests) + 1)
+        return self.asset_requests[request]
+
+    def redirect_chain(self, request):
+        chain = []
+        seen = set()
+        while request is not None:
+            identity = self.asset_request_id(request)
+            if identity in seen or len(chain) >= 20:
+                raise RuntimeError('Script redirect chain cycles or exceeds 20 requests')
+            seen.add(identity)
+            chain.append({'requestId': identity, 'url': request.url, 'method': request.method,
+                          'requestType': request.resource_type})
+            request = request.redirected_from
+        return list(reversed(chain))
+
+    async def cold_http_session(self, page, label):
+        session = await self.context.new_cdp_session(page)
+        self.network_sessions.append(session)
+        await session.send('Network.enable')
+        await session.send('Network.setCacheDisabled', {'cacheDisabled': True})
+        self.data.setdefault('coldHttpCacheControls', []).append({
+            'label': label, 'hostWall': int(time.time() * 1000), 'cacheDisabled': True,
+            'method': 'Explicit CDP Network.setCacheDisabled before HTTP navigation'})
+        return session
+
+    async def asset(self, response):
+        request = response.request
+        if request.resource_type != 'script':
+            return
+        # Record status, identity and chain BEFORE asking for bytes. A redirect or
+        # body failure must never erase the HTTP facts needed to diagnose it.
+        asset = {'case': self.name, 'requestId': self.asset_request_id(request),
+                 'url': response.url, 'status': response.status, 'requestUrl': request.url,
+                 'requestMethod': request.method, 'requestType': request.resource_type,
+                 'finalUrl': None, 'hostWall': int(time.time() * 1000)}
+        self.asset_rows.append((request, asset))
+        report['scriptAssets'].append(asset)
+        try:
+            recorded = self.script_requests.get(request)
+            check(self.name, 'script response belongs to a synchronously observed navigation request',
+                  recorded is not None, {'requestId': asset['requestId'], 'url': response.url})
+            asset.update({'pageId': recorded['pageId'], 'navigationId': recorded['navigationId']})
+            asset.update({'fromServiceWorker': response.from_service_worker,
+                'redirectChain': self.redirect_chain(request),
+                'redirectedFrom': request.redirected_from.url if request.redirected_from else None,
+                'redirectedTo': request.redirected_to.url if request.redirected_to else None})
+            response_headers = response.headers
+            request_headers = request.headers
+            asset['cacheHeaders'] = {key: response_headers[key] for key in (
+                'etag', 'last-modified', 'cache-control', 'expires', 'age', 'date', 'vary',
+                'location', 'content-type', 'content-length') if key in response_headers}
+            asset['conditionalRequestHeaders'] = {key: request_headers[key] for key in (
+                'if-none-match', 'if-modified-since', 'cache-control', 'pragma') if key in request_headers}
+            if 300 <= response.status <= 399 and response.status != 304:
+                asset['classification'] = 'Intermediate HTTP redirect; final executed response must be verified'
+                asset['bodyRead'] = False
+                # redirected_to may arrive after the response callback. The final
+                # chain audit runs after all actual requests and asset tasks finish.
+                return
+            asset['classification'] = 'Final executed script response'
+            asset['finalUrl'] = response.url
+            check(self.name, 'cold HTTP final executed script response is 200', response.status == 200,
+                  {'url': response.url, 'status': response.status, 'requestId': asset['requestId']})
             body = await response.body()
             digest = hashlib.sha256(body).hexdigest()
             path = urlparse(response.url).path.removeprefix(urlparse(self.url).path)
-            asset = {'case': self.name, 'url': response.url, 'releasePath': path,
-                     'status': response.status, 'sha256': digest, 'bytes': len(body)}
-            report['scriptAssets'].append(asset)
+            asset.update({'releasePath': path, 'sha256': digest, 'bytes': len(body), 'bodyRead': True})
             check(self.name, 'actual HTTP script bytes match the pinned release manifest',
-                  self.release_info is not None and self.release_info.get('files', {}).get(path) == digest, asset)
+                  self.release_info is not None and self.release_info.get('files', {}).get(path) == digest, asset.copy())
+            asset['verifiedCompleteBody'] = True
         except Exception as error:
-            report['errors'].append({'case': self.name, 'asset': response.url, 'error': str(error)})
+            asset['error'] = str(error)
+            report['errors'].append({'case': self.name, 'category': 'asset-observation',
+                'asset': response.url, 'status': response.status, 'requestId': asset['requestId'],
+                'error': str(error)})
+
+    def verify_asset_chains(self):
+        rows_by_id = {row['requestId']: row for _, row in self.asset_rows}
+        for request, recorded in self.script_requests.items():
+            responses = [row for _, row in self.asset_rows if row['requestId'] == recorded['requestId']]
+            check(self.name, 'every actual script request has exactly one observed response',
+                  len(responses) == 1, recorded.copy())
+            row = responses[0]
+            final = request
+            visited = set()
+            while final.redirected_to is not None:
+                identity = self.asset_request_id(final)
+                if identity in visited or len(visited) >= 20:
+                    raise RuntimeError('Script redirect chain cycles or exceeds 20 requests')
+                visited.add(identity)
+                final = final.redirected_to
+            final_id = self.asset_request_id(final)
+            terminal = rows_by_id.get(final_id)
+            row['redirectedTo'] = request.redirected_to.url if request.redirected_to else None
+            row['finalUrl'] = final.url
+            row['finalRequestId'] = final_id
+            row['completeRedirectChain'] = self.redirect_chain(final)
+            check(self.name, 'every observed script response closes to its actual verified final 200 body',
+                  terminal is not None and terminal['status'] == 200 and terminal.get('verifiedCompleteBody') is True
+                  and terminal.get('pageId') == recorded['pageId']
+                  and terminal.get('navigationId') == recorded['navigationId']
+                  and (request is final or (300 <= row['status'] <= 399 and row['status'] != 304)),
+                  {'requestId': row['requestId'], 'status': row['status'], 'finalRequestId': final_id,
+                   'finalUrl': final.url, 'chain': row['completeRedirectChain']})
+        for navigation in self.navigations:
+            verified = [row['requestId'] for _, row in self.asset_rows
+                if row.get('pageId') == navigation['pageId']
+                and row.get('navigationId') == navigation['navigationId']
+                and row['requestId'] in navigation['scriptRequestIds']
+                and row['status'] == 200 and row.get('verifiedCompleteBody') is True]
+            navigation['verifiedFinalScriptRequestIds'] = verified
+            check(self.name, 'each boot/reload/second-tab navigation has its own verified complete 200 script body',
+                  bool(verified), navigation.copy())
 
     async def boot(self):
         parsed = urlparse(self.url)
@@ -305,10 +472,11 @@ class Case:
         await self.context.add_init_script(PROBE.replace('__KEY__', json.dumps(KEY)).replace('__BACKUP__', json.dumps(BACKUP)).replace('__CASE_ID__', json.dumps(self.name)))
         self.page = await self.context.new_page()
         self.attach(self.page)
-        self.cdp = await self.context.new_cdp_session(self.page)
+        self.cdp = await self.cold_http_session(self.page, 'primary before boot')
         await self.cdp.send('DOMStorage.enable')
         for event_name in ('domStorageItemAdded', 'domStorageItemUpdated', 'domStorageItemRemoved', 'domStorageItemsCleared'):
             self.cdp.on('DOMStorage.' + event_name, lambda event, kind=event_name: self.record_storage_event(kind, event))
+        self.begin_navigation(self.page, 'primary boot')
         response = await self.page.goto(self.url, wait_until='load')
         check(self.name, 'production page served successfully over HTTP', response is not None and response.status == 200)
         await self.page.locator('[data-bind="amount-metal"]').wait_for()
@@ -491,6 +659,10 @@ class Case:
             check(self.name, 'native UI reported the verified import in its first terminal microtask', terminal['status'] == '已导入并存入本地')
             (out / f'{self.name}-synthetic-accepted.json').write_text(accepted_raw)
             (out / f'{self.name}-synthetic-overwritten-current-backup.json').write_text(replaced_raw)
+            await self.cdp.send('Network.setCacheDisabled', {'cacheDisabled': True})
+            self.data['coldHttpCacheControls'].append({'label': 'primary before native reload',
+                'hostWall': int(time.time() * 1000), 'cacheDisabled': True})
+            self.begin_navigation(self.page, 'primary native reload')
             await self.page.reload(wait_until='load')
             await self.page.locator('[data-bind="amount-metal"]').wait_for()
             await self.settle_frames()
@@ -524,6 +696,8 @@ class Case:
         elif self.mode == 'conflict':
             other = await self.context.new_page()
             self.attach(other)
+            await self.cold_http_session(other, 'real second tab before boot')
+            self.begin_navigation(other, 'real second tab boot')
             response = await other.goto(self.url, wait_until='load')
             check(self.name, 'real second tab served successfully', response is not None and response.status == 200)
             await self.click_manual_save(other)
@@ -593,8 +767,12 @@ async def work():
         if isinstance(result, BaseException):
             item.data['failure'] = repr(result)
             report['errors'].append({'case': item.name, 'error': repr(result)})
-    if background_tasks:
-        await asyncio.wait_for(asyncio.gather(*list(background_tasks), return_exceptions=True), 4)
+    await drain_background_tasks()
+    for item in selected:
+        try:
+            item.verify_asset_chains()
+        except Exception as error:
+            report['errors'].append({'case': item.name, 'category': 'asset-chain-audit', 'error': repr(error)})
     report['mainCorrectnessPassed'] = all(c.data.get('completed', False) for c in selected if c.mode != 'old')
     report['oldKnownLimitationReproduced'] = selected[0].data.get('completed', False)
     check('suite', 'new main correctness gate passed independently of the old limitation', report['mainCorrectnessPassed'])
