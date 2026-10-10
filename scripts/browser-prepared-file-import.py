@@ -46,7 +46,8 @@ report = {
     'scope': 'Deterministic file-result timing across a real >=15s autosave; not an uninjected natural disk race, OS suspension, or atomic cross-tab CAS proof.',
     'fileSelection': 'Playwright locator.set_input_files with a real on-disk synthetic JSON file; input/change isTrusted observations are recorded, not assumed.',
     'nativeExecution': 'Headless Chromium under Playwright defaults. No page clock/timer/visibility API emulation. This is not native hidden-tab throttling evidence.',
-    'storageEvidence': 'Read-only CDP DOMStorage snapshots/events and passive native reads. Events prove observable mutations, not attempted identical-value setItem calls.',
+    'storageEvidence': 'Native CDP DOMStorage mutation events plus passive native storage reads, including the first terminal-status MutationObserver microtask. Modal handlers issue no renderer/CDP read. Import event oldValue is independently compared to the preserved backup. Events prove observable mutations, not attempted identical-value setItem calls.',
+    'operationCorrelation': 'Case/operation IDs are harness scope tags for one native file selection. Native events are independently matched by origin, localStorage, current key, and exact terminal bytes; these IDs are not browser-supplied transaction IDs.',
     'boundsSeconds': {'work': 76, 'evidence': 5, 'browserCleanup': 3, 'whole': 90},
     'url': args.url, 'beforeUrl': args.before_url, 'expectedBeforeSha': args.expected_before_sha, 'expectedAfterSha': args.expected_after_sha,
     'checks': [], 'cases': [], 'errors': [], 'failedRequests': [], 'scriptAssets': [],
@@ -100,7 +101,8 @@ def tracked(coro):
 
 
 PROBE = r"""(() => {
- const key=__KEY__, backup=__BACKUP__;
+ if(location.protocol!=='http:' && location.protocol!=='https:')return;
+ const key=__KEY__, backup=__BACKUP__, caseId=__CASE_ID__;
  const refs={date:Date.now, performance:performance.now, raf:requestAnimationFrame,
    interval:setInterval, timeout:setTimeout, confirm:window.confirm,
    get:Storage.prototype.getItem, set:Storage.prototype.setItem,
@@ -108,7 +110,7 @@ PROBE = r"""(() => {
    file:File.prototype.text};
  const isNative=fn=>/\[native code\]/.test(Function.prototype.toString.call(fn));
  const p={startedWall:Date.now(),startedPerf:performance.now(),frames:0,lastFrame:null,
-   statusChanges:[],storageEvents:[],fileEvents:[],actionEvents:[],visibilityEvents:[],files:[],released:0,returned:0,
+   statusChanges:[],terminalObservations:[],storageEvents:[],fileEvents:[],actionEvents:[],visibilityEvents:[],files:[],released:0,returned:0,
    initialVisibility:document.visibilityState};
  const raw=()=>refs.get.call(localStorage,key);
  const status=()=>document.querySelector('[data-bind="status"]')?.textContent ?? '';
@@ -133,11 +135,19 @@ PROBE = r"""(() => {
    played:document.querySelector('[data-bind="played"]')?.textContent,
    integrity:p.integrity(),released:p.released,returned:p.returned,
    files:p.files.map(({release,...entry})=>entry),
-   statusChanges:p.statusChanges,storageEvents:p.storageEvents,fileEvents:p.fileEvents,
+   statusChanges:p.statusChanges,terminalObservations:p.terminalObservations,storageEvents:p.storageEvents,fileEvents:p.fileEvents,
    initialVisibility:p.initialVisibility,visibilityEvents:p.visibilityEvents,actionEvents:p.actionEvents});
  let previous='';
  new MutationObserver(()=>{const next=status();if(next===previous)return;previous=next;
-   p.statusChanges.push({status:next,wall:Date.now(),perf:performance.now(),raw:raw()});
+   const observed={status:next,wall:Date.now(),perf:performance.now(),raw:raw()};
+   p.statusChanges.push(observed);
+   if(next==='已导入并存入本地'||next==='已取消文件导入，当前进度未改动'){
+     const file=p.files[p.files.length-1];
+     p.terminalObservations.push({...observed,caseId,operationId:file?.operationId??null,
+       fileSelectedWall:file?.selectedWall??null,fileSelectedPerf:file?.selectedPerf??null,
+       fileReturnedWall:file?.returnedWall??null,fileReturnedPerf:file?.returnedPerf??null,
+       backups:backups(),integrity:p.integrity()});
+   }
  }).observe(document,{subtree:true,childList:true,characterData:true});
  for(const type of ['input','change'])document.addEventListener(type,event=>{
    if(event.target?.matches?.('[data-bind="import-file"]'))p.fileEvents.push({type,
@@ -153,7 +163,7 @@ PROBE = r"""(() => {
  const count=now=>{p.frames++;p.lastFrame=now;refs.raf.call(window,count);};
  refs.raf.call(window,count);
  File.prototype.text=async function(){
-   const entry={name:this.name,size:this.size,selectedWall:Date.now(),selectedPerf:performance.now(),ready:false};
+   const entry={operationId:caseId+':file:'+(p.files.length+1),name:this.name,size:this.size,selectedWall:Date.now(),selectedPerf:performance.now(),ready:false};
    p.files.push(entry);
    const text=await refs.file.call(this); // Always perform the real native read.
    entry.nativeText=text;entry.ready=true;entry.readyWall=Date.now();entry.readyPerf=performance.now();
@@ -170,6 +180,8 @@ class Case:
         self.name, self.url, self.mode, self.seeded = name, url, mode, seeded
         self.context = self.page = self.cdp = None
         self.storage_events = []
+        self.storage_changed = asyncio.Event()
+        self.operation_id = None
         self.dialogs = []
         self.dialog_tasks = []
         self.dialog_done = asyncio.Event()
@@ -185,30 +197,32 @@ class Case:
         check(self.name, f'{label}: clocks, scheduling, confirm and Storage remain native', all(value['integrity'].values()), value['integrity'])
         return value
 
-    async def storage(self):
-        result = await self.cdp.send('DOMStorage.getDOMStorageItems', {'storageId': {
-            'securityOrigin': self.origin, 'isLocalStorage': True}})
-        values = dict(result['entries'])
-        return {'current': values.get(KEY), 'backups': {k: v for k, v in values.items()
-            if k == BACKUP or k.startswith(BACKUP + '.')}}
-
     async def on_dialog(self, dialog):
         row = {'type': dialog.type, 'message': dialog.message, 'openedHostWall': int(time.time() * 1000)}
         self.dialogs.append(row)
         try:
-            # Browser runtime is modal-paused. CDP storage reads need no page JS.
-            row['storageAtDialog'] = await asyncio.wait_for(self.storage(), 3)
+            # No command needing a renderer response is issued while the modal is
+            # open. The last pre-release native read supplies prompt metadata only.
+            # Exact overwritten bytes are proved later by the native update event.
             if self.mode in ('accept', 'reject'):
-                current = json.loads(row['storageAtDialog']['current'])
+                observed_raw = self.release_snapshot['current']
+                observed = [event for event in self.storage_events if event.get('key') == KEY and 'newValue' in event]
+                if observed:
+                    observed_raw = observed[-1]['newValue']
+                row['promptMetadataBaseline'] = {'current': observed_raw,
+                    'basis': 'Latest already-observed native current bytes; not a modal-time read'}
+                row['mutationsAlreadyObservedAtOpening'] = len(self.storage_events)
+                current = json.loads(observed_raw)
                 active = next(p for p in current['state']['planets'] if p['id'] == current['state']['activePlanetId'])
                 wanted = [f"v{incoming['version']}/r{incoming['revision']}",
                           f"第 {current['state']['stats']['launches'] + 1} 轮",
-                          f"{len(current['state']['planets'])} 颗星球", active['name']]
-                check(self.name, 'native confirmation identifies source v/r and current round/planet count/name',
+                          f"{len(current['state']['planets'])} 颗星球", active['name'],
+                          '读取期间产生的变化也会被替换', '保留当前已保存原件', '写入校验成功后才采用']
+                check(self.name, 'native confirmation identifies source/current world and warns about replacement/backup/write verification',
                       dialog.type == 'confirm' and all(part in dialog.message for part in wanted), {'required': wanted, 'actual': dialog.message})
-                check(self.name, 'native confirmation opens before any replacement/backup',
+                check(self.name, 'pre-release baseline is current world with no backup, and none is observed at confirmation opening',
                       current['state']['planets'][0]['name'] != incoming['state']['planets'][0]['name']
-                      and not row['storageAtDialog']['backups'])
+                      and not self.release_snapshot['backups'] and not self.backup_mutations())
                 # A real modal delay distinguishes a rejected rebase from ordinary RAF progress.
                 await asyncio.sleep(0.8)
                 row['beforeDecisionHostWall'] = int(time.time() * 1000)
@@ -228,6 +242,16 @@ class Case:
         finally:
             row['returnedHostWall'] = int(time.time() * 1000)
             self.dialog_done.set()
+
+    def record_storage_event(self, kind, event):
+        storage_id = event.get('storageId', {})
+        if storage_id.get('isLocalStorage') is not True or storage_id.get('securityOrigin') != self.origin:
+            self.data['ignoredStorageEventCount'] = self.data.get('ignoredStorageEventCount', 0) + 1
+            return
+        self.storage_events.append({**event, 'kind': kind, 'case': self.name,
+            'operationId': self.operation_id, 'hostWall': int(time.time() * 1000),
+            'hostMonotonic': time.monotonic()})
+        self.storage_changed.set()
 
     def attach(self, page):
         page.set_default_timeout(5000)
@@ -278,14 +302,13 @@ class Case:
         check(self.name, 'served release uses the current fixture format',
               self.release_info.get('saveVersion') == incoming['version']
               and self.release_info.get('saveRevision') == args.expected_revision)
-        await self.context.add_init_script(PROBE.replace('__KEY__', json.dumps(KEY)).replace('__BACKUP__', json.dumps(BACKUP)))
+        await self.context.add_init_script(PROBE.replace('__KEY__', json.dumps(KEY)).replace('__BACKUP__', json.dumps(BACKUP)).replace('__CASE_ID__', json.dumps(self.name)))
         self.page = await self.context.new_page()
         self.attach(self.page)
         self.cdp = await self.context.new_cdp_session(self.page)
         await self.cdp.send('DOMStorage.enable')
         for event_name in ('domStorageItemAdded', 'domStorageItemUpdated', 'domStorageItemRemoved', 'domStorageItemsCleared'):
-            self.cdp.on('DOMStorage.' + event_name, lambda event, kind=event_name: self.storage_events.append({
-                'kind': kind, 'hostWall': int(time.time() * 1000), **event}))
+            self.cdp.on('DOMStorage.' + event_name, lambda event, kind=event_name: self.record_storage_event(kind, event))
         response = await self.page.goto(self.url, wait_until='load')
         check(self.name, 'production page served successfully over HTTP', response is not None and response.status == 200)
         await self.page.locator('[data-bind="amount-metal"]').wait_for()
@@ -293,9 +316,13 @@ class Case:
         first = await self.snapshot('before selecting file')
         check(self.name, 'clean case has no pre-existing backup', not first['backups'])
         check(self.name, 'initial current slot matches case type', (first['current'] is not None) == self.seeded)
+        self.operation_id = self.name + ':file:1'
+        self.data['fileOperationId'] = self.operation_id
         await self.page.locator('[data-bind="import-file"]').set_input_files(str(incoming_path.resolve()))
         await self.page.wait_for_function('window.__preparedProbe.files.length===1 && window.__preparedProbe.files[0].ready')
         self.pending = await self.snapshot('native file read resolved and result gated')
+        check(self.name, 'native selected file belongs to this case and this one file operation',
+              len(self.pending['files']) == 1 and self.pending['files'][0]['operationId'] == self.operation_id)
         check(self.name, 'file result becomes pending before the first 15-second timer can run',
               self.pending['perf'] - self.pending['startedPerf'] < 12000
               and not any(row['status'] == '已自动保存' for row in self.pending['statusChanges']))
@@ -337,12 +364,11 @@ class Case:
         return [e for e in self.storage_events[index:] if e.get('key') == KEY or e.get('key') == BACKUP or e.get('key', '').startswith(BACKUP + '.')]
 
     async def release(self):
+        # Save the native baseline before scheduling release, so the modal handler
+        # already has metadata and never needs to ask the paused renderer for it.
+        self.release_snapshot = await self.snapshot('immediately before native File.text result release')
         self.release_event_index = len(self.storage_events)
-        self.release_snapshot = await self.page.evaluate("""() => {
-            const p=window.__preparedProbe,before=p.snapshot();
-            setTimeout(()=>p.files[0].release(),0);return before;
-        }""")
-        self.data['snapshots'].append({'label': 'immediately before native File.text result release', **self.release_snapshot})
+        await self.page.evaluate('() => {setTimeout(()=>window.__preparedProbe.files[0].release(),0);}')
 
     async def wait_for_release(self):
         await self.page.wait_for_function('''() => {
@@ -364,9 +390,56 @@ class Case:
     async def settle_frames(self):
         await self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
 
+    async def click_manual_save(self, page):
+        modal = page.locator('[data-bind="offline-modal"]')
+        if await modal.is_visible():
+            await page.locator('[data-action="dismiss-offline"]').click()
+            await modal.wait_for(state='hidden')
+            self.data.setdefault('manualSaveDismissals', []).append({
+                'hostWall': int(time.time() * 1000),
+                'method': 'Native Playwright click on actual dismiss-offline UI before intentional manual retirement'})
+        await page.locator('[data-action="save"]').click()
+
     async def manual_save(self):
-        await self.page.locator('[data-action="save"]').click()
+        await self.click_manual_save(self.page)
         return await self.snapshot('after explicit native-input manual save')
+
+    def matching_import_updates(self, terminal):
+        return [event for event in self.mutations_since(self.release_event_index)
+            if event.get('kind') == 'domStorageItemUpdated' and event.get('key') == KEY
+            and event.get('case') == self.name and terminal.get('caseId') == self.name
+            and event.get('operationId') == self.operation_id == terminal.get('operationId')
+            and event.get('storageId', {}).get('isLocalStorage') is True
+            and event.get('storageId', {}).get('securityOrigin') == self.origin
+            and event.get('newValue') == terminal['raw']]
+
+    async def await_import_update(self, terminal):
+        # Renderer terminal reads and browser-process DOMStorage notifications have
+        # separate delivery queues. Wait on host-side events only, after the modal
+        # has returned; never query the paused renderer or manufacture a mutation.
+        began = time.monotonic()
+        deadline = began + 3
+        proof = {'operationId': self.operation_id, 'origin': self.origin,
+                 'currentKey': KEY, 'terminalRawSha256': sha(terminal['raw']),
+                 'startedHostWall': int(time.time() * 1000), 'maximumSeconds': 3}
+        self.data['importUpdateArrivalBarrier'] = proof
+        while not self.matching_import_updates(terminal):
+            self.storage_changed.clear()
+            if self.matching_import_updates(terminal):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(self.storage_changed.wait(), remaining)
+            except asyncio.TimeoutError:
+                break
+        proof['elapsedSeconds'] = time.monotonic() - began
+        updates = self.matching_import_updates(terminal)
+        proof['matchingEvents'] = len(updates)
+        check(self.name, 'native same-operation import notification arrived within the bounded host-only barrier',
+              bool(updates), proof)
+        return updates
 
     async def verify_dialog_result(self):
         await self.release()
@@ -377,23 +450,47 @@ class Case:
               len(self.dialogs) == 1 and not self.dialogs[0].get('error'))
         await self.settle_frames()
         after = await self.snapshot('after confirmation returned')
-        latest = self.dialogs[0]['storageAtDialog']
+        latest = self.release_snapshot
+        terminal_rows = [row for row in after['terminalObservations']
+            if row.get('caseId') == self.name and row.get('operationId') == self.operation_id
+            and row['status'] == ('已导入并存入本地' if self.mode == 'accept' else '已取消文件导入，当前进度未改动')]
+        check(self.name, 'first terminal status microtask captured actual native current and backup bytes',
+              len(terminal_rows) == 1 and all(terminal_rows[0]['integrity'].values()))
+        terminal = terminal_rows[0]
+        self.data['firstTerminalObservation'] = terminal
+        selected_file = after['files'][0]
+        check(self.name, 'terminal observation belongs to this selected file and occurs after its native result returned',
+              selected_file['operationId'] == terminal['operationId'] == self.operation_id
+              and terminal['fileSelectedWall'] == selected_file['selectedWall']
+              and terminal['fileSelectedPerf'] == selected_file['selectedPerf']
+              and terminal['fileReturnedWall'] == selected_file['returnedWall']
+              and terminal['fileReturnedPerf'] == selected_file['returnedPerf']
+              and terminal['wall'] >= selected_file['returnedWall']
+              and terminal['perf'] >= selected_file['returnedPerf'])
         if self.mode == 'accept':
-            accepted = json.loads(after['current'])
+            accepted_raw = terminal['raw']
+            accepted = json.loads(accepted_raw)
+            import_updates = await self.await_import_update(terminal)
+            check(self.name, 'one native current-update event exactly matches first successful persisted current bytes',
+                  len(import_updates) == 1 and isinstance(import_updates[0].get('oldValue'), str), compact(import_updates))
+            replaced_raw = import_updates[0]['oldValue']
+            self.data['importCurrentUpdate'] = import_updates[0]
             check(self.name, 'acceptance persists exact complete incoming engine-state payload', accepted['state'] == incoming['state'])
             expected_raw = await self.page.evaluate('({source,savedAt,lastTickAt}) => JSON.stringify({...source,savedAt,lastTickAt},null,2)',
                 {'source': incoming, 'savedAt': accepted['savedAt'], 'lastTickAt': accepted['lastTickAt']})
             check(self.name, 'entire persisted envelope matches native JS serialization of source with only fresh timestamps substituted',
-                  after['current'] == expected_raw, {'expectedRawSha256': sha(expected_raw), 'actualRawSha256': sha(after['current'])})
-            check(self.name, 'backup is byte-for-byte latest current slot read during the native dialog',
-                  len(after['backups']) == 1 and next(iter(after['backups'].values())) == latest['current'])
+                  accepted_raw == expected_raw, {'expectedRawSha256': sha(expected_raw), 'actualRawSha256': sha(accepted_raw)})
+            check(self.name, 'backup is byte-for-byte the actual overwritten current from native update event oldValue',
+                  len(terminal['backups']) == 1 and next(iter(terminal['backups'].values())) == replaced_raw
+                  and after['backups'] == terminal['backups']
+                  and replaced_raw != accepted_raw)
             check(self.name, 'acceptance uses a fresh paired clock after confirmation, never the file-selection clock',
                   accepted['savedAt'] == accepted['lastTickAt']
                   and accepted['savedAt'] >= self.dialogs[0]['beforeDecisionHostWall'] - 2
-                  and accepted['savedAt'] <= after['wall'])
-            check(self.name, 'native UI reports the verified import', after['status'] == '已导入并存入本地')
-            (out / f'{self.name}-synthetic-accepted.json').write_text(after['current'])
-            (out / f'{self.name}-synthetic-preconfirmation-backup.json').write_text(latest['current'])
+                  and accepted['savedAt'] <= terminal['wall'])
+            check(self.name, 'native UI reported the verified import in its first terminal microtask', terminal['status'] == '已导入并存入本地')
+            (out / f'{self.name}-synthetic-accepted.json').write_text(accepted_raw)
+            (out / f'{self.name}-synthetic-overwritten-current-backup.json').write_text(replaced_raw)
             await self.page.reload(wait_until='load')
             await self.page.locator('[data-bind="amount-metal"]').wait_for()
             await self.settle_frames()
@@ -409,7 +506,8 @@ class Case:
                   and reloaded['backups'] == after['backups'])
         else:
             check(self.name, 'rejection leaves current and backup bytes unchanged',
-                  after['current'] == latest['current'] and after['backups'] == latest['backups'])
+                  terminal['raw'] == latest['current'] and terminal['backups'] == latest['backups']
+                  and after['current'] == latest['current'] and after['backups'] == latest['backups'])
             check(self.name, 'rejection performs no observable current/backup mutation', not self.mutations_since(self.release_event_index))
             check(self.name, 'native UI reports cancellation', after['status'] == '已取消文件导入，当前进度未改动')
             saved = await self.manual_save()
@@ -428,7 +526,7 @@ class Case:
             self.attach(other)
             response = await other.goto(self.url, wait_until='load')
             check(self.name, 'real second tab served successfully', response is not None and response.status == 200)
-            await other.locator('[data-action="save"]').click()
+            await self.click_manual_save(other)
             await self.page.wait_for_function("window.__preparedProbe.storageEvents.some(e=>e.trusted) && document.querySelector('[data-bind=\"status\"]').textContent.includes('其他标签页')")
             self.before_release = await self.snapshot('real other-tab native save created observed conflict')
             check(self.name, 'conflict comes from a trusted native storage event',
