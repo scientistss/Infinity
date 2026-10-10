@@ -54,7 +54,7 @@ INIT=r"""(() => {
  const p={events:[],fault:null,files:[],gateFiles:false};
  Storage.prototype.setItem=function(k,v){
   if(this===localStorage&&String(k)===key){
-   p.events.push({type:'write',at:elapsed,chars:String(v).length,injected:p.fault==='write'||p.fault==='drop'});
+   p.events.push({type:'write',key:String(k),fault:p.fault,at:elapsed,chars:String(v).length,injected:p.fault==='write'||p.fault==='drop'});
    if(p.fault==='write')throw new DOMException('Labeled controlled current-slot fault','QuotaExceededError');
    if(p.fault==='drop')return; // Labeled acknowledged-but-dropped write; native readback must reject it.
   }
@@ -581,8 +581,16 @@ def run_cases():
     frame(page);whole(page,'incoming.initial');context.close()
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
-    context,page=boot();baseline=raw(page);page.evaluate('window.__renderProbe.fault("write")')
-    tab(page,'save');click(page,'[data-action="save"]');status=page.locator('[data-bind="status"]').inner_text()
+    context,page=boot();tab(page,'save');baseline=raw(page)
+    # Migration already wrote canonical r9 at time zero. Re-saving identical
+    # bytes is a legitimate no-op, so make only the save envelope 1 ms newer.
+    before_events=page.evaluate('window.__renderProbe.snapshot().events')
+    page.evaluate('window.__renderProbe.advance(1)')
+    check('fault preparation advances no RAF or persisted game state',raw(page)==baseline and page.evaluate('window.__renderProbe.snapshot().events')==before_events)
+    page.evaluate('window.__renderProbe.fault("write")')
+    click(page,'[data-action="save"]');status=page.locator('[data-bind="status"]').inner_text()
+    injected=[event for event in page.evaluate('window.__renderProbe.snapshot().events')[len(before_events):] if event['type']=='write' and event['injected']]
+    check('the labelled current-slot setItem fault actually executes once in its own phase',len(injected)==1 and injected[0]['at']==1 and injected[0]['key']==KEY and injected[0]['fault']=='write')
     check('native delegated Storage fault exposes protection','失败' in status or '无法' in status or '暂停' in status)
     clear_updates(page)
     for at in (17,34,51,100,200,1000):frame(page,at)
