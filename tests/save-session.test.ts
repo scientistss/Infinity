@@ -14,9 +14,15 @@ function game(clicks = 17) {
   return { ...state, manualClicks: clicks };
 }
 function raw(clicks = 17) { return exportSave(game(clicks), NOW); }
-function legacy(revision: 2 | 3 | 4, source = raw()) {
+function legacy(revision: 2 | 3 | 4 | 5, source = raw()) {
   const file = JSON.parse(source);
   file.revision = revision;
+  for (const fleet of file.state.fleets) delete fleet.orderTransport;
+  if (revision === 5) {
+    delete file.state.orders.nextWorkId;
+    for (const task of file.state.orders.tasks) { delete task.transport; delete task.currentWork; }
+    return JSON.stringify(file);
+  }
   delete file.state.orders;
   for (const planet of file.state.planets) {
     for (const job of [...planet.buildQueue, ...planet.shipyardQueue]) {
@@ -105,7 +111,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([]);
   });
 
-  it.each([2, 3, 4] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
+  it.each([2, 3, 4, 5] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     const session = new SaveSession(store, NOW);
     expect(session.mode).toBe("ready");
@@ -115,7 +121,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
   });
 
-  it.each([2, 3, 4] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
+  it.each([2, 3, 4, 5] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     store.write = () => { throw new Error("quota full"); };
     const session = new SaveSession(store, NOW + 5000);
@@ -127,7 +133,7 @@ describe("SaveSession load and version protection", () => {
     expect(session.export(game(99))).toEqual({ raw: source, protected: true });
   });
 
-  it.each([2, 3, 4] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
+  it.each([2, 3, 4, 5] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
     for (const fault of ["backup-write", "backup-read", "backup-noop", "current-write", "current-read", "current-noop", "current-write-then-throw"] as const) {
       const source = legacy(revision), store = new MemoryStore(source);
       let currentWritten = false;

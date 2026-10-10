@@ -40,7 +40,7 @@ function fleet(_state: GameState, ships: Fleet["ships"], overrides: Partial<Flee
   return {
     id: 1, originId: "homeworld", target: { galaxy: 1, system: 51, position: 8 },
     mission: "transport", ships, cargo: emptyCargo(), duration: 30, remaining: 30,
-    elapsed: 0, returning: true, ...overrides,
+    elapsed: 0, returning: true, orderTransport: null, ...overrides,
   };
 }
 

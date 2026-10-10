@@ -1,6 +1,6 @@
 /** Compare migrations of real preceding serializers and paid-queue primitives.
  * Inputs are synthetic, pre-funded states; this is not natural player progression.
- * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root
+ * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root
  */
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
@@ -8,17 +8,23 @@ import { pathToFileURL } from "node:url";
 import { importSave } from "../src/game/save.ts";
 
 const roots = process.argv.slice(2);
-if (roots.length !== 3) throw Error("Provide verified source directories for r2, r3 and r4");
+if (roots.length !== 4) throw Error("Provide verified source directories for r2, r3, r4 and r5");
 function priorProjection(state, revision) {
   const s = structuredClone(state);
-  delete s.orders;
-  for (const planet of s.planets) {
-    for (const job of planet.buildQueue) { delete job.jobId; delete job.taskId; }
-    for (const job of planet.shipyardQueue) {
-      delete job.jobId; delete job.taskId; delete job.orderedCount; delete job.paidPerUnit;
+  for (const fleet of s.fleets ?? []) delete fleet.orderTransport;
+  if (revision < 5) {
+    delete s.orders;
+    for (const planet of s.planets) {
+      for (const job of planet.buildQueue) { delete job.jobId; delete job.taskId; }
+      for (const job of planet.shipyardQueue) {
+        delete job.jobId; delete job.taskId; delete job.orderedCount; delete job.paidPerUnit;
+      }
     }
+    for (const job of s.research.queue) { delete job.jobId; delete job.taskId; }
+  } else {
+    delete s.orders.nextWorkId;
+    for (const task of s.orders.tasks) { delete task.transport; delete task.currentWork; }
   }
-  for (const job of s.research.queue) { delete job.jobId; delete job.taskId; }
   if (revision < 4) {
     delete s.arcade.nextRunId; delete s.arcade.autoBatch;
     for (const ticket of s.arcade.runs) delete ticket.id;
@@ -50,21 +56,60 @@ for (let index = 0; index < roots.length; index++) {
     state = next.state;
   }
   state = yard.advanceShipyard(state, yard.unitSeconds(state, "small_cargo") * 2.5, false).state;
+  if (revision === 5) {
+    const [orders, fleet] = await Promise.all([load("orders"), load("fleet")]);
+    for (const target of [
+      {kind:"building",building:"crystal_mine",targetLevel:5},
+      {kind:"research",tech:"energy_tech",targetLevel:5},
+      {kind:"shipyard",unit:"light_fighter",quantity:5},
+    ]) {
+      const result = orders.createOrderTask(state, {...target,planetId:state.activePlanetId,
+        expectedNextTaskId:state.orders.nextTaskId,budget:{metal:"1000000",crystal:"1000000",deuterium:"1000000"}});
+      assert.equal(result.ok,true,`r5 real finite plan creation failed: ${result.reason}`);
+      state = result.state;
+    }
+    state = orders.advanceOrderPlans(state,10);
+    assert.ok(state.orders.tasks.every(t=>t.activeJob), "All three real r5 plans must have paid work");
+    // Cancel the remaining ordinary ship batch through its real refund path, then
+    // partially build the plan-owned batch. Migration must retain its paid watermark.
+    const cancellation = yard.cancelUnits(state,0);
+    assert.equal(cancellation.ok,true,cancellation.reason);
+    state = yard.advanceShipyard(cancellation.state,yard.unitSeconds(cancellation.state,"light_fighter")*2.5,false).state;
+    assert.equal(state.orders.tasks.find(t=>t.kind==="shipyard").completedUnits,2);
+    const origin = state.planets.find(p=>p.id===state.activePlanetId);
+    state.planets.push(factory.createPlanet("synthetic-r5-colony", {...origin.coordinates,position:origin.coordinates.position===9?10:9}));
+    const flight = fleet.sendFleet(state,{mission:"transport",target:state.planets.at(-1).coordinates,
+      ships:{small_cargo:1},cargo:{metal:decimal.big(13),crystal:decimal.big(17),deuterium:decimal.big(19)},speedPercent:100});
+    assert.equal(flight.ok,true,`r5 real manual flight failed: ${flight.reason}`);
+    state = flight.state;
+  }
   state = logic.tick(state, 0);
   const raw = save.exportSave(state, 1_000_000);
   assert.equal(JSON.parse(raw).revision, revision, "Source must actually emit the claimed old revision");
   const old = save.importSave(raw).state;
   const migrated = importSave(raw).state;
   assert.deepEqual(priorProjection(migrated, revision), priorProjection(old, revision), `r${revision} economic/timing state changed`);
-  assert.equal(migrated.orders.tasks.length, 0, "Migration must not invent plans");
+  assert.equal(migrated.orders.nextWorkId,1,"Migration cannot invent pending-work authorizations");
+  assert.ok(migrated.orders.tasks.every(t=>t.transport===null && t.currentWork===null),"Old plans do not authorize new logistics");
+  assert.ok(migrated.fleets.every(f=>f.orderTransport===null),"Old fleets remain ordinary unowned missions");
   const jobs = migrated.planets.flatMap(p => [...p.buildQueue, ...p.shipyardQueue]).concat(migrated.research.queue);
-  assert.deepEqual(jobs.map(j => j.jobId), [1, 2, 3], "Identity assignment order must be deterministic");
-  assert.ok(jobs.every(j => j.taskId === null), "Old manual jobs remain unowned");
-  assert.equal(migrated.orders.nextJobId, 4);
-  const batch = migrated.planets[0].shipyardQueue[0];
-  assert.equal(batch.count, 5);
-  assert.equal(batch.orderedCount, 5, "Migration must not invent already-completed plan work");
-  assert.equal(batch.progress, old.planets[0].shipyardQueue[0].progress);
-  reports.push({sourceRevision:revision,paidJobs:jobs.length,remainingShips:batch.count,result:"passed"});
+  if (revision < 5) {
+    assert.equal(migrated.orders.tasks.length, 0, "Migration must not invent plans");
+    assert.deepEqual(jobs.map(j => j.jobId), [1, 2, 3], "Identity assignment order must be deterministic");
+    assert.ok(jobs.every(j => j.taskId === null), "Old manual jobs remain unowned");
+    assert.equal(migrated.orders.nextJobId, 4);
+    const batch = migrated.planets[0].shipyardQueue[0];
+    assert.equal(batch.count, 5);
+    assert.equal(batch.orderedCount, 5, "Migration must not invent already-completed plan work");
+    assert.equal(batch.progress, old.planets[0].shipyardQueue[0].progress);
+    reports.push({sourceRevision:revision,paidJobs:jobs.length,remainingShips:batch.count,result:"passed"});
+  } else {
+    assert.equal(migrated.orders.tasks.length,3);
+    assert.equal(migrated.orders.tasks.find(t=>t.kind==="shipyard").completedUnits,2);
+    assert.equal(migrated.planets[0].shipyardQueue[0].count,3);
+    assert.equal(migrated.fleets.length,1);
+    assert.equal(jobs.filter(j=>j.source==="plan").length,3);
+    reports.push({sourceRevision:revision,paidJobs:jobs.length,paidPlans:3,planShipsCompleted:2,remainingShips:3,ordinaryFleets:1,result:"passed"});
+  }
 }
-console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state and deterministic identity migration",synthetic:true,revisions:reports,result:"passed"}, null, 2));
+console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport",synthetic:true,revisions:reports,result:"passed"}, null, 2));

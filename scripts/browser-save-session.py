@@ -305,6 +305,18 @@ try:
             invalid = json.loads(raw_fixture("imported"))
             invalid[field] = value
             invalids[label] = json.dumps(invalid, ensure_ascii=False)
+        invalid = json.loads(raw_fixture("imported"))
+        del invalid["state"]["orders"]["nextWorkId"]
+        invalids["r6 missing mandatory work counter"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = copy.deepcopy(fixtures["paidR5"])
+        invalid["state"]["orders"]["tasks"][0]["transport"] = None
+        invalids["actual r5 source smuggles null r6 transport field"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = copy.deepcopy(fixtures["paidR5"])
+        invalid["revision"] = SAVE_REVISION
+        invalid["state"]["orders"]["nextWorkId"] = 1
+        for task in invalid["state"]["orders"]["tasks"]:
+            task["transport"], task["currentWork"] = None, None
+        invalids["synthetic r6 missing mandatory fleet owner tag"] = json.dumps(invalid, ensure_ascii=False)
         for label, invalid in invalids.items():
             case = "invalid import: " + label
             clear_audit(page)
@@ -349,7 +361,7 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3, 4):
+        for revision in (2, 3, 4, 5):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
@@ -380,8 +392,40 @@ try:
               json.loads(raw(page))["state"]["arcade"]["autoBatch"] == armed_value["state"]["arcade"]["autoBatch"])
         context.close()
 
+        case = "actual r5 paid-plan and ordinary-fleet migration"
+        paid_value = copy.deepcopy(fixtures["paidR5"])
+        paid_value["savedAt"] = paid_value["lastTickAt"] = int(time.time() * 1000)
+        paid_raw = json.dumps(paid_value, ensure_ascii=False, indent=2)
+        context, page = boot(paid_raw)
+        migrated = json.loads(verify_commit(page, paid_raw, "已升级并保存本地存档"))
+        migrated_orders = copy.deepcopy(migrated["state"]["orders"])
+        check("r5 upgrade introduces only an empty work counter", migrated_orders.pop("nextWorkId") == 1)
+        for task in migrated_orders["tasks"]:
+            check("real r5 paid plan never becomes transport permission",
+                  task.pop("transport") is None and task.pop("currentWork") is None)
+        check("r5 paid identities, exact ledgers and paused task preserved", migrated_orders == paid_value["state"]["orders"])
+        old_queue, new_queue = paid_value["state"]["planets"][0]["buildQueue"], migrated["state"]["planets"][0]["buildQueue"]
+        check("actual r5 paid queue remains present", len(old_queue) == len(new_queue) == 1)
+        check("r5 real paid queue keeps price and ownership", all(new_queue[0][key] == old_queue[0][key]
+              for key in ("jobId", "taskId", "source", "building", "targetLevel", "paid", "totalSeconds")))
+        check("r5 paid timer advances only within original remaining duration",
+              0 < new_queue[0]["remainingSeconds"] <= old_queue[0]["remainingSeconds"])
+        old_fleet, new_fleet = paid_value["state"]["fleets"][0], migrated["state"]["fleets"][0]
+        check("r5 ordinary fleet cannot become owned transport", new_fleet["orderTransport"] is None)
+        check("r5 fleet keeps identity, manifest and locked duration", all(new_fleet[key] == old_fleet[key]
+              for key in ("id", "originId", "target", "mission", "cargo", "ships", "duration", "returning")))
+        check("r5 paid migration preserves exact original bytes", raw(page, BACKUP) == paid_raw)
+        context.close()
+
+        case = "r5 paid source backup failure freezes original work and exports original bytes"
+        context, page = boot(paid_raw, startup_fault={"operation": "write", "target": "backup", "mode": "throw"})
+        check("paid r5 source remains byte-identical after backup denial", raw(page) == paid_raw)
+        check("paid r5 original remains exportable", download_raw(page, "r5-paid-protected-original.json") == paid_raw)
+        check("failed paid r5 upgrade retains readable source", planet(page) == name_of(paid_raw))
+        context.close()
+
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3, 4):
+        for revision in (2, 3, 4, 5):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)

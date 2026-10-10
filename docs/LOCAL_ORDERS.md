@@ -6,7 +6,7 @@ Local plans authorize a fixed, finite goal on one selected paying/executing plan
 - Research: reach an empire research level, paid by the selected planet and using its lab.
 - Shipyard: build an additional specified number of ships or defenses for this plan. Existing inventory does not count toward the quantity.
 
-This checkpoint has no shipments or automatic resource transfers. Selecting another planet never moves a plan or changes its payer.
+Local mode does not dispatch shipments or transfer resources. Explicit single-source authorization is a separate optional mode described in [bounded transport](TRANSPORT_ORDERS.md). Selecting another planet never moves a plan or changes its payer.
 
 ## Authorization and budgets
 
@@ -41,4 +41,4 @@ Every shipyard enqueue also reserves safe integer headroom for stock, queued uni
 
 ## Saves
 
-Revision 5 persists authorizations, fixed payer/target fields, exact ledgers, stable queue identities and ship completion watermarks. Current saves must have matching real paid jobs and ownership receipts. Invalid relationships are rejected rather than silently recreated. Legacy queue migration assigns deterministic identities without inventing historical completion or changing old costs and timers.
+Revision 6 persists authorizations, fixed payer/target fields, exact ledgers, stable queue identities and ship completion watermarks. Current saves must have matching real paid jobs and ownership receipts. Invalid relationships are rejected rather than silently recreated. Legacy queue migration assigns deterministic identities without inventing historical completion or changing old costs and timers.

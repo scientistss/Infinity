@@ -39,7 +39,7 @@ for(let seed=1;seed<=16;seed++) {
     s.arcade.seed=seed*991;s.manualClicks=100;
     Object.assign(s.research.levels,{combustion_drive:2,energy_tech:3,astrophysics:1,computer_tech:2});
   }
-  const check=()=>{assert.equal(current.orders.tasks.length, 0, "baseline must not create plans");assert.equal(current.orders.accumulator, 0, "idle plans must not alter old timing");assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
+  const check=()=>{assert.equal(current.orders.tasks.length, 0, "baseline must not create plans");assert.equal(current.orders.nextWorkId, 1, "baseline must not create logistics work authorizations");assert.equal(current.orders.accumulator, 0, "idle plans must not alter old timing");assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
   old=oldLogic.tick(old,0.1);current=nowLogic.tick(current,0.1);check();
   old=oldQueue.enqueue(old,"metal_mine","manual").state;current=nowQueue.enqueue(current,"metal_mine","manual").state;check();
   old=oldResearch.enqueueResearch(old,"computer_tech","manual").state;current=nowResearch.enqueueResearch(current,"computer_tech","manual").state;check();

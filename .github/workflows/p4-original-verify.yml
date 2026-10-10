@@ -37,13 +37,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pre-orders"
           git archive 55f7aa9e483c69901a560dd51d1b9c1ce1ad1514 | tar -x -C "$RUNNER_TEMP/pre-orders"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-orders/node_modules"
-          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-orders" > save-revision-report.json
+          mkdir -p "$RUNNER_TEMP/pre-transport"
+          git archive b58c8816ad1d7e7e5e0b3d839f1668e18de22de4 | tar -x -C "$RUNNER_TEMP/pre-transport"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-transport/node_modules"
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-transport" > save-revision-report.json
           mkdir -p "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3"
           git archive 3d29c3942225e161977f4f298d970413738553f2 | tar -x -C "$RUNNER_TEMP/source-r2"
           git archive ebf75a755aa87f0b452bf427eb6cda833e26990d | tar -x -C "$RUNNER_TEMP/source-r3"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r2/node_modules"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r3/node_modules"
-          node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" > order-migration-report.json
+          node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" > order-migration-report.json
           npm run sim -- 60 | tee balance-report.txt
       - name: Browser prerequisites
         timeout-minutes: 4
@@ -63,6 +66,8 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/orders-transport-fixture.ts > orders-transport-review-save.json
+          python scripts/browser-orders-transport.py --fixture orders-transport-review-save.json
           node --import tsx scripts/orders-fixture.ts > orders-review-save.json
           python scripts/browser-orders.py --fixture orders-review-save.json
           node --import tsx scripts/ring-automation-fixture.ts > ring-automation-review-save.json
@@ -74,7 +79,7 @@ jobs:
           python scripts/browser-ring.py
           node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
           python scripts/browser-deep-dashboard.py
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" > save-session-review-save.json
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" > save-session-review-save.json
           python scripts/browser-save-session.py --fixture save-session-review-save.json
       - name: Archive exact readable source
         if: always()
@@ -94,6 +99,7 @@ jobs:
             save-session-evidence
             ring-automation-evidence
             orders-evidence
+            orders-transport-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json

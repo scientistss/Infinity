@@ -13,7 +13,7 @@ function paidFile(kind: "building" | "research" | "shipyard" = "building") {
   const file = emptyFile(), state = file.state;
   const task = { id: 1, kind, planetId: state.activePlanetId, status: "running", reason: "",
     budget: price("100000", "100000", "100000"), charged: price("60", "15"), refunded: zero(),
-    activeJob: { jobId: 1, quantity: 1, credited: 0 }, completedUnits: 0 } as any;
+    activeJob: { jobId: 1, quantity: 1, credited: 0 }, completedUnits: 0, transport: null, currentWork: null } as any;
   const job = { jobId: 1, taskId: 1, source: "plan" };
   if (kind === "building") {
     Object.assign(task, { building: "metal_mine", targetLevel: 3 });
@@ -29,7 +29,7 @@ function paidFile(kind: "building" | "research" | "shipyard" = "building") {
     state.planets[0].shipyardQueue.push({ ...job, unit: "rocket_launcher", count: 3, orderedCount: 5,
       paidPerUnit: price("2000"), progress: 0.375 });
   }
-  state.orders = { nextTaskId: 2, nextJobId: 2, accumulator: 7.5, tasks: [task] };
+  state.orders = { nextTaskId: 2, nextJobId: 2, nextWorkId: 1, accumulator: 7.5, tasks: [task] };
   return file;
 }
 function read(file: any) { return importSave(JSON.stringify(file)); }
@@ -68,7 +68,7 @@ function legacyFile(revision: 2 | 3 | 4) {
 }
 
 // Entirely synthetic snapshots; mutation cases are adversarial save files, never player data.
-describe("r5 finite order persistence", () => {
+describe("r6 local finite order persistence", () => {
   it.each(["building", "research", "shipyard"] as const)("round-trips %s ownership, exact ledgers, timer and completion watermark", kind => {
     const file = paidFile(kind), first = read(file);
     expect(first.revision).toBe(SAVE_REVISION);
@@ -220,7 +220,7 @@ describe("deterministic r2/r3/r4 paid queue migration", () => {
   });
   it.each([2, 3, 4] as const)("rejects r5 fields smuggled into r%d", revision => {
     const mutations = [
-      (f: any) => { f.state.orders = createOrderState(); },
+      (f: any) => { const { nextWorkId: _nextWorkId, ...r5Orders } = createOrderState(); f.state.orders = r5Orders; },
       (f: any) => { f.state.planets[0].buildQueue[0].jobId = 1; },
       (f: any) => { f.state.planets[0].buildQueue[0].taskId = null; },
       (f: any) => { f.state.planets[0].shipyardQueue[0].orderedCount = 3; },

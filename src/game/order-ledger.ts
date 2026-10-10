@@ -1,12 +1,14 @@
 import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
 import { isUnitId } from "../data/units";
-import { big, isValidAmount, type BigNumber } from "./decimal";
+import { big, isValidAmount } from "./decimal";
 import {
   MAX_ORDER_LEVEL, MAX_ORDER_QUANTITY, MAX_ORDER_REASON_LENGTH,
   type NewPaidJob, type OrderMoney, type OrderResult, type OrderTask, type PaidJobRef,
 } from "./order-state";
 import { addOrderAmounts, compareOrderAmounts, isOrderAmount, multiplyOrderAmountInteger, subtractOrderAmounts } from "./order-money";
+import { checkedWalletTransfer as transfer, walletAmountsNear as near } from "./order-wallet";
+import { canPayCurrentWork, irreversibleFuelMoney } from "./order-transport-ledger";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 
 export * from "./order-money";
@@ -41,6 +43,33 @@ export function committedOrderMoney(task: Pick<OrderTask, "budget" | "charged" |
   }
   return result;
 }
+/** Remaining price of the immutable child work, including progress before a re-payment. */
+export function remainingOrderWorkMoney(task: OrderTask): OrderMoney | null {
+  const work = task.currentWork;
+  if (!work) return null;
+  if (work.spec.kind !== "shipyard") return isOrderMoney(work.spec.price) ? { ...work.spec.price } : null;
+  const count = work.spec.quantity - (task.completedUnits - work.spec.completedUnitsAtStart);
+  if (!Number.isSafeInteger(count) || count < 0 || count > work.spec.quantity || !isOrderMoney(work.spec.paidPerUnit)) return null;
+  const money = zeroOrderMoney();
+  for (const id of RESOURCE_IDS) {
+    const amount = multiplyOrderAmountInteger(work.spec.paidPerUnit[id], count);
+    if (amount === null) return null;
+    money[id] = amount;
+  }
+  return money;
+}
+function equalMoney(a: OrderMoney, b: OrderMoney): boolean {
+  return RESOURCE_IDS.every(id => compareOrderAmounts(a[id], b[id]) === 0);
+}
+function matchesWork(task: OrderTask, job: NewPaidJob, credited = 0): boolean {
+  const work = task.currentWork;
+  if (!work || work.spec.kind !== job.kind) return false;
+  const spec = work.spec;
+  if (spec.kind === "building" && job.kind === "building") return spec.building === job.building && spec.targetLevel === job.targetLevel;
+  if (spec.kind === "research" && job.kind === "research") return spec.tech === job.tech && spec.targetLevel === job.targetLevel;
+  return spec.kind === "shipyard" && job.kind === "shipyard" && spec.unit === job.unit
+    && spec.quantity - (task.completedUnits - spec.completedUnitsAtStart) + credited === job.quantity;
+}
 function validId(value: number): boolean { return Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER; }
 function validJob(job: NewPaidJob): boolean {
   if (!job || typeof job.planetId !== "string" || !["manual", "protocol", "plan"].includes(job.source)) return false;
@@ -69,18 +98,6 @@ function failure(state: GameState, job: NewPaidJob, reason: string, pause = fals
   if (pause && task && task.status === "running") state = replaceTask(state, { ...task, status: "paused", reason: reason.slice(0, MAX_ORDER_REASON_LENGTH) });
   return { state, ok: false, reason, jobId: null };
 }
-function near(actual: BigNumber, expected: BigNumber): boolean {
-  return isValidAmount(actual) && isValidAmount(expected) && (expected.eq(0) ? actual.eq(0) : actual.sub(expected).abs().div(expected).lte(1e-9));
-}
-function transfer(before: BigNumber, amount: BigNumber, refund: boolean): BigNumber | null {
-  if (!isValidAmount(before) || !isValidAmount(amount)) return null;
-  if (amount.eq(0)) return before;
-  if (!refund && before.lt(amount)) return null;
-  const after = refund ? before.add(amount) : before.sub(amount);
-  if (!isValidAmount(after) || (refund ? !after.gt(before) : !after.lt(before))) return null;
-  const movement = refund ? after.sub(before) : before.sub(after);
-  return near(movement, amount) ? after : null;
-}
 function jobIdInUse(state: GameState, jobId: number): boolean {
   return state.research.queue.some(job => job.jobId === jobId) || state.planets.some(planet => planet.buildQueue.some(job => job.jobId === jobId) || planet.shipyardQueue.some(job => job.jobId === jobId));
 }
@@ -103,6 +120,18 @@ export function preparePaidJob(state: GameState, job: NewPaidJob, quotedCost: Re
     const money = exactCost ?? (job.kind === "shipyard" ? null : quoteOrderMoney(quotedCost));
     const committed = committedOrderMoney(owner);
     if (!money || !isOrderMoney(money) || !committed) return failure(state, job, ORDER_PRECISION_REASON, true);
+    if (owner.transport) {
+      const work = owner.currentWork;
+      const reserved = remainingOrderWorkMoney(owner);
+      if (!work || work.stage !== "pending" || !validId(work.workId) || work.workId >= state.orders.nextWorkId
+        || !matchesWork(owner, job) || !reserved || !equalMoney(reserved, work.reserved) || !equalMoney(money, reserved)) return failure(state, job, ORDER_IDENTITY_REASON, true);
+      if (state.orders.tasks.some(other => other.id !== owner!.id && (other.currentWork?.workId === work.workId || other.transport?.trips.some(trip => trip.workId === work.workId)))) return failure(state, job, ORDER_IDENTITY_REASON, true);
+      if (!canPayCurrentWork(state, owner)) return failure(state, job, "当前运输尚未完成可付款阶段");
+      if (job.kind === "building" && planet.buildQueue.some(queued => queued.building === job.building)
+        || job.kind === "research" && state.research.queue.some(queued => queued.tech === job.tech)) return failure(state, job, "已有同目标付费任务，等待实际完成");
+      const fuel = irreversibleFuelMoney(owner);
+      if (!fuel || RESOURCE_IDS.some(id => compareOrderAmounts(committed[id], fuel[id]) === -1)) return failure(state, job, ORDER_IDENTITY_REASON, true);
+    } else if (owner.currentWork !== null) return failure(state, job, ORDER_IDENTITY_REASON, true);
     quote = money;
     charged = zeroOrderMoney();
     for (const id of RESOURCE_IDS) {
@@ -127,7 +156,7 @@ export function preparePaidJob(state: GameState, job: NewPaidJob, quotedCost: Re
     planets: state.planets.map(value => value.id === planet.id ? { ...value, resources } : value),
     orders: { ...state.orders, nextJobId: jobId + 1 },
   };
-  if (owner && charged) next = replaceTask(next, { ...owner, charged, activeJob: { jobId, quantity: job.quantity, credited: 0 }, reason: "付费任务已入队" });
+  if (owner && charged) next = replaceTask(next, { ...owner, charged, currentWork: owner.transport && owner.currentWork ? { workId: owner.currentWork.workId, spec: owner.currentWork.spec, shipmentFleetId: owner.currentWork.shipmentFleetId, stage: "paid", jobId } : null, activeJob: { jobId, quantity: job.quantity, credited: 0 }, reason: "付费任务已入队" });
   return { state: next, ok: true, reason: "", jobId };
 }
 
@@ -170,8 +199,18 @@ function paidContext(state: GameState, ref: PaidJobRef): { task: OrderTask | nul
   // matchesTarget's remaining-goal check excludes already-credited units; restore them for the original batch.
   if (!matchesTarget({ ...task, completedUnits: task.completedUnits - receipt.credited }, job)) return null;
   if (job.kind === "shipyard" ? receipt.credited !== observed || task.completedUnits < receipt.credited : receipt.credited !== 0) return null;
+  if (task.transport) {
+    if (!task.currentWork || task.currentWork.stage !== "paid" || task.currentWork.jobId !== ref.jobId || !matchesWork(task, job, receipt.credited)) return null;
+    const expected = remainingOrderWorkMoney(task);
+    if (!expected || !liability || !equalMoney(expected, liability)) return null;
+  } else if (task.currentWork !== null) return null;
   const goalOnFinish = (job.kind === "building" && task.kind === "building" && job.targetLevel >= task.targetLevel) || (job.kind === "research" && task.kind === "research" && job.targetLevel >= task.targetLevel);
   return { task, liability, quantity: job.quantity, observed, goalOnFinish };
+}
+
+/** The real paid queue and its receipt must still agree; used by the scheduler as a read-only guard. */
+export function validOwnedPaidJob(state: GameState, task: OrderTask): boolean {
+  return !!task.activeJob && paidContext(state, { kind: task.kind, planetId: task.planetId, taskId: task.id, jobId: task.activeJob.jobId })?.task?.id === task.id;
 }
 
 export function refundPaidJob(state: GameState, ref: PaidJobRef, quotedRefund: OrderMoney): OrderResult {
@@ -184,9 +223,13 @@ export function refundPaidJob(state: GameState, ref: PaidJobRef, quotedRefund: O
   if (task) {
     const committed = committedOrderMoney(task);
     if (!isOrderMoney(quotedRefund) || !context.liability || !committed) return { state, ok: false, reason: ORDER_PRECISION_REASON };
+    const fuel = task.transport ? irreversibleFuelMoney(task) : zeroOrderMoney();
+    if (!fuel) return { state, ok: false, reason: ORDER_IDENTITY_REASON };
     refunded = zeroOrderMoney();
     for (const id of RESOURCE_IDS) {
       if (compareOrderAmounts(quotedRefund[id], context.liability[id]) === 1 || compareOrderAmounts(quotedRefund[id], committed[id]) === 1) return { state, ok: false, reason: ORDER_IDENTITY_REASON };
+      const refundable = subtractOrderAmounts(committed[id], fuel[id]);
+      if (refundable === null || compareOrderAmounts(context.liability[id], refundable) === 1 || compareOrderAmounts(quotedRefund[id], refundable) === 1) return { state, ok: false, reason: ORDER_IDENTITY_REASON };
       const amount = addOrderAmounts(task.refunded[id], quotedRefund[id]);
       if (amount === null) return { state, ok: false, reason: ORDER_PRECISION_REASON };
       refunded[id] = amount;
@@ -212,9 +255,14 @@ export function creditPaidJob(state: GameState, ref: PaidJobRef, cumulativeCompl
   if (task.kind === "shipyard" && task.completedUnits + delta > task.quantity) return state;
   if (!finished && delta === 0) return state;
   const completed = finished && (context.goalOnFinish || (task.kind === "shipyard" && task.completedUnits + delta >= task.quantity));
-  return replaceTask(state, { ...task, completedUnits: task.completedUnits + delta, status: completed ? "completed" : task.status, activeJob: finished ? null : { ...task.activeJob, credited: cumulativeCompleted }, reason: completed ? "有限目标已完成" : finished ? "付费任务已完成" : "付费任务进行中" });
+  return replaceTask(state, { ...task, completedUnits: task.completedUnits + delta, status: completed ? "completed" : task.status, currentWork: finished ? null : task.currentWork, activeJob: finished ? null : { ...task.activeJob, credited: cumulativeCompleted }, reason: completed ? "有限目标已完成" : finished ? "付费任务已完成" : "付费任务进行中" });
 }
 export function cancelledPaidJob(state: GameState, ref: PaidJobRef): GameState {
   const task = paidContext(state, ref)?.task;
-  return task ? replaceTask(state, { ...task, activeJob: null, status: "paused", reason: "付费任务已取消；计划暂停，继续需重新授权" }) : state;
+  if (!task) return state;
+  const remaining = task.transport ? remainingOrderWorkMoney(task) : null;
+  if (task.transport && (!remaining || !task.currentWork)) return state;
+  const currentWork = task.transport && task.currentWork && remaining
+    ? { workId: task.currentWork.workId, spec: task.currentWork.spec, shipmentFleetId: task.currentWork.shipmentFleetId, stage: "pending" as const, reserved: remaining } : null;
+  return replaceTask(state, { ...task, currentWork, activeJob: null, status: "paused", reason: "付费任务已取消；计划暂停，保留原授权与子任务" });
 }

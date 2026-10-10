@@ -1,6 +1,8 @@
 import type { BuildingId } from "../data/buildings";
 import type { ResearchId } from "../data/research";
 import type { UnitId } from "../data/units";
+import type { OrderCurrentWork, OrderTransportAuthorization, OrderTransportState } from "./order-transport-state";
+export * from "./order-transport-state";
 import type { OrderSource } from "./planet";
 import type { GameState, ResourceId } from "./types";
 
@@ -28,14 +30,17 @@ export type OrderTask = OrderTarget & {
   refunded: OrderMoney;
   activeJob: OrderJobReceipt | null;
   completedUnits: number;
+  transport: OrderTransportState | null;
+  currentWork: OrderCurrentWork | null;
 };
 export interface OrderState {
   nextTaskId: number;
   nextJobId: number;
+  nextWorkId: number;
   accumulator: number;
   tasks: OrderTask[];
 }
-export type CreateOrderRequest = OrderTarget & { expectedNextTaskId: number; budget: OrderMoney };
+export type CreateOrderRequest = OrderTarget & { expectedNextTaskId: number; budget: OrderMoney; transport?: OrderTransportAuthorization | null };
 export interface PaidJobIdentity { jobId: number; taskId: number | null }
 export type PaidJobRef = PaidJobIdentity & { kind: OrderKind; planetId: string };
 export type CancelPaidJobRequest = { kind: OrderKind; planetId: string; jobId: number };
@@ -52,8 +57,9 @@ export interface OrderResult { state: GameState; ok: boolean; reason: string }
 export type OrderAction =
   | { type: "order-create"; request: CreateOrderRequest }
   | { type: "order-pause" | "order-resume" | "order-cancel" | "order-dismiss"; taskId: number }
+  | { type: "order-retry-dock"; taskId: number; fleetId: number }
   | { type: "cancel-paid-job"; request: CancelPaidJobRequest };
 
 export function createOrderState(): OrderState {
-  return { nextTaskId: 1, nextJobId: 1, accumulator: 0, tasks: [] };
+  return { nextTaskId: 1, nextJobId: 1, nextWorkId: 1, accumulator: 0, tasks: [] };
 }

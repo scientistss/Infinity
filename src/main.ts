@@ -117,7 +117,7 @@ async function handleAction(action: UiAction): Promise<void> {
     return;
   }
   const before = state.unlocked;
-  if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "cancel-paid-job") {
+  if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "order-retry-dock" || action.type === "cancel-paid-job") {
     const result = applyOrderAction(state, action);
     const changed = result.state !== state;
     state = result.state;
@@ -136,7 +136,8 @@ async function handleAction(action: UiAction): Promise<void> {
   } else if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
     if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
     const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
-    state=result.state;status=result.reason;if(result.ok)persist();
+    const changed=result.state!==state;
+    state=result.state;status=result.reason;if(changed)persist();
   } else if (action.type === "select-planet") {
     const next = selectPlanet(state, action.id);
     if (next !== state) { state = next; status = `已切换至${activePlanet(state).name}，协议卡只作用于当前星球`; persist(); }

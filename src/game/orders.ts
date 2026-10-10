@@ -7,7 +7,7 @@ import { cancelResearch, enqueueResearch, nextResearchLevel } from "./research";
 import { canBuildUnits, cancelUnits, enqueueUnits, SHIPYARD, unitCost } from "./shipyard";
 import {
   committedOrderMoney, isOrderMoney, ORDER_BUDGET_REASON, ORDER_IDENTITY_REASON,
-  ORDER_PRECISION_REASON, quoteOrderMoney, zeroOrderMoney,
+  ORDER_PRECISION_REASON, quoteOrderMoney, remainingOrderWorkMoney, zeroOrderMoney,
 } from "./order-ledger";
 import { addOrderAmounts, compareOrderAmounts, multiplyOrderAmountInteger, normalizeOrderAmount } from "./order-money";
 import {
@@ -16,6 +16,9 @@ import {
   type CancelPaidJobRequest, type CreateOrderRequest, type OrderAction,
   type OrderMoney, type OrderResult, type OrderTarget, type OrderTask,
 } from "./order-state";
+import { advanceTransportOrder, cancelTransportOrder, copyOrderTransportAuthorization, validOrderTransportAuthorization } from "./order-transport";
+import { retryOwnedFleetDock } from "./fleet";
+import { grossShippedMoney, irreversibleFuelMoney, reservedOrderMoney, retireOwnedTripsForPrestige, validateOwnedFleetContext } from "./order-transport-ledger";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export type { OrderAction, OrderResult } from "./order-state";
@@ -53,6 +56,7 @@ function normalizeMoney(money: OrderMoney): OrderMoney {
 }
 export function createOrderTask(state: GameState, request: CreateOrderRequest): OrderResult {
   if (!targetValid(request) || !isOrderMoney(request.budget)) return failed(state, "计划目标、数量或预算无效");
+  if (request.transport !== undefined && request.transport !== null && !validOrderTransportAuthorization(state, request.planetId, request.transport)) return failed(state, "单源运输授权无效");
   if (!validId(request.expectedNextTaskId) || request.expectedNextTaskId !== state.orders.nextTaskId) return failed(state, "计划表单已使用或过期，请编辑表单或新建计划后重试");
   if (!state.planets.some(planet => planet.id === request.planetId)) return failed(state, "支付和执行星球不存在");
   if (state.orders.tasks.length >= MAX_ORDER_TASKS) return failed(state, "计划记录已满，请移除已结束记录");
@@ -62,7 +66,7 @@ export function createOrderTask(state: GameState, request: CreateOrderRequest): 
   const target: OrderTarget = request.kind === "building" ? { kind: request.kind, planetId: request.planetId, building: request.building, targetLevel: request.targetLevel }
     : request.kind === "research" ? { kind: request.kind, planetId: request.planetId, tech: request.tech, targetLevel: request.targetLevel }
     : { kind: request.kind, planetId: request.planetId, unit: request.unit, quantity: request.quantity };
-  const task: OrderTask = { ...target, id: request.expectedNextTaskId, status: "running", reason: "等待下一次计划检查", budget: normalizeMoney(request.budget), charged: zeroOrderMoney(), refunded: zeroOrderMoney(), activeJob: null, completedUnits: 0 };
+  const task: OrderTask = { ...target, id: request.expectedNextTaskId, status: "running", reason: "等待下一次计划检查", budget: normalizeMoney(request.budget), charged: zeroOrderMoney(), refunded: zeroOrderMoney(), activeJob: null, completedUnits: 0, transport: request.transport ? { authorization: copyOrderTransportAuthorization(request.transport), trips: [] } : null, currentWork: null };
   return { state: { ...state, orders: { ...state.orders, nextTaskId: task.id + 1, accumulator: state.orders.tasks.some(value => value.status === "running") ? state.orders.accumulator : 0, tasks: [...state.orders.tasks, task] } }, ok: true, reason: "有限计划已创建；每 10 秒检查一次" };
 }
 export function pauseOrderTask(state: GameState, taskId: number): OrderResult {
@@ -74,6 +78,21 @@ export function resumeOrderTask(state: GameState, taskId: number): OrderResult {
   const task = state.orders.tasks.find(value => value.id === taskId);
   if (!validId(taskId) || !task || task.status !== "paused") return failed(state, "该计划不能继续");
   if (!state.planets.some(planet => planet.id === task.planetId) || !targetValid(task) || !committedOrderMoney(task)) return failed(state, ORDER_IDENTITY_REASON);
+  if (task.transport) {
+    if (task.transport.trips.some(trip => trip.phase.kind === "returning" && trip.phase.dockBlocked)) return failed(state, "返港入库受阻，请先重试入港再继续计划");
+    if (!validOrderTransportAuthorization(state, task.planetId, task.transport.authorization)) return failed(state, ORDER_IDENTITY_REASON);
+    const net = committedOrderMoney(task), reserved = reservedOrderMoney(task), fuel = irreversibleFuelMoney(task), gross = grossShippedMoney(task);
+    if (!net || !reserved || !fuel || !gross) return failed(state, ORDER_PRECISION_REASON);
+    if (task.currentWork?.stage === "pending") {
+      const expected = remainingOrderWorkMoney(task);
+      if (!expected || RESOURCE_IDS.some(id => compareOrderAmounts(expected[id], reserved[id]) !== 0)) return failed(state, ORDER_IDENTITY_REASON);
+    }
+    for (const id of RESOURCE_IDS) {
+      const occupied = addOrderAmounts(net[id], reserved[id]);
+      if (occupied === null || compareOrderAmounts(occupied, task.budget[id]) === 1 || compareOrderAmounts(net[id], fuel[id]) === -1 || compareOrderAmounts(gross[id], task.transport.authorization.grossCargoCap[id]) === 1) return failed(state, ORDER_IDENTITY_REASON);
+    }
+    if (task.transport.trips.some(trip => (trip.phase.kind === "outbound" || trip.phase.kind === "returning") && validateOwnedFleetContext(state, trip.fleetId).kind !== "owned")) return failed(state, ORDER_IDENTITY_REASON);
+  }
   const wasIdle = !state.orders.tasks.some(value => value.status === "running");
   const next = setTask(state, taskId, { status: "running", reason: "等待下一次计划检查" });
   return { state: wasIdle ? { ...next, orders: { ...next.orders, accumulator: 0 } } : next, ok: true, reason: "计划已继续，原预算和进度保持不变" };
@@ -106,6 +125,7 @@ export function cancelPaidJob(state: GameState, request: CancelPaidJobRequest): 
 export function cancelOrderTask(state: GameState, taskId: number): OrderResult {
   const task = state.orders.tasks.find(value => value.id === taskId);
   if (!validId(taskId) || !task || !live(task)) return failed(state, "该计划已经结束或不存在");
+  if (task.transport) return cancelTransportOrder(state, taskId);
   let next = state;
   if (task.activeJob) {
     const cancellation = cancelPaidJob(state, { kind: task.kind, planetId: task.planetId, jobId: task.activeJob.jobId });
@@ -116,7 +136,7 @@ export function cancelOrderTask(state: GameState, taskId: number): OrderResult {
 }
 export function dismissOrderTask(state: GameState, taskId: number): OrderResult {
   const task = state.orders.tasks.find(value => value.id === taskId);
-  if (!validId(taskId) || !task || live(task) || task.activeJob) return failed(state, "只能移除已结束的计划记录");
+  if (!validId(taskId) || !task || live(task) || task.activeJob || task.currentWork || task.transport?.trips.some(trip => trip.phase.kind === "outbound" || trip.phase.kind === "returning") || state.fleets.some(fleet => fleet.orderTransport?.taskId === taskId)) return failed(state, "只能移除已结束的计划记录");
   return { state: { ...state, orders: { ...state.orders, tasks: state.orders.tasks.filter(value => value.id !== taskId) } }, ok: true, reason: "已移除计划记录" };
 }
 export function applyOrderAction(state: GameState, action: OrderAction): OrderResult {
@@ -126,6 +146,7 @@ export function applyOrderAction(state: GameState, action: OrderAction): OrderRe
     case "order-resume": return resumeOrderTask(state, action.taskId);
     case "order-cancel": return cancelOrderTask(state, action.taskId);
     case "order-dismiss": return dismissOrderTask(state, action.taskId);
+    case "order-retry-dock": return retryOwnedFleetDock(state, action.taskId, action.fleetId);
     case "cancel-paid-job": return cancelPaidJob(state, action.request);
     default: return failed(state, "计划操作无效");
   }
@@ -182,6 +203,7 @@ export function runDueOrderPass(state: GameState): GameState {
       if (!activeReceiptExists(next, task)) next = setTask(next, taskId, { status: "paused", reason: ORDER_IDENTITY_REASON });
       continue;
     }
+    if (task.transport) { next = advanceTransportOrder(next, taskId); continue; }
     if (satisfied(next, task)) { next = setTask(next, taskId, { status: "completed", reason: "有限目标已完成" }); continue; }
     const local = selectPlanet(next, task.planetId);
     const planet = local.planets.find(value => value.id === task.planetId)!;
@@ -212,5 +234,6 @@ export function advanceOrderPlans(state: GameState, seconds: number): GameState 
 }
 /** Prestige drops the run's queues: retain historical spending without inventing a refund. */
 export function terminateOrdersForPrestige(state: GameState): GameState["orders"] {
-  return { ...state.orders, accumulator: 0, tasks: state.orders.tasks.map(task => live(task) ? { ...task, status: "cancelled", activeJob: null, reason: "殖民发射已结束本轮计划；已支付资源不额外退款" } : task) };
+  const retired = retireOwnedTripsForPrestige(state);
+  return { ...retired.orders, accumulator: 0, tasks: retired.orders.tasks.map(task => live(task) ? { ...task, status: "cancelled", activeJob: null, currentWork: null, reason: "殖民发射已结束本轮计划；已支付资源不额外退款" } : task) };
 }

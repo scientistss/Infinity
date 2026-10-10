@@ -5,8 +5,8 @@ The production entry point (`src/main.ts`) uses `src/game/save-session.ts` for e
 ## Supported formats
 
 - Current storage key: `infinity.original-p4.save.v1`.
-- Current schema: `infinity-original-p4`, version **9**, revision **5**.
-- Supported older imports are **the same schema, version 9, revisions 2, 3 and 4**. The r2 → r3 step preserves its universe, fleets and game progress while initializing `deepSpace`; r2 files carrying deep-space fields are rejected. The r3 → r4 step assigns stable ticket IDs in existing pending order, initializes the next ID and leaves finite automatic-reveal authorization empty. Both older revisions reject r4-only fields instead of silently discarding them.
+- Current schema: `infinity-original-p4`, version **9**, revision **6**.
+- Supported older imports are **the same schema, version 9, revisions 2, 3, 4 and 5**. The r2 → r3 step preserves its universe, fleets and game progress while initializing `deepSpace`; r2 files carrying deep-space fields are rejected. The r3 → r4 step assigns stable ticket IDs in existing pending order, initializes the next ID and leaves finite automatic-reveal authorization empty. Both older revisions reject r4-only fields instead of silently discarding them.
 - v1/v5/v7/v8, later versions, r1/unknown revisions, other route schemas and malformed files are not converted or silently reset. They remain protected. Retaining original bytes does not imply compatibility.
 - The previous site's `infinity.save.v1` is never used as the current game and is never overwritten. Its existing export control remains available.
 
@@ -30,13 +30,33 @@ Budget, cumulative charged and refunded amounts are exact bounded decimal string
 
 The r4 → r5 step adds an empty plan list and assigns existing paid-job IDs deterministically: planets in saved order, building queue then shipyard queue per planet, followed by global research. It preserves saved costs, timers, payer IDs, queue progress and economy. Existing ship batches get `orderedCount = count` with catalog unit-price snapshots, so migration never invents historical unit completion. Existing r4 ring tickets and finite authorization remain intact. Only r2/r3 migrations disable the legacy ring cards, as above. Every older revision rejects r5-only orders, identities and snapshot fields rather than interpreting them as fresh permission or silently downgrading them.
 
-Native browser migration fixtures are generated from the actual verified r2/r3/r4 source serializers, not by relabeling a current file. The generator accepts their absolute source directories in revision order; the browser suite checks all three migrations, armed r4 authority, exact backups and frozen views for injected migration failures. All fixtures are synthetic.
+Native browser migration fixtures are generated from the actual verified r2/r3/r4/r5 source serializers, not by relabeling a current file. The generator accepts their absolute source directories in revision order; the browser suite checks all four migrations, armed r4 authority, exact backups and frozen views for injected migration failures. All fixtures are synthetic.
+
+## Single-source transport authority in r6
+
+Revision 6 is an additive authorization boundary. Every task has mandatory `transport` and `currentWork` fields, every fleet has mandatory `orderTransport`, and orders have a mandatory `nextWorkId`. Absence is rejected; no missing field becomes a fresh allowance. Local plans and ordinary fleets explicitly store `null`. Authorization, fixed work, receipt manifests, coordinates and outcomes are copied independently on serialization. New nested objects reject unknown fields, phase/outcome values, invalid integers, and amounts that lose exact value through the wallet representation.
+
+A transport authorization fixes one donor distinct from the executor, one flyable ship kind and count, a speed in 10-percent steps, 1–100 trips and a gross cargo cap for each resource. The authorization itself does not debit resources. Trips keep immutable real fleet/work IDs, original target ID and coordinates, cargo, fuel and locked duration. History is bounded to 256 receipts across all retained tasks; a terminal task does not bypass that bound. Issued work and fleet IDs remain below their monotonically increasing counters; exhausted safe-integer counters are allowed only as unissued sentinels.
+
+Work ownership is global across current work and all retained trip history. Only the same task's current work and its one trip may share a work ID. A task can retain at most one outbound or returning trip, including a blocked return. It cannot open another work while that ship is still active. `shipmentFleetId` must name the one receipt for the current work, and cannot be cleared to replenish authorization after recall, refund, reload or delivery.
+
+Pending work has no paid job, and its exact reservation equals the frozen remaining price. Ship work retains its original quantity, unit-price snapshot and completed-unit baseline through cancellation and re-payment. Paid work must match its actual queue, fixed goal, payer, original price, quantity and completed watermark. A transport work cannot pay while its ship is outbound, or while an undelivered ship is still returning. A delivered returning ship may coexist with its real paid queue. Building and research work cannot skip an unfinished predecessor or be a paid successor behind a same-goal queue entry.
+
+Every active trip and tagged real fleet match one-to-one. Mission, donor, exact ship kind/count, target ID and coordinates, locked duration, phase and cargo are checked. Outbound ships retain the full manifest. A delivered return has exactly zero cargo; an undelivered return retains exactly its original manifest. Logs, a returning Boolean and an empty cargo hold are never substituted for an explicit outcome. Settled or prestige-retired receipts cannot retain a real fleet. Terminal tasks retain no paid/current work and cannot remain outbound, but may retain a real returning ship. A missing executor is allowed in an active return only for cancelled `target-invalid` history; live authorizations require both planets.
+
+The reader verifies `net + reserved <= budget`, nonrefundable fuel is covered by net deuterium, remaining real queue refund liability fits after subtracting that fuel, gross cargo stays within each cap, and trips stay within the fixed count. Exact additions fail closed at the existing `1e190`, 18-decimal-place and 256-character limits. Returning cargo and fuel are never refunded by migration. Historical fuel and duration are not recomputed from current research or stocks.
+
+`dockBlocked` is explicit returning receipt state at zero remaining time. The original ship and cargo remain present and a running owner must already be paused; terminal owners stay terminal. Reload does not fabricate return, unload, dispatch or payment. The normal simulation freezes blocked-leg elapsed time and excludes the blocked event until the user retries that same real fleet's landing.
+
+The r5 → r6 migration first rejects any new transport/work/owner fields, even null, and validates the old exact task schema. It preserves all real r5 plan ledgers, paid identities, completed watermarks, costs, timers, fleet cargo and existing ring authority. It adds only `transport = null`, `currentWork = null`, `nextWorkId = 1` and fleet `orderTransport = null`. Revisions 2–4 retain their existing migration chain before the same additive step. Their old paid jobs and fleets are never inferred to authorize transport. All older revisions reject smuggled r6 fields instead of silently dropping them.
+
+Synthetic unit boundary fixtures are separate from real historical-source proof. `scripts/save-session-fixture.ts` requires four absolute verified r2, r3, r4 and r5 source directories. It produces actual source-exported legacy files, an armed r4 file, and a real r5 paid local plan plus ordinary transport. The native browser suite covers all four migrations and byte-exact backup/failure behavior, including preserving readable r5 paid work when a backup fails. `scripts/check-order-migration.mjs` independently compares complete old-schema projections from real old serializers and queue primitives. The old r5 reader must reject r6 rather than strip its authority.
 
 ## Open and protection
 
 A missing key (`null`) permits a fresh game to save normally. An empty string is a corrupt save, not an absent save.
 
-Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2/r3/r4 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
+Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2/r3/r4/r5 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
 
 If a source cannot be read or parsed, the UI explicitly labels its initial display as a temporary placeholder. Protected/conflicted/unavailable sessions do not simulate time or accept gameplay mutations. Export, import, explicit reset and recovery notices remain accessible. Obtaining `window.localStorage` does not perform a write probe: a full quota must not hide readable saved progress.
 
@@ -46,7 +66,7 @@ A protected session may retry an explicitly requested valid import or reset afte
 
 ## Replacement order
 
-Import, reset and r2/r3/r4 upgrade use this order:
+Import, reset and r2/r3/r4/r5 upgrade use this order:
 
 1. Parse and validate the supported schema and state, then deserialize the candidate.
 2. Serialize the candidate and validate the serialized output before touching storage.
@@ -76,6 +96,6 @@ File imports capture a latest-intent token. A newer import/reset, any subsequent
 
 ## Compatibility APIs and verification
 
-`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2/r3/r4 compatibility path preserves the exact raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
+`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2/r3/r4/r5 compatibility path preserves the exact raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
 
-`tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2/r3/r4 upgrade, disabled legacy automation, partial-batch reload and migration write/read/quota failures, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.
+`tests/transport-save.test.ts` covers strict transport structure, historical ownership, pending/paid reservations, actual fleet phases, blocked returns, exact limits and additive r5 migration. `tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2/r3/r4/r5 upgrade, disabled legacy automation, partial-batch reload and migration write/read/quota failures, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.

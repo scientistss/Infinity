@@ -1,4 +1,4 @@
-import { migrateLegacyOrders, readOrders, serializeOrders, validateOrderReferences } from "./orders-save";
+import { migrateLegacyOrders, migrateTransportOrders, rejectLegacyTransportFields, readOrders, serializeOrders, validateOrderReferences, validateOrderTransportReferences } from "./orders-save";
 import type { PaidJobIdentity } from "./order-state";
 import { compareOrderAmounts, isOrderAmount } from "./order-money";
 import type { OrderSource } from "./planet";
@@ -135,7 +135,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2/r3/r4 → r5 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2/r3/r4/r5 → r6 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -218,6 +218,7 @@ export function deserializeState(raw: unknown): GameState {
   state.deepSpace=readDeepState(raw.deepSpace,state);
   validateRingBatchReferences(state);
   validateOrderReferences(state);
+  validateOrderTransportReferences(state);
   if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
   if(chargeReservations(state)>Number.MAX_SAFE_INTEGER-state.arcade.nextRunId)throw Error("充能任务超出剩余安全票号");
   const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
@@ -251,10 +252,13 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r${SAVE_REVISION}）；原件保留，未导入`);
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r${SAVE_REVISION}）；原件保留，未导入`);
   }
-  if (parsed.revision !== SAVE_REVISION) parsed.state = migrateLegacyState(parsed.state, parsed.revision);
+  if (parsed.revision !== SAVE_REVISION) {
+    rejectLegacyTransportFields(parsed.state);
+    parsed.state = migrateTransportOrders(parsed.revision === 5 ? parsed.state : migrateLegacyState(parsed.state, parsed.revision));
+  }
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }

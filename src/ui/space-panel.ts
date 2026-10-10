@@ -40,11 +40,12 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
-  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","本地有限计划",ordersPanelHtml()));
+  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
   const updateDeep=installDeepPanel(root,onAction,()=>target(coordinateKey({...origin,position:16}),"charge"));
   let cursor:Coordinates={galaxy:1,system:50,position:8},selected:string|null=null,initialized=false,origin:Coordinates=cursor;
   let model:SpaceView|null=null;
+  let fleetButtons = new WeakMap<HTMLButtonElement, number>();
   function choose(id:string){
     selected=id;for(const b of root.querySelectorAll<HTMLElement>("[data-tab]")){const active=b.dataset.tab===id;b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));}
     for(const p of root.querySelectorAll<HTMLElement>("[data-tab-panel]"))p.hidden=p.dataset.tabPanel!==id;
@@ -69,12 +70,12 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="route")target(b.dataset.coordinate!,b.dataset.mission!);
       if(a==="select")onAction({type:"select-planet",id:b.dataset.planet!});
       if(a==="send")onAction({type:"send-fleet",request:request()});
-      if(a==="recall")onAction({type:"recall-fleet",id:Number(b.dataset.fleet)});
+      if(a==="recall"){const id=Number(b.dataset.fleet);if(fleetButtons.get(b)===id&&Number.isSafeInteger(id)&&id>0&&el(root,"#space-fleets").contains(b))onAction({type:"recall-fleet",id});}
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
   return {...original, updateDeep, updateOrders:orderPanel.update,
-    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();},
+    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){
@@ -93,7 +94,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       const route=(key:string,m:string,label:string)=>`<button type="button" data-space="route" data-coordinate="${key}" data-mission="${m}">${label}</button>`;
       html(root,"#space-worlds",model.rows.map(row=>`<tr class="space-world ${row.planetId?"space-owned":""}"><td>${row.position}</td><td>${enc(row.name)}<small>[${row.key}]</small></td><td>${row.kind}</td><td>${row.properties}</td><td>${row.bonus}</td><td><div class="space-actions">${row.planetId?`<button type="button" data-space="select" data-planet="${enc(row.planetId)}">切换</button>`:""}${row.canColonize?route(row.key,"colonize","殖民"):""}${row.canScout?route(row.key,"scout","侦察"):""}${row.canTransport?route(row.key,"transport","运输"):""}${row.position===16?route(row.key,"charge","深空充能"):""}</div></td></tr>`).join(""));
       const signature=model.fleets.map(f=>`${f.id}:${f.canRecall}`).join("|");const list=el(root,"#space-fleets");
-      if(list.dataset.fleetSignature!==signature){list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div><small class="flight-detail muted" style="grid-column:1/-1"></small></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';}
+      if(list.dataset.fleetSignature!==signature){fleetButtons=new WeakMap<HTMLButtonElement,number>();list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div><small class="flight-detail muted" style="grid-column:1/-1"></small></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';for(const button of list.querySelectorAll<HTMLButtonElement>('[data-space="recall"]'))fleetButtons.set(button,Number(button.dataset.fleet));}
       for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
       const planets=el(root,"#space-planets");
       const planetSignature=JSON.stringify(model.planets.map(p=>[p.id,p.name,p.coordinate,p.selected]));

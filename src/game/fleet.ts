@@ -8,12 +8,16 @@ import { big, isValidAmount } from "./decimal";
 import { coordinateKey, distance, SPACE, npcAt, planetProperties, sameCoordinates, validCoordinates, type Coordinates } from "./galaxy";
 import { clonePlanet, createPlanet, HOMEWORLD_ID } from "./planet";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
+import type { OrderFleetIdentity, OrderNonDelivery } from "./order-state";
+import { checkedCargoCredit, checkedShipLanding } from "./order-wallet";
+import { isOwnedDockBlocked, pauseOwnedFleetOwner, recordOwnedTripPhase, validateOwnedFleetContext, type ValidOwnedFleetContext } from "./order-transport-ledger";
 
 export const MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle"] as const;
 export type Mission = (typeof MISSIONS)[number];
 export const MISSION_LABEL: Record<Mission, string> = { transport: "运输", deploy: "部署", colonize: "殖民", scout: "侦察", charge: "深空充能", recycle: "残骸回收" };
 export interface Fleet {
   id: number;
+  orderTransport: OrderFleetIdentity | null;
   originId: string;
   target: Coordinates;
   mission: Mission;
@@ -38,7 +42,7 @@ export interface FleetRequest {
   chargeWithBets?: boolean;
 }
 export interface FlightQuote { ok: boolean; reason: string; duration: number; fuel: ReturnType<typeof big>; capacity: ReturnType<typeof big>; stake?: number; holdSeconds?: number }
-export interface FleetResult { ok: boolean; reason: string; state: GameState }
+export interface FleetResult { ok: boolean; reason: string; state: GameState; fleetId?: number }
 export function emptyCargo(): ResourceAmounts { return { metal: big(0), crystal: big(0), deuterium: big(0) }; }
 export function fleetSlots(state: GameState): number { return Math.min(SPACE.maxFleets, 1 + state.research.levels.computer_tech); }
 export function colonyLimit(state: GameState): number { return Math.ceil(state.research.levels.astrophysics / 2); }
@@ -134,17 +138,29 @@ export function sendFleet(state: GameState, request: FleetRequest): FleetResult 
   const planet = clonePlanet(activePlanet(state));
   for (const id of SHIP_IDS) planet.units[id] -= request.ships[id] ?? 0;
   for (const id of RESOURCE_IDS) planet.resources[id] = planet.resources[id].sub(request.cargo[id]).sub(id === "deuterium" ? quote.fuel.add(quote.stake??0) : 0);
-  const fleet: Fleet = { id: state.nextFleetId, originId: planet.id, target: { ...request.target }, mission: request.mission, ships: { ...request.ships }, cargo: { ...request.cargo }, duration: quote.duration, remaining: quote.duration, returning: false, elapsed: 0 };
+  const fleet: Fleet = { id: state.nextFleetId, orderTransport: null, originId: planet.id, target: { ...request.target }, mission: request.mission, ships: { ...request.ships }, cargo: { ...request.cargo }, duration: quote.duration, remaining: quote.duration, returning: false, elapsed: 0 };
   if(request.mission==="charge") fleet.charge={slots:request.holdSlots!,phase:"outbound",cargoFactor:1+.05*state.research.levels.hyperspace_tech,bets:request.chargeWithBets?{...state.arcade.bets}:{metal:0,crystal:0,deuterium:0,drifter:0},stake:quote.stake??0,betUnit:betUnitDeut(state),dm:0,items:{},offerId:null,reportId:null};
   const next = { ...withPlanet(state, { planet }), fleets: [...state.fleets, fleet], nextFleetId: state.nextFleetId + 1 };
-  return { ok: true, state: addMessage(next, `dispatch-${fleet.id}`, `${MISSION_LABEL[fleet.mission]}舰队 #${fleet.id} 已从 ${planet.name} 出发，目标 [${coordinateKey(fleet.target)}]。`), reason: "舰队已出发，往返燃料已扣除" };
+  return { ok: true, state: addMessage(next, `dispatch-${fleet.id}`, `${MISSION_LABEL[fleet.mission]}舰队 #${fleet.id} 已从 ${planet.name} 出发，目标 [${coordinateKey(fleet.target)}]。`), reason: "舰队已出发，往返燃料已扣除", fleetId: fleet.id };
+}
+/** Include history too, so stripping a tag can never turn an owned ship into a manual one. */
+function receiptFleetIds(state: GameState): Set<number> {
+  return new Set(state.orders.tasks.flatMap(task => task.transport?.trips.map(trip => trip.fleetId) ?? []));
+}
+/** Invalid owned identities are quarantined too: never fall through to manual economics. */
+function ownedFleetFrozen(state: GameState, fleet: Fleet, receipts: ReadonlySet<number>): boolean {
+  if (!fleet.orderTransport && !receipts.has(fleet.id)) return false;
+  const context = validateOwnedFleetContext(state, fleet.id);
+  return context.kind === "invalid" || context.kind === "owned" && context.trip.phase.kind === "returning" && context.trip.phase.dockBlocked;
 }
 export function nextFleetEvent(state: GameState): number {
-  return state.fleets.reduce((min, f) => Math.min(min, Math.max(0, f.remaining)), Infinity);
+  const receipts = receiptFleetIds(state);
+  return state.fleets.reduce((min, f) => ownedFleetFrozen(state, f, receipts) ? min : Math.min(min, Math.max(0, f.remaining)), Infinity);
 }
 export function advanceFleets(state: GameState, seconds: number): GameState {
   if (!Number.isFinite(seconds) || seconds < 0 || seconds > nextFleetEvent(state) + 1e-8) throw Error("舰队时间必须停在下一个事件边界");
-  const advanced = { ...state, fleets: state.fleets.map((f) => ({ ...f, remaining: Math.max(0, f.remaining - seconds), elapsed: f.elapsed + seconds })) };
+  const receipts = receiptFleetIds(state);
+  const advanced = { ...state, fleets: state.fleets.map((f) => ownedFleetFrozen(state, f, receipts) ? f : ({ ...f, remaining: Math.max(0, f.remaining - seconds), elapsed: f.elapsed + seconds })) };
   return resolveFleetArrivals(advanced);
 }
 function addMessage(state: GameState, id: string, text: string): GameState {
@@ -163,11 +179,56 @@ function unload(state: GameState, planetId: string, fleet: Fleet, ships: boolean
     return next;
   }) };
 }
+function settleOwnedReturn(state: GameState, context: ValidOwnedFleetContext, retry = false): GameState {
+  const { fleet, trip } = context;
+  if (trip.phase.kind !== "returning" || fleet.remaining > 1e-9) return state;
+  const donor = state.planets.find(planet => planet.id === fleet.originId);
+  const resources = donor && checkedCargoCredit(donor.resources, fleet.cargo);
+  const units = donor && checkedShipLanding(state, donor.id, fleet);
+  if (!donor || !resources || !units) {
+    if (retry || trip.phase.dockBlocked) return state;
+    const patched = recordOwnedTripPhase(state, context, { ...trip.phase, dockBlocked: true }, { pauseReason: "返港入库受阻；原舰船与货物已保留，请调整母港库存后重试入港" });
+    return patched ? { ...patched, fleets: patched.fleets.map(value => value.id === fleet.id ? { ...value, remaining: 0 } : value) } : state;
+  }
+  const patched = recordOwnedTripPhase(state, context, { kind: "returned", outcome: trip.phase.outcome });
+  if (!patched) return state;
+  const next = { ...patched, planets: patched.planets.map(planet => planet.id === donor.id ? { ...planet, resources, units } : planet), fleets: patched.fleets.filter(value => value.id !== fleet.id) };
+  return addMessage(next, `return-${fleet.id}`, `舰队 #${fleet.id} 已返航，舰船与剩余货物已安全入港。`);
+}
+function resolveOwnedFleetEvent(state: GameState, context: ValidOwnedFleetContext): GameState {
+  const { fleet, trip, task } = context;
+  if (trip.phase.kind === "returning") return settleOwnedReturn(state, context);
+  if (trip.phase.kind !== "outbound" || fleet.remaining > 1e-9) return state;
+  const target = state.planets.find(planet => planet.id === trip.targetPlanetId);
+  const exactTarget = target && sameCoordinates(target.coordinates, trip.target) && state.planets.filter(planet => sameCoordinates(planet.coordinates, trip.target)).length === 1;
+  const resources = exactTarget ? checkedCargoCredit(target.resources, fleet.cargo) : null;
+  const failure: OrderNonDelivery | null = !exactTarget ? "target-invalid" : !resources ? "precision-rejected" : null;
+  const phase = { kind: "returning" as const, dockBlocked: false, outcome: failure ? { kind: "not-delivered" as const, reason: failure } : { kind: "delivered" as const } };
+  const patched = recordOwnedTripPhase(state, context, phase, failure ? { cancelMissingTarget: !target, pauseReason: failure === "precision-rejected" ? "到港金额精度不足，全部货物原路返航；计划已暂停" : "运输目标身份已改变，全部货物原路返航；计划已暂停" } : {});
+  if (!patched) return pauseOwnedFleetOwner(state, fleet.id, "运输回执不一致，舰船与货物已保留");
+  const next = { ...patched,
+    planets: !failure && resources ? patched.planets.map(planet => planet.id === task.planetId ? { ...planet, resources } : planet) : patched.planets,
+    fleets: patched.fleets.map(value => value.id === fleet.id ? { ...value, cargo: failure ? value.cargo : emptyCargo(), returning: true, remaining: value.duration, elapsed: 0 } : value),
+  };
+  return addMessage(next, `${failure ? "failed" : "arrival"}-${fleet.id}`, failure ? `舰队 #${fleet.id} 未能交付，全部货物和舰船原路返航。` : `舰队 #${fleet.id} 已抵达 ${target!.name}，货物已安全卸载，舰队开始返航。`);
+}
 /** Resolve only due events; tick must stop at their exact times before calling this. */
 export function resolveFleetArrivals(state: GameState): GameState {
   let next = state;
-  for (const fleet of [...state.fleets].sort((a, b) => a.id - b.id)) {
+  const receipts = receiptFleetIds(state);
+  for (const snapshot of [...state.fleets].sort((a, b) => a.id - b.id)) {
+    const potentiallyOwned = !!snapshot.orderTransport || receipts.has(snapshot.id);
+    if (!potentiallyOwned && snapshot.remaining > 1e-9) continue;
+    const fleet = next.fleets.find(value => value.id === snapshot.id);
+    if (!fleet) continue;
+    const owned = potentiallyOwned ? validateOwnedFleetContext(next, fleet.id) : { kind: "unowned" as const, fleet };
+    if (owned.kind === "invalid") { next = pauseOwnedFleetOwner(next, fleet.id, owned.reason); continue; }
     if (fleet.remaining > 1e-9) continue;
+    if (owned.kind === "owned") {
+      if (owned.trip.phase.kind === "returning" && owned.trip.phase.dockBlocked) continue;
+      next = resolveOwnedFleetEvent(next, owned);
+      continue;
+    }
     const remove = () => { next = { ...next, fleets: next.fleets.filter((f) => f.id !== fleet.id) }; };
     if (fleet.returning) {
       if (!next.planets.some((p) => p.id === fleet.originId)) throw new Error("返航母港不存在");
@@ -219,17 +280,33 @@ export function resolveFleetArrivals(state: GameState): GameState {
   }
   return next;
 }
-export function recallFleet(state: GameState, id: number): FleetResult {
+export function recallFleet(state: GameState, id: number, reason: OrderNonDelivery = "manual-recall"): FleetResult {
   const fleet = state.fleets.find((f) => f.id === id);
   if (!fleet || fleet.returning) return { ok: false, state, reason: "舰队不存在或已在返航途中" };
-  const next = { ...state, fleets: state.fleets.map((f) => f.id === id ? { ...f, returning: true, remaining: f.charge?.phase==="holding"?f.duration:Math.min(f.duration, f.elapsed), elapsed: 0, ...(f.charge?{charge:{...f.charge,phase:"return" as const}}:{}) } : f) };
+  const context = validateOwnedFleetContext(state, id);
+  if (context.kind === "invalid") return { ok: false, state: pauseOwnedFleetOwner(state, id, context.reason), reason: context.reason };
+  let next = state;
+  if (context.kind === "owned") {
+    if (!["manual-recall", "plan-cancel", "goal-satisfied"].includes(reason)) return { ok: false, state, reason: "召回原因无效" };
+    const patched = recordOwnedTripPhase(state, context, { kind: "returning", outcome: { kind: "not-delivered", reason }, dockBlocked: false }, reason === "manual-recall" ? { pauseReason: "运输舰队已手动召回，计划暂停；此子任务不会再次发船" } : {});
+    if (!patched) return { ok: false, state, reason: "召回运输回执不一致" };
+    next = patched;
+  }
+  next = { ...next, fleets: next.fleets.map((f) => f.id === id ? { ...f, returning: true, remaining: f.charge?.phase === "holding" ? f.duration : Math.min(f.duration, f.elapsed), elapsed: 0, ...(f.charge ? { charge: { ...f.charge, phase: "return" as const } } : {}) } : f) };
   return { ok: true, state: resolveFleetArrivals(addMessage(next, `recall-${id}`, `舰队 #${id} 已召回，出航中按已飞行时间返回，驻留中按完整单程返回；未结算充能押注在返港时退回，燃料不退。`)), reason: "召回指令已下达" };
+}
+/** A user retries the same retained fleet; failure is exactly idempotent. */
+export function retryOwnedFleetDock(state: GameState, taskId: number, fleetId: number): FleetResult {
+  const context = validateOwnedFleetContext(state, fleetId);
+  if (context.kind !== "owned" || context.task.id !== taskId || !isOwnedDockBlocked(state, fleetId)) return { state, ok: false, reason: "没有对应的受阻返港舰队" };
+  const next = settleOwnedReturn(state, context, true);
+  return next === state ? { state, ok: false, reason: "返港入库仍受阻，请调整母港库存或舰船数量后重试" } : { state: next, ok: true, reason: "舰船与剩余货物已安全入港" };
 }
 export function abandonColony(state: GameState, id: string): FleetResult {
   const planet = state.planets.find((p) => p.id === id);
   if (!planet || planet.id === HOMEWORLD_ID) return { state, ok: false, reason: "不能放弃母星" };
   if (state.fleets.some((f) => f.originId === id || sameCoordinates(f.target, planet.coordinates)) || state.research.queue.some((q) => q.planetId === id)) return { state, ok: false, reason: "仍有相关舰队或研究订单，不能放弃该星球" };
-  if (state.orders.tasks.some(task => task.planetId === id && (task.status === "running" || task.status === "paused"))) return { state, ok: false, reason: "仍有未结束的本地计划，不能放弃该星球" };
+  if (state.orders.tasks.some(task => (task.planetId === id || task.transport?.authorization.donorPlanetId === id) && (task.status === "running" || task.status === "paused"))) return { state, ok: false, reason: "仍有未结束的本地或运输计划，不能放弃该星球" };
   if (state.arcade.autoBatch?.armed && state.arcade.autoBatch.planetId === id) state = stopRingBatch(state, "来源星球已放弃，自动批次已停止");
   const planets = state.planets.filter((p) => p.id !== id);
   return { state: { ...state, planets, deepSpace:{...state.deepSpace,offers:state.deepSpace.offers.filter(o=>o.planetId!==id)}, activePlanetId: state.activePlanetId === id ? planets[0]!.id : state.activePlanetId }, ok: true, reason: "殖民地已放弃；其库存、建筑与驻留舰船不退款" };
