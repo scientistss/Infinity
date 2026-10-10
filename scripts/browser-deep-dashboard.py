@@ -85,6 +85,34 @@ with sync_playwright() as p:
             page.set_viewport_size({'width':width,'height':1050});advance()
             check(str(width)+'px no page overflow',page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
             if width==390:snap('deep-dashboard-mobile.png')
+        # Actual same-ID import must retire both hidden dashboard row caches and
+        # their rendered recall capabilities, not just the ordinary fleet tab.
+        old_fleet_id=page.locator('[data-deep-flight] [data-space="recall"]').get_attribute('data-fleet')
+        page.locator('[data-deep-flight] [data-space="recall"]').evaluate('(e)=>window.__preImportDeepRecall=e')
+        incoming=save()
+        page.locator('[data-bind="transfer"]').fill(json.dumps(incoming,ensure_ascii=False))
+        page.locator('[data-action="import-text"]').click()
+        expect(page.locator('[data-bind="status"]')).to_have_text('已导入并存入本地')
+        check('import retires cached deep recall while dashboard is hidden',page.evaluate('!window.__preImportDeepRecall.isConnected'))
+        tab('deep')
+        check('same-ID import creates a fresh deep recall capability',page.locator('[data-deep-flight] [data-space="recall"]').get_attribute('data-fleet')==old_fleet_id and page.evaluate("""document.querySelector('[data-deep-flight] [data-space=\"recall\"]')!==window.__preImportDeepRecall"""))
+        rejected=page.evaluate("""()=>{
+          const status=document.querySelector('[data-bind="status"]').textContent;
+          const old=window.__preImportDeepRecall;
+          document.querySelector('#deep-flight-list').append(old);old.click();old.remove();
+          const current=document.querySelector('[data-deep-flight] [data-space="recall"]');
+          const clone=current.cloneNode(true);document.querySelector('#deep-flight-list').append(clone);clone.click();clone.remove();
+          const id=current.dataset.fleet;current.dataset.fleet=String(Number(id)+1000);current.click();current.dataset.fleet=id;
+          return document.querySelector('[data-bind="status"]').textContent===status && document.querySelector('[data-deep-flight] [aria-current="step"]').dataset.phase==='holding';
+        }""")
+        check('retired cloned and dataset-tampered deep recall nodes are rejected before action',rejected)
+        page.locator('[data-deep-flight] [data-space="recall"]').evaluate('(e)=>{window.__freshDeepRecall=e;e.focus()}')
+        # Explicit DOM-render boundary probe: invalidate only the ordinary list's
+        # render cache, without changing or injecting any game state.
+        page.evaluate("""()=>{window.__ordinaryRecall=document.querySelector('#space-fleets [data-space="recall"]');delete document.querySelector('#space-fleets').dataset.fleetSignature;}""")
+        advance(1)
+        check('ordinary fleet redraw cannot retire the independent deep capability',page.evaluate("""!window.__ordinaryRecall.isConnected && document.querySelector('#space-fleets [data-space="recall"]')!==window.__ordinaryRecall && document.querySelector('[data-deep-flight] [data-space="recall"]')===window.__freshDeepRecall"""))
+        check('fresh deep recall still retains focus across ordinary timer updates',page.evaluate('window.__freshDeepRecall===document.activeElement && window.__freshDeepRecall.isConnected'))
         page.locator('[data-deep-flight] [data-space="recall"]').click();advance()
         check('recall uses actual fleet action',page.locator('[data-deep-flight] [aria-current="step"]').get_attribute('data-phase')=='return')
         check('recall immediately disables duplicate action',page.locator('[data-deep-flight] [data-space="recall"]').is_disabled())

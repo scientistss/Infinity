@@ -42,7 +42,13 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
   `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
-  const updateDeep=installDeepPanel(root,onAction,()=>target(coordinateKey({...origin,position:16}),"charge"));
+  // Each surface owns its rendered capabilities; rebuilding the fleet tab must
+  // not retire the deep dashboard's stable, focused timer controls.
+  let deepFleetButtons = new WeakMap<HTMLButtonElement, number>();
+  const updateDeep=installDeepPanel(root,onAction,()=>target(coordinateKey({...origin,position:16}),"charge"),{
+    register(button,id){deepFleetButtons.set(button,id);},
+    retire(button){deepFleetButtons.delete(button);},
+  });
   let cursor:Coordinates={galaxy:1,system:50,position:8},selected:string|null=null,initialized=false,origin:Coordinates=cursor;
   let model:SpaceView|null=null;
   let fleetButtons = new WeakMap<HTMLButtonElement, number>();
@@ -70,12 +76,17 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="route")target(b.dataset.coordinate!,b.dataset.mission!);
       if(a==="select")onAction({type:"select-planet",id:b.dataset.planet!});
       if(a==="send")onAction({type:"send-fleet",request:request()});
-      if(a==="recall"){const id=Number(b.dataset.fleet);if(fleetButtons.get(b)===id&&Number.isSafeInteger(id)&&id>0&&el(root,"#space-fleets").contains(b))onAction({type:"recall-fleet",id});}
+      if(a==="recall"){
+        const id=Number(b.dataset.fleet);
+        const authorized=(fleetButtons.get(b)===id&&el(root,"#space-fleets").contains(b))
+          ||(deepFleetButtons.get(b)===id&&el(root,"#deep-flight-list").contains(b));
+        if(authorized&&Number.isSafeInteger(id)&&id>0)onAction({type:"recall-fleet",id});
+      }
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
   return {...original, updateDeep, updateOrders:orderPanel.update,
-    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

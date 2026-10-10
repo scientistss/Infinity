@@ -1,4 +1,4 @@
-import { installDeepDashboard } from "./deep-dashboard";
+import { installDeepDashboard, type DeepRecallAuthority } from "./deep-dashboard";
 import { installRingVisual, type RingAction } from "./ring-visual";
 import pkg from "../../package.json";
 import type { GameState, ResourceId } from "../game/types";
@@ -26,7 +26,7 @@ export function deepPanelHtml():string{return `
 function el<T extends HTMLElement=HTMLElement>(r:ParentNode,s:string):T{const n=r.querySelector<T>(s);if(!n)throw Error(`缺少深空节点 ${s}`);return n;}
 function put(r:ParentNode,s:string,t:string){const n=el(r,s);if(n.textContent!==t)n.textContent=t;}
 function html(r:ParentNode,s:string,t:string){const n=el(r,s);if(n.dataset.signature===t)return;const open=[...n.querySelectorAll<HTMLDetailsElement>('details[open]')].map(d=>d.dataset.report);n.innerHTML=t;n.dataset.signature=t;for(const d of n.querySelectorAll<HTMLDetailsElement>('details'))if(open.includes(d.dataset.report))d.open=true;}
-export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void, openCharge:()=>void){
+export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void, openCharge:()=>void, recallAuthority:DeepRecallAuthority){
  el<HTMLSelectElement>(root,"#deep-buy").value="crystal";
  const kicker=root.querySelector(".brand .kicker");if(kicker)kicker.textContent=`Planet surface · v${pkg.version}`;
  const save=root.querySelector('[data-tab-panel="save"]');
@@ -34,7 +34,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
  const arcade=root.querySelector('[data-tab-panel="arcade"]');
  arcade?.insertAdjacentHTML('afterbegin','<p class="muted">信标规则保持原样；舰队充能请到“深空”或“舰队”页。充能回放不再次发奖，奖励在舰队返航后进入出发星球。统计含两类回放，不应直接与信标概率对比。</p>');
  const updateRing=installRingVisual(root,onAction);
- const updateDashboard=installDeepDashboard(root);
+ const updateDashboard=installDeepDashboard(root,recallAuthority);
  root.addEventListener('click',e=>{
   const b=e.target instanceof Element?e.target.closest<HTMLButtonElement>('[data-deep]'):null;if(!b||b.disabled)return;
   const a=b.dataset.deep;
@@ -44,7 +44,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
   if(a==="arcade")root.querySelector<HTMLButtonElement>('[data-tab="arcade"]')?.click();
   if(a==="charge")openCharge();
  });
- return (state:GameState)=>{
+ const update=(state:GameState)=>{
   updateRing(state);
   if(el(root,'#space-deep').hidden)return;
   const d=state.deepSpace,now=state.totalTime.toNumber();
@@ -59,4 +59,5 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
   html(root,'#deep-reports',d.reports.slice().reverse().map(r=>`<details class="ov-card" data-report="${r.id}"><summary>#${r.fleetId} · ${arcadeSymbolDef(r.symbol).nameZh} · [${coordinateKey(r.target)}] · ${r.slots} 段 · ${chargeDeliveryStatus(state,r)}</summary><ul>${r.lines.map(t=>`<li>${enc(t)}</li>`).join('')}</ul>${r.battle?`<div class="space-table-scroll"><table class="ov-table"><thead><tr><th>回合</th><th>己方剩余</th><th>敌方剩余</th><th>己方输出</th><th>敌方输出</th></tr></thead><tbody>${r.battle.rounds.map(b=>`<tr><td>${b.round}</td><td>${b.attacker}</td><td>${b.defender}</td><td>${formatAmount(big(b.attackDamage))}</td><td>${formatAmount(big(b.defendDamage))}</td></tr>`).join('')}</tbody></table></div>`:''}</details>`).join('')||'<p class="muted">派出第一支充能舰队后，这里会记录实际结果、保护判定与战报。</p>');
   updateDashboard(state);
  };
+ return Object.assign(update,{invalidateFleetAuthority:updateDashboard.invalidateFleetAuthority});
 }

@@ -18,7 +18,11 @@ function help(paragraph: HTMLElement, title: string): void {
   const summary = document.createElement("summary"); summary.textContent = title;
   paragraph.before(detail); detail.append(summary, paragraph);
 }
-export function installDeepDashboard(root: HTMLElement): (state: GameState) => void {
+export interface DeepRecallAuthority {
+  register(button: HTMLButtonElement, fleetId: number): void;
+  retire(button: HTMLButtonElement): void;
+}
+export function installDeepDashboard(root: HTMLElement, recallAuthority: DeepRecallAuthority) {
   const panel = el(root, "#space-deep");
   const intro = el(panel, ":scope > p.muted");
   help(intro, "充能、返航与回放的区别");
@@ -83,18 +87,20 @@ export function installDeepDashboard(root: HTMLElement): (state: GameState) => v
       }
     }
   }
-  return next => {
+  const update = (next: GameState) => {
     state = next; if (panel.hidden) return;
     text(panel, "#deep-protection", protectionSummary(next));
     text(panel, "#deep-merchant-hint", merchantSummary(next).text);
     const rows = chargeRows(next), ids = new Set(rows.map(r => r.id));
-    for (const [id, node] of rowNodes) if (!ids.has(id)) { node.remove(); rowNodes.delete(id); }
+    for (const [id, node] of rowNodes) if (!ids.has(id)) { recallAuthority.retire(el<HTMLButtonElement>(node, '[data-space="recall"]')); node.remove(); rowNodes.delete(id); }
     for (const model of rows) {
       let row = rowNodes.get(model.id);
       if (!row) {
         row = document.createElement("article"); row.className = "deep-flight-row"; row.dataset.deepFlight = String(model.id);
         row.innerHTML = '<div class="deep-flight-heading"><strong class="deep-flight-name"></strong><span class="deep-flight-origin"></span><strong class="deep-timer"></strong><button type="button" data-space="recall">召回</button><button type="button" class="deep-view-report">查看报告</button></div><div class="deep-phase-steps"><span data-phase="outbound">01 前往深空</span><span data-phase="holding">02 驻留充能</span><span data-phase="return">03 返航入港</span></div><progress max="100" aria-label="当前阶段进度"></progress><p class="deep-flight-load"></p><p class="deep-flight-note"></p>';
-        el(row, '[data-space="recall"]').dataset.fleet = String(model.id);
+        const recall = el<HTMLButtonElement>(row, '[data-space="recall"]');
+        recall.dataset.fleet = String(model.id);
+        recallAuthority.register(recall, model.id);
         rowNodes.set(model.id, row); list.append(row);
       }
       text(row, ".deep-flight-name", `舰队 #${model.id}`);
@@ -114,4 +120,12 @@ export function installDeepDashboard(root: HTMLElement): (state: GameState) => v
     text(panel, "#deep-flight-count", `${rows.length} 支`); el(panel, "#deep-flight-empty").hidden = rows.length > 0;
     decorateReports(); showReports();
   };
+  return Object.assign(update, {
+    invalidateFleetAuthority() {
+      // Fleet IDs are scoped to a save. Retire the cached nodes as well as their
+      // capabilities, including while this tab is hidden during replacement.
+      for (const row of rowNodes.values()) recallAuthority.retire(el<HTMLButtonElement>(row, '[data-space="recall"]'));
+      rowNodes.clear(); list.replaceChildren(); state = null;
+    },
+  });
 }
