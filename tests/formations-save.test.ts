@@ -61,6 +61,7 @@ function appendHistory(value: any): any {
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7): any {
   const value = revision >= 5 ? unpaidFile() : file();
   value.revision = revision;
+  delete value.state.buildingTemplates;
   delete value.state.formations;
   for (const task of value.state.orders.tasks) delete task.formationOrigin;
   if (revision < 7) delete value.state.researchTemplates;
@@ -91,7 +92,6 @@ class MemoryStore implements KeyValueStore {
 describe("r8 pure named fleet formation persistence", () => {
   it("round-trips designs, research intent, historical prices and real paid receipts together", () => {
     const source = paidFile(), restored = read(source);
-    expect(restored.revision).toBe(8);
     expect(restored.revision).toBe(SAVE_REVISION);
     expect(restored.state).toEqual(source.state);
     expect(serializeState(deserializeState(restored.state))).toEqual(source.state);
@@ -356,6 +356,7 @@ describe("r8 additive migration and SaveSession protection", () => {
     if (revision === 7) {
       expect(imported.state.researchTemplates).toEqual(source.state.researchTemplates);
       const projection: any = structuredClone(imported.state); delete projection.formations;
+      expect(projection.buildingTemplates).toEqual({ nextTemplateId: 1, templates: [] }); delete projection.buildingTemplates;
       for (const task of projection.orders.tasks) delete task.formationOrigin;
       expect(projection).toEqual(source.state);
     }
@@ -402,7 +403,7 @@ describe("r8 additive migration and SaveSession protection", () => {
     expect(session.loaded.state.formations).toEqual(createFormationState());
     expect(session.loaded.state.researchTemplates).toEqual(source.state.researchTemplates);
     expect(session.loaded.state.orders.tasks[0]!.formationOrigin).toBeNull();
-    expect(importSave(store.getItem(STORAGE_KEY)!).revision).toBe(8);
+    expect(importSave(store.getItem(STORAGE_KEY)!).revision).toBe(SAVE_REVISION);
   });
   it("keeps readable r7 progress frozen when preserving the original fails", () => {
     const raw = JSON.stringify(legacy(7)), store = new MemoryStore(raw); store.failBackup = true;

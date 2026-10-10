@@ -52,6 +52,7 @@ function queueFile() {
 function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
   file.revision = revision;
+  delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;
   delete file.state.orders;

@@ -409,6 +409,7 @@ describe("watermarks respect existing failure and replacement boundaries", () =>
   it.each([false, true])("migration uses the old watermark and pairs only its successful replacement (failure=%s)", failed => {
     const legacy = JSON.parse(exportSave(game(), START + 45_000, START));
     legacy.revision = 7;
+    delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy);
     const store = new MemoryStore(source);

@@ -295,6 +295,7 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   next.nextFleetId = state.nextFleetId;
   next.orders = terminateOrdersForPrestige(state);
   next.formations = { nextFormationId: state.formations.nextFormationId, entries: state.formations.entries.map(cloneFormation) };
+  next.buildingTemplates = { nextTemplateId: state.buildingTemplates.nextTemplateId, templates: state.buildingTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.researchTemplates = { nextTemplateId: state.researchTemplates.nextTemplateId, templates: state.researchTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };

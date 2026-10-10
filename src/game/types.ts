@@ -1,5 +1,6 @@
 import type { FleetFormationState } from "./formation-state";
 import type { OrderState } from "./order-state";
+import type { BuildingTemplateState } from "./building-template-state";
 import type { ResearchTemplateState } from "./research-template-state";
 import type { DeepState } from "./deep-state";
 import type { Universe } from "./galaxy";
@@ -93,6 +94,8 @@ export interface GameState {
   formations: FleetFormationState;
   /** Reusable research goals; authorization is created separately through finite plans. */
   researchTemplates: ResearchTemplateState;
+  /** Reusable planet-local building goals; each application needs separate finite authorization. */
+  buildingTemplates: BuildingTemplateState;
   /** Canonical per-planet inventories and independent local queues (P4-1). */
   planets: PlanetState[];
   activePlanetId: string;

@@ -327,6 +327,7 @@ try:
         invalid["state"]["orders"]["nextWorkId"] = 1
         invalid["state"]["researchTemplates"] = {"nextTemplateId": 1, "templates": []}
         invalid["state"]["formations"] = {"nextFormationId": 1, "entries": []}
+        invalid["state"]["buildingTemplates"] = {"nextTemplateId": 1, "templates": []}
         for task in invalid["state"]["orders"]["tasks"]:
             task["transport"], task["currentWork"], task["formationOrigin"] = None, None, None
         invalids["synthetic r6 missing mandatory fleet owner tag"] = json.dumps(invalid, ensure_ascii=False)
@@ -348,6 +349,12 @@ try:
         invalid = copy.deepcopy(fixtures["transportR7"]["returning"])
         invalid["state"]["orders"]["tasks"][0]["formationOrigin"] = None
         invalids["actual r7 smuggles even null r8 order origin"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = json.loads(raw_fixture("imported"))
+        del invalid["state"]["buildingTemplates"]
+        invalids["r9 missing mandatory building intention library"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = copy.deepcopy(fixtures["transportR8"]["outbound"])
+        invalid["state"]["buildingTemplates"] = {"nextTemplateId": 1, "templates": []}
+        invalids["actual r8 smuggles even empty r9 building intentions"] = json.dumps(invalid, ensure_ascii=False)
         for label, invalid in invalids.items():
             case = "invalid import: " + label
             clear_audit(page)
@@ -392,7 +399,7 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3, 4, 5, 6, 7):
+        for revision in (2, 3, 4, 5, 6, 7, 8):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
@@ -402,6 +409,7 @@ try:
             check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
             check("migration never creates finite order authorization", migrated_file["state"]["orders"]["tasks"] == [])
             check("migration never invents research intent", migrated_file["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
+            check("migration never invents building intentions", migrated_file["state"]["buildingTemplates"] == {"nextTemplateId": 1, "templates": []})
             check("migration never invents fleet designs", migrated_file["state"]["formations"] == {"nextFormationId": 1, "entries": []})
             check("migration retains original planet", planet(page) == name_of(legacy_raw))
             check(f"migration backup is byte-for-byte r{revision} original", raw(page, BACKUP) == legacy_raw)
@@ -471,6 +479,8 @@ try:
             context, page = boot(r6_raw)
             migrated = json.loads(verify_commit(page, r6_raw, "已升级并保存本地存档"))
             projection = copy.deepcopy(migrated["state"])
+            check("source has no building template field", "buildingTemplates" not in r6_value["state"])
+            check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r6 migration creates exactly an empty intent library", projection.pop("researchTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r6 migration creates exactly an empty formation library", projection.pop("formations") == {"nextFormationId": 1, "entries": []})
             for task in projection["orders"]["tasks"]:
@@ -484,7 +494,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r6 exact source backup survives native reload", raw(page, BACKUP) == r6_raw)
-            check("r8 migration state remains current on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
+            check("r9 migration state remains current on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
             context.close()
 
         classification = "HTTP / native Storage / actual r6 source / injected migration fault"
@@ -535,6 +545,8 @@ try:
             context, page = boot(r7_raw)
             migrated = json.loads(verify_commit(page, r7_raw, "已升级并保存本地存档"))
             projection = copy.deepcopy(migrated["state"])
+            check("source has no building template field", "buildingTemplates" not in r7_value["state"])
+            check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r7 migration preserves complete nonempty research intent", projection["researchTemplates"] == r7_value["state"]["researchTemplates"])
             check("r7 migration creates exactly an empty formation library", projection.pop("formations") == {"nextFormationId": 1, "entries": []})
             for task in projection["orders"]["tasks"]:
@@ -550,7 +562,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r7 exact source backup survives native reload", raw(page, BACKUP) == r7_raw)
-            check("r7 templates remain complete on native r8 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
+            check("r7 templates remain complete on native r9 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
             context.close()
 
         classification = "HTTP / native Storage / actual r7 source / injected migration fault"
@@ -587,9 +599,77 @@ try:
             check("r7 failure cannot silently unlock writes after fault is removed", not any(row["operation"] == "write-attempt" for row in events(page)))
             capture_audit(page, "actual r7 source remains protected")
             context.close()
+        classification = "HTTP / native localStorage / actual r8 source / controlled no-catchup timestamp"
+        for phase in ("outbound", "returning"):
+            case = f"actual r8 {phase} complete formations, origins and transport migration"
+            r8_value = copy.deepcopy(fixtures["transportR8"][phase])
+            source = r8_value["state"]
+            check("fixture is genuine r8 with no new field", r8_value["revision"] == 8 and "buildingTemplates" not in source)
+            check("real r8 research, edited formation and immutable original are nonempty",
+                  len(source["researchTemplates"]["templates"]) == 2 and len(source["formations"]["entries"]) == 1
+                  and source["formations"]["entries"][0]["revision"] == 2
+                  and source["orders"]["tasks"][-1]["formationOrigin"]["formation"]["revision"] == 1)
+            r8_value["savedAt"] = r8_value["lastTickAt"] = int(time.time() * 1000) + 60_000
+            r8_raw = json.dumps(r8_value, ensure_ascii=False, indent=2)
+            context, page = boot(r8_raw)
+            migrated = json.loads(verify_commit(page, r8_raw, "已升级并保存本地存档"))
+            check("r8 migration uses the actual r9 envelope", migrated["revision"] == SAVE_REVISION == 9)
+            check("all r8 values and ordered arrays survive the sole empty-library lift",
+                  json.dumps(migrated["state"], sort_keys=True, separators=(",", ":")) ==
+                  json.dumps({"buildingTemplates": {"nextTemplateId": 1, "templates": []}, **source}, sort_keys=True, separators=(",", ":")))
+            check("r8 owned transport keeps its genuine flight phase", source["orders"]["tasks"][0]["transport"]["trips"][0]["phase"]["kind"] == phase)
+            check("r8 paid partial formation work and research survive", source["orders"]["tasks"][-1]["completedUnits"] == 2
+                  and source["planets"][1]["shipyardQueue"][0]["count"] == 1 and len(source["research"]["queue"]) == 1)
+            check("r8 migration preserves the exact original bytes", raw(page, BACKUP) == r8_raw)
+            page.reload(wait_until="networkidle")
+            select_save(page)
+            reloaded = json.loads(raw(page))
+            check("r8 exact backup and all saved intentions survive native r9 reload", raw(page, BACKUP) == r8_raw
+                  and reloaded["revision"] == SAVE_REVISION
+                  and reloaded["state"]["buildingTemplates"] == {"nextTemplateId": 1, "templates": []}
+                  and reloaded["state"]["researchTemplates"] == source["researchTemplates"]
+                  and reloaded["state"]["formations"] == source["formations"]
+                  and reloaded["state"]["orders"]["tasks"][-1]["formationOrigin"] == source["orders"]["tasks"][-1]["formationOrigin"])
+            context.close()
+
+        classification = "HTTP / native Storage / actual r8 source / injected migration fault"
+        for fault in ({"operation": "write", "target": "backup", "mode": "throw"},
+                      {"operation": "write", "target": "backup", "mode": "drop"},
+                      {"operation": "write", "target": "current", "mode": "throw"},
+                      {"operation": "write", "target": "current", "mode": "drop"},
+                      {"operation": "read", "target": "backup", "afterWrite": True},
+                      {"operation": "read", "target": "current", "afterWrite": True}):
+            case = "actual r8 paid transport source migration fault: " + json.dumps(fault, sort_keys=True)
+            r8_value = copy.deepcopy(fixtures["transportR8"]["outbound"])
+            r8_value["savedAt"] = r8_value["lastTickAt"] = int(time.time() * 1000) + 60_000
+            r8_raw = json.dumps(r8_value, ensure_ascii=False, indent=2)
+            context, page = boot(r8_raw, startup_fault=fault)
+            expect(page.locator('[data-bind="notice"]')).to_contain_text("原件已保留")
+            frozen_time, frozen_metal = page.locator('[data-bind="played"]').text_content(), page.locator('[data-bind="amount-metal"]').text_content()
+            page.wait_for_timeout(1_200)
+            check("failed r8 migration freezes readable simulation", page.locator('[data-bind="played"]').text_content() == frozen_time and page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
+            check("failed r8 migration keeps the readable original planet", planet(page) == name_of(r8_raw))
+            check("failed r8 migration exports the exact original despite readback failure", download_raw(page, f"r8-{fault['operation']}-{fault['target']}-{fault.get('mode', 'readback')}-original.json") == r8_raw)
+            expected_event = "read-throw" if fault["operation"] == "read" else "write-" + fault["mode"]
+            check("r8 source fault was actually exercised", any(row["operation"] == expected_event and row.get("injected") for row in events(page)))
+            persisted = page.evaluate("key => window.__saveNativeRead(key)", KEY)
+            uncertain_write = fault["operation"] == "read" and fault["target"] == "current"
+            if uncertain_write:
+                check("uncertain r8 write remains on disk without a false rollback claim", json.loads(persisted)["revision"] == SAVE_REVISION)
+            else:
+                check("r8 original bytes survive denied or dropped replacement", persisted == r8_raw)
+            check("r8 failed migration never announces success", not any(row["operation"] == "ui-status" and row["text"] == "已升级并保存本地存档" for row in events(page)))
+            capture_audit(page, "actual r8 migration fault and exact protected export")
+            page.evaluate("window.__saveFault = null")
+            clear_audit(page)
+            page.locator('[data-action="save"]').click()
+            check("r8 failure cannot silently unlock writes after fault is removed", not any(row["operation"] == "write-attempt" for row in events(page)))
+            capture_audit(page, "actual r8 source remains protected")
+            context.close()
+
 
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3, 4, 5, 6, 7):
+        for revision in (2, 3, 4, 5, 6, 7, 8):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)

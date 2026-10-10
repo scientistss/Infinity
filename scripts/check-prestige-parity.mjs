@@ -1,7 +1,8 @@
 /** Full-state prestige parity against the independently archived, last-green r8 engine.
  * Usage: node --import tsx scripts/check-prestige-parity.mjs /path/to/6016391
- * Synthetic engine-built fixtures only; no production saves and no field projection.
+ * Synthetic engine-built fixtures only; no production saves; only the explicitly asserted empty r9 library is added.
  */
+import { assertR8StatePreserved } from "./r8-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -52,18 +53,18 @@ fixtures["huge-score"] = old.save.deserializeState(old.save.serializeState(huge)
 const results = [];
 for (const [name, before] of Object.entries(fixtures)) {
   const raw = old.save.serializeState(before);
-  const current = currentSave.deserializeState(raw);
-  assert.deepEqual(currentSave.serializeState(current), raw, `${name}: canonical reader must preserve the actual old input`);
+  const current = currentSave.deserializeState(currentSave.importSave(old.save.exportSave(before, 1234)).state);
+  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: canonical reader must preserve the actual old input`);
   const expected = old.logic.prestige(before);
   const evaluation = evaluatePrestige(current);
   assert.equal(evaluation.gain.toString(), old.logic.warpGain(before).toString(), `${name}: nominal gain`);
-  assert.deepEqual(currentSave.serializeState(evaluation.next), old.save.serializeState(expected), `${name}: complete serialized state`);
+  assertR8StatePreserved(currentSave.serializeState(evaluation.next), old.save.serializeState(expected), `${name}: complete serialized state`);
   assert.deepEqual(old.save.serializeState(before), raw, `${name}: archived input was mutated`);
-  assert.deepEqual(currentSave.serializeState(current), raw, `${name}: current input was mutated`);
+  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: current input was mutated`);
   assert.equal(evaluation.next === current, expected === before, `${name}: threshold reference identity`);
   const restored = currentSave.deserializeState(currentSave.importSave(currentSave.exportSave(evaluation.next, 1234)).state);
   assert.deepEqual(currentSave.serializeState(restored), currentSave.serializeState(evaluation.next), `${name}: candidate reader roundtrip`);
   results.push({ name, gain: evaluation.gain.toString(), launches: evaluation.next.stats.launches });
 }
-console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "none: every serialized field",
+console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "every r8 field exact; sole r9 addition is independently asserted empty buildingTemplates",
   scope: "Actual old-r8 APIs, stored seeds, settled readers, paid queues, old formation origin, templates, owned transport phases, ring authority, deep rewards and threshold/achievement boundaries", scenarios: results }, null, 2));

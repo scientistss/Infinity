@@ -9,6 +9,7 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
+import { assertR8StatePreserved, liftR8State } from "./r8-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -66,12 +67,16 @@ assert.equal(sha256(fixture.save), fixture.manifest.sha256, "exact native save c
 assert.equal(fixture.save.length, fixture.manifest.stringChars, "native save UTF-16 code-unit length");
 assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "native save UTF-8 byte length");
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
-const sourceState = afterSave.deserializeState(afterSave.importSave(fixture.save).state);
+assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
+const migratedFile = afterSave.importSave(fixture.save);
+assert.equal(migratedFile.revision, 9, "new reader must perform the real r8-to-r9 migration");
+const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
 const serialized = JSON.stringify(afterSave.serializeState(sourceState));
-assert.equal(JSON.stringify(beforeSave.serializeState(beforeState)), serialized, "archived/current strict readers must agree on all state");
+const archivedSerialized = JSON.stringify(beforeSave.serializeState(beforeState));
+assertR8StatePreserved(afterSave.serializeState(sourceState), beforeSave.serializeState(beforeState), "archived/current strict readers");
 for (let pass = 0; pass < 2; pass++) {
-  assert.equal(JSON.stringify(beforeSave.serializeState(beforeLogic.tick(beforeState, 0))), serialized, "archived zero-time startup parity");
+  assert.equal(JSON.stringify(beforeSave.serializeState(beforeLogic.tick(beforeState, 0))), archivedSerialized, "archived zero-time startup parity");
   assert.equal(JSON.stringify(afterSave.serializeState(afterLogic.tick(sourceState, 0))), serialized, "current zero-time startup parity");
 }
 function deepFreeze(value, seen = new WeakSet()) {
@@ -190,15 +195,16 @@ const separateResults = [
 ];
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
 assert.equal(beforeSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "current exact serialization parity");
+const expectedR9 = { ...fixture.ready, revision: 9, state: liftR8State(fixture.ready.state) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR9, null, 2), "current exact native serialization is the sole explicit empty-library lift plus r9 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
-  assert.equal(JSON.stringify(afterSave.serializeState(afterLogic.tick(state, delta))),
-    JSON.stringify(beforeSave.serializeState(beforeLogic.tick(state, delta))), `complete simulation state parity at ${delta}s`);
+  assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
+    beforeSave.serializeState(beforeLogic.tick(state, delta)), `complete simulation state parity at ${delta}s`);
 }
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen strict-reader fixture. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r9 migration; only the independently asserted empty buildingTemplates field is new. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },
@@ -209,6 +215,6 @@ process.stdout.write(JSON.stringify({
     startupParityPasses: 2, timingIncludes: "only the named synchronous callback", timingExcludes: "fixture generation, module loading, freezing, equality/hash checks, output serialization",
     limits: "CPU/JIT/GC and competing workload affect native timings. Small-sample p95 is descriptive, not a statistical guarantee. Browser measurements and storage quota must be reported separately." },
   modelResults, separateResults,
-  correctness: { strictReadersEqual: true, zeroTimeStartupStable: true, archivedFullPresentParity: true, visibleAndSharedFieldsEqual: true,
-    splitSpaceParity: true, frozenInputUnchanged: true, completeSimulationStateParity: true, exactNativeSerializationParity: true },
+  correctness: { strictReadersEqualAfterSoleEmptyLibraryLift: true, zeroTimeStartupStable: true, archivedFullPresentParity: true, visibleAndSharedFieldsEqual: true,
+    splitSpaceParity: true, frozenInputUnchanged: true, completeSimulationStateParity: true, exactNativeSerializationParityAfterExplicitR9Lift: true },
 }, null, 2) + "\n");

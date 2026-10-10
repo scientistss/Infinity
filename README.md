@@ -60,6 +60,7 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 - [只读开拓查看](docs/EXPANSION_NAVIGATION.md)：当前星系、真实限制、明确场景报价与只读边界。
 - [曲率收益与损失预览](docs/CURVATURE_PREVIEW.md)：共享实际规则、只读预览与手动写入后采用。
 - [命名编成与有限补船](docs/FLEET_FORMATIONS.md)：数量设计、一次缺额、固定预算及历史引用。
+- [建筑意图模板](docs/BUILDING_TEMPLATES.md)：本地有限目标、逐项预算、r9 迁移；当前检查点仅领域，玩家面板待接线。
 - [研究意图模板](docs/RESEARCH_TEMPLATES.md)：纯目标库、重新报价、明确应用与旧订单隔离。
 - [本地有限计划](docs/LOCAL_ORDERS.md)：固定目标、真实付款、净占用预算、稳定取消与边界。
 - [有限单源运输](docs/TRANSPORT_ORDERS.md)：真实航班、到货后付款、货物毛额度、燃料与受阻返港。

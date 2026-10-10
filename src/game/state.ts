@@ -1,5 +1,6 @@
 import { createFormationState } from "./formation-state";
 import { createOrderState } from "./order-state";
+import { createBuildingTemplateState } from "./building-template-state";
 import { createResearchTemplateState } from "./research-template-state";
 import { createDeepState } from "./deep-state";
 import { homeCoordinates } from "./galaxy";
@@ -71,6 +72,7 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat
     orders: createOrderState(),
     formations: createFormationState(),
     researchTemplates: createResearchTemplateState(),
+    buildingTemplates: createBuildingTemplateState(),
     planets: [{ ...createPlanet(HOMEWORLD_ID, homeCoordinates(worldSeed)), resources: startingResources() }],
     universe: {seed: worldSeed, layout: "ring-v1"},
     fleets: [], messages: [], nextFleetId: 1,

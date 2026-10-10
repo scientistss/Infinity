@@ -1,3 +1,4 @@
+import { readBuildingTemplates, serializeBuildingTemplates, migrateBuildingTemplates, rejectLegacyBuildingTemplateFields } from "./building-templates-save";
 import { readResearchTemplates, serializeResearchTemplates, migrateResearchTemplates, rejectLegacyResearchTemplateFields } from "./research-templates-save";
 import { readFormations, serializeFormations, validateFormationReferences, rejectLegacyFormationFields, migrateFormations } from "./formations-save";
 import { migrateLegacyOrders, migrateTransportOrders, rejectLegacyTransportFields, readOrders, serializeOrders, validateOrderReferences, validateOrderTransportReferences } from "./orders-save";
@@ -91,6 +92,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 }
 
 export interface SerializedState {
+  buildingTemplates: ReturnType<typeof serializeBuildingTemplates>;
   formations: ReturnType<typeof serializeFormations>;
   researchTemplates: ReturnType<typeof serializeResearchTemplates>;
   orders: ReturnType<typeof serializeOrders>;
@@ -139,7 +141,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r7 → r8 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r8 → r9 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -162,6 +164,7 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
+    buildingTemplates: serializeBuildingTemplates(state.buildingTemplates),
     formations: serializeFormations(state.formations),
     researchTemplates: serializeResearchTemplates(state.researchTemplates),
     orders: serializeOrders(state.orders),
@@ -201,6 +204,7 @@ export function deserializeState(raw: unknown): GameState {
   if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
   state.activePlanetId = readPlanetId(raw.activePlanetId);
   if (!ids.has(state.activePlanetId)) throw new Error("当前星球不存在");
+  state.buildingTemplates = readBuildingTemplates(raw.buildingTemplates);
   state.researchTemplates = readResearchTemplates(raw.researchTemplates);
   state.formations = readFormations(raw.formations);
   state.orders = readOrders(raw.orders, 8);
@@ -248,7 +252,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r8 or explicitly migrate same-schema r2–r7; never touch the current game. */
+/** Validate current v9/r9 or explicitly migrate same-schema r2–r8; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -261,27 +265,32 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== 7 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r7/r${SAVE_REVISION}）；原件保留，未导入`);
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== 7 && parsed.revision !== 8 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r7/r8/r${SAVE_REVISION}）；原件保留，未导入`);
   }
   if (parsed.revision !== SAVE_REVISION) {
-    rejectLegacyFormationFields(parsed.state);
-    if (parsed.revision < 7) rejectLegacyResearchTemplateFields(parsed.state);
-    // r6/r7 own real transport authority; r7 also owns real research intent.
-    // Read their genuine subformat 6 before adding only a null formation origin.
-    if (parsed.revision < 6) {
-      rejectLegacyTransportFields(parsed.state);
-      if (parsed.revision === 2 || parsed.revision === 3 || parsed.revision === 4) {
-        parsed.state = migrateLegacyState(parsed.state, parsed.revision);
+    rejectLegacyBuildingTemplateFields(parsed.state);
+    if (parsed.revision < 8) {
+      rejectLegacyFormationFields(parsed.state);
+      if (parsed.revision < 7) rejectLegacyResearchTemplateFields(parsed.state);
+      // Preserve the genuine r2–r7 chain. Only r6/r7 require order subformat 6;
+      // r8 already owns formation origins and must retain order subformat 8.
+      if (parsed.revision < 6) {
+        rejectLegacyTransportFields(parsed.state);
+        if (parsed.revision === 2 || parsed.revision === 3 || parsed.revision === 4) {
+          parsed.state = migrateLegacyState(parsed.state, parsed.revision);
+        }
+        parsed.state = migrateTransportOrders(parsed.state);
+      } else {
+        if (!isRecord(parsed.state)) throw Error("存档状态格式不正确");
+        parsed.state = { ...parsed.state, orders: readOrders(parsed.state.orders, 6) };
       }
-      parsed.state = migrateTransportOrders(parsed.state);
-    } else {
+      if (parsed.revision < 7) parsed.state = migrateResearchTemplates(parsed.state);
       if (!isRecord(parsed.state)) throw Error("存档状态格式不正确");
-      parsed.state = { ...parsed.state, orders: readOrders(parsed.state.orders, 6) };
+      parsed.state = migrateFormations(parsed.state);
     }
-    if (parsed.revision < 7) parsed.state = migrateResearchTemplates(parsed.state);
-    if (!isRecord(parsed.state)) throw Error("存档状态格式不正确");
-    parsed.state = migrateFormations(parsed.state);
+    // r8 needs exactly this additive field; existing authority is never reconstructed.
+    parsed.state = migrateBuildingTemplates(parsed.state);
   }
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");

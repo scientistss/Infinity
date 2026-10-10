@@ -153,9 +153,24 @@ def save(page):
     return saved(page)
 
 
+def exact_state(actual, expected):
+    # JSON scalar types and array ordering are part of the whole-state contract.
+    return json.dumps(actual,sort_keys=True,separators=(',',':')) == json.dumps(expected,sort_keys=True,separators=(',',':'))
+
+
+def lift_r8_state(state):
+    assert 'buildingTemplates' not in state, 'Actual r8 oracle must not already contain buildingTemplates'
+    return {'buildingTemplates': {'nextTemplateId': 1, 'templates': []}, **state}
+
+
+def expected_state(name, page=None):
+    state = fixtures['expected'][name]
+    return state if page is not None and page.url.startswith(args.before_url) else lift_r8_state(state)
+
+
 def whole(page,expected,label='complete serialized engine state matches independent production-engine oracle'):
     value=save(page)
-    check(label,value==fixtures['expected'][expected],{'expected':expected})
+    check(label,exact_state(value,expected_state(expected,page)),{'expected':expected})
     return value
 
 
@@ -170,6 +185,7 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     url=url or args.url;parsed=urlparse(url)
     check('production bundle is served over HTTP(S)',parsed.scheme in ('http','https'))
     seed=copy.deepcopy(fixtures[which]);seed['savedAt']=seed['lastTickAt']=EPOCH
+    check('controlled shared fixture is genuine r8 with no r9 library',seed['revision']==8 and 'buildingTemplates' not in seed['state'])
     if corrupt:seed['state']['formations']['nextFormationId']=0
     context=browser.new_context(viewport={'width':1440,'height':1100},reduced_motion='reduce',accept_downloads=True,
         storage_state={'cookies':[],'origins':[{'origin':f'{parsed.scheme}://{parsed.netloc}','localStorage':[
@@ -179,6 +195,10 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     check('actual HTTP production response',response is not None and response.status==200)
     page.locator('[data-bind="energy-chip"]').wait_for()
     check('counter and healthy Storage delegate to captured native implementations',all(page.evaluate('window.__renderProbe.snapshot().backing').values()))
+    if not corrupt and url == args.url:
+        stored=json.loads(raw(page))
+        check('controlled current startup observes the actual r8 migration and only its empty new library',stored['revision']==9 and exact_state(stored['state'],lift_r8_state(seed['state'])))
+        check('controlled migration preserves exact historical native seed bytes',page.evaluate('key=>localStorage.getItem(key)',BACKUP)==json.dumps(seed,ensure_ascii=False))
     return context,page
 
 
@@ -341,7 +361,7 @@ def run_cases():
         protected_masks(page)
         check('clearing storage fault does not implicitly recover authority',raw(page)==baseline)
         click(page,'[data-action="import-text"]',flush=False)
-        check('explicit verified import recovers the complete incoming state',saved(page)==fixtures['expected']['incoming.initial'])
+        check('explicit verified import recovers the complete incoming state',saved(page)==expected_state('incoming.initial'))
         check('recovery masks retire old editor and review authority before a paint',page.locator('#template-save').is_disabled() and page.locator('#formation-save').is_disabled() and page.locator('#formation-confirm-replenish').is_disabled() and page.locator('#template-confirm-apply').is_disabled())
         check('recovery restores only fresh entry controls without hidden lists',page.locator('#template-new').is_enabled() and page.locator('#formation-new').is_enabled() and page.locator('#order-create').is_enabled() and page.locator('#order-transport-fields input,#order-transport-fields select').evaluate_all('(xs)=>xs.every(x=>x.disabled)') and page.locator('#formation-library article,#template-library article,#order-list article').count()==0)
         recovered=raw(page);writes=len([row for row in page.evaluate('window.__renderProbe.snapshot().events') if row['type']=='write'])
@@ -361,7 +381,7 @@ def run_cases():
         case='before/after identical controlled trace '+name
         before,count_before=differential_trace(name,args.before_url)
         after,count_after=differential_trace(name,args.url)
-        check('exact entire state matches archived before bundle on identical trace',before==after)
+        check('every archived field matches on identical trace with only the exact empty r9 library',exact_state(after,lift_r8_state(before)))
         if name.startswith('steady'):
             check('old bundle updates on every requested frame',count_before==len(fixtures['traces'][name]))
             check('ordinary latest-only rendering is bounded at 10Hz',18<=count_after<=21,{'before':count_before,'after':count_after})
@@ -374,8 +394,13 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.11-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.12-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
+        check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else 9))
+        # Observe the new reader's migration above, then perform the same genuine
+        # manual save on both bundles. This sets the same status through real UI
+        # work; no status text or other visible field is projected away.
+        whole(page,'base.initial','paired visible review starts from identical historical state after a real manual save')
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
@@ -389,6 +414,22 @@ def run_cases():
                 check('visible galaxy snapshot contains exact phase paragraph once',snapshots[label][name]['text'].count(range_text)==1)
                 normalized=range_text.replace(token,'v<verified-release-version>',1)
                 snapshots[label][name]['text']=snapshots[label][name]['text'].replace(range_text,normalized,1)
+            if name=='save':
+                revision=8 if label=='before' else 9
+                paragraph=page.locator('[data-tab-panel="save"] p').first.inner_text()
+                cap=page.locator('[data-tab-panel="save"] p [data-bind="offline-cap"]').inner_text()
+                expected_paragraph=(f'原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r{revision} 存档；'
+                    f'有效 r2–r{revision-1} 先备份后升级，仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。'
+                    '读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 '+cap+'。')
+                check('entire save metadata paragraph is the exact original text with its verified revision values',paragraph==expected_paragraph)
+                tokens={f'v9 / r{revision} 存档': 'v9 / r<current> 存档',
+                        f'有效 r2–r{revision-1} 先备份后升级': '有效 r2–r<previous> 先备份后升级'}
+                normalized=paragraph
+                for token,replacement in tokens.items():
+                    check('save notice contains its exact supported revision metadata once',paragraph.count(token)==1)
+                    normalized=normalized.replace(token,replacement,1)
+                check('visible save snapshot contains the complete metadata paragraph once',snapshots[label][name]['text'].count(paragraph)==1)
+                snapshots[label][name]['text']=snapshots[label][name]['text'].replace(paragraph,normalized,1)
             if name in ('orders','fleet'):
                 details_id='research-templates' if name=='orders' else 'fleet-formations'
                 new_id='template-new' if name=='orders' else 'formation-new'
@@ -502,7 +543,7 @@ def run_cases():
         else:
             tab(page,'save');page.once('dialog',lambda dialog:dialog.accept());click(page,'[data-action="reset"]');expected=None
         before=save(page)
-        if expected:check('replacement equals complete independent engine result',before==fixtures['expected'][expected])
+        if expected:check('replacement equals complete independent engine result',before==expected_state(expected))
         replay_old(page)
         check('retired original and cloned controls have no effect',save(page)==before)
         check('adoption clears old dispatch fill',page.locator('[data-ship="small_cargo"]').input_value()=='0')
@@ -573,13 +614,13 @@ def run_cases():
     for _ in range(60):frame(page)
     check('visible idle original arcade receives every RAF including attract mode',updates(page)==60)
     click(page,'[data-action="arcade-run"]')
-    check('manual single reward commits exactly once',saved(page)==fixtures['expected']['ring.single'])
+    check('manual single reward commits exactly once',saved(page)==expected_state('ring.single'))
     # Original animator may disable its button while showing the result. Advancing
     # zero engine time still gives every original RAF; use the separate all case
     # rather than fabricate animation completion or force a disabled control.
     whole(page,'ring.single');context.close()
     context,page=boot('ring');tab(page,'arcade');click(page,'[data-action="arcade-all"]')
-    check('manual batch reward commits exactly once',saved(page)==fixtures['expected']['ring.all'])
+    check('manual batch reward commits exactly once',saved(page)==expected_state('ring.all'))
     for _ in range(20):frame(page)
     whole(page,'ring.all','repeated original animation frames never settle rewards twice');context.close()
 
@@ -606,7 +647,8 @@ with sync_playwright() as playwright:
         raise
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
-            'parityMetadataException':'Only the exact galaxy #space-range paragraph version token is normalized after checking the served manifests equal before 0.6.7-alpha.1 and after 0.6.11-alpha.1. All other visible text and controls stay exact.',
+            'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact and only empty buildingTemplates is added. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
+            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.12-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. Complete paragraph boundaries, all other visible text, status, and controls remain exact.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},

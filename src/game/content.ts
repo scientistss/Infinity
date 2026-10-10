@@ -26,11 +26,11 @@ export interface ResourceDef {
  * v6 (P1): OGame buildings by level, build queue, storage caps, planet fields.
  * v7 (P2): research levels + research queue, dark matter, 12 protocol slots (design doc §4).
  * v8 (P3): planet.units (ships and defenses) and planet.shipyardQueue (design doc §17).
- * Unsupported versions remain protected. Same-schema v9 r2–r7 migrate to the current revision.
+ * Unsupported versions remain protected. Same-schema v9 r2–r8 migrate to the current revision.
  */
 export const SAVE_VERSION = 9;
-/** r8 adds bounded named formations and immutable finite-replenishment order origins. */
-export const SAVE_REVISION = 8;
+/** r9 adds bounded, purely declarative building-intent templates. */
+export const SAVE_REVISION = 9;
 export const SAVE_SCHEMA = "infinity-original-p4";
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.original-p4.save.v1";

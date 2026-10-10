@@ -141,6 +141,7 @@ function legacyFile(revision: 2 | 3) {
   for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
   const file = JSON.parse(exportSave(state, 123));
   file.revision = revision;
+  delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;
   delete file.state.orders;

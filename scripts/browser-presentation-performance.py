@@ -274,7 +274,7 @@ active_identity = {}
 report = {
     'completed': False, 'invocationId':args.invocation_id, 'phaseHistory':[], 'classification': 'actual native browser timings / HTTP / native localStorage / unmodified clocks, RAF and timers',
     'beforeUrl': args.before_url, 'afterUrl': args.after_url,
-    'design': 'Sequential isolated AB/BA repetitions with identical source fixture state payloads. Only savedAt/lastTickAt are rebased at document start using native Date.now to exclude unrelated offline catch-up; every exact seeded envelope hash is recorded. No concurrent game page is kept running.',
+    'design': 'Sequential isolated AB/BA repetitions on economically identical, strict current-version inputs: actual archived r8 fixture before; real current import/export r9 with only an independently asserted empty buildingTemplates library after. Native input hashes differ and are recorded beside the common historical-state hash. Only envelope timestamps are rebased. Fresh origins test two-copy replacement capacity; migration and three-copy quota protection are separate.',
     'limits': ['Headless foreground Chromium; not OS-hidden, mobile or display-hardware performance.',
                'CPU ScriptDuration and TaskDuration are actual CDP metrics; frame intervals are separate presentation observations.',
                'EventTiming duration is browser-measured input-to-next-paint latency, quantized by the browser; events below 16ms may be absent and are never invented.',
@@ -375,7 +375,7 @@ PROBE = r"""(() => {
     const actual=JSON.parse(currentRaw),expected=JSON.parse(p.seeded);
     expected.savedAt=actual.savedAt;expected.lastTickAt=actual.lastTickAt;
     currentByteProof={matches:JSON.stringify(expected,null,2)===currentRaw,savedAt:actual.savedAt,
-     lastTickAt:actual.lastTickAt,stringChars:currentRaw.length,readAt};
+     lastTickAt:actual.lastTickAt,stringChars:currentRaw.length,readAt,sourceRevision:expected.revision};
    }
    return {...(full?p:{}),now:performance.now(),hidden:document.hidden,visibility:document.visibilityState,
     ready:!!document.querySelector('[data-bind="energy-chip"]'),status,notice,protectedState,frameCount:p.frames.length,longTaskCount:p.longTasks.length,inputCount:p.inputs.length,visibilityEventCount:p.visibilityEvents.length,
@@ -447,15 +447,17 @@ def run(browser, profile, variant, repetition, order):
     parsed=urlparse(url)
     check('benchmark bundle is HTTP(S)',parsed.scheme in ('http','https'))
     active_identity.clear();active_identity.update(profile=profile['profile'],variant=variant,repetition=repetition,url=url)
+    native_input=profile['nativeInputs'][variant]
     run={'profile':profile['profile'],'variant':variant,'repetition':repetition,'pairOrder':order,'url':url,
-         'sourceSaveSha256':digest(profile['save']),'sourceStateSha256':profile['stateSha256'],'samples':[],
+         'inputSaveSha256':digest(native_input['save']),'inputRevision':native_input['ready']['revision'],
+         'commonR8StateSha256':profile['commonR8StateSha256'],'samples':[],
          'pageErrors':[],'failedRequests':[],'qualified':False,'completed':False}
     report['runs'].append(run)
     context=page=cdp=None
     checkpoint('run.begin','before')
     try:
         context=phase_call('context.create',lambda:browser.new_context(viewport={'width':1440,'height':1100},reduced_motion='reduce',accept_downloads=True))
-        phase_call('context.init-script',lambda:context.add_init_script(PROBE.replace('__KEY__',json.dumps(profile['key'])).replace('__SAVE__',json.dumps(profile['save']))))
+        phase_call('context.init-script',lambda:context.add_init_script(PROBE.replace('__KEY__',json.dumps(profile['key'])).replace('__SAVE__',json.dumps(native_input['save']))))
         page=phase_call('page.create',context.new_page);page.set_default_timeout(30000)
         page.on('pageerror',lambda error:run['pageErrors'].append(str(error)))
         page.on('requestfailed',lambda request:run['failedRequests'].append(request.url))
@@ -480,7 +482,10 @@ def run(browser, profile, variant, repetition, order):
             run['blocker']='Genuine native localStorage could not seed this profile; no ready-performance claim.'
             return
         seeded=json.loads(initialized['seeded'])
-        check('only envelope timestamps changed from source fixture',seeded['state']==profile['ready']['state'])
+        target_revision = 8 if variant == 'before' else 9
+        check('served bundle has the exact expected r8/r9 reader revision',report['servedBundles'][variant]['release']['saveRevision']==target_revision)
+        check('native input is the strict current version for this served bundle',seeded['revision']==target_revision)
+        check('only envelope timestamps changed from validated current-version fixture',seeded['state']==native_input['ready']['state'])
         if initialized['currentRaw'] != initialized['seeded']:
             # A native startup may legitimately settle time and save; retain full
             # status and hashes rather than silently considering it the seed.
@@ -489,7 +494,11 @@ def run(browser, profile, variant, repetition, order):
         if run['startupProtected']:
             run['blocker']='Native save session is protected at startup; excluded from ready-gameplay comparison.'
             return
-        phase_call('initialization.network-idle',lambda:page.wait_for_load_state('networkidle'))
+        startup_file = json.loads(initialized['currentRaw'])
+        startup_backups = phase_call('initialization.clean-current-origin',lambda:page.evaluate('key=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup"))',profile['key']))
+        check('paired current-version startup has no migration or pre-existing backup',startup_file['revision']==target_revision and not startup_backups)
+        run['capacityScope']='Fresh current-version origin; exact current plus one replacement backup. Migration and additional historical-backup capacity are qualified separately.'
+        phase_call('initialization.network-idle' ,lambda:page.wait_for_load_state('networkidle'))
         for name in args.tabs.split(','):
             run['samples'].append(collect_sample(page,cdp,name.strip()))
             checkpoint('sample.recorded','after',tab=name.strip())
@@ -645,7 +654,8 @@ def run(browser, profile, variant, repetition, order):
         # Compare the entire native stored string in the SAME synchronous snapshot
         # that reads it at the first terminal DOM change. A later independent read may
         # legitimately observe its next autosave rather than this import result.
-        # Only transaction envelope timestamps are substituted; no state is masked.
+        # Only transaction envelope timestamps are substituted. Each input is
+        # already its reader's strict current version; no state is masked here.
         byte_proof=completion['currentByteProof']
         run['nativePersistence']['currentByteProof']={**byte_proof,
             'observedRawSha256':digest(completion['currentRaw'] or ''),
@@ -779,13 +789,25 @@ def worker_main():
             if not path:continue
             source=phase_call('fixture.read',lambda:json.loads(Path(path).read_text()),profile=label)
             ready=source.get('ready',source.get('base'))
-            raw=source.get('save',json.dumps(ready,ensure_ascii=False,indent=2))
-            profile={'profile':source.get('profile',label),'key':source['key'],'ready':ready,'save':raw,
-                     'stateSha256':digest(json.dumps(ready['state'],sort_keys=True,separators=(',',':'),ensure_ascii=False))}
+            pair=source['pairedNative']
+            raw=pair['beforeSave']
+            current_raw=pair['afterSave'];current_ready=json.loads(current_raw)
+            check('original native fixture comes from actual source r8',ready['revision']==8 and 'buildingTemplates' not in ready['state'])
+            check('pair preparation used actual fixed r8 source and current native import/export',
+                  pair['sourceSha']=='4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b'
+                  and pair['generatedBy']=='actual archived r8 strict reader/exportSave, then actual current importSave/exportSave')
+            check('both complete native input checksums match verified preparation',digest(raw)==pair['beforeSha256'] and digest(current_raw)==pair['afterSha256'])
+            expected={**ready,'revision':9,'state':{'buildingTemplates':{'nextTemplateId':1,'templates':[]},**ready['state']}}
+            check('r9 paired input adds only the empty library; all old values, scalar types and array order remain',
+                  json.dumps(current_ready,sort_keys=True,separators=(',',':'))==json.dumps(expected,sort_keys=True,separators=(',',':')))
+            profile={'profile':source.get('profile',label),'key':source['key'],
+                     'commonR8StateSha256':pair['commonR8StateSha256'],
+                     'nativeInputs':{'before':{'ready':ready,'save':raw},'after':{'ready':current_ready,'save':current_raw}}}
             profiles.append(profile)
             report['profiles'].append({'profile':profile['profile'],'path':path,'description':source['description'],
-                'sourceSaveSha256':digest(raw),'sourceStateSha256':profile['stateSha256'],'sourceUtf8Bytes':len(raw.encode()),
-                'sourceStringChars':len(raw.encode('utf-16-le'))//2,'manifest':source.get('manifest')})
+                'beforeNativeSha256':digest(raw),'afterNativeSha256':digest(current_raw),'commonR8StateSha256':pair['commonR8StateSha256'],
+                'nativeUtf8Bytes':{'before':len(raw.encode()),'after':len(current_raw.encode())},
+                'capacityScope':pair['capacityScope'],'manifest':source.get('manifest')})
         playwright=phase_call('playwright.start',lambda:sync_playwright().start())
         browser=phase_call('browser.launch',lambda:playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'),headless=True,args=['--no-sandbox']))
         report['environment']={'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version}

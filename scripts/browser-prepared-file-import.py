@@ -35,7 +35,7 @@ parser.add_argument('--expected-before-sha', default='8c19d044fb3c38c601223cd552
 parser.add_argument('--expected-after-sha', default=os.environ.get('GITHUB_SHA'),
                     help='Exact after source SHA; defaults to GITHUB_SHA or local git HEAD')
 parser.add_argument('--fixture', default='save-session-review-save.json')
-parser.add_argument('--expected-revision', type=int, default=8)
+parser.add_argument('--expected-revision', type=int, default=9)
 parser.add_argument('--output', default='prepared-file-import-evidence')
 parser.add_argument('--chromium', default=None)
 args = parser.parse_args()
@@ -450,7 +450,7 @@ class Case:
         self.origin = f'{parsed.scheme}://{parsed.netloc}'
         values = {'infinity.ui.tab': 'save'}
         if self.seeded:
-            seed = copy.deepcopy(fixtures['current'])
+            seed = copy.deepcopy(fixtures['historicalR8']['current'] if self.mode == 'old' else fixtures['current'])
             # Refresh only envelope timestamps; never change a single engine-state field.
             seed['savedAt'] = seed['lastTickAt'] = int(time.time() * 1000)
             values[KEY] = json.dumps(seed, ensure_ascii=False, indent=2)
@@ -466,9 +466,9 @@ class Case:
         self.data['servedRelease'] = {'url': release_url, 'expectedSourceSha': expected_sha, **self.release_info}
         check(self.name, 'served release sourceSha strictly matches the pinned before/after SHA',
               self.release_info.get('sourceSha') == expected_sha, self.data['servedRelease'])
-        check(self.name, 'served release uses the current fixture format',
+        check(self.name, 'served release uses its exact historical/current format',
               self.release_info.get('saveVersion') == incoming['version']
-              and self.release_info.get('saveRevision') == args.expected_revision)
+              and self.release_info.get('saveRevision') == (8 if self.mode == 'old' else args.expected_revision))
         await self.context.add_init_script(PROBE.replace('__KEY__', json.dumps(KEY)).replace('__BACKUP__', json.dumps(BACKUP)).replace('__CASE_ID__', json.dumps(self.name)))
         self.page = await self.context.new_page()
         self.attach(self.page)
@@ -643,10 +643,13 @@ class Case:
                   len(import_updates) == 1 and isinstance(import_updates[0].get('oldValue'), str), compact(import_updates))
             replaced_raw = import_updates[0]['oldValue']
             self.data['importCurrentUpdate'] = import_updates[0]
-            check(self.name, 'acceptance persists exact complete incoming engine-state payload', accepted['state'] == incoming['state'])
+            check(self.name, 'actual old input has no building template field', 'buildingTemplates' not in incoming['state'])
+            expected_state = {'buildingTemplates': {'nextTemplateId': 1, 'templates': []}, **incoming['state']}
+            check(self.name, 'acceptance adds only the exact empty building library and preserves every old engine field', accepted['state'] == expected_state)
+            expected_source = {**incoming, 'revision': args.expected_revision, 'state': expected_state}
             expected_raw = await self.page.evaluate('({source,savedAt,lastTickAt}) => JSON.stringify({...source,savedAt,lastTickAt},null,2)',
-                {'source': incoming, 'savedAt': accepted['savedAt'], 'lastTickAt': accepted['lastTickAt']})
-            check(self.name, 'entire persisted envelope matches native JS serialization of source with only fresh timestamps substituted',
+                {'source': expected_source, 'savedAt': accepted['savedAt'], 'lastTickAt': accepted['lastTickAt']})
+            check(self.name, 'entire persisted envelope matches native JS serialization of the sole r9 empty-library lift and fresh timestamps',
                   accepted_raw == expected_raw, {'expectedRawSha256': sha(expected_raw), 'actualRawSha256': sha(accepted_raw)})
             check(self.name, 'backup is byte-for-byte the actual overwritten current from native update event oldValue',
                   len(terminal['backups']) == 1 and next(iter(terminal['backups'].values())) == replaced_raw
@@ -740,13 +743,15 @@ async def work():
     fixture_path = Path(args.fixture)
     fixtures = json.loads(fixture_path.read_text())
     KEY, BACKUP = fixtures['key'], fixtures['backupKey']
-    incoming = fixtures['imported']
+    incoming = fixtures['historicalR8']['imported']
     report['fixture'] = {'path': str(fixture_path), 'sha256': hashlib.sha256(fixture_path.read_bytes()).hexdigest(),
-        'description': fixtures.get('description'), 'engineStateChanges': 'None; existing synthetic current/imported state bytes only. Current envelope timestamps refreshed before initial storage_state.'}
+        'description': fixtures.get('description'), 'engineStateChanges': 'Actual archived r8 import bytes on both builds; current build starts from native r9 current state. Only startup envelope timestamps refreshed; successful import must add only the empty r9 library.'}
     check('fixture', 'existing fixture explicitly identifies synthetic data', 'synthetic' in str(fixtures.get('description', '')).lower())
-    check('fixture', 'current and imported fixtures use expected current revision; no startup migration',
-          all(fixtures[name]['revision'] == args.expected_revision for name in ('current', 'imported')),
+    check('fixture', 'new-build current fixture uses expected current revision; no startup migration',
+          fixtures['current']['revision'] == args.expected_revision,
           {name: fixtures[name]['revision'] for name in ('current', 'imported')})
+    check('fixture', 'before input and imported input are actual r8 source bytes without a new field',
+          all(file['revision'] == 8 and 'buildingTemplates' not in file['state'] for file in fixtures['historicalR8'].values()))
     check('fixture', 'current and imported fixtures distinguish their worlds',
           fixtures['current']['state']['planets'][0]['name'] != incoming['state']['planets'][0]['name'])
     incoming_path = out / 'synthetic-native-selected-import.json'

@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--url', default='http://127.0.0.1:4173/Infinity/')
 parser.add_argument('--fixture', default='accounted-clock-review-save.json')
 parser.add_argument('--session-fixture', default=None,
-                    help='Optional existing actual-source r2-r7 save-session fixture for migration clock checks')
+                    help='Optional existing actual-source r2-r8 save-session fixture for migration clock checks')
 parser.add_argument('--output', default='accounted-clock-evidence')
 parser.add_argument('--chromium', default=None)
 args = parser.parse_args()
