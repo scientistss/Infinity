@@ -7,8 +7,10 @@ import { createInitialState } from "../src/game/state.ts";
 import { SAVE_REVISION } from "../src/game/content.ts";
 
 const root = process.argv[2];
-if (!root) throw Error("Provide the verified pre-r4 source directory");
+if (!root) throw Error("Provide the verified preceding source directory");
 const previous = await import(pathToFileURL(resolve(root, "src/game/save.ts")).href);
+const previousContent = await import(pathToFileURL(resolve(root, "src/game/content.ts")).href);
+assert.ok(previousContent.SAVE_REVISION < SAVE_REVISION, "Guard must load a genuinely older revision");
 const candidate = exportSave(createInitialState(42), 1_000_000);
 assert.throws(() => previous.importSave(candidate), /修订不兼容/, "Old readers must reject rather than discard new authority fields");
-console.log(JSON.stringify({ currentRevision: SAVE_REVISION, previousReader: "v9/r3", result: "rejected as required" }));
+console.log(JSON.stringify({ currentRevision: SAVE_REVISION, previousReader: `v${previousContent.SAVE_VERSION}/r${previousContent.SAVE_REVISION}`, result: "rejected as required" }));

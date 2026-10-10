@@ -14,9 +14,17 @@ function game(clicks = 17) {
   return { ...state, manualClicks: clicks };
 }
 function raw(clicks = 17) { return exportSave(game(clicks), NOW); }
-function legacy(revision: 2 | 3, source = raw()) {
+function legacy(revision: 2 | 3 | 4, source = raw()) {
   const file = JSON.parse(source);
   file.revision = revision;
+  delete file.state.orders;
+  for (const planet of file.state.planets) {
+    for (const job of [...planet.buildQueue, ...planet.shipyardQueue]) {
+      delete job.jobId; delete job.taskId; delete job.orderedCount; delete job.paidPerUnit;
+    }
+  }
+  for (const job of file.state.research.queue) { delete job.jobId; delete job.taskId; }
+  if (revision === 4) return JSON.stringify(file);
   if (revision === 2) delete file.state.deepSpace;
   delete file.state.arcade.nextRunId;
   delete file.state.arcade.autoBatch;
@@ -97,7 +105,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([]);
   });
 
-  it.each([2, 3] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
+  it.each([2, 3, 4] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     const session = new SaveSession(store, NOW);
     expect(session.mode).toBe("ready");
@@ -107,7 +115,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
   });
 
-  it.each([2, 3] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
+  it.each([2, 3, 4] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     store.write = () => { throw new Error("quota full"); };
     const session = new SaveSession(store, NOW + 5000);
@@ -119,7 +127,7 @@ describe("SaveSession load and version protection", () => {
     expect(session.export(game(99))).toEqual({ raw: source, protected: true });
   });
 
-  it.each([2, 3] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
+  it.each([2, 3, 4] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
     for (const fault of ["backup-write", "backup-read", "backup-noop", "current-write", "current-read", "current-noop", "current-write-then-throw"] as const) {
       const source = legacy(revision), store = new MemoryStore(source);
       let currentWritten = false;
@@ -185,7 +193,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.data[BACKUP_KEY]).toBe(source);
   });
 
-  it("reloads r4 without replenishing the finite budget or resetting its consumed cursor", () => {
+  it("reloads current ring state without replenishing the finite budget or resetting its consumed cursor", () => {
     let state = game();
     for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
     const ticketIds = state.arcade.runs.map(run => run.id);
@@ -199,6 +207,30 @@ describe("SaveSession load and version protection", () => {
     expect(session.save(session.loaded.state, NOW)).toEqual({ ok: true });
     const reopened = new SaveSession(store, NOW);
     expect(reopened.loaded.state.arcade.autoBatch).toEqual(state.arcade.autoBatch);
+  });
+
+  it.each([false, true])("preserves armed r4 authority with a verified upgrade or frozen failed view (failure=%s)", fail => {
+    let state = game();
+    for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
+    const ticketIds = state.arcade.runs.map(run => run.id);
+    state.arcade.runs.shift();
+    state.arcade.autoBatch = { armed: true, planetId: state.activePlanetId, ticketIds, completed: 1,
+      maxDeuterium: "100", spentDeuterium: "65", bets: { ...state.arcade.bets }, stopReason: "" };
+    const source = legacy(4, exportSave(state, NOW)), store = new MemoryStore(source);
+    if (fail) store.write = () => { throw Error("backup quota"); };
+    const session = new SaveSession(store, NOW);
+    expect(session.mode).toBe(fail ? "protected" : "ready");
+    expect(session.loaded.state.arcade.autoBatch).toEqual(state.arcade.autoBatch);
+    expect(session.loaded.state.orders.tasks).toEqual([]);
+    if (fail) {
+      expect(session.export(game())).toEqual({ raw: source, protected: true });
+      expect(store.data[STORAGE_KEY]).toBe(source);
+    } else {
+      expect(store.data[BACKUP_KEY]).toBe(source);
+      expect(session.notice).toContain("已有星环有限批次授权保持不变");
+      expect(session.notice).not.toContain("旧星环自动卡已停用");
+      expect(new SaveSession(store, NOW).loaded.state.arcade.autoBatch).toEqual(state.arcade.autoBatch);
+    }
   });
 
   it("does not falsely report an unreadable startup as a missing save", () => {

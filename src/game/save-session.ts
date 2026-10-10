@@ -59,7 +59,8 @@ export class SaveSession {
         const candidate = this.prepare(loaded.state, now);
         const committed = this.writeCandidate(candidate, true);
         if (!committed.ok) return;
-        this.notice = `同源 v9/r${sourceRevision} 存档已备份并升级为 r${SAVE_REVISION}；旧星环自动卡已停用，请重新确认有限批次。`;
+        this.notice = `同源 v9/r${sourceRevision} 存档已备份并升级为 r${SAVE_REVISION}；有限计划为空，已有付款队列已保留并按原规则离线推进。` +
+          (sourceRevision < 4 ? "旧星环自动卡已停用，请重新确认有限批次。" : "已有星环有限批次授权保持不变。");
         this.message = "已升级并保存本地存档";
       }
       this.loaded = loaded;

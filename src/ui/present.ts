@@ -104,6 +104,9 @@ export interface DmButtonView {
 export interface QueueItemView {
   index: number;
   key: string;
+  /** Stable paid identity from the exact rendered queue snapshot. */
+  planetId: string;
+  jobId: number;
   label: string;
   detail: string;
   progressPct: number;
@@ -405,7 +408,9 @@ function queueView(state: GameState): QueueView {
     const estimate = secondsFor(state, def, order.targetLevel, order.paid);
     return {
       index,
-      key: `${order.building}:${order.targetLevel}:${index}`,
+      key: `${planet.id}:${order.jobId}`,
+      planetId: planet.id,
+      jobId: order.jobId,
       label: `${def.nameZh} → 等级 ${order.targetLevel}`,
       detail: active
         ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
@@ -534,7 +539,9 @@ function researchQueueView(state: GameState): QueueView {
     const estimate = researchSecondsFor(selectPlanet(state, order.planetId), def, order.targetLevel, order.paid);
     return {
       index,
-      key: `${order.planetId}:${order.tech}:${order.targetLevel}:${index}`,
+      key: `${order.planetId}:${order.jobId}`,
+      planetId: order.planetId,
+      jobId: order.jobId,
       label: `${def.nameZh} → 等级 ${order.targetLevel}${state.planets.length > 1 ? ` · ${state.planets.find(p => p.id === order.planetId)?.name ?? order.planetId}` : ""}`,
       detail: active
         ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`

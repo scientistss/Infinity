@@ -5,11 +5,12 @@ import { big, type BigNumber } from "./decimal";
 import type { ResourceAmounts } from "./types";
 import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
+import type { PaidJobIdentity } from "./order-state";
 
-export type OrderSource = "manual" | "protocol";
+export type OrderSource = "manual" | "protocol" | "plan";
 
 /** One build-queue entry. Index 0 of the queue is the order under construction. */
-export interface BuildOrder {
+export interface BuildOrder extends PaidJobIdentity {
   building: BuildingId;
   targetLevel: number;
   /** Charged when queued; refunded in full on cancel. */
@@ -90,6 +91,6 @@ export function clonePlanet(planet: PlanetState): PlanetState {
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),
     units: { ...planet.units },
-    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order })),
+    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order, paidPerUnit: { ...order.paidPerUnit } })),
   };
 }

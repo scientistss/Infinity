@@ -1,3 +1,7 @@
+import { migrateLegacyOrders, readOrders, serializeOrders, validateOrderReferences } from "./orders-save";
+import type { PaidJobIdentity } from "./order-state";
+import { compareOrderAmounts, isOrderAmount } from "./order-money";
+import type { OrderSource } from "./planet";
 import { DEEP } from "../data/deep-space";
 import { readDeepState, readReceipt } from "./deep-save";
 import { createDeepState, storedRunLimit, chargeReservations, type DeepState } from "./deep-state";
@@ -50,13 +54,13 @@ export interface KeyValueStore {
   removeItem(key: string): void;
 }
 
-export interface SerializedOrder {
+export interface SerializedOrder extends PaidJobIdentity {
   building: BuildingId;
   targetLevel: number;
   paid: Record<ResourceId, string>;
   totalSeconds: number;
   remainingSeconds: number;
-  source: "manual" | "protocol";
+  source: OrderSource;
 }
 
 export interface SerializedPlanet {
@@ -71,20 +75,21 @@ export interface SerializedPlanet {
   buildQueue: SerializedOrder[];
   /** v8 (P3). */
   units: Record<UnitId, number>;
-  shipyardQueue: ShipyardOrder[];
+  shipyardQueue: Array<Omit<ShipyardOrder, "paidPerUnit"> & { paidPerUnit: Record<ResourceId, string> }>;
 }
 
-export interface SerializedResearchOrder {
+export interface SerializedResearchOrder extends PaidJobIdentity {
   planetId: string;
   tech: ResearchId;
   targetLevel: number;
   paid: Record<ResourceId, string>;
   totalSeconds: number;
   remainingSeconds: number;
-  source: "manual" | "protocol";
+  source: OrderSource;
 }
 
 export interface SerializedState {
+  orders: ReturnType<typeof serializeOrders>;
   planets: SerializedPlanet[];
   activePlanetId: string;
   universe: Universe;
@@ -130,7 +135,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2/r3 → r4 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2/r3/r4 → r5 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -153,6 +158,7 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
+    orders: serializeOrders(state.orders),
     planets: state.planets.map(serializePlanet),
     activePlanetId: state.activePlanetId,
     deepSpace: structuredClone(state.deepSpace),
@@ -189,6 +195,7 @@ export function deserializeState(raw: unknown): GameState {
   if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
   state.activePlanetId = readPlanetId(raw.activePlanetId);
   if (!ids.has(state.activePlanetId)) throw new Error("当前星球不存在");
+  state.orders = readOrders(raw.orders);
   state.research = readResearch(raw.research);
   if (state.research.queue.some(o => !ids.has(o.planetId))) throw new Error("研究出资星球不存在");
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
@@ -210,6 +217,7 @@ export function deserializeState(raw: unknown): GameState {
   Object.assign(state, readSpaceState(raw, state));
   state.deepSpace=readDeepState(raw.deepSpace,state);
   validateRingBatchReferences(state);
+  validateOrderReferences(state);
   if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
   if(chargeReservations(state)>Number.MAX_SAFE_INTEGER-state.arcade.nextRunId)throw Error("充能任务超出剩余安全票号");
   const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
@@ -243,8 +251,8 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r${SAVE_REVISION}）；原件保留，未导入`);
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r${SAVE_REVISION}）；原件保留，未导入`);
   }
   if (parsed.revision !== SAVE_REVISION) parsed.state = migrateLegacyState(parsed.state, parsed.revision);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
@@ -263,8 +271,10 @@ export function importSave(json: string): SaveFile {
 }
 
 /** Add metadata without rerolling tickets or inferring any spending authorization. */
-function migrateLegacyState(raw: unknown, revision: 2 | 3): Record<string, unknown> {
+function migrateLegacyState(raw: unknown, revision: 2 | 3 | 4): Record<string, unknown> {
+  raw = migrateLegacyOrders(raw);
   if (!isRecord(raw)) throw Error("存档状态格式不正确");
+  if (revision === 4) return raw;
   const arcade = raw.arcade;
   if (arcade !== undefined && !isRecord(arcade)) throw Error("星环机数据格式不正确");
   if (isRecord(arcade) && ("nextRunId" in arcade || "autoBatch" in arcade ||
@@ -355,9 +365,11 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
       totalSeconds: order.totalSeconds,
       remainingSeconds: order.remainingSeconds,
       source: order.source,
+      jobId: order.jobId,
+      taskId: order.taskId,
     })),
     units: { ...planet.units },
-    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order })),
+    shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order, paidPerUnit: mapResources(order.paidPerUnit) })),
   };
 }
 
@@ -413,9 +425,11 @@ function readShipyardOrder(raw: unknown, index: number): ShipyardOrder {
   if (typeof raw.progress !== "number" || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress >= 1) {
     throw new Error(`${label}进度无效`);
   }
-  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  const source = raw.source === "protocol" || raw.source === "manual" || raw.source === "plan" ? raw.source : null;
   if (!source) throw new Error(`${label}来源无效`);
-  return { unit: raw.unit, count, progress: raw.progress, source };
+  const orderedCount = readInteger(raw.orderedCount, `${label}原始数量`, count, SHIPYARD.maxBatch);
+  const paidPerUnit = readPlanPrice(raw.paidPerUnit, `${label}单价快照`);
+  return { unit: raw.unit, count, orderedCount, paidPerUnit, progress: raw.progress, source, ...readPaidIdentity(raw, source) };
 }
 
 function readOrder(raw: unknown, index: number): BuildOrder {
@@ -426,10 +440,10 @@ function readOrder(raw: unknown, index: number): BuildOrder {
   const targetLevel = readInteger(raw.targetLevel, `${label}目标等级`, 1, MAX_LEVEL);
   const totalSeconds = readSeconds(raw.totalSeconds, `${label}总时长`);
   const remainingSeconds = Math.min(readSeconds(raw.remainingSeconds, `${label}剩余时间`), totalSeconds);
-  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  const source = raw.source === "protocol" || raw.source === "manual" || raw.source === "plan" ? raw.source : null;
   if (!source) throw new Error(`${label}来源无效`);
-  const paid = readResourceMap(raw.paid, `${label}已付`);
-  return { building: raw.building, targetLevel, paid, totalSeconds, remainingSeconds, source };
+  const paid = source === "plan" ? readPlanPrice(raw.paid, `${label}已付`) : readResourceMap(raw.paid, `${label}已付`);
+  return { building: raw.building, targetLevel, paid, totalSeconds, remainingSeconds, source, ...readPaidIdentity(raw, source) };
 }
 
 function readItems(raw: unknown): Record<InventoryItemId, number> {
@@ -634,6 +648,8 @@ function serializeResearch(research: ResearchState): SerializedState["research"]
       totalSeconds: order.totalSeconds,
       remainingSeconds: order.remainingSeconds,
       source: order.source,
+      jobId: order.jobId,
+      taskId: order.taskId,
     })),
   };
 }
@@ -663,10 +679,27 @@ function readResearchOrder(raw: unknown, index: number): ResearchOrder {
   const targetLevel = readInteger(raw.targetLevel, `${label}目标等级`, 1, MAX_LEVEL);
   const totalSeconds = readSeconds(raw.totalSeconds, `${label}总时长`);
   const remainingSeconds = Math.min(readSeconds(raw.remainingSeconds, `${label}剩余时间`), totalSeconds);
-  const source = raw.source === "protocol" ? "protocol" : raw.source === "manual" ? "manual" : null;
+  const source = raw.source === "protocol" || raw.source === "manual" || raw.source === "plan" ? raw.source : null;
   if (!source) throw new Error(`${label}来源无效`);
-  const paid = readResourceMap(raw.paid, `${label}已付`);
-  return { planetId: readPlanetId(raw.planetId), tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
+  const paid = source === "plan" ? readPlanPrice(raw.paid, `${label}已付`) : readResourceMap(raw.paid, `${label}已付`);
+  return { planetId: readPlanetId(raw.planetId), tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source, ...readPaidIdentity(raw, source) };
+}
+
+/** A paid snapshot must retain the exact finite quote through the wallet's representation. */
+function readPlanPrice(raw: unknown, label: string): ReturnType<typeof readResourceMap> {
+  if (!isRecord(raw) || Object.keys(raw).length !== RESOURCE_IDS.length || RESOURCE_IDS.some(res => !isOrderAmount(raw[res]))) throw Error(`${label}快照无效`);
+  const paid = readResourceMap(raw, label);
+  if (RESOURCE_IDS.some(res => compareOrderAmounts(raw[res] as string, paid[res].toString()) !== 0)) throw Error(`${label}快照精度无法保留`);
+  return paid;
+}
+
+function readPaidIdentity(raw: Record<string, unknown>, source: OrderSource): PaidJobIdentity {
+  const jobId = readInteger(raw.jobId, "付款 ID", 1, Number.MAX_SAFE_INTEGER - 1);
+  if (source !== "plan") {
+    if (raw.taskId !== null) throw Error("普通队列必须明确没有计划归属");
+    return { jobId, taskId: null };
+  }
+  return { jobId, taskId: readInteger(raw.taskId, "付款计划 ID", 1, Number.MAX_SAFE_INTEGER - 1) };
 }
 
 export const BACKUP_KEY = `${STORAGE_KEY}.backup`;

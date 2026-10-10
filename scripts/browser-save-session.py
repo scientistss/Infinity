@@ -52,14 +52,13 @@ def raw_fixture(which="current"):
 
 
 def legacy_fixture(revision):
-    value = json.loads(raw_fixture())
-    value["revision"] = revision
-    if revision == 2:
-        del value["state"]["deepSpace"]
-    del value["state"]["arcade"]["nextRunId"]
-    del value["state"]["arcade"]["autoBatch"]
-    for run in value["state"]["arcade"]["runs"]:
-        del run["id"]
+    source = next((entry for entry in fixtures["legacySources"] if entry["revision"] == revision), None)
+    if not source or source["generatedBy"] != "actual source-revision createInitialState/exportSave":
+        raise RuntimeError(f"r{revision} source-generated fixture is required")
+    value = copy.deepcopy(fixtures["legacy"][str(revision)])
+    if value["revision"] != revision:
+        raise RuntimeError("source fixture revision mismatch")
+    value["savedAt"] = value["lastTickAt"] = int(time.time() * 1000)
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
@@ -350,20 +349,39 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3):
+        for revision in (2, 3, 4):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
             migrated = verify_commit(page, legacy_raw, "已升级并保存本地存档")
             migrated_file = json.loads(migrated)
             check(f"supported migration produces revision {SAVE_REVISION}", migrated_file["revision"] == SAVE_REVISION)
-            check("migration never creates spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
+            check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
+            check("migration never creates finite order authorization", migrated_file["state"]["orders"]["tasks"] == [])
             check("migration retains original planet", planet(page) == name_of(legacy_raw))
             check(f"migration backup is byte-for-byte r{revision} original", raw(page, BACKUP) == legacy_raw)
             context.close()
 
+        case = "armed r4 startup migration preserves exact ring authorization"
+        armed_value = copy.deepcopy(fixtures["armedR4"])
+        armed_value["savedAt"] = armed_value["lastTickAt"] = int(time.time() * 1000)
+        armed_raw = json.dumps(armed_value, ensure_ascii=False, indent=2)
+        context, page = boot(armed_raw)
+        migrated = verify_commit(page, armed_raw, "已升级并保存本地存档")
+        migrated_file = json.loads(migrated)
+        check("r4 migration retains the armed source, IDs, cursor and budget",
+              migrated_file["state"]["arcade"]["autoBatch"] == armed_value["state"]["arcade"]["autoBatch"])
+        check("r4 migration backs up exact source bytes", raw(page, BACKUP) == armed_raw)
+        check("r4 migration adds only an empty finite order plan list", migrated_file["state"]["orders"]["tasks"] == [])
+        page.reload(wait_until="networkidle")
+        select_save(page)
+        page.locator('[data-action="save"]').click()
+        check("r4 authority remains unchanged after native reload and save",
+              json.loads(raw(page))["state"]["arcade"]["autoBatch"] == armed_value["state"]["arcade"]["autoBatch"])
+        context.close()
+
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3):
+        for revision in (2, 3, 4):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)

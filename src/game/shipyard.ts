@@ -8,6 +8,7 @@ import { activePlanet, withPlanet } from "./empire";
 import balance from "../data/balance.json";
 import {
   SILO_SLOTS_PER_LEVEL,
+  SHIP_IDS,
   emptyUnits,
   UNIT_IDS,
   isUnitId,
@@ -25,15 +26,23 @@ import type { OrderSource, PlanetState } from "./planet";
 import { shortfall } from "./queue";
 import { missingRequirements } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
+import { sameCoordinates } from "./galaxy";
+import { cancelledPaidJob, creditPaidJob, preparePaidJob, refundPaidJob } from "./order-ledger";
+import { multiplyOrderAmountInteger } from "./order-money";
+import type { OrderMoney, PaidJobIdentity } from "./order-state";
 
 export const SHIPYARD = balance.shipyard;
 const EPS = 1e-9;
 
 /** One shipyard batch. Index 0 is being built. */
-export interface ShipyardOrder {
+export interface ShipyardOrder extends PaidJobIdentity {
   unit: UnitId;
   /** Units still to build in this batch, including the one in progress. */
   count: number;
+  /** Original paid batch quantity, retained through partial completions. */
+  orderedCount: number;
+  /** Immutable unit quote; cancellation never reads a newer catalog price. */
+  paidPerUnit: ResourceCost;
   /** Fraction of the current unit already built, 0 ≤ progress < 1. */
   progress: number;
   source: OrderSource;
@@ -45,6 +54,7 @@ export interface CompletedUnits {
 }
 
 export interface ShipyardResult {
+  jobId?: number;
   state: GameState;
   ok: boolean;
   reason: string;
@@ -78,10 +88,66 @@ export function unitSeconds(state: GameState, id: UnitId): number {
 /** Why the shipyard is not working right now ("" when it can work). */
 export function shipyardPausedReason(state: GameState): string {
   const head = activePlanet(state).buildQueue[0];
-  if (!head || head.totalSeconds <= 0) return "";
-  if (head.building === "shipyard") return "造船厂升级中，暂停造船";
-  if (head.building === "nanite_factory") return "纳米机器人工厂升级中，暂停造船";
+  if (head && head.totalSeconds > 0) {
+    if (head.building === "shipyard") return "造船厂升级中，暂停造船";
+    if (head.building === "nanite_factory") return "纳米机器人工厂升级中，暂停造船";
+  }
+  const batch = activePlanet(state).shipyardQueue[0];
+  if (batch && shipOutputCapacity(state, batch.unit, false) < 1) return "舰船数量达到安全上限，已付费余量暂停";
   return "";
+}
+
+export const MAX_PLANET_UNITS = 1e15;
+
+/** Sum bounded integers without first making an imprecise or overflowing addition. */
+function addCount(total: number, count: number, limit: number): number | null {
+  if (!Number.isSafeInteger(count) || count < 0 || count > limit - total) return null;
+  return total + count;
+}
+
+/**
+ * Prospective output capacity shared by manual, protocol, and plan orders. A fleet is
+ * counted once in its per-ShipId empire total, and separately reserves its eventual landing world.
+ * Every fleet reserves its home port while recall is possible; an outbound deployment
+ * also reserves its destination. Those local reservations never duplicate empire stock.
+ * Completion ignores queued reservations so already-paid work can make only the units
+ * that still fit if an unrelated reward has consumed capacity since its payment.
+ */
+export function shipOutputCapacity(state: GameState, id: UnitId, includeQueued = true): number {
+  const planet = activePlanet(state);
+  let local = addCount(0, planet.units[id], MAX_PLANET_UNITS);
+  if (local === null) return 0;
+  if (includeQueued) for (const order of planet.shipyardQueue) {
+    if (order.unit !== id) continue;
+    local = addCount(local, order.count, MAX_PLANET_UNITS);
+    if (local === null) return 0;
+  }
+  if (unitById(id).kind !== "ship") return MAX_PLANET_UNITS - local;
+  let empire = 0;
+  for (const world of state.planets) {
+    const total = addCount(empire, world.units[id], Number.MAX_SAFE_INTEGER);
+    if (total === null) return 0;
+    empire = total;
+    if (includeQueued) for (const order of world.shipyardQueue) {
+      if (order.unit !== id) continue;
+      const total = addCount(empire, order.count, Number.MAX_SAFE_INTEGER);
+      if (total === null) return 0;
+      empire = total;
+    }
+  }
+  for (const fleet of state.fleets) {
+    const fleetCount = fleet.ships[id as (typeof SHIP_IDS)[number]] ?? 0;
+    const total = addCount(empire, fleetCount, Number.MAX_SAFE_INTEGER);
+    if (total === null) return 0;
+    empire = total;
+    const reservesDeploymentTarget = !fleet.returning && fleet.mission === "deploy"
+      && sameCoordinates(planet.coordinates, fleet.target);
+    if (fleet.originId === planet.id || reservesDeploymentTarget) {
+      local = addCount(local, fleetCount, MAX_PLANET_UNITS);
+      if (local === null) return 0;
+    }
+  }
+  return Math.min(MAX_PLANET_UNITS - local, Number.MAX_SAFE_INTEGER - empire);
 }
 
 export function queuedUnits(planet: PlanetState, id: UnitId): number {
@@ -123,7 +189,7 @@ function capLimit(planet: PlanetState, def: UnitDef): number {
 /** Most units of `id` the current stock pays for, within dome / silo limits and the batch cap. */
 export function maxBuildable(state: GameState, id: UnitId): number {
   const def = unitById(id);
-  let most = Math.min(SHIPYARD.maxBatch, capLimit(activePlanet(state), def));
+  let most = Math.min(SHIPYARD.maxBatch, capLimit(activePlanet(state), def), shipOutputCapacity(state, id));
   for (const res of RESOURCE_IDS) {
     const price = def.cost[res];
     if (price > 0) most = Math.min(most, Math.floor(activePlanet(state).resources[res].toNumber() / price + 1e-9));
@@ -144,7 +210,7 @@ export function canBuildUnits(state: GameState, id: UnitId, count: number): Unit
   if (activePlanet(state).buildings.shipyard < 1) return fail("需要造船厂 等级 1");
   const missing = unitMissing(state, id);
   if (missing.length > 0) return fail(`需要 ${missing.join("、")}`);
-  if (!(n >= 1)) return fail("数量至少 1");
+  if (!Number.isSafeInteger(n) || !(n >= 1)) return fail("数量至少 1 且必须在安全整数范围内");
   if (n > SHIPYARD.maxBatch) return fail(`单批最多 ${SHIPYARD.maxBatch.toLocaleString("zh-CN")}`);
   const queue = activePlanet(state).shipyardQueue;
   if (queue.length >= SHIPYARD.maxOrders) return fail(`造船队列已满（${queue.length}/${SHIPYARD.maxOrders}）`);
@@ -154,25 +220,37 @@ export function canBuildUnits(state: GameState, id: UnitId, count: number): Unit
     const free = Math.max(0, siloCapacity(activePlanet(state)) - siloUsed(activePlanet(state)));
     return fail(activePlanet(state).buildings.missile_silo < 1 ? "需要导弹井" : `导弹井空位不足（剩 ${free} 格，每枚占 ${def.siloSlots} 格）`);
   }
+  if (n > shipOutputCapacity(state, id)) return fail("舰船数量超过星球或帝国安全上限（含已付费排队与在途舰船）");
   const lack = shortfall(state, cost);
   if (lack) return fail(lack, { onlyResources: true });
   return { ok: true, reason: "", count: n, cost };
 }
 
 /** Charge the batch and append it to the shipyard queue. */
-export function enqueueUnits(state: GameState, id: UnitId, count: number, source: OrderSource): ShipyardResult {
+export function enqueueUnits(state: GameState, id: UnitId, count: number, source: OrderSource, taskId: number | null = null): ShipyardResult {
   const check = canBuildUnits(state, id, count);
   if (!check.ok) return { state, ok: false, reason: check.reason };
-  const resources = { ...activePlanet(state).resources };
-  for (const res of RESOURCE_IDS) resources[res] = resources[res].sub(check.cost[res]);
+  const paidPerUnit = unitCost(unitById(id));
+  const exactCost = exactUnitCost(paidPerUnit, check.count);
+  if (source === "plan" && exactCost === null) return { state, ok: false, reason: "计划批次金额无法精确表示" };
+  const cost = source === "plan" && exactCost ? moneyToCost(exactCost) : check.cost;
+  const payment = preparePaidJob(state, {
+    kind: "shipyard", planetId: state.activePlanetId, unit: id,
+    quantity: check.count, source, taskId,
+  }, cost, source === "plan" ? exactCost! : undefined);
+  if (!payment.ok) return { state: payment.state, ok: false, reason: payment.reason };
   const planet: PlanetState = {
-    ...activePlanet(state),
-    shipyardQueue: [...activePlanet(state).shipyardQueue.map((o) => ({ ...o })), { unit: id, count: check.count, progress: 0, source }],
+    ...activePlanet(payment.state),
+    shipyardQueue: [...activePlanet(payment.state).shipyardQueue, {
+      jobId: payment.jobId, taskId, unit: id, count: check.count,
+      orderedCount: check.count, paidPerUnit, progress: 0, source,
+    }],
   };
   const stats = source === "manual" ? { ...state.stats, manualActions: state.stats.manualActions + 1 } : state.stats;
   return {
-    state: { ...withPlanet(state, { resources, planet }), stats },
+    state: { ...withPlanet(payment.state, { planet }), stats },
     ok: true,
+    jobId: payment.jobId,
     reason: `${unitById(id).nameZh} ×${check.count.toLocaleString("zh-CN")} 已入队`,
   };
 }
@@ -187,7 +265,7 @@ export function resolveUnitAmount(state: GameState, id: UnitId, amount: UnitAmou
 }
 
 /** Order units by count, "max" or fill-to-N (owned + queued count toward N). */
-export function orderUnits(state: GameState, id: UnitId, amount: UnitAmount, source: OrderSource): ShipyardResult {
+export function orderUnits(state: GameState, id: UnitId, amount: UnitAmount, source: OrderSource, taskId: number | null = null): ShipyardResult {
   const count = resolveUnitAmount(state, id, amount);
   const def = unitById(id);
   if (count < 1) {
@@ -199,22 +277,48 @@ export function orderUnits(state: GameState, id: UnitId, amount: UnitAmount, sou
       return { state, ok: false, reason: `${def.nameZh}已有 ${unitTotal(activePlanet(state), id).toLocaleString("zh-CN")}（含排队），不少于 ${amount.fillTo.toLocaleString("zh-CN")}` };
     }
   }
-  return enqueueUnits(state, id, count, source);
+  return enqueueUnits(state, id, count, source, taskId);
 }
 
 /** Cancel a batch: every unit not finished yet is refunded in full (the one in progress too). */
 export function cancelUnits(state: GameState, index: number): ShipyardResult {
   const order = activePlanet(state).shipyardQueue[index];
   if (!Number.isInteger(index) || !order) return { state, ok: false, reason: "造船队列中没有这一项" };
-  const refund = unitCost(unitById(order.unit), order.count);
-  const resources = { ...activePlanet(state).resources };
-  for (const res of RESOURCE_IDS) resources[res] = resources[res].add(refund[res]);
-  const shipyardQueue = activePlanet(state).shipyardQueue.filter((_, i) => i !== index).map((o) => ({ ...o }));
+  let candidate = state;
+  const ref = { kind: "shipyard" as const, planetId: state.activePlanetId, jobId: order.jobId, taskId: order.taskId };
+  if (order.source === "plan") {
+    const exact = exactUnitCost(order.paidPerUnit, order.count);
+    if (exact === null) return { state, ok: false, reason: "计划退款金额无法精确表示" };
+    const result = refundPaidJob(state, ref, exact);
+    if (!result.ok) return { state, ok: false, reason: result.reason };
+    candidate = result.state;
+  } else {
+    const resources = { ...activePlanet(state).resources };
+    for (const res of RESOURCE_IDS) resources[res] = resources[res].add(order.paidPerUnit[res].mul(order.count));
+    candidate = withPlanet(state, { resources });
+  }
+  candidate = cancelledPaidJob(candidate, ref);
+  const shipyardQueue = activePlanet(candidate).shipyardQueue.filter((_, i) => i !== index);
   return {
-    state: { ...withPlanet(state, { resources, planet: { ...activePlanet(state), shipyardQueue } }) },
+    state: withPlanet(candidate, { planet: { ...activePlanet(candidate), shipyardQueue } }),
     ok: true,
     reason: `已取消 ${unitById(order.unit).nameZh} ×${order.count.toLocaleString("zh-CN")}，资源已全额退还`,
   };
+}
+
+/** Exact batch economics; unlike floating multiplication these quotes telescope on refund. */
+export function exactUnitCost(paidPerUnit: ResourceCost, count: number): OrderMoney | null {
+  const result: OrderMoney = { metal: "0", crystal: "0", deuterium: "0" };
+  for (const res of RESOURCE_IDS) {
+    const amount = multiplyOrderAmountInteger(paidPerUnit[res].toString(), count);
+    if (amount === null) return null;
+    result[res] = amount;
+  }
+  return result;
+}
+
+function moneyToCost(money: OrderMoney): ResourceCost {
+  return { metal: big(money.metal), crystal: big(money.crystal), deuterium: big(money.deuterium) };
 }
 
 /** Seconds left on the head batch (null when idle or paused). */
@@ -238,7 +342,8 @@ export function nextShipyardEvent(state: GameState): number {
   const head = activePlanet(state).shipyardQueue[0];
   if (!head || shipyardPausedReason(state)) return Number.POSITIVE_INFINITY;
   const per = unitSeconds(state, head.unit);
-  const batch = (head.count - head.progress) * per;
+  const safeCount = Math.min(head.count, shipOutputCapacity(state, head.unit, false));
+  const batch = (safeCount - head.progress) * per;
   if (head.unit !== "solar_satellite") return batch;
   return Math.min(batch, Math.max((1 - head.progress) * per, 1));
 }
@@ -254,35 +359,43 @@ export function advanceShipyard(
 ): { state: GameState; completed: CompletedUnits[] } {
   const completed: CompletedUnits[] = [];
   if (!(seconds > 0) || activePlanet(state).shipyardQueue.length === 0 || shipyardPausedReason(state)) return { state, completed };
-  const queue = activePlanet(state).shipyardQueue.map((o) => ({ ...o }));
-  const units = { ...activePlanet(state).units };
+  let current = state;
   let left = seconds;
-  while (left > EPS && queue.length > 0) {
+  while (left > EPS && activePlanet(current).shipyardQueue.length > 0) {
+    const queue = activePlanet(current).shipyardQueue.map(o => ({ ...o }));
+    const units = { ...activePlanet(current).units };
     const head = queue[0]!;
-    const per = unitSeconds(state, head.unit);
+    const capacity = shipOutputCapacity(current, head.unit, false);
+    if (capacity < 1) break;
+    const per = unitSeconds(current, head.unit);
     const batch = (head.count - head.progress) * per;
-    if (left + EPS * Math.max(1, per) >= batch) {
-      units[head.unit] += head.count;
-      completed.push({ unit: head.unit, count: head.count });
-      queue.shift();
-      left -= batch;
-      if (!carry) break;
-      continue;
-    }
+    const finishes = left + EPS * Math.max(1, per) >= batch;
     const built = head.progress + left / per;
-    let whole = Math.floor(built + 1e-9);
-    whole = Math.min(whole, head.count - 1);
+    const requested = finishes ? head.count : Math.min(Math.floor(built + 1e-9), head.count - 1);
+    const whole = Math.min(requested, capacity);
+    const blocked = whole < requested || (whole === capacity && whole < head.count);
     if (whole > 0) {
+      // Credit while the original real job and its old count are still present.
+      const cumulative = head.orderedCount - head.count + whole;
+      current = creditPaidJob(current, { kind: "shipyard", planetId: current.activePlanetId, jobId: head.jobId, taskId: head.taskId }, cumulative, whole === head.count);
       units[head.unit] += whole;
       completed.push({ unit: head.unit, count: whole });
     }
     head.count -= whole;
-    head.progress = Math.max(0, Math.min(1 - 1e-12, built - whole));
-    left = 0;
+    if (head.count === 0) {
+      queue.shift();
+      left -= batch;
+    } else {
+      // Lost capacity suspends paid work; no overflowing inventory and no zero-time event.
+      head.progress = blocked ? 0 : Math.max(0, Math.min(1 - 1e-12, built - whole));
+      left = 0;
+    }
+    current = withPlanet(current, { planet: { ...activePlanet(current), units, shipyardQueue: queue } });
+    if (!carry || blocked) break;
   }
   const merged = mergeCompleted(completed);
-  const stats = { ...state.stats, unitsBuilt: state.stats.unitsBuilt + merged.reduce((s, u) => s + u.count, 0) };
-  return { state: { ...withPlanet(state, { planet: { ...activePlanet(state), units, shipyardQueue: queue } }), stats }, completed: merged };
+  const stats = { ...current.stats, unitsBuilt: current.stats.unitsBuilt + merged.reduce((s, u) => s + u.count, 0) };
+  return { state: { ...current, stats }, completed: merged };
 }
 
 export function mergeCompleted(list: readonly CompletedUnits[]): CompletedUnits[] {
@@ -296,7 +409,7 @@ export function mergeCompleted(list: readonly CompletedUnits[]): CompletedUnits[
 }
 
 export function cloneShipyard(planet: PlanetState): Pick<PlanetState, "units" | "shipyardQueue"> {
-  return { units: { ...planet.units }, shipyardQueue: planet.shipyardQueue.map((o) => ({ ...o })) };
+  return { units: { ...planet.units }, shipyardQueue: planet.shipyardQueue.map((o) => ({ ...o, paidPerUnit: { ...o.paidPerUnit } })) };
 }
 
 /** Resources spent on everything standing on the planet's shipyard side (OGame fleet + defense points). */
@@ -323,7 +436,7 @@ export function unitLabel(id: UnitId, count: number): string {
 }
 
 export function isOrderSource(value: unknown): value is OrderSource {
-  return value === "manual" || value === "protocol";
+  return value === "manual" || value === "protocol" || value === "plan";
 }
 
 export { emptyUnits, isUnitId, resourceName };

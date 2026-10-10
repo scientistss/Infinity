@@ -14,6 +14,9 @@ import { buildSeconds, buildingCost, type ResourceCost } from "./formulas";
 import { clonePlanet, usedFields, type BuildOrder, type OrderSource, type PlanetState } from "./planet";
 import { missingRequirements as missingFrom } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
+import { cancelledPaidJob, creditPaidJob, preparePaidJob, refundPaidJob } from "./order-ledger";
+import { subtractOrderAmounts } from "./order-money";
+import type { OrderMoney } from "./order-state";
 
 export interface EnqueueCheck {
   ok: boolean;
@@ -26,6 +29,7 @@ export interface EnqueueCheck {
 }
 
 export interface QueueResult {
+  jobId?: number;
   state: GameState;
   ok: boolean;
   reason: string;
@@ -105,11 +109,18 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
 }
 
 /** Charge the cost and append an order. Starts it immediately when nothing is under construction. */
-export function enqueue(state: GameState, id: BuildingId, source: OrderSource): QueueResult {
+export function enqueue(state: GameState, id: BuildingId, source: OrderSource, taskId: number | null = null): QueueResult {
   const check = canEnqueue(state, id);
   if (!check.ok) return { state, ok: false, reason: check.reason };
-  const planet = clonePlanet(activePlanet(state));
+  const payment = preparePaidJob(state, {
+    kind: "building", planetId: state.activePlanetId, building: id,
+    targetLevel: check.targetLevel, quantity: 1, source, taskId,
+  }, check.cost);
+  if (!payment.ok) return { state: payment.state, ok: false, reason: payment.reason };
+  const planet = clonePlanet(activePlanet(payment.state));
   const order: BuildOrder = {
+    jobId: payment.jobId,
+    taskId,
     building: id,
     targetLevel: check.targetLevel,
     paid: { metal: check.cost.metal, crystal: check.cost.crystal, deuterium: check.cost.deuterium },
@@ -118,12 +129,10 @@ export function enqueue(state: GameState, id: BuildingId, source: OrderSource): 
     source,
   };
   planet.buildQueue.push(order);
-  const resources = { ...activePlanet(state).resources };
-  for (const res of RESOURCE_IDS) resources[res] = resources[res].sub(check.cost[res]);
   const stats =
     source === "manual" ? { ...state.stats, manualActions: state.stats.manualActions + 1 } : state.stats;
-  const next = startNext({ ...withPlanet(state, { planet, resources }), stats });
-  return { state: next, ok: true, reason: `${buildingById(id).nameZh} → 等级 ${check.targetLevel} 已入队` };
+  const next = startNext({ ...withPlanet(payment.state, { planet }), stats });
+  return { state: next, ok: true, jobId: payment.jobId, reason: `${buildingById(id).nameZh} → 等级 ${check.targetLevel} 已入队` };
 }
 
 /** Give the head order its duration if it has not started yet. */
@@ -143,7 +152,8 @@ export function startNext(state: GameState): GameState {
 export function completeActive(state: GameState): { state: GameState; completed: CompletedBuild | null } {
   const head = activePlanet(state).buildQueue[0];
   if (!head) return { state, completed: null };
-  const planet = clonePlanet(activePlanet(state));
+  const credited = creditPaidJob(state, { kind: "building", planetId: state.activePlanetId, jobId: head.jobId, taskId: head.taskId }, 1, true);
+  const planet = clonePlanet(activePlanet(credited));
   planet.buildQueue.shift();
   planet.buildings[head.building] = Math.max(planet.buildings[head.building], head.targetLevel);
   const stats = {
@@ -151,7 +161,7 @@ export function completeActive(state: GameState): { state: GameState; completed:
     buildsCompleted: state.stats.buildsCompleted + 1,
     seenQueueIdle: state.stats.seenQueueIdle || planet.buildQueue.length === 0,
   };
-  const next = startNext({ ...withPlanet(state, { planet }), stats });
+  const next = startNext({ ...withPlanet(credited, { planet }), stats });
   return { state: next, completed: { building: head.building, level: head.targetLevel } };
 }
 
@@ -162,25 +172,51 @@ export function completeActive(state: GameState): { state: GameState; completed:
 export function cancel(state: GameState, index: number): QueueResult {
   const target = activePlanet(state).buildQueue[index];
   if (!Number.isInteger(index) || !target) return { state, ok: false, reason: "队列中没有这一项" };
+  // Assemble every refund against a candidate. A later exact-ledger failure must not leak
+  // an earlier refund, a level change, or a removed job into the returned state.
+  let candidate = state;
   const planet = clonePlanet(activePlanet(state));
+  const refund = (order: BuildOrder, amounts: ResourceCost, exact?: OrderMoney): string => {
+    if (order.source === "plan") {
+      const result = refundPaidJob(candidate, { kind: "building", planetId: planet.id, jobId: order.jobId, taskId: order.taskId }, exact ?? quotedBuildMoney(amounts));
+      if (!result.ok) return result.reason;
+      candidate = result.state;
+    } else {
+      const resources = { ...activePlanet(candidate).resources };
+      for (const res of RESOURCE_IDS) resources[res] = resources[res].add(amounts[res]);
+      candidate = withPlanet(candidate, { resources });
+    }
+    return "";
+  };
+  let reason = refund(target, target.paid);
+  if (reason) return { state, ok: false, reason };
   planet.buildQueue.splice(index, 1);
-  const resources = { ...activePlanet(state).resources };
-  for (const res of RESOURCE_IDS) resources[res] = resources[res].add(target.paid[res]);
   for (let i = index; i < planet.buildQueue.length; i += 1) {
     const order = planet.buildQueue[i];
     if (!order || order.building !== target.building) continue;
     order.targetLevel -= 1;
     const repriced = costFor(state, order.building, order.targetLevel);
+    const amounts = zeroCost();
+    const exact: OrderMoney = { metal: "0", crystal: "0", deuterium: "0" };
     for (const res of RESOURCE_IDS) {
       const diff = order.paid[res].sub(repriced[res]);
       if (diff.gt(0)) {
-        resources[res] = resources[res].add(diff);
+        if (order.source === "plan") {
+          const difference = subtractOrderAmounts(order.paid[res].toString(), repriced[res].toString());
+          if (difference === null) return { state, ok: false, reason: "计划退款金额无法精确表示" };
+          exact[res] = difference;
+        }
+        amounts[res] = diff;
         order.paid[res] = repriced[res];
       }
     }
+    reason = refund(order, amounts, exact);
+    if (reason) return { state, ok: false, reason };
     // A waiting order has no duration yet; a started one keeps its timer.
   }
-  const next = startNext({ ...withPlanet(state, { planet, resources }) });
+  candidate = cancelledPaidJob(candidate, { kind: "building", planetId: planet.id, jobId: target.jobId, taskId: target.taskId });
+  planet.resources = activePlanet(candidate).resources;
+  const next = startNext(withPlanet(candidate, { planet }));
   return {
     state: next,
     ok: true,
@@ -190,4 +226,8 @@ export function cancel(state: GameState, index: number): QueueResult {
 
 export function zeroCost(): ResourceCost {
   return { metal: big(0), crystal: big(0), deuterium: big(0) };
+}
+
+function quotedBuildMoney(cost: ResourceCost): OrderMoney {
+  return { metal: cost.metal.toString(), crystal: cost.crystal.toString(), deuterium: cost.deuterium.toString() };
 }

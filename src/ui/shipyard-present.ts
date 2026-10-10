@@ -152,7 +152,9 @@ function shipyardQueueView(state: GameState): QueueView {
     const left = (order.count - order.progress) * per;
     return {
       index,
-      key: `${order.unit}:${index}:${order.count}`,
+      key: `${activePlanet(state).id}:${order.jobId}`,
+      planetId: activePlanet(state).id,
+      jobId: order.jobId,
       label: `${def.nameZh} ×${formatUnits(order.count)}`,
       detail: active
         ? paused
@@ -172,7 +174,7 @@ function shipyardQueueView(state: GameState): QueueView {
   return {
     summary: `造船队列 ${activePlanet(state).shipyardQueue.length}/${SHIPYARD.maxOrders}${total > 0 ? ` · 全部完成约 ${formatDuration(Math.ceil(total))}` : ""}${paused ? ` · ${paused}` : ""}`,
     items,
-    signature: items.map((item) => item.key.split(":").slice(0, 2).join(":")).join("|"),
+    signature: items.map((item) => item.key).join("|"),
     idleHint,
   };
 }

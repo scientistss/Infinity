@@ -229,6 +229,7 @@ export function abandonColony(state: GameState, id: string): FleetResult {
   const planet = state.planets.find((p) => p.id === id);
   if (!planet || planet.id === HOMEWORLD_ID) return { state, ok: false, reason: "不能放弃母星" };
   if (state.fleets.some((f) => f.originId === id || sameCoordinates(f.target, planet.coordinates)) || state.research.queue.some((q) => q.planetId === id)) return { state, ok: false, reason: "仍有相关舰队或研究订单，不能放弃该星球" };
+  if (state.orders.tasks.some(task => task.planetId === id && (task.status === "running" || task.status === "paused"))) return { state, ok: false, reason: "仍有未结束的本地计划，不能放弃该星球" };
   if (state.arcade.autoBatch?.armed && state.arcade.autoBatch.planetId === id) state = stopRingBatch(state, "来源星球已放弃，自动批次已停止");
   const planets = state.planets.filter((p) => p.id !== id);
   return { state: { ...state, planets, deepSpace:{...state.deepSpace,offers:state.deepSpace.offers.filter(o=>o.planetId!==id)}, activePlanetId: state.activePlanetId === id ? planets[0]!.id : state.activePlanetId }, ok: true, reason: "殖民地已放弃；其库存、建筑与驻留舰船不退款" };

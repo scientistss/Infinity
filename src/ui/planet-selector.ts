@@ -1,10 +1,74 @@
+import type { CancelPaidJobRequest, OrderAction, OrderKind } from "../game/order-state";
+import type { QueueView } from "./present";
 import { mountView as mountSurfaceView, type GameView, type UiAction as SurfaceAction } from "./view";
 
-export type UiAction = SurfaceAction | { type: "select-planet"; id: string };
+export type UiAction = SurfaceAction | OrderAction | { type: "select-planet"; id: string };
 
 /** Add only the P4 world switcher. The original view, CSS and artwork remain unchanged. */
-export function mountView(root: HTMLElement, onAction: (action: UiAction) => void): GameView {
+export function mountView(root: HTMLElement, onAction: (action: UiAction) => void): GameView & { invalidateOrderAuthority(): void } {
   const surface = mountSurfaceView(root, onAction);
+  // Bind only the identity in the exact displayed snapshot. Never infer an index
+  // from current state; even invalid or forged legacy buttons are swallowed.
+  let paidButtons = new WeakMap<HTMLButtonElement, CancelPaidJobRequest>();
+  root.addEventListener("click", event => {
+    const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button[data-action="cancel-queue"],button[data-action="cancel-research"],button[data-action="cancel-units"]') : null;
+    if (!button) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const ref = paidButtons.get(button);
+    if (!button.disabled && ref && button.dataset.paidKind === ref.kind && button.dataset.paidPlanet === ref.planetId && button.dataset.paidJob === String(ref.jobId)) {
+      onAction({type: "cancel-paid-job", request: {...ref}});
+    }
+  }, true);
+  const queueNodes = new Map<string, Map<string, HTMLElement>>();
+  function reconcileQueue(prefix: string, suffixes: readonly string[], kind: OrderKind, queue: QueueView) {
+    for (const suffix of suffixes) {
+      const bind = `${prefix}-list${suffix}`;
+      const list = root.querySelector<HTMLElement>(`[data-bind="${bind}"]`);
+      if (!list) continue;
+      const old = queueNodes.get(bind) ?? new Map<string, HTMLElement>();
+      const next = new Map<string, HTMLElement>();
+      const rendered = [...list.querySelectorAll<HTMLElement>(".queue-item")];
+      queue.items.forEach((item,index) => {
+        const fresh = rendered[index];
+        if (!fresh) return;
+        const row = old.get(item.key) ?? fresh;
+        if (row !== fresh) {
+          // Retain the logical job's original nodes through unrelated queue edits.
+          // Copy rendered properties without replacing its controls or text nodes.
+          row.className = fresh.className;
+          for (const key of ["label","detail","halve","finish"] as const) {
+            const from = fresh.querySelector<HTMLElement>(`[data-q="${key}"]`);
+            const to = row.querySelector<HTMLElement>(`[data-q="${key}"]`);
+            if (!from || !to) continue;
+            if (to.textContent !== from.textContent) to.textContent = from.textContent;
+            to.title = from.title;
+            if (from instanceof HTMLButtonElement && to instanceof HTMLButtonElement) to.disabled = from.disabled;
+          }
+          const fill = row.querySelector<HTMLElement>('[data-q="fill"]');
+          const newFill = fresh.querySelector<HTMLElement>('[data-q="fill"]');
+          if (fill && newFill) fill.style.width = newFill.style.width;
+          const dm = row.querySelector<HTMLElement>('[data-q="dm"]');
+          const newDm = fresh.querySelector<HTMLElement>('[data-q="dm"]');
+          if (dm && newDm) dm.hidden = newDm.hidden;
+          fresh.replaceWith(row);
+        }
+        row.classList.toggle("active",item.active);
+        row.dataset.paidKey = item.key;
+        const button = row.querySelector<HTMLButtonElement>(".queue-cancel");
+        if (button) {
+          button.dataset.index = String(item.index);
+          button.dataset.paidKind = kind;
+          button.dataset.paidPlanet = item.planetId;
+          button.dataset.paidJob = String(item.jobId);
+          if (Number.isSafeInteger(item.jobId) && item.jobId > 0 && item.planetId) paidButtons.set(button,{kind,planetId:item.planetId,jobId:item.jobId});
+          else paidButtons.delete(button);
+        }
+        next.set(item.key,row);
+      });
+      queueNodes.set(bind,next);
+    }
+  }
   const strip = root.querySelector(".res-strip");
   if (!strip) throw new Error("缺少原版资源栏");
   const label = document.createElement("label");
@@ -26,7 +90,7 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   const saveNote = root.querySelector('[data-tab-panel="save"] p');
   if (saveNote) {
     saveNote.replaceChildren(document.createTextNode(
-      "原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r4 存档；有效 r2 / r3 先备份后升级，旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 ",
+      "原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r5 存档；有效 r2 / r3 / r4 先备份后升级，仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 ",
     ));
     const cap = document.createElement("strong");
     cap.dataset.bind = "offline-cap";
@@ -46,6 +110,16 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
   let signature = "";
   return {
     ...surface,
+    invalidateOrderAuthority() {
+      // An adopted save is a new ID namespace, even when every numeric ID and
+      // planet name happens to match. Retire all prior rendered capabilities.
+      paidButtons = new WeakMap<HTMLButtonElement, CancelPaidJobRequest>();
+      queueNodes.clear();
+      for (const list of root.querySelectorAll<HTMLElement>(".queue-list")) {
+        delete list.dataset.sig;
+        list.replaceChildren();
+      }
+    },
     update(model) {
       toolbar.hidden = model.planets.length <= 1;
       label.hidden = toolbar.hidden;
@@ -60,7 +134,12 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
         }));
       }
       if (select.value !== model.activePlanetId) select.value = model.activePlanetId;
+      const focused = document.activeElement instanceof HTMLElement && root.contains(document.activeElement) ? document.activeElement : null;
       surface.update(model);
+      reconcileQueue("queue", ["", "-ov"], "building", model.queue);
+      reconcileQueue("rqueue", ["", "-ov"], "research", model.research.queue);
+      reconcileQueue("squeue", ["", "-def", "-ov"], "shipyard", model.shipyard.queue);
+      if (focused?.isConnected && document.activeElement !== focused && focused.closest(".queue-item")) focused.focus({preventScroll:true});
     },
   };
 }

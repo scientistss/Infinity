@@ -1,3 +1,5 @@
+import { applyOrderAction } from "./game/orders";
+import { ordersView } from "./ui/orders-present";
 import { summonMerchant, trade } from "./game/merchant";
 import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
 import { spaceView } from "./ui/space-present";
@@ -22,9 +24,9 @@ import {
 import { buildingById } from "./data/buildings";
 import { big } from "./game/decimal";
 import { formatAmount } from "./game/format";
-import { cancel, enqueue } from "./game/queue";
-import { cancelResearch, enqueueResearch } from "./game/research";
-import { cancelUnits, orderUnits } from "./game/shipyard";
+import { enqueue } from "./game/queue";
+import { enqueueResearch } from "./game/research";
+import { orderUnits } from "./game/shipyard";
 import { buyPackage, buyShopItem, speedUp, useInventory } from "./game/dark-matter";
 import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
@@ -103,6 +105,7 @@ function render(): void {
   view.setOrigin(activePlanet(state).coordinates);
   view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
   view.updateDeep(state);
+  view.updateOrders(ordersView(state), saveSession.mode === "ready");
 }
 
 async function handleAction(action: UiAction): Promise<void> {
@@ -114,7 +117,14 @@ async function handleAction(action: UiAction): Promise<void> {
     return;
   }
   const before = state.unlocked;
-  if(action.type==="summon-merchant"||action.type==="trade"){
+  if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "cancel-paid-job") {
+    const result = applyOrderAction(state, action);
+    const changed = result.state !== state;
+    state = result.state;
+    status = result.reason;
+    // Safety failures can intentionally pause a task. Persist those state changes too.
+    if (changed) persist();
+  } else if(action.type==="summon-merchant"||action.type==="trade"){
     const result=action.type==="summon-merchant"?summonMerchant(state):trade(state,action.offer,action.sell,action.buy,action.amount);
     state=result.state;status=result.reason;if(result.ok)persist();
   } else if(action.type==="export-legacy"){
@@ -144,20 +154,16 @@ async function handleAction(action: UiAction): Promise<void> {
     status = result.ok ? result.reason : `${buildingById(action.id).nameZh}：${result.reason}`;
     if (result.ok) persist();
   } else if (action.type === "cancelQueue") {
-    const result = cancel(state, action.index);
-    state = result.state;
-    status = result.reason;
-    if (result.ok) persist();
+    // Index-only cancellation must never resolve against a newer queue snapshot.
+    status = "队列已更新，请使用当前工作的取消按钮";
   } else if (action.type === "enqueueResearch") {
     const result = enqueueResearch(state, action.id, "manual");
     state = result.state;
     status = result.ok ? result.reason : `${researchById(action.id).nameZh}：${result.reason}`;
     if (result.ok) persist();
   } else if (action.type === "cancelResearch") {
-    const result = cancelResearch(state, action.index);
-    state = result.state;
-    status = result.reason;
-    if (result.ok) persist();
+    // Index-only cancellation must never resolve against a newer queue snapshot.
+    status = "队列已更新，请使用当前工作的取消按钮";
   } else if (action.type === "build-units") {
     const amount = action.mode === "max" ? "max" : action.mode === "fill" ? { fillTo: action.count } : action.count;
     const result = orderUnits(state, action.id, amount, "manual");
@@ -165,10 +171,8 @@ async function handleAction(action: UiAction): Promise<void> {
     status = result.reason;
     if (result.ok) persist();
   } else if (action.type === "cancel-units") {
-    const result = cancelUnits(state, action.index);
-    state = result.state;
-    status = result.reason;
-    if (result.ok) persist();
+    // Index-only cancellation must never resolve against a newer queue snapshot.
+    status = "队列已更新，请使用当前工作的取消按钮";
   } else if (action.type === "dm-speedup") {
     const result = speedUp(state, action.target, action.mode);
     state = result.state;
@@ -316,6 +320,9 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
     return;
   }
   if (!saveSession.isCurrentReplacement(result)) return;
+  // Task/job counters are scoped to a save. Do not let controls or draft nonces
+  // from the old namespace attach themselves to matching IDs in the new one.
+  view.invalidateOrderAuthority();
   state = result.state;
   catchup = null;
   banner = null;

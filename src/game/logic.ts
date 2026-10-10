@@ -1,3 +1,4 @@
+import { accrueOrderPlanTime, runDueOrderPass, nextOrderPassIn, terminateOrdersForPrestige } from "./orders";
 import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
 import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
@@ -58,7 +59,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
   current = applyEmpireAchievements(startNextResearch(current));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
-  const limit = Math.ceil(dtSeconds / period) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 4 * state.fleets.length + 256;
+  const limit = Math.ceil(dtSeconds / period) + Math.ceil(dtSeconds / 10) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 4 * state.fleets.length + 256;
   let t = 0, segments = 0;
   while (dtSeconds - t > EPS) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
@@ -68,13 +69,16 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     let step = dtSeconds - t;
     const lab = current.research.queue[0];
     if (lab && lab.totalSeconds > 0) step = Math.min(step, Math.max(0, lab.remainingSeconds));
-    step = Math.min(step, Math.max(0, period - current.protocols.accumulator), nextBoosterExpiry(current), nextBeaconIn(current), nextFleetEvent(current));
+    step = Math.min(step, Math.max(0, period - current.protocols.accumulator), nextBoosterExpiry(current), nextBeaconIn(current), nextFleetEvent(current), nextOrderPassIn(current));
     for (const snapshot of snapshots) {
       const local = selectPlanet(current, snapshot.id);
       const head = activePlanet(local).buildQueue[0];
       if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
       step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local));
     }
+    const orderAccrual = accrueOrderPlanTime(current, step);
+    const launchesBeforeBoundary = current.stats.launches;
+    current = orderAccrual.state;
     let filled: StoredResId[] = [];
     for (const snapshot of snapshots) {
       current = onPlanet(current, snapshot.id, (local) => {
@@ -126,6 +130,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     current = evaluateEvents(refreshUnlocks(current), events);
     const accrued = current.protocols.accumulator + step;
     current = accrued >= period - EPS ? evaluateLoadout(setAccumulator(current, 0), period) : setAccumulator(current, accrued);
+    if (orderAccrual.passes > 0 && current.stats.launches === launchesBeforeBoundary) current = runDueOrderPass(current);
     current = applyEmpireAchievements(refreshUnlocks(current));
     t += step;
   }
@@ -278,6 +283,7 @@ export function prestige(state: GameState): GameState {
   next.deepSpace = {...structuredClone(state.deepSpace), offers:[], debris:[]};
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
+  next.orders = terminateOrdersForPrestige(state);
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };
   next.research = { levels: { ...state.research.levels }, queue: [] };

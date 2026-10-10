@@ -1,0 +1,22 @@
+/* Additive finite-plan panel; original surface stylesheet and artwork remain intact. */
+.orders-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:start; }
+.orders-layout > *, .order-fields > *, .order-budgets > * { min-width:0; }
+.order-form-card h3 { display:flex; align-items:center; gap:8px; }
+.order-form-card h3 .icon { width:28px; height:28px; }
+.order-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.order-fields label, .order-budgets label { display:flex; flex-direction:column; gap:6px; }
+.order-fields select, .order-fields input, .order-budgets input { width:100%; min-width:0; box-sizing:border-box; }
+.order-form-card fieldset { min-width:0; padding:12px; border:1px solid var(--border,#2b3547); border-radius:8px; margin:16px 0 12px; }
+.order-form-card legend { max-width:100%; }
+.order-budgets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.order-review, .order-row, #order-draft-status { overflow-wrap:anywhere; }
+.order-review { line-height:1.7; }
+.order-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.order-list { display:grid; gap:12px; }
+.order-row { display:grid; gap:8px; }
+.order-row .queue-bar { width:100%; }
+.order-reason { line-height:1.6; }
+.order-form-card details { margin-top:16px; }
+.order-actions button[hidden] { display:none; }
+@media(max-width:900px) { .orders-layout { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:420px) { .order-fields, .order-budgets { grid-template-columns:minmax(0,1fr); } .order-form-card fieldset { padding:8px; } }
