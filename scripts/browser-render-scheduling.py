@@ -14,6 +14,8 @@ import hashlib
 import json
 import platform
 import shutil
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright, expect
@@ -202,8 +204,8 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     return context,page
 
 
-def snapshot(page, omit_building_addition=False):
-    return page.evaluate('''omitBuilding => {
+def snapshot(page, omit_building_addition=False, ring_base=None):
+    result=page.evaluate('''({omitBuilding,ringBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
         // Chromium may return geometry for closed-details content. Its first
@@ -228,10 +230,111 @@ def snapshot(page, omit_building_addition=False):
         if(!text.endsWith(suffix)||text.indexOf(summary)!==text.lastIndexOf(summary))throw Error('Unexpected new-region text boundary');
         text=text.slice(0,-suffix.length);
       }
-      return {tab:panel?.dataset.tabPanel,text,
+      const inputs=[...panel.querySelectorAll('input,select,textarea,button')].filter(visible);
+      const result={tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
-       inputs:[...panel.querySelectorAll('input,select,textarea,button')].filter(visible).map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
-    }''',omit_building_addition)
+       inputs:inputs.map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
+      if(ringBase){
+        const auto=panel.querySelector('section.ring-auto'),progress=panel.querySelector('[data-bind="arcade-auto"]');
+        const side=panel.querySelector('.arcade-side'),manual=side?.querySelector('.arcade-controls'),topup=side?.querySelector('[data-action="arcade-topup"]');
+        const describe=e=>e?{html:e.outerHTML,text:e.innerText,hidden:e.hidden,display:getComputedStyle(e).display,visible:visible(e)}:null;
+        result.ringEvidence={panelHTML:panel.outerHTML,auto:describe(auto),progress:describe(progress),
+          counts:[panel.querySelectorAll('section.ring-auto').length,panel.querySelectorAll('[data-bind="arcade-auto"]').length,panel.querySelectorAll('#ring-manual-progress').length],
+          exactPlacement:!!auto&&!!progress&&auto.parentElement===side&&auto.nextElementSibling===topup&&
+            (ringBase==='before'?auto.previousElementSibling===manual&&progress.parentElement.matches('details.ring-details')&&
+              !progress.parentElement.open&&progress.parentElement.querySelector(':scope > summary')?.textContent==='押注、奖池与自动开奖'&&progress.parentElement.lastElementChild===progress:
+              progress.parentElement===side&&manual.nextElementSibling===progress&&progress.nextElementSibling===auto),
+          manualText:manual?.innerText,topupText:topup?.innerText,
+          controls:[...(auto?.querySelectorAll('input,select,textarea,button')??[])].map(e=>({tag:e.tagName,id:e.id,ring:e.dataset.ring??null,
+            type:e.type,value:e.value,disabled:e.disabled,hidden:e.hidden,visible:visible(e),index:inputs.indexOf(e)})),
+          invariants:Object.fromEntries(['.arcade-board','.arcade-controls','.arcade-bets','.ring-queue','#ring-rules',
+            '[data-bind="arcade-history"]','.ring-history-detail','[data-bind="status-arcade"]','[data-action="arcade-topup"]'].map(selector=>{
+              const nodes=panel.querySelectorAll(selector);return [selector,{count:nodes.length,html:nodes[0]?.outerHTML}];})),
+        };
+      }
+      return result;
+    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base})
+    return ring_base_snapshot(page,ring_base,result) if ring_base else result
+
+
+def ring_base_snapshot(page,label,projected):
+    # Read-only, narrowly scoped exception for the approved manual-first base UI.
+    # Keep the unfiltered visible snapshot and full DOM even if a precheck fails.
+    evidence=projected.pop('ringEvidence')
+    original=copy.deepcopy(projected);stored=raw(page);at=page.evaluate('window.__renderProbe.at()');state=json.loads(stored)['state']
+    artifact=f'panel-parity-arcade-{label}-raw.json'
+    (out/artifact).write_text(json.dumps({'snapshot':original,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+    check('ring exception has the exact legal complete base state: '+label,exact_state(state,expected_state('base.initial',page)))
+    arcade=state['arcade']
+    check('ring exception is only manual zero, no batch, no card and no ready slot: '+label,
+          arcade['stats']['manualRuns']==0 and arcade['autoBatch'] is None and 'auto_runner' not in state['unlockedCards'] and
+          all(slot['card'] is None or slot['card']['id']!='auto_runner' for slot in state['protocols']['slots']) and state['research']['levels']['astrophysics']==4)
+    check('ring exception retains every original queued outcome and zero stake: '+label,
+          exact_state(arcade,fixtures['expected']['base.initial']['arcade']) and
+          arcade['bets']=={'metal':0,'crystal':0,'deuterium':0,'drifter':0} and len(arcade['runs'])==1)
+    after=label=='after'
+    check('ring exception nodes are unique and at the exact original/manual-first boundaries: '+label,
+          label in ('before','after') and projected['tab']=='arcade' and evidence['counts']==[1,1,1 if after else 0] and evidence['exactPlacement'])
+    source=next(planet for planet in state['planets'] if planet['id']==state['activePlanetId']);coords=source['coordinates']
+    source_text=escape(f'当前来源星球：{source["name"]} [{coords["galaxy"]}:{coords["system"]}:{coords["position"]}]')
+    disabled=' disabled=""' if after else ''
+    setup=(f'<p id="ring-auto-source">{source_text}</p><p id="ring-auto-bets">待授权押注：无押注（每次扣费 0 重氢）</p>'
+        '<div class="ring-auto-fields"><label>自动跑灯槽位<select id="ring-auto-slot" aria-describedby="ring-auto-prerequisite"'+disabled+'><option value="-1">暂无可用槽位</option></select></label>'
+        '<label>本批次数<input id="ring-auto-count" type="number" min="0" max="1" step="1" value="0" inputmode="numeric"'+disabled+'></label>'
+        '<label>总扣费上限（重氢）<input id="ring-auto-cap" type="text" value="0" inputmode="decimal" maxlength="100"'+disabled+'></label></div>')
+    validation='<p id="ring-auto-validation" role="status"></p>'
+    expected_auto=('<section class="ring-auto" aria-labelledby="ring-auto-title"'+(' hidden=""' if after else '')+'>'
+        '<h3 id="ring-auto-title">有限自动开奖</h3><p id="ring-auto-status" role="status" aria-live="polite">关闭 · 默认未授权</p>'
+        '<p id="ring-auto-progress">已完成 0/0 次 · 已扣重氢 0 / 上限 0</p><p id="ring-auto-frozen">授权时固定来源星球、当前待揭晓队列前缀和押注。</p>'+
+        ('<div id="ring-auto-setup" hidden="">'+setup+validation+'</div>' if after else setup)+
+        '<p id="ring-auto-prerequisite">先手动开奖 10 次解锁「自动跑灯」，再到协议页装配到已开启槽位。</p>'+('' if after else validation)+
+        '<div class="ring-auto-actions"><button type="button" data-ring="auto-arm" disabled=""'+(' hidden=""' if after else '')+'>授权本批次</button><button type="button" data-ring="auto-stop" disabled="">停止自动开奖</button></div>'
+        '<p id="ring-auto-stop-reason" role="status"></p><small>只包含授权时已有的前 N 次；重氢上限按总扣费计算，赢回不补充额度。不会自动加注购买次数，未来信标、顺风奖励不续入。手动开奖或改押注会停止本批次；装配或开关卡片不等于授权。离线也只执行已授权范围。</small></section>')
+    # Compare all DOM tokens/text; attribute order alone has no DOM meaning.
+    # Parse strings in Python, never clone, rewrite or hide live browser nodes.
+    class Tokens(HTMLParser):
+        def __init__(self):super().__init__(convert_charrefs=True);self.tokens=[]
+        def handle_starttag(self,tag,attrs):self.tokens.append(('start',tag,sorted(attrs)))
+        def handle_endtag(self,tag):self.tokens.append(('end',tag))
+        def handle_data(self,data):self.tokens.append(('text',data))
+        def handle_comment(self,data):self.tokens.append(('comment',data))
+    def tokens(html):
+        parser=Tokens();parser.feed(html);parser.close();return parser.tokens
+    check('ring automatic region has exact complete structure, text and attributes: '+label,
+          tokens(evidence['auto']['html'])==tokens(expected_auto))
+    expected_progress=('<p class="muted ring-manual-progress" data-bind="arcade-auto" id="ring-manual-progress">手动开奖 0/10 次 · 达标后解锁「自动跑灯」。</p>' if after else
+                       '<p class="muted" data-bind="arcade-auto">手动开奖 0/10 次后解锁协议卡「自动跑灯」。</p>')
+    check('ring progress is the exact 0/10 node, visible only after its approved move: '+label,
+          tokens(evidence['progress']['html'])==tokens(expected_progress) and evidence['progress']['visible']==after and not evidence['progress']['hidden'])
+    check('ring automatic region is visible before and genuinely hidden after: '+label,
+          evidence['auto']['hidden']==after and evidence['auto']['visible']==(not after) and (evidence['auto']['display']=='none')==after)
+    expected_controls=[('SELECT','ring-auto-slot',None,'select-one','-1',after,False),
+                       ('INPUT','ring-auto-count',None,'number','0',after,False),('INPUT','ring-auto-cap',None,'text','0',after,False),
+                       ('BUTTON','','auto-arm','button','',True,after),('BUTTON','','auto-stop','button','',True,False)]
+    check('ring exact five-control contract uses data-ring to distinguish both no-id buttons: '+label,
+          [(c['tag'],c['id'],c['ring'],c['type'],c['value'],c['disabled'],c['hidden']) for c in evidence['controls']]==expected_controls and
+          all(c['visible']==(not after) for c in evidence['controls']))
+    check('ring invariant board, manual controls, bets, queue, odds, history and status remain unique: '+label,
+          all(row['count']==1 for row in evidence['invariants'].values()))
+    removed=evidence['progress'] if after else evidence['auto']
+    block=removed['text'];text=projected['text'];left=evidence['manualText'];right=evidence['topupText']
+    check('ring removed complete visible block occurs exactly once: '+label,bool(block) and text.count(block)==1 and text.count(left)==1 and text.count(right)==1)
+    start=text.index(block);end=start+len(block);left_end=text.index(left)+len(left);right_start=text.index(right)
+    separators=(text[left_end:start],text[end:right_start])
+    check('ring removed block has only exact adjacent sibling line-break boundaries: '+label,
+          left_end<start<end<right_start and all(s in ('\n','\n\n') for s in separators))
+    projected['text']=text[:left_end]+'\n'+text[right_start:]
+    indices=[c['index'] for c in evidence['controls']]
+    check('ring exclusion addresses only the verified visible old five controls: '+label,
+          indices==([-1]*5 if after else list(range(3,8))))
+    if not after:projected['inputs']=[control for i,control in enumerate(projected['inputs']) if i not in indices]
+    projected['ringInvariantDOM']=evidence['invariants']
+    check('ring snapshot exception never mutates stored state or advances the clock: '+label,raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at)
+    audits.append({'kind':'manual-first-ring-parity-exception','side':label,'rawArtifact':artifact,
+        'removedNode':'#ring-manual-progress' if after else 'section.ring-auto','removedText':block,
+        'adjacentSiblingSeparators':separators,'removedVisibleControlIndices':[] if after else indices,
+        'constraint':'Exact base state; old full unauthorized region versus new hidden disabled region and accurate manual 0/10. All remaining visible text/controls and captured invariant DOM compare exactly.'})
+    return projected
 
 
 def differential_trace(name,url):
@@ -404,7 +507,7 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.12-alpha.2'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.13-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else 9))
         check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
@@ -417,9 +520,9 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders')
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None)
             if name=='galaxy':
-                # The intentional package version change is the only parity
+                # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
                 # paragraph, never to names, controls or arbitrary panel text.
                 range_text=page.locator('#space-range').inner_text();token='v'+expected_version
@@ -669,7 +772,8 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact and only empty buildingTemplates is added. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.12-alpha.2) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.13-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring exception, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},

@@ -567,11 +567,52 @@ def worker(args):
         def screenshot(self, name, selector=None):
             if selector:
                 self.page.locator(selector).scroll_into_view_if_needed()
+            related_targets = ['#ring-manual-progress'] if selector == '.arcade-controls' else []
+            if name.startswith('armed-colony-'):
+                related_targets = ['#ring-auto-status', '#ring-auto-progress', '#ring-auto-frozen', '#ring-auto-source', '[data-ring="auto-stop"]']
+            witnessed_targets = [selector, *related_targets] if selector in ('.arcade-board', '.arcade-controls', '[data-action="arcade-run"]', '.ring-auto') else []
+            # A viewport bounding box can still sit behind the real sticky header.
+            # Reframe with native scrolling only; never hide UI or resize the viewport.
+            visibility_probe = r'''({targets,position}) => {
+                const header=()=>{
+                    const e=document.querySelector('.topbar'),r=e?.getBoundingClientRect();
+                    const position=e?getComputedStyle(e).position:null;
+                    return {position,top:r?.top??0,bottom:r?.bottom??0,
+                        obstruction:r&&['sticky','fixed'].includes(position)&&r.top<innerHeight&&r.bottom>0?Math.min(innerHeight,r.bottom):0};
+                };
+                const nodes=targets.map(selector=>({selector,e:document.querySelector(selector)}));
+                const rectangles=nodes.map(({e})=>e.getBoundingClientRect());
+                const top=Math.min(...rectangles.map(r=>r.top)),bottom=Math.max(...rectangles.map(r=>r.bottom));
+                const before=header();
+                if(position&&(top<before.obstruction+8||bottom>innerHeight-8)){
+                    const desired=before.obstruction+8+Math.max(0,(innerHeight-before.obstruction-16-(bottom-top))/2);
+                    window.scrollBy({top:top-desired,left:0,behavior:'instant'});
+                }
+                const bar=header();
+                return {scrollX,scrollY,viewport:{width:innerWidth,height:innerHeight},header:bar,
+                    nodes:nodes.map(({selector,e})=>{
+                        const r=e.getBoundingClientRect();
+                        const points=[[.1,.1],[.9,.1],[.5,.5],[.1,.9],[.9,.9]].map(([u,v])=>{
+                            const x=r.left+r.width*u,y=r.top+r.height*v,hit=document.elementFromPoint(x,y);
+                            return {x,y,unoccluded:hit!==null&&(hit===e||e.contains(hit)),
+                                hit:hit?{tag:hit.tagName,id:hit.id,className:hit.getAttribute('class')}:null};
+                        });
+                        return {selector,bounds:{x:r.x,y:r.y,width:r.width,height:r.height},points,
+                            unoccluded:r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth
+                                &&r.top>=bar.obstruction&&r.bottom<=innerHeight&&points.every(p=>p.unoccluded)};
+                    })};
+            }'''
+            visible_before = self.page.evaluate(visibility_probe, {'targets': witnessed_targets, 'position': True}) if witnessed_targets else None
+            if visible_before:
+                check('screenshot targets clear the real header and hit-test unobscured before capture', all(node['unoccluded'] for node in visible_before['nodes']), visible_before)
             animation_sample = '''() => ({title:document.querySelector('.ring-hero-title')?.textContent,lit:[...document.querySelectorAll('.arcade-tile.lit')].map(e=>Number(e.dataset.tile)),clock:window.__naturalRing.clock()})'''
             animation_before = self.page.evaluate(animation_sample) if name.endswith('-animation') else None
             path = out / (name + '.png')
             self.page.screenshot(path=str(path), full_page=False, animations='allow', timeout=5000)
             animation_after = self.page.evaluate(animation_sample) if animation_before else None
+            visible_after = self.page.evaluate(visibility_probe, {'targets': witnessed_targets, 'position': False}) if witnessed_targets else None
+            if visible_after:
+                check('screenshot targets remain unobscured after capture without further scrolling', all(node['unoccluded'] for node in visible_after['nodes']), visible_after)
             if animation_before:
                 check('animation remains genuinely active before and after screenshot capture',
                       all(sample['title'] == '正在揭晓' and bool(sample['lit']) for sample in (animation_before, animation_after)),
@@ -580,12 +621,7 @@ def worker(args):
             if selector in ('.arcade-board', '.arcade-controls', '[data-action="arcade-run"]'):
                 viewport = self.page.viewport_size
                 check('manual entry or animation board is fully visible in actual viewport', geometry and geometry['width'] > 0 and geometry['height'] > 0 and geometry['x'] >= -1 and geometry['y'] >= -1 and geometry['x'] + geometry['width'] <= viewport['width'] + 1 and geometry['y'] + geometry['height'] <= viewport['height'] + 1, geometry)
-            related_geometry = {}
-            if selector == '.arcade-controls':
-                related_geometry['#ring-manual-progress'] = self.page.locator('#ring-manual-progress').bounding_box()
-            if name.startswith('armed-colony-'):
-                related_geometry = {target: self.page.locator(target).bounding_box() for target in
-                                    ('#ring-auto-status', '#ring-auto-progress', '#ring-auto-frozen', '#ring-auto-source', '[data-ring="auto-stop"]')}
+            related_geometry = {target: self.page.locator(target).bounding_box() for target in related_targets}
             for target, bounds in related_geometry.items():
                 viewport = self.page.viewport_size
                 check('screenshot includes the actual visible control or context: ' + target,
@@ -595,6 +631,7 @@ def worker(args):
                    'bytes': path.stat().st_size, 'viewport': self.page.viewport_size,
                    'selectorScrolledIntoView': selector, 'targetGeometry': geometry, 'fullPage': False,
                    'relatedVisibleGeometry': related_geometry,
+                   'visibilityWitnessBefore': visible_before, 'visibilityWitnessAfter': visible_after,
                    'animationBefore': animation_before, 'animationAfter': animation_after,
                    'clock': self.page.evaluate('window.__naturalRing.clock()')}
             report['screenshots'].append(row)
