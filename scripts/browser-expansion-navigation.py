@@ -33,6 +33,9 @@ completed, active_page, diagnostics = False, None, None
 case = 'setup'
 
 INIT = r"""(() => {
+ window.__fileImportConfirmations=[];
+ const nativeConfirm=window.confirm.bind(window);
+ window.confirm=message=>{window.__fileImportConfirmations.push(String(message));return nativeConfirm(message);};
  const key=__KEY__, raf=requestAnimationFrame.bind(window);
  const get=Storage.prototype.getItem, set=Storage.prototype.setItem;
  let elapsed=0;
@@ -66,6 +69,33 @@ def check(name, condition):
     checks.append({'case': case, 'name': name, 'passed': bool(condition), 'classification': MODE})
     if not condition:
         raise AssertionError(f'{case}: {name}')
+
+
+def confirmation_count(page):
+    return page.evaluate('window.__fileImportConfirmations.length')
+
+
+def accept_file_confirmation(page, incoming, current):
+    # Install only around this successful current read, never on every page/dialog.
+    active = next(planet for planet in current['planets'] if planet['id'] == current['activePlanetId'])
+    progress = f'第 {current["stats"]["launches"] + 1} 轮，{len(current["planets"])} 颗星球，当前“{active["name"]}”'
+    seen = []
+    def answer(dialog):
+        seen.append({'type': dialog.type, 'message': dialog.message})
+        assertions = [
+            ('file import presents a native confirm', dialog.type == 'confirm'),
+            ('file confirmation identifies the actual source version and revision', dialog.message.startswith(f'已读取存档 v{incoming["version"]}/r{incoming["revision"]}。')),
+            ('file confirmation names the current round and planet progress', f'是否替换当前进度（{progress}）？' in dialog.message),
+            ('file confirmation warns that read-time changes will be replaced', '读取期间产生的变化也会被替换' in dialog.message),
+            ('file confirmation promises adoption only after verified persistence', '写入校验成功后才采用' in dialog.message),
+        ]
+        if not all(condition for _, condition in assertions):
+            dialog.dismiss()
+        for name, condition in assertions:
+            check(name, condition)
+        dialog.accept()
+    page.once('dialog', answer)
+    return seen
 
 
 def advance(page, milliseconds=0):
@@ -297,6 +327,7 @@ def run_cases():
       File.prototype.text=function(){return new Promise((resolve,reject)=>nativeText.call(this).then(text=>{
         window.__pendingExpansionFile={release:()=>resolve(text)};
       },reject));};}''')
+    before_confirmations = confirmation_count(page)
     page.locator('[data-bind="import-file"]').set_input_files({'name':'anonymous-delayed-expansion.json','mimeType':'application/json','buffer':json.dumps(incoming,ensure_ascii=False).encode()})
     page.wait_for_function('window.__pendingExpansionFile !== null')
     original_raw = raw(page); clear_audit(page)
@@ -307,7 +338,10 @@ def run_cases():
     page.locator('#expansion-navigation-summary').click(); advance(page)
     page.locator('#expansion-navigation-summary').click(); advance(page)
     check('held file is still pending and inspection never reads or writes its save slot', raw(page) == original_raw and not storage_operations(page,current_only=True))
+    check('native file read and read-only inspection never confirm before completion', confirmation_count(page) == before_confirmations)
+    file_dialogs = accept_file_confirmation(page, incoming, json.loads(original_raw)['state'])
     page.evaluate('window.__pendingExpansionFile.release()'); advance(page)
+    check('current read after inspection asks exactly one replacement confirmation', len(file_dialogs) == 1 and confirmation_count(page) == before_confirmations + 1)
     page.wait_for_function('document.querySelector("#expansion-position").value === "1"')
     adopted = json.loads(raw(page))['state']
     check('file completion adopts exact replacement after all read-only interactions', adopted == incoming['state'])

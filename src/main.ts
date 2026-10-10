@@ -80,7 +80,7 @@ render();
 
 window.requestAnimationFrame(frame);
 
-window.setInterval(() => persist("已自动保存"), AUTOSAVE_MS);
+window.setInterval(() => persist("已自动保存", true), AUTOSAVE_MS);
 window.addEventListener("beforeunload", () => persist());
 window.addEventListener("storage", (event) => {
   if (event.storageArea !== store || !saveSession.handleStorageEvent(event.key)) return;
@@ -89,7 +89,7 @@ window.addEventListener("storage", (event) => {
   render();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") persist();
+  if (document.visibilityState === "hidden") persist(undefined, true);
   // Account the full resume gap in the existing frame before displaying it.
   else renderScheduler.invalidate();
 });
@@ -112,7 +112,7 @@ function frame(now: number): void {
     if (result.appliedSeconds >= OFFLINE_MODAL_SECONDS) catchup = result;
     const unlocked = unlockBanner(result.newAchievementIds);
     if (unlocked) banner = unlocked;
-    persist("已追赶后台进度");
+    persist("已追赶后台进度", true);
   } else if (gap > 0) {
     const before = state.unlocked;
     state = tick(state, gap);
@@ -394,16 +394,32 @@ async function handleAction(action: UiAction): Promise<void> {
     const sample = sampleClock();
     applyReplacement(saveSession.importText(action.text, sample.wallAt), "导入", sample);
   } else if (action.type === "import-file") {
-    let sample: ClockSample | null = null;
-    const result = await saveSession.importFile(action.file, () => {
-      // Capture after the asynchronous read, immediately before its transaction.
-      // The old world's waiting time must never advance the replacement world.
-      sample = sampleClock();
-      return sample.wallAt;
-    });
-    // A superseded read must not overwrite a newer action's state, text, or status.
-    if (!saveSession.isCurrentFileResult(result) || (!result.ok && result.code === "stale")) return;
-    applyReplacement(result, "导入", sample);
+    // Reading validates data only. Background saves may continue; no old
+    // replacement intent survives the read or authorizes overwriting new progress.
+    const prepared = await saveSession.prepareFile(action.file);
+    if (!saveSession.isCurrentPreparedFile(prepared) || (!prepared.ok && prepared.code === "stale")) return;
+    if (!prepared.ok) {
+      status = `导入失败，当前进度未改动：${prepared.message}`;
+      notice = saveSession.notice;
+    } else {
+      const confirmationState = state;
+      const accepted = window.confirm(
+        `已读取存档 v${prepared.sourceVersion}/r${prepared.sourceRevision}。\n` +
+        `是否替换当前进度（第 ${state.stats.launches + 1} 轮，${state.planets.length} 颗星球，当前“${activePlanet(state).name}”）？\n` +
+        "读取期间产生的变化也会被替换。保留当前已保存原件，写入校验成功后才采用。",
+      );
+      // Dialog return must not revive an action, conflict or different world.
+      if (!saveSession.isCurrentPreparedFile(prepared) || state !== confirmationState) return;
+      if (!accepted) {
+        saveSession.cancelPendingImport();
+        status = "已取消文件导入，当前进度未改动";
+      } else {
+        // New explicit consent, a fresh paired clock sample, and synchronous
+        // storage replacement/adoption. No await remains in this transaction.
+        const sample = sampleClock();
+        applyReplacement(saveSession.importText(prepared.raw, sample.wallAt), "导入", sample);
+      }
+    }
   } else if (action.type === "reset") {
     if (!window.confirm("备份当前原始存档并重新开始？新存档写入成功后才会替换当前进度。")) return;
     const sample = sampleClock();
@@ -450,18 +466,21 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
  * A cancelled or rejected launch leaves the generation untouched. */
 function observeWorldAdoption(): void {
   if (state.stats.launches === adoptedLaunches) return;
+  saveSession.cancelPendingImport();
   view.invalidateOrderAuthority();
   paintedHeads = null;
   renderScheduler.reset();
   adoptedLaunches = state.stats.launches;
 }
 
-function persist(nextStatus?: string): void {
+function persist(nextStatus?: string, background = false): void {
   observeWorldAdoption();
   const beforeStatus = status;
   const beforeNotice = notice;
   const beforeMode = saveSession.mode;
-  const result = saveSession.save(state, Date.now(), accountedClock.lastTickAt);
+  const result = background
+    ? saveSession.saveBackground(state, Date.now(), accountedClock.lastTickAt)
+    : saveSession.save(state, Date.now(), accountedClock.lastTickAt);
   if (result.ok) {
     if (nextStatus) status = nextStatus;
   } else {

@@ -107,6 +107,7 @@ jobs:
           done
           python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > save-session-review-save.json
+          python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
           node --import tsx scripts/accounted-clock-fixture.ts > accounted-clock-review-save.json
           python scripts/browser-accounted-clock.py --fixture accounted-clock-review-save.json --session-fixture save-session-review-save.json --output accounted-clock-evidence
           node --import tsx scripts/native-background-fixture.ts > native-background-review-save.json
@@ -154,6 +155,7 @@ jobs:
             ring-evidence
             dashboard-evidence
             save-session-evidence
+            prepared-file-import-evidence
             ring-automation-evidence
             orders-evidence
             orders-transport-evidence

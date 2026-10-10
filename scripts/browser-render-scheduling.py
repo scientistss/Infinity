@@ -34,6 +34,9 @@ checks,errors,failed_requests,audits,differentials=[],[],[],[],[]
 case,completed,active_page,diagnostics='setup',False,None,None
 
 INIT=r"""(() => {
+ window.__fileImportConfirmations=[];
+ const nativeConfirm=window.confirm.bind(window);
+ window.confirm=message=>{window.__fileImportConfirmations.push(String(message));return nativeConfirm(message);};
  const key=__KEY__,epoch=__EPOCH__,get=Storage.prototype.getItem,set=Storage.prototype.setItem;
  let elapsed=0,next=0,updates=0;const callbacks=new Map(),intervals=new Map();
  const native=fn=>/\[native code\]/.test(Function.prototype.toString.call(fn));
@@ -81,6 +84,33 @@ def check(name,condition,detail=None):
     if detail is not None:row['detail']=detail
     checks.append(row)
     if not condition:raise AssertionError(f'{case}: {name}')
+
+
+def confirmation_count(page):
+    return page.evaluate('window.__fileImportConfirmations.length')
+
+
+def accept_file_confirmation(page, incoming, current):
+    # Install only around this successful current read, never on every page/dialog.
+    active = next(planet for planet in current['planets'] if planet['id'] == current['activePlanetId'])
+    progress = f'第 {current["stats"]["launches"] + 1} 轮，{len(current["planets"])} 颗星球，当前“{active["name"]}”'
+    seen = []
+    def answer(dialog):
+        seen.append({'type': dialog.type, 'message': dialog.message})
+        assertions = [
+            ('file import presents a native confirm', dialog.type == 'confirm'),
+            ('file confirmation identifies the actual source version and revision', dialog.message.startswith(f'已读取存档 v{incoming["version"]}/r{incoming["revision"]}。')),
+            ('file confirmation names the current round and planet progress', f'是否替换当前进度（{progress}）？' in dialog.message),
+            ('file confirmation warns that read-time changes will be replaced', '读取期间产生的变化也会被替换' in dialog.message),
+            ('file confirmation promises adoption only after verified persistence', '写入校验成功后才采用' in dialog.message),
+        ]
+        if not all(condition for _, condition in assertions):
+            dialog.dismiss()
+        for name, condition in assertions:
+            check(name, condition)
+        dialog.accept()
+    page.once('dialog', answer)
+    return seen
 
 
 def frame(page,at=None):
@@ -344,7 +374,7 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.9-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.10-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
@@ -496,11 +526,17 @@ def run_cases():
 
     case='navigation-only invalidation does not cancel delayed native file import'
     context,page=boot();tab(page,'save');page.evaluate('window.__renderProbe.gate()')
+    before_confirmations = confirmation_count(page)
     page.locator('[data-bind="import-file"]').set_input_files({'name':'delayed-native.json','mimeType':'application/json','buffer':json.dumps(fixtures['incoming'],ensure_ascii=False).encode()})
     page.wait_for_function('window.__renderProbe.files[0]?.ready&&typeof window.__renderProbe.files[0].release==="function"',polling=20)
     for name in ('galaxy','orders','fleet','overview'):tab(page,name)
+    check('pending file and ordinary navigation never confirm before read completion', confirmation_count(page) == before_confirmations)
+    # This scenario runs on args.url only. Archived before traces never install
+    # an import handler, so a later reset cannot accidentally consume one.
+    file_dialogs = accept_file_confirmation(page, fixtures['incoming'], saved(page))
     page.evaluate('window.__renderProbe.files[0].release()')
     page.wait_for_function('document.querySelector("[data-bind=\\"status\\"]")?.textContent.includes("已导入")',polling=20)
+    check('current navigation-only file asks exactly one replacement confirmation', len(file_dialogs) == 1 and confirmation_count(page) == before_confirmations + 1)
     frame(page);whole(page,'incoming.initial');context.close()
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
@@ -570,7 +606,7 @@ with sync_playwright() as playwright:
         raise
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
-            'parityMetadataException':'Only the exact galaxy #space-range paragraph version token is normalized after checking the served manifests equal before 0.6.7-alpha.1 and after 0.6.9-alpha.1. All other visible text and controls stay exact.',
+            'parityMetadataException':'Only the exact galaxy #space-range paragraph version token is normalized after checking the served manifests equal before 0.6.7-alpha.1 and after 0.6.10-alpha.1. All other visible text and controls stay exact.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},

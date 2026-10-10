@@ -95,9 +95,10 @@ INIT = r"""(() => {
  window.addEventListener('storage',event=>{
   if(event.storageArea===localStorage&&event.key===key)window.__clockAudit.push({operation:'storage-event',trusted:event.isTrusted,wall,frame});
  });
+ window.__fileImportConfirmations=[];
  window.__clockConfirmGap=0;
  const confirm=window.confirm.bind(window);
- window.confirm=message=>{const result=confirm(message);window.__clockAdvance(window.__clockConfirmGap);window.__clockConfirmGap=0;return result;};
+ window.confirm=message=>{window.__fileImportConfirmations.push(String(message));const result=confirm(message);window.__clockAdvance(window.__clockConfirmGap);window.__clockConfirmGap=0;return result;};
  const fileText=File.prototype.text;
  window.__clockFiles=[];window.__clockGateFiles=false;
  File.prototype.text=async function(){
@@ -117,6 +118,35 @@ def check(name, condition):
     checks.append({'case':case, 'name':name, 'passed':bool(condition), 'classification':MODE})
     if not condition:
         raise AssertionError(f'{case}: {name}')
+
+
+def confirmation_count(page):
+    return page.evaluate('window.__fileImportConfirmations.length')
+
+
+def answer_file_confirmation(page, incoming, current, accept=True, gap=0):
+    # Install only around this named current read, never on every page/dialog.
+    page.evaluate('gap=>window.__clockConfirmGap=gap', gap)
+    active = next(planet for planet in current['planets'] if planet['id'] == current['activePlanetId'])
+    progress = f'第 {current["stats"]["launches"] + 1} 轮，{len(current["planets"])} 颗星球，当前“{active["name"]}”'
+    seen = []
+    def answer(dialog):
+        seen.append({'type': dialog.type, 'message': dialog.message})
+        assertions = [
+            ('file import presents a native confirm', dialog.type == 'confirm'),
+            ('file confirmation identifies the actual source version and revision', dialog.message.startswith(f'已读取存档 v{incoming["version"]}/r{incoming["revision"]}。')),
+            ('file confirmation names the current round and planet progress', f'是否替换当前进度（{progress}）？' in dialog.message),
+            ('file confirmation warns that read-time changes will be replaced', '读取期间产生的变化也会被替换' in dialog.message),
+            ('file confirmation preserves the current saved original', '保留当前已保存原件' in dialog.message),
+            ('file confirmation promises adoption only after verified persistence', '写入校验成功后才采用' in dialog.message),
+        ]
+        if not all(condition for _, condition in assertions):
+            dialog.dismiss()
+        for name, condition in assertions:
+            check(name, condition)
+        dialog.accept() if accept else dialog.dismiss()
+    page.once('dialog', answer)
+    return seen
 
 
 def advance(page, milliseconds):
@@ -207,16 +237,19 @@ def attach(page):
     page.on('requestfailed', lambda request: requests.append({'case':case,'url':request.url}))
 
 
-def boot(which='mixed', value=None, wall=0, fault=None):
+def boot(which='mixed', value=None, wall=0, fault=None, backups=None):
     global active_page
     parsed = urlparse(args.url)
     if parsed.scheme not in ('http','https'):
         raise ValueError('Native acceptance requires actual HTTP(S)')
     seed = copy.deepcopy(fixtures[which] if value is None else value)
     seed['savedAt'] = seed['lastTickAt'] = EPOCH
+    storage = [{'name':KEY,'value':json.dumps(seed,ensure_ascii=False)}, {'name':'infinity.ui.tab','value':'overview'}]
+    for key, content in (backups or {}).items():
+        check('synthetic initial backup seed targets backup slots only', key == BACKUP or key.startswith(BACKUP+'.'))
+        storage.append({'name':key,'value':content})
     context = browser.new_context(viewport={'width':1440,'height':1100}, reduced_motion='reduce', accept_downloads=True,
-        storage_state={'cookies':[],'origins':[{'origin':f'{parsed.scheme}://{parsed.netloc}', 'localStorage':[
-            {'name':KEY,'value':json.dumps(seed,ensure_ascii=False)}, {'name':'infinity.ui.tab','value':'overview'}]}]})
+        storage_state={'cookies':[],'origins':[{'origin':f'{parsed.scheme}://{parsed.netloc}', 'localStorage':storage}]})
     script = INIT
     if wall:
         script += f'window.__clockAdvance({wall});'
@@ -257,10 +290,12 @@ def confirm_action(page, action, accept=True, gap=0):
 
 def pending_file(page, which='incoming', text=None):
     tab(page,'save'); page.evaluate('window.__clockGateFiles=true')
+    before_confirmations = confirmation_count(page)
     page.locator('[data-bind="import-file"]').set_input_files({'name':'controlled-'+which+'.json',
         'mimeType':'application/json','buffer':(text if text is not None else json.dumps(fixtures[which],ensure_ascii=False)).encode()})
     index = page.evaluate('window.__clockFiles.length-1')
     page.wait_for_function('i=>window.__clockFiles[i]?.ready&&typeof window.__clockFiles[i].release==="function"', arg=index, polling=20)
+    check('pending native file bytes never request confirmation before completion', confirmation_count(page) == before_confirmations)
     return index
 
 
@@ -389,11 +424,60 @@ def run_cases():
     context,page=boot(); advance(page,10000); index=pending_file(page)
     advance(page,50000)
     check('read delay leaves stored old world intact',saved(page)['state']==EXPECTED['mixed.initial'])
+    before_confirmations = confirmation_count(page)
+    file_dialogs = answer_file_confirmation(page, fixtures['incoming'], saved(page)['state'])
     release_file(page,index); expect(page.locator('[data-bind="status"]')).to_contain_text('已导入')
+    check('successful file completion asks exactly one explicit replacement confirmation', len(file_dialogs) == 1 and confirmation_count(page) == before_confirmations + 1)
     value=saved(page); same_state(value,'incoming.initial'); envelope(value,60000,60000)
     advance(page,1000); frame(page); value=save(page)
     same_state(value,'incoming.live1'); envelope(value,61000,61000)
     audit(page); context.close()
+
+    case='accepted native file confirmation samples a fresh epoch after dialog duration'
+    context,page=boot(); advance(page,10000); index=pending_file(page)
+    original = raw(page); advance(page,20000); clear(page)
+    before_confirmations = confirmation_count(page)
+    file_dialogs = answer_file_confirmation(page, fixtures['incoming'], saved(page)['state'], gap=30000)
+    release_file(page,index)
+    expect(page.locator('[data-bind="status"]')).to_have_text('已导入并存入本地')
+    check('accepted file displays exactly one source-checked native confirmation', len(file_dialogs) == 1 and confirmation_count(page) == before_confirmations + 1)
+    check('file confirmation consumes its full controlled wait', page.evaluate('window.__clockSnapshot().wall') == EPOCH+60000 and page.evaluate('window.__clockConfirmGap') == 0)
+    writes = [row for row in events(page) if row['operation'] == 'write-attempt']
+    check('all candidate and backup writes occur after native confirmation returns', bool(writes) and all(row['wall'] == EPOCH+60000 for row in writes))
+    check('confirmed replacement preserves the exact prior current bytes in backup', raw(page,BACKUP) == original)
+    value=saved(page); same_state(value,'incoming.initial'); envelope(value,60000,60000)
+    advance(page,1000); frame(page); value=save(page)
+    same_state(value,'incoming.live1','first imported frame receives only one second, never old-world read or confirmation backlog')
+    envelope(value,61000,61000)
+    audit(page,'accepted file confirmation clock boundary'); context.close()
+
+    case='dismissed native file confirmation preserves all bytes and full old-world backlog'
+    prior_backups = {BACKUP:'SYNTHETIC PRE-EXISTING BACKUP\n', BACKUP+'.1':'SYNTHETIC SECOND IMMUTABLE BACKUP\n'}
+    context,page=boot(backups=prior_backups)
+    def current_and_backup_bytes():
+        return page.evaluate('''({key,backup}) => Object.fromEntries(
+          Array.from({length:localStorage.length},(_,index)=>localStorage.key(index))
+            .filter(name=>name===key||name===backup||name.startsWith(backup+'.'))
+            .map(name=>[name,window.__clockRead(name)]))''', {'key':KEY,'backup':BACKUP})
+    original_bytes = current_and_backup_bytes()
+    check('cancellation premise includes exact current and two pre-existing backup slots', set(original_bytes) == {KEY,BACKUP,BACKUP+'.1'} and all(original_bytes[key] == content for key,content in prior_backups.items()))
+    advance(page,10000); index=pending_file(page); advance(page,20000); clear(page)
+    before_confirmations = confirmation_count(page)
+    file_dialogs = answer_file_confirmation(page, fixtures['incoming'], saved(page)['state'], accept=False, gap=30000)
+    release_file(page,index)
+    expect(page.locator('[data-bind="status"]')).to_have_text('已取消文件导入，当前进度未改动')
+    check('dismissed file displays exactly one source-checked native confirmation', len(file_dialogs) == 1 and confirmation_count(page) == before_confirmations + 1)
+    check('dismissed confirmation consumes its full controlled wait', page.evaluate('window.__clockSnapshot().wall') == EPOCH+60000 and page.evaluate('window.__clockConfirmGap') == 0)
+    check('dismissal preserves exact current bytes and every backup slot without adding one', current_and_backup_bytes() == original_bytes)
+    check('dismissal never attempts a current or backup write', not any(row['operation'].startswith('write') for row in events(page)))
+    value=export(page,'file-confirmation-dismissed-before-frame')
+    same_state(value,'mixed.initial'); envelope(value,60000,0)
+    check('read-only clock inspection also preserves every native save byte', current_and_backup_bytes() == original_bytes and not any(row['operation'].startswith('write') for row in events(page)))
+    advance(page,1000); frame(page); value=saved(page)
+    same_state(value,'mixed.offline61','old world receives the complete read and dismissed-confirmation wait through the real engine')
+    envelope(value,61000,61000)
+    check('old-world catch-up leaves both immutable backup originals intact', all(raw(page,key) == content for key,content in prior_backups.items()))
+    audit(page,'dismissed file confirmation clock boundary'); context.close()
 
     case='failed text replacement retains old epoch and full pending backlog'
     context,page=boot(); advance(page,60000); import_text(page,text='{labeled invalid JSON')
@@ -404,7 +488,9 @@ def run_cases():
 
     case='delayed invalid native file completion retains old epoch and full pending backlog'
     context,page=boot(); advance(page,10000); index=pending_file(page,text='{labeled invalid JSON')
+    before_confirmations = confirmation_count(page)
     advance(page,50000); release_file(page,index)
+    check('invalid completed file never asks for replacement confirmation', confirmation_count(page) == before_confirmations)
     expect(page.locator('[data-bind="status"]')).to_contain_text('导入失败')
     advance(page,1000); frame(page); value=saved(page)
     same_state(value,'mixed.offline61'); envelope(value,61000,61000)
@@ -413,14 +499,19 @@ def run_cases():
     case='stale delayed file after intervening save retains old epoch and full backlog'
     context,page=boot(); advance(page,10000); index=pending_file(page)
     advance(page,50000); value=save(page); envelope(value,60000,0)
-    advance(page,1000); release_file(page,index); frame(page)
+    before_confirmations = confirmation_count(page)
+    advance(page,1000); release_file(page,index)
+    check('manual-save-retired file completion never asks for confirmation', confirmation_count(page) == before_confirmations)
+    frame(page)
     value=saved(page); same_state(value,'mixed.offline61'); envelope(value,61000,61000)
     check('stale file never adopts incoming planet',page.locator('[data-bind="ov-planet"]').text_content()==fixtures['mixed']['state']['planets'][0]['name'])
     audit(page); context.close()
 
     case='stale delayed file cannot rebase a newer successful replacement'
     context,page=boot(); advance(page,10000); index=pending_file(page,'mixed')
-    advance(page,50000); import_text(page); advance(page,1000); release_file(page,index)
+    advance(page,50000); import_text(page); before_confirmations = confirmation_count(page)
+    advance(page,1000); release_file(page,index)
+    check('newer-import-retired file completion never asks for confirmation', confirmation_count(page) == before_confirmations)
     advance(page,1000); frame(page); value=save(page)
     same_state(value,'incoming.live2'); envelope(value,62000,62000)
     audit(page); context.close()
@@ -442,7 +533,9 @@ def run_cases():
 
     case='empty file selection leaves old epoch and backlog untouched'
     context,page=boot(); advance(page,60000); tab(page,'save')
+    before_confirmations = confirmation_count(page)
     page.locator('[data-bind="import-file"]').set_input_files([])
+    check('empty native file selection never asks for replacement confirmation', confirmation_count(page) == before_confirmations)
     advance(page,1000); frame(page); value=saved(page)
     same_state(value,'mixed.offline61'); envelope(value,61000,61000)
     audit(page); context.close()

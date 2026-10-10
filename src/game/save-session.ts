@@ -10,6 +10,9 @@ export interface SaveFailure { ok: false; code: SaveFailureCode; message: string
 export type SaveResult = { ok: true } | SaveFailure;
 export type ReplacementResult = { ok: true; state: GameState; raw: string; intent: number } | SaveFailure;
 export type FileImportResult = ReplacementResult & { completionIntent: number };
+export type PreparedFileResult = (
+  { ok: true; raw: string; sourceVersion: number; sourceRevision: number } | SaveFailure
+) & { preparation: number };
 
 const PROTECTION_NOTICE = "原件已保留并受保护，自动保存暂停。请先导出原件；导入有效存档或明确重新开始可重试替换。";
 const CONFLICT_NOTICE = "检测到其他标签页修改了存档，已暂停写入。请先导出本页保留的原件，再刷新读取最新存档。";
@@ -31,6 +34,7 @@ export class SaveSession {
   private expectedRaw: string | null | undefined;
   private protectedRaw: string | null = null;
   private intent = 0;
+  private preparation = 0;
 
   constructor(private readonly store: KeyValueStore | null, now = Date.now()) {
     if (!store) {
@@ -80,6 +84,18 @@ export class SaveSession {
 
   /** Saves are disabled after any unresolved storage failure or conflict. */
   save(state: GameState, now = Date.now(), lastTickAt = now): SaveResult {
+    this.preparation += 1;
+    return this.saveCurrent(state, now, lastTickAt);
+  }
+
+  /** Only a verified background save may retain a read-only file preparation. */
+  saveBackground(state: GameState, now = Date.now(), lastTickAt = now): SaveResult {
+    const result = this.saveCurrent(state, now, lastTickAt);
+    if (!result.ok) this.preparation += 1;
+    return result;
+  }
+
+  private saveCurrent(state: GameState, now: number, lastTickAt: number): SaveResult {
     if (this.mode !== "ready") return this.blocked();
     let raw: string;
     try {
@@ -88,22 +104,26 @@ export class SaveSession {
       return this.invalid(error);
     }
     const result = this.writeCandidate(raw, false);
-    if (result.ok) this.cancelPendingImport();
+    // Background saves still retire legacy replacement authority, never renew it.
+    if (result.ok) this.intent += 1;
     return result;
   }
 
   /** A newer import/reset, manual action, save, or observed conflict invalidates a pending file read. */
   cancelPendingImport(): void {
     this.intent += 1;
+    this.preparation += 1;
   }
 
   importText(json: string, now = Date.now()): ReplacementResult {
-    const intent = ++this.intent;
+    this.cancelPendingImport();
+    const intent = this.intent;
     return this.importForIntent(json, now, intent);
   }
 
   async importFile(file: { text(): Promise<string> }, now: () => number = Date.now): Promise<FileImportResult> {
-    const intent = ++this.intent;
+    this.cancelPendingImport();
+    const intent = this.intent;
     try {
       const json = await file.text();
       if (intent !== this.intent) return { ...this.stale(), completionIntent: this.intent };
@@ -115,13 +135,36 @@ export class SaveSession {
     }
   }
 
+  /** Read and validate only. The returned bytes grant no replacement authority. */
+  async prepareFile(file: { text(): Promise<string> }): Promise<PreparedFileResult> {
+    this.cancelPendingImport();
+    const preparation = this.preparation;
+    try {
+      const raw = await file.text();
+      if (preparation !== this.preparation) return { ...this.stale(), preparation };
+      importSave(raw);
+      // importSave migrates its result, so display metadata from the validated source.
+      const source = JSON.parse(raw) as { version: number; revision: number };
+      return { ok: true, raw, sourceVersion: source.version, sourceRevision: source.revision, preparation };
+    } catch (error) {
+      const result = preparation !== this.preparation ? this.stale() : this.invalid(error);
+      return { ...result, preparation };
+    }
+  }
+
+  /** Check successes and failures again after await; preparation is not an import intent. */
+  isCurrentPreparedFile(result: PreparedFileResult): boolean {
+    return result.preparation === this.preparation;
+  }
+
   /** Failure status can also become stale between promise completion and UI resumption. */
   isCurrentFileResult(result: FileImportResult): boolean {
     return result.completionIntent === this.intent;
   }
 
   reset(now = Date.now()): ReplacementResult {
-    const intent = ++this.intent;
+    this.cancelPendingImport();
+    const intent = this.intent;
     return this.replace(createInitialState(), now, intent);
   }
 

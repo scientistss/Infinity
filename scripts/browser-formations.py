@@ -30,6 +30,9 @@ case = 'setup'
 EPOCH = int(time.time() * 1000)
 MODE = 'HTTP / native localStorage / anonymous synthetic controlled simulation timestamps'
 CLOCK = r"""(() => {
+ window.__fileImportConfirmations=[];
+ const nativeConfirm=window.confirm.bind(window);
+ window.confirm=message=>{window.__fileImportConfirmations.push(String(message));return nativeConfirm(message);};
  const raf=window.requestAnimationFrame.bind(window);
  const saved=sessionStorage.getItem('formation-clock');
  const epoch=saved ? Number(saved) : __EPOCH__;
@@ -48,6 +51,10 @@ def check(name, condition):
     checks.append({'case': case, 'name': name, 'passed': bool(condition), 'classification': MODE})
     if not condition:
         raise AssertionError(f'{case}: {name}')
+
+
+def confirmation_count(page):
+    return page.evaluate('window.__fileImportConfirmations.length')
 
 
 def advance(page, milliseconds=0):
@@ -389,10 +396,13 @@ try:
         incoming = copy.deepcopy(fixtures['base']); incoming['savedAt'] = incoming['lastTickAt'] = page.evaluate('Date.now()')
         page.locator('[data-tab="save"]').click()
         page.evaluate('''() => {const nativeText=File.prototype.text;window.__pendingFormationFile=null;File.prototype.text=function(){return new Promise((resolve,reject)=>nativeText.call(this).then(text=>{window.__pendingFormationFile={release:()=>resolve(text)}},reject))};}''')
+        before_confirmations = confirmation_count(page)
         page.locator('[data-bind="import-file"]').set_input_files({'name': 'anonymous-delayed-formation.json', 'mimeType': 'application/json', 'buffer': json.dumps(incoming, ensure_ascii=False).encode()})
         page.wait_for_function('window.__pendingFormationFile !== null'); fleet(page); page.locator('#formation-fill').click()
         before, filled = copy.deepcopy(read(page)), ship_values(page)
+        check('pending file never confirms before explicit fill retires it', confirmation_count(page) == before_confirmations)
         page.evaluate('window.__pendingFormationFile.release()'); advance(page)
+        check('explicit-fill-retired file completion never asks for confirmation', confirmation_count(page) == before_confirmations)
         check('new explicit fill cancels pending replacement intent', read(page) == before and ship_values(page) == filled and len(read(page)['formations']['entries']) == 1)
         context.close()
 

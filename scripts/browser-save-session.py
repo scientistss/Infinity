@@ -45,6 +45,10 @@ def check(name, condition):
         raise AssertionError(f"{case}: {name}")
 
 
+def confirmation_count(page):
+    return page.evaluate('window.__fileImportConfirmations.length')
+
+
 def raw_fixture(which="current"):
     value = copy.deepcopy(fixtures[which])
     value["savedAt"] = value["lastTickAt"] = int(time.time() * 1000)
@@ -136,6 +140,9 @@ def screenshot(page, filename):
 # Native reads inside the UI observer bypass the audit so they cannot accidentally
 # count as the application's mandatory post-write verification.
 AUDIT = r"""(() => {
+ window.__fileImportConfirmations=[];
+ const nativeConfirm=window.confirm.bind(window);
+ window.confirm=message=>{window.__fileImportConfirmations.push(String(message));return nativeConfirm(message);};
   const key = __KEY__, backup = __BACKUP__;
   const get = Storage.prototype.getItem;
   const set = Storage.prototype.setItem;
@@ -772,9 +779,11 @@ try:
                     });
                 };
             }""")
+            before_confirmations = confirmation_count(page)
             page.locator('[data-bind="import-file"]').set_input_files(
                 {"name": "synthetic-delayed.json", "mimeType": "application/json", "buffer": incoming.encode()})
             page.wait_for_function("window.__pendingFileRead !== null")
+            check("pending file never asks for confirmation before native read completes", confirmation_count(page) == before_confirmations)
             if newer_action == "text import":
                 import_text(page, newer)
                 expect(page.locator('[data-bind="status"]')).to_have_text("已导入并存入本地")
@@ -789,9 +798,12 @@ try:
             newest_status = status(page)
             newest_transfer = page.locator('[data-bind="transfer"]').input_value()
             clear_audit(page)
+            before_release_confirmations = confirmation_count(page)
             page.evaluate("window.__pendingFileRead.release()")
             # Run the native microtask/animation-frame chain, without a fake game clock.
             page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            check("retired file completion never adds a replacement confirmation", confirmation_count(page) == before_release_confirmations)
+            check("only an explicit newer reset asks for confirmation", confirmation_count(page) == before_confirmations + (1 if newer_action == "reset" else 0))
             check("stale completed file read cannot overwrite newer storage", raw(page) == newest_raw)
             check("stale completed file read cannot replace newer live state", planet(page) == newest_planet)
             check("stale completed file read cannot overwrite newer status", status(page) == newest_status)
@@ -819,6 +831,7 @@ try:
                 });
             };
         }""")
+        before_confirmations = confirmation_count(page)
         page.locator('[data-bind="import-file"]').set_input_files(
             {"name": "synthetic-invalid-delayed.json", "mimeType": "application/json", "buffer": b"{invalid-json"})
         page.wait_for_function("window.__pendingFileRead !== null")
@@ -832,6 +845,7 @@ try:
             queueMicrotask(() => document.querySelector('[data-action="import-text"]').click());
         }""")
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        check("obsolete failed file and newer text import never ask for confirmation", confirmation_count(page) == before_confirmations)
         check("newer import's success status survives obsolete file failure", status(page) == "已导入并存入本地")
         committed = verify_commit(page, original, "已导入并存入本地")
         check("newer successful file remains durable", name_of(committed) == name_of(newer))

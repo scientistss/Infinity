@@ -568,6 +568,24 @@ def run(browser, profile, variant, repetition, order):
             at:performance.now(),wallAt:Date.now(),hidden:document.hidden,visibility:document.visibilityState,
             currentRaw:localStorage.getItem(key),backups:Object.keys(localStorage).filter(k=>k.startsWith(key+'.backup')).map(key=>({key,value:localStorage.getItem(key)}))});
         }''',{'key':profile['key'],'name':file_path.name,'size':len(file_bytes),'id':witness_id}))
+        confirmations=[]
+        release_version=report['servedBundles'][variant]['release']['version'].split('-')[0]
+        needs_confirmation=tuple(map(int,release_version.split('.'))) >= (0,6,10)
+        def confirm_import(dialog):
+            expected=f"已读取存档 v{seeded['version']}/r{seeded['revision']}。"
+            valid=needs_confirmation and dialog.type=='confirm' and dialog.message.startswith(expected) and all(
+                part in dialog.message for part in ('是否替换当前进度（第 ', ' 颗星球，当前“', '读取期间产生的变化也会被替换', '写入校验成功后才采用'))
+            if not valid or confirmations:
+                dialog.dismiss()
+                check('only the explicit current-file replacement confirmation is accepted',False)
+            # Read the browser's actual storage while the native modal pauses page
+            # JavaScript. No evaluate, API wrapper, extra page, or storage mutation.
+            items=phase_call('persistence.confirmation-native-read',lambda:cdp.send('DOMStorage.getDOMStorageItems',
+                {'storageId':{'securityOrigin':f'{parsed.scheme}://{parsed.netloc}','isLocalStorage':True}}))
+            prior=dict(items['entries']).get(profile['key'])
+            confirmations.append({'message':dialog.message,'priorRaw':prior,'hostWallAt':time.time()})
+            dialog.accept()
+        page.on('dialog',confirm_import)
         persistence_cpu_before=metrics(cdp);persistence_started=time.perf_counter()
         phase_call('persistence.select-native-file',lambda:page.locator('[data-bind="import-file"]').set_input_files(str(file_path.resolve()),timeout=30000))
         # File.text and the replacement transaction are genuinely asynchronous.
@@ -575,6 +593,9 @@ def run(browser, profile, variant, repetition, order):
         completion=phase_call('persistence.await-file-result',lambda:page.wait_for_function(
             '() => window.__nativePersistenceWitness?.() || false',polling=50,timeout=30000).json_value())
         persistence_cpu_after=metrics(cdp)
+        check('file replacement requires exactly one fresh confirmation in the new reader',len(confirmations)==(1 if needs_confirmation else 0))
+        run['nativePersistence']['confirmations']=[{'message':row['message'],'nativePriorSha256':digest(row['priorRaw'] or ''),
+            'hostWallAt':row['hostWallAt'],'scope':'Native dialog and read-only CDP DOMStorage before acceptance; after CPU sampling'} for row in confirmations]
         run['nativePersistence']['completion']={key:completion[key] for key in ('status','notice','at','hidden','visibility')}
         check('first terminal witness belongs to the exact single trusted file selection',
             completion['id']==witness_id and completion['initialStatus'] in ('已保存到本地','已自动保存') and completion['selectionCount']==1
@@ -612,7 +633,8 @@ def run(browser, profile, variant, repetition, order):
             'stringChars':len((row['value'] or '').encode('utf-16-le'))//2,
             'matchesPreImportNativeRead':row['value']==before_replacement['currentRaw'],
             'matchesManualSaveNativeRead':row['value']==saved['currentRaw'],
-            'matchesNativeFileChangeRead':row['value']==completion['selected']['priorRaw']} for row in backups]
+            'matchesNativeFileChangeRead':row['value']==completion['selected']['priorRaw'],
+            'matchesNativeConfirmationRead':row['value']==confirmations[0]['priorRaw'] if confirmations else None} for row in backups]
         run['nativePersistence']['manualSavedSha256']=digest(saved['currentRaw'] or '')
         run['nativePersistence']['preImportNativeReadSha256']=digest(before_replacement['currentRaw'] or '')
         run['nativePersistence']['postImportNativeReadSha256']=digest(replacement['currentRaw'] or '')
@@ -621,7 +643,7 @@ def run(browser, profile, variant, repetition, order):
         run['nativePersistence']['protectedAfterReplacement']=replacement['protectedState']
         run['nativePersistence']['manualSaveSucceeded']=saved['status']=='已保存到本地' and bool(saved['currentRaw']) and not saved['protectedState']
         run['nativePersistence']['replacementSucceeded']=completion['status']=='已导入并存入本地' and bool(completion['currentRaw']) and not completion['protectedState'] and not replacement['protectedState'] and byte_proof['matches']
-        run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesNativeFileChangeRead'] for row in run['nativePersistence']['backups'])
+        run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesNativeConfirmationRead'] if needs_confirmation else row['matchesNativeFileChangeRead'] for row in run['nativePersistence']['backups'])
         run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes'] and run['nativePersistence']['remainedVisible']
         checkpoint('persistence.result','after',qualified=run['nativePersistence']['qualified'],status=completion['status'])
         check('native import commits exact current bytes and preserves exact prior backup bytes',run['nativePersistence']['qualified'])
