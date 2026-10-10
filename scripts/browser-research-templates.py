@@ -152,6 +152,7 @@ def import_fixture(page, which='seeded'):
 
 def snap(page, name):
     page.evaluate('Promise.all([...document.images].filter(i=>i.getClientRects().length).map(i=>i.decode().catch(()=>null)))')
+    page.evaluate('scrollTo(0,0)')
     page.screenshot(path=str(out / name), full_page=True)
 
 

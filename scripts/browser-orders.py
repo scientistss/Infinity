@@ -346,7 +346,12 @@ try:
                 snap(page, 'orders-mobile.png')
         snap(page, 'orders-desktop.png')
         before = save(page)
-        page.locator('#space-orders details summary').click()
+        # The intent library is a second, independent disclosure on this page.
+        # Keep this regression scoped to the original payment/cancellation help.
+        payment_help = page.locator('#space-orders .order-form-card > details > summary')
+        expect(payment_help).to_have_count(1)
+        payment_help.click()
+        check('original payment help opens for read-only inspection', payment_help.locator('..').evaluate('(e) => e.open'))
         page.locator('#planet-select').select_option(COLONY)
         page.locator('#order-kind').select_option('research')
         page.locator('#order-target').select_option('laser_tech')
