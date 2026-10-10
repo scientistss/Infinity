@@ -1,0 +1,67 @@
+name: Attribute exact c7 fleet DOM cost
+on:
+  push:
+    branches: ['codex/infinity-rebuild-fleet-profile-20261010']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      TARGET_SHA: c7b8217bfcd63b0fc13264383be93476e5989a78
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build actual pinned archive and its unchanged legal fixtures
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir -p fleet-dom-profile-evidence "$RUNNER_TEMP/fleet-profile-target"
+          git archive "$TARGET_SHA" | tar -x -C "$RUNNER_TEMP/fleet-profile-target"
+          test "$(git rev-parse "$TARGET_SHA^{commit}")" = "$TARGET_SHA"
+          cd "$RUNNER_TEMP/fleet-profile-target"
+          npm ci
+          GITHUB_SHA="$TARGET_SHA" npm run build
+          node --import tsx scripts/performance-fixture.ts > "$GITHUB_WORKSPACE/fleet-dom-profile-evidence/combined-fixture.json"
+          node --import tsx scripts/render-scheduling-fixture.ts > "$GITHUB_WORKSPACE/fleet-dom-profile-evidence/moderate-fixture.json"
+          cp dist/release.json "$GITHUB_WORKSPACE/fleet-dom-profile-evidence/target-release.json"
+      - name: Official Chrome and pinned Playwright prerequisites
+        timeout-minutes: 2
+        working-directory: ${{ runner.temp }}/fleet-profile-target
+        run: bash scripts/browser-prerequisites.sh
+      - name: Bounded visible native attribution
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python scripts/profile-fleet-dom.py --self-test
+          mkdir -p "$RUNNER_TEMP/fleet-profile-http"
+          ln -s "$RUNNER_TEMP/fleet-profile-target/dist" "$RUNNER_TEMP/fleet-profile-http/Infinity"
+          python -m http.server 4176 --bind 127.0.0.1 --directory "$RUNNER_TEMP/fleet-profile-http" > fleet-dom-profile-evidence/http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:4176/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4176/Infinity/release.json > fleet-dom-profile-evidence/http-release.json
+          # Outer hard bound supplements script deadlines and finally cleanup.
+          timeout --signal=TERM --kill-after=10s 205s xvfb-run -a --server-args='-screen 0 1440x1100x24' \
+            python scripts/profile-fleet-dom.py \
+              --dist "$RUNNER_TEMP/fleet-profile-target/dist" \
+              --fixture fleet-dom-profile-evidence/combined-fixture.json \
+              --moderate-fixture fleet-dom-profile-evidence/moderate-fixture.json \
+              --output fleet-dom-profile-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-dom-c7-attribution-${{ github.sha }}
+          path: fleet-dom-profile-evidence
+          retention-days: 7
+          if-no-files-found: error
