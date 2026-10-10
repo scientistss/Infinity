@@ -12,7 +12,8 @@ import { SPACE, wrap, coordinateKey, type Coordinates } from "../game/galaxy";
 import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
-import type { SpaceView } from "./space-present";
+import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
+import type { GameState } from "../game/types";
 export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
@@ -63,7 +64,6 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     retire(button){deepFleetButtons.delete(button);},
   });
   let cursor:Coordinates={galaxy:1,system:50,position:8},selected:string|null=null,initialized=false,origin:Coordinates=cursor;
-  let model:SpaceView|null=null;
   let fleetButtons = new WeakMap<HTMLButtonElement, number>();
   function choose(id:string){
     selected=id;for(const b of root.querySelectorAll<HTMLElement>("[data-tab]")){const active=b.dataset.tab===id;b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));}
@@ -98,37 +98,57 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
-  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction, updateFormations:formationPanel.update, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
+  function updateSpaceChrome(origin:string,status:string){
+    if(selected)choose(selected);
+    for(const n of root.querySelectorAll<HTMLElement>(".space-location"))if(n.textContent!==origin)n.textContent=origin;
+    for(const n of root.querySelectorAll<HTMLElement>(".space-status"))if(n.textContent!==status)n.textContent=status;
+  }
+  function updateSpaceGalaxy(model:SpaceGalaxyView){
+    put(root,"#space-range",`${model.phase} · 种子 ${model.seed}`);
+    const route=(key:string,m:string,label:string)=>`<button type="button" data-space="route" data-coordinate="${key}" data-mission="${m}">${label}</button>`;
+    html(root,"#space-worlds",model.rows.map(row=>`<tr class="space-world ${row.planetId?"space-owned":""}"><td>${row.position}</td><td>${enc(row.name)}<small>[${row.key}]</small></td><td>${row.kind}</td><td>${row.properties}</td><td>${row.bonus}</td><td><div class="space-actions">${row.planetId?`<button type="button" data-space="select" data-planet="${enc(row.planetId)}">切换</button>`:""}${row.canColonize?route(row.key,"colonize","殖民"):""}${row.canScout?route(row.key,"scout","侦察"):""}${row.canTransport?route(row.key,"transport","运输"):""}${row.position===16?route(row.key,"charge","深空充能"):""}</div></td></tr>`).join(""));
+  }
+  function updateSpaceFleet(model:SpaceFleetView){
+    el(root,"#charge-options").hidden=!model.isCharge;
+    put(root,"#charge-risk-preview",model.chargePreview.risk);
+    put(root,"#charge-capacity-preview",model.chargePreview.capacity);
+    el(root,"#charge-risk-preview").hidden=!model.isCharge;
+    el(root,"#charge-capacity-preview").hidden=!model.isCharge;
+    put(root,"#space-slots",model.slots);
+    put(root,"#space-quote",model.quote.text);el<HTMLButtonElement>(root,"#space-send").disabled=!model.quote.ok;
+    for(const ship of model.ships)put(root,`#available-${ship.id}`,`现有 ${ship.count.toLocaleString("en-US")} 艘`);
+    const signature=model.fleets.map(f=>`${f.id}:${f.canRecall}`).join("|");const list=el(root,"#space-fleets");
+    if(list.dataset.fleetSignature!==signature){fleetButtons=new WeakMap<HTMLButtonElement,number>();list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div><small class="flight-detail muted" style="grid-column:1/-1"></small></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';for(const button of list.querySelectorAll<HTMLButtonElement>('[data-space="recall"]'))fleetButtons.set(button,Number(button.dataset.fleet));}
+    for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
+    const planets=el(root,"#space-planets");
+    const planetSignature=JSON.stringify(model.planets.map(p=>[p.id,p.name,p.coordinate,p.selected]));
+    if(planets.dataset.planets!==planetSignature){
+      planets.dataset.planets=planetSignature;
+      planets.innerHTML=model.planets.map(p=>`<div class="space-planet" data-world-id="${enc(p.id)}"><strong>${enc(p.name)} [${p.coordinate}]</strong><span class="planet-stock"></span><div class="space-actions"><button type="button" data-space="select" data-planet="${enc(p.id)}" ${p.selected?"disabled":""}>${p.selected?"当前星球":"切换"}</button>${p.canAbandon?`<button type="button" class="danger" data-space="abandon" data-planet="${enc(p.id)}">放弃</button>`:""}</div></div>`).join("");
+    }
+    for(const p of model.planets)put(planets,`[data-world-id="${p.id}"] .planet-stock`,p.stock);
+  }
+  function updateSpaceMessages(model:SpaceMessagesView){
+    html(root,"#space-messages",model.messages.length?model.messages.map(m=>`<article class="space-message"><small>${m.time}</small><p>${enc(m.text)}</p></article>`).join(""):'<p class="muted">尚无航行记录。</p>');
+  }
+  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates(state:GameState,writable:boolean){
+      templatePanel.observe(state,writable);
+      if(!el(root,"#space-orders").hidden&&el<HTMLDetailsElement>(root,"#research-templates").open)templatePanel.update(state,writable);
+    }, completeResearchTemplateAction:templatePanel.completeAction, updateFormations(state:GameState,writable:boolean){
+      formationPanel.observe(state,writable);
+      if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
+    }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
+    observeContexts(state:GameState,writable:boolean){orderPanel.observe(state,writable);templatePanel.observe(state,writable);formationPanel.observe(state,writable);},
     fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;},
     invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){
-      model=value;
-      el(root,"#charge-options").hidden=!model.isCharge;
-      put(root,"#charge-risk-preview",model.chargePreview.risk);
-      put(root,"#charge-capacity-preview",model.chargePreview.capacity);
-      el(root,"#charge-risk-preview").hidden=!model.isCharge;
-      el(root,"#charge-capacity-preview").hidden=!model.isCharge;
-      if(selected)choose(selected);
-      for(const n of root.querySelectorAll<HTMLElement>(".space-location"))if(n.textContent!==model.origin)n.textContent=model.origin;
-      for(const n of root.querySelectorAll<HTMLElement>(".space-status"))if(n.textContent!==status)n.textContent=status;
-      put(root,"#space-slots",model.slots);put(root,"#space-range",`${model.phase} · 种子 ${model.seed}`);
-      put(root,"#space-quote",model.quote.text);el<HTMLButtonElement>(root,"#space-send").disabled=!model.quote.ok;
-      for(const ship of model.ships)put(root,`#available-${ship.id}`,`现有 ${ship.count.toLocaleString("en-US")} 艘`);
-      const route=(key:string,m:string,label:string)=>`<button type="button" data-space="route" data-coordinate="${key}" data-mission="${m}">${label}</button>`;
-      html(root,"#space-worlds",model.rows.map(row=>`<tr class="space-world ${row.planetId?"space-owned":""}"><td>${row.position}</td><td>${enc(row.name)}<small>[${row.key}]</small></td><td>${row.kind}</td><td>${row.properties}</td><td>${row.bonus}</td><td><div class="space-actions">${row.planetId?`<button type="button" data-space="select" data-planet="${enc(row.planetId)}">切换</button>`:""}${row.canColonize?route(row.key,"colonize","殖民"):""}${row.canScout?route(row.key,"scout","侦察"):""}${row.canTransport?route(row.key,"transport","运输"):""}${row.position===16?route(row.key,"charge","深空充能"):""}</div></td></tr>`).join(""));
-      const signature=model.fleets.map(f=>`${f.id}:${f.canRecall}`).join("|");const list=el(root,"#space-fleets");
-      if(list.dataset.fleetSignature!==signature){fleetButtons=new WeakMap<HTMLButtonElement,number>();list.dataset.fleetSignature=signature;list.innerHTML=model.fleets.length?model.fleets.map(f=>`<div class="space-flight ov-card" data-flight="${f.id}"><strong class="flight-title"></strong><span class="flight-route muted"></span><strong class="flight-time"></strong><button type="button" data-space="recall" data-fleet="${f.id}" ${f.canRecall?"":"disabled"}>${f.canRecall?"召回":"返航中"}</button><div class="queue-bar"><span class="flight-progress"></span></div><small class="flight-detail muted" style="grid-column:1/-1"></small></div>`).join(""):'<p class="muted">暂无在途舰队。选择目标并编成第一支舰队。</p>';for(const button of list.querySelectorAll<HTMLButtonElement>('[data-space="recall"]'))fleetButtons.set(button,Number(button.dataset.fleet));}
-      for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
-      const planets=el(root,"#space-planets");
-      const planetSignature=JSON.stringify(model.planets.map(p=>[p.id,p.name,p.coordinate,p.selected]));
-      if(planets.dataset.planets!==planetSignature){
-        planets.dataset.planets=planetSignature;
-        planets.innerHTML=model.planets.map(p=>`<div class="space-planet" data-world-id="${enc(p.id)}"><strong>${enc(p.name)} [${p.coordinate}]</strong><span class="planet-stock"></span><div class="space-actions"><button type="button" data-space="select" data-planet="${enc(p.id)}" ${p.selected?"disabled":""}>${p.selected?"当前星球":"切换"}</button>${p.canAbandon?`<button type="button" class="danger" data-space="abandon" data-planet="${enc(p.id)}">放弃</button>`:""}</div></div>`).join("");
-      }
-      for(const p of model.planets)put(planets,`[data-world-id="${p.id}"] .planet-stock`,p.stock);
-      html(root,"#space-messages",model.messages.length?model.messages.map(m=>`<article class="space-message"><small>${m.time}</small><p>${enc(m.text)}</p></article>`).join(""):'<p class="muted">尚无航行记录。</p>');
-    }
+      updateSpaceChrome(value.origin,status);
+      updateSpaceGalaxy(value);
+      updateSpaceFleet(value);
+      updateSpaceMessages(value);
+    },
+    updateSpaceChrome, updateSpaceGalaxy, updateSpaceFleet, updateSpaceMessages,
   };
 }

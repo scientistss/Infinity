@@ -150,7 +150,18 @@ export function installFormationsPanel(root: HTMLElement, onAction: (action: For
     for (const input of editor.querySelectorAll<HTMLInputElement>("input")) input.disabled = !ready || !edit;
     payer.disabled = !ready || !valid(selected);
   }
+  // Observation never projects lists or grants draft/review authority. Explicit
+  // handlers read this reference even when the next scheduled paint is skipped.
+  function observe(state: GameState, writable: boolean) { latest = state; ready = writable; }
+  function refreshAuthority() {
+    if (!latest) return;
+    if (edit?.formation && !valid(edit.formation)) edit = null;
+    if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; get(panel, "#formation-delete-dialog").hidden = true; }
+    if (selected && !valid(selected)) { selected = null; retireReview("编成已修改或删除，请重新选择。"); selection.hidden = true; }
+    if (review && (!selected || review.signature !== formationAuthoritySignature(latest, selected.id, payer.value))) retireReview("缺额、编成或计划容量已改变，请明确重新预览。");
+  }
   function authorized(item: HTMLButtonElement | null): ButtonAuthority | null {
+    refreshAuthority();
     retireRemoved(observer.takeRecords());
     if (!item || item.disabled || !panel.contains(item)) return null;
     const authority = buttons.get(item);
@@ -160,6 +171,7 @@ export function installFormationsPanel(root: HTMLElement, onAction: (action: For
   }
   editor.addEventListener("submit", event => {
     event.preventDefault();
+    refreshAuthority();
     if (!ready || !latest || !edit || edit.generation !== generation) return;
     if (event.submitter ? !(event.submitter instanceof HTMLButtonElement) || authorized(event.submitter)?.action !== "save" : !event.isTrusted) return;
     const draft = normalizeFormationDraft(currentDraft());
@@ -201,12 +213,10 @@ export function installFormationsPanel(root: HTMLElement, onAction: (action: For
     // Late unchanged input/change/blur never creates editor, selection or review authority.
   });
   return {
+    observe,
     update(state: GameState, writable: boolean) {
-      latest = state; ready = writable;
-      if (edit?.formation && !valid(edit.formation)) edit = null;
-      if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; get(panel, "#formation-delete-dialog").hidden = true; }
-      if (selected && !valid(selected)) { selected = null; retireReview("编成已修改或删除，请重新选择。"); selection.hidden = true; }
-      if (review && (!selected || review.signature !== formationAuthoritySignature(state, selected.id, payer.value))) retireReview("缺额、编成或计划容量已改变，请明确重新预览。");
+      observe(state, writable);
+      refreshAuthority();
       const planets = JSON.stringify(state.planets.map(planet => [planet.id, planet.name]));
       if (planetSignature !== planets) {
         const selectedPayer = payer.value;

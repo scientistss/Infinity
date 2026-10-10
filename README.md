@@ -53,6 +53,7 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 ## 实现与设计文档
 
 - [重建阶段与检查点](docs/REBUILD_CHECKPOINTS.md)：本次基线、验收门槛与每阶段远端保存。
+- [表现与性能验收](docs/PRESENTATION_PERFORMANCE.md)：可见内容、独立模拟、合法组合压力档与分层实测。
 - [安全存档会话](docs/SAVE_SESSION.md)：导入、备份、失败保护与跨标签边界。
 - [只读开拓查看](docs/EXPANSION_NAVIGATION.md)：当前星系、真实限制、明确场景报价与只读边界。
 - [曲率收益与损失预览](docs/CURVATURE_PREVIEW.md)：共享实际规则、只读预览与手动写入后采用。

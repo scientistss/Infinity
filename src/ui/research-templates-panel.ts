@@ -201,7 +201,18 @@ export function installResearchTemplatesPanel(root: HTMLElement, onAction: (acti
     payer.disabled = !ready || !valid(selected);
     for (const input of get(panel, "#template-budgets").querySelectorAll<HTMLInputElement>("input")) input.disabled = !ready || !valid(selected);
   }
+  // Observation never projects lists or grants draft/review authority. Explicit
+  // handlers read this reference even when the next scheduled paint is skipped.
+  function observe(state: GameState, writable: boolean) { latest = state; ready = writable; }
+  function refreshAuthority() {
+    if (!latest) return;
+    if (edit?.template && !valid(edit.template)) edit = null;
+    if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; get(panel, "#template-delete-dialog").hidden = true; }
+    if (selected && !valid(selected)) { selected = null; retireReview("模板已修改或删除，请重新选择后核对。"); get(panel, "#template-apply").hidden = true; }
+    if (review && (!selected || review.signature !== templateAuthoritySignature(latest, selected.id, payer.value))) retireReview("目标、队列或计划状态已改变，请明确重新核对后创建。");
+  }
   function authorized(item: HTMLButtonElement | null): ButtonAuthority | null {
+    refreshAuthority();
     retireRemoved(observer.takeRecords());
     if (!item || item.disabled || !panel.contains(item)) return null;
     const authority = buttons.get(item);
@@ -211,6 +222,7 @@ export function installResearchTemplatesPanel(root: HTMLElement, onAction: (acti
   }
   editor.addEventListener("submit", event => {
     event.preventDefault();
+    refreshAuthority();
     if (!ready || !latest || !edit || edit.generation !== generation) return;
     if (event.submitter && (!(event.submitter instanceof HTMLButtonElement) || authorized(event.submitter)?.action !== "save")) return;
     // Keyboard submission is also scoped to a live, explicitly opened editor.
@@ -261,12 +273,10 @@ export function installResearchTemplatesPanel(root: HTMLElement, onAction: (acti
     // No input/change/blur handler grants a new draft, selection or review nonce.
   });
   return {
+    observe,
     update(state: GameState, writable: boolean) {
-      latest = state; ready = writable;
-      if (edit?.template && !valid(edit.template)) edit = null;
-      if (pendingDelete && !valid(pendingDelete)) { pendingDelete = null; get(panel, "#template-delete-dialog").hidden = true; }
-      if (selected && !valid(selected)) { selected = null; retireReview("模板已修改或删除，请重新选择后核对。"); get(panel, "#template-apply").hidden = true; }
-      if (review && (!selected || review.signature !== templateAuthoritySignature(state, selected.id, payer.value))) retireReview("目标、队列或计划状态已改变，请明确重新核对后创建。");
+      observe(state, writable);
+      refreshAuthority();
       const planets = JSON.stringify(state.planets.map(planet => [planet.id, planet.name]));
       if (planetSignature !== planets) {
         const selectedPayer = payer.value;

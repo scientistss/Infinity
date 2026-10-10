@@ -4,7 +4,7 @@ import { applyOrderAction } from "./game/orders";
 import { ordersView } from "./ui/orders-present";
 import { summonMerchant, trade } from "./game/merchant";
 import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
-import { spaceView } from "./ui/space-present";
+import { spaceFleetView, spaceGalaxyView, spaceMessagesView, spaceOrigin } from "./ui/space-present";
 import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
 import { catchUp, type OfflineCatchup } from "./core/offline";
@@ -36,7 +36,9 @@ import { researchById } from "./data/research";
 import type { KeyValueStore } from "./game/save";
 import { SaveSession, type ReplacementResult } from "./game/save-session";
 import type { GameState } from "./game/types";
-import { present } from "./ui/present";
+import { presentVisible, resolveVisibleTab } from "./ui/present";
+import { RenderScheduler } from "./ui/render-scheduler";
+import { maySpeedUp, queueHeads, sameQueueHeads, type QueueHeads } from "./ui/queue-head-authority";
 import { prestigeConfirmation } from "./ui/prestige-preview-model";
 import { mountView, type UiAction } from "./ui/space-panel";
 import "./style.css";
@@ -61,9 +63,19 @@ let adoptedLaunches = state.stats.launches;
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
 let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
+const renderScheduler = new RenderScheduler();
+let paintedHeads: QueueHeads | null = null;
+// Register before extension capture handlers, some of which stop propagation.
+// Only invalidate here: even a microtask can run between trusted DOM listeners
+// and detach the clicked capability. The existing next RAF paints after dispatch.
+for (const type of ["click", "input", "change", "compositionend", "toggle"]) {
+  app.addEventListener(type, () => renderScheduler.invalidate(), true);
+}
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
+view.setOrigin(activePlanet(state).coordinates);
+view.observeContexts(state, saveSession.mode === "ready");
 render();
 
 window.requestAnimationFrame(frame);
@@ -78,19 +90,22 @@ window.addEventListener("storage", (event) => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") persist();
+  // Account the full resume gap in the existing frame before displaying it.
+  else renderScheduler.invalidate();
 });
 
 function frame(now: number): void {
   const gap = accountedClock.gapSeconds(now);
   // Protected progress is read-only. A failed migration must not become a new live game.
   if (saveSession.mode !== "ready") {
-    render();
+    render(false, now);
     window.requestAnimationFrame(frame);
     return;
   }
   if (gap >= BACKGROUND_NOTICE_SECONDS) {
     const result = catchUp(state, gap);
     state = result.state;
+    observePresentationContext();
     // Consume the whole observed gap, including time discarded by the existing
     // offline cap. A later save/reload must not reclaim that discarded portion.
     accountedClock.account(now);
@@ -101,25 +116,55 @@ function frame(now: number): void {
   } else if (gap > 0) {
     const before = state.unlocked;
     state = tick(state, gap);
+    observePresentationContext();
     accountedClock.account(now);
     const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (unlocked) banner = unlocked;
   }
-  render();
+  render(false, now);
   window.requestAnimationFrame(frame);
 }
 
-function render(): void {
+function observePresentationContext(): void {
+  // Retire old-world capabilities immediately, even on a skipped/hidden paint.
   observeWorldAdoption();
-  view.update(present(state, { status, banner, notice, catchup }));
+  view.observeContexts(state, saveSession.mode === "ready");
+  // Original speedup controls target the head, unlike stable-ID cancellation.
+  // A newly active paid job must not inherit the previous job's displayed button.
+  if (!sameQueueHeads(paintedHeads, queueHeads(state))) renderScheduler.invalidate();
+}
+
+function visibleTab(): string {
+  return app!.querySelector<HTMLElement>("[data-tab-panel]:not([hidden])")?.dataset.tabPanel ?? "facilities";
+}
+
+function render(urgent = true, now = performance.now()): void {
+  observePresentationContext();
+  if (urgent) renderScheduler.invalidate();
+  const requested = visibleTab();
+  const tab = resolveVisibleTab(state, requested);
+  const ready = saveSession.mode === "ready";
+  if (!renderScheduler.shouldPaint(now, { hidden: document.hidden, ready, visibleTab: tab })) return;
+  if (tab !== requested) {
+    // Use the original navigation path so a persisted, initially locked tab
+    // receives the same selection and preference update as a normal fallback.
+    app!.querySelector<HTMLButtonElement>('[data-tab="facilities"]')?.click();
+  }
+  view.update(presentVisible(state, { status, banner, notice, catchup }, tab));
   view.setOrigin(activePlanet(state).coordinates);
-  view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
+  view.updateSpaceChrome(spaceOrigin(state), status);
+  if (tab === "galaxy") view.updateSpaceGalaxy(spaceGalaxyView(state, view.cursor()));
+  if (tab === "fleet") view.updateSpaceFleet(spaceFleetView(state, view.readRequest()));
+  if (tab === "messages") view.updateSpaceMessages(spaceMessagesView(state));
   view.updateDeep(state);
-  view.updateOrders(ordersView(state), saveSession.mode === "ready");
-  view.updateResearchTemplates(state, saveSession.mode === "ready");
-  view.updateFormations(state, saveSession.mode === "ready");
-  view.updatePrestigePreview(state, saveSession.mode === "ready");
+  if (tab === "orders") view.updateOrders(ordersView(state), ready);
+  view.updateResearchTemplates(state, ready);
+  view.updateFormations(state, ready);
+  // Their hidden paths are cheap and must observe leaving their surfaces.
+  view.updatePrestigePreview(state, ready);
   view.updateExpansionNavigation(state, view.cursor());
+  paintedHeads = queueHeads(state);
+  renderScheduler.didPaint(now, tab);
 }
 
 async function handleAction(action: UiAction): Promise<void> {
@@ -209,10 +254,14 @@ async function handleAction(action: UiAction): Promise<void> {
     // Index-only cancellation must never resolve against a newer queue snapshot.
     status = "队列已更新，请使用当前工作的取消按钮";
   } else if (action.type === "dm-speedup") {
-    const result = speedUp(state, action.target, action.mode);
-    state = result.state;
-    status = result.reason;
-    if (result.ok) persist();
+    if (!maySpeedUp(paintedHeads, queueHeads(state), action.target)) {
+      status = "当前工作已改变，请查看刷新后的加速按钮";
+    } else {
+      const result = speedUp(state, action.target, action.mode);
+      state = result.state;
+      status = result.reason;
+      if (result.ok) persist();
+    }
   } else if (action.type === "dm-shop") {
     const result = buyShopItem(state, action.id, action.res);
     state = result.state;
@@ -385,6 +434,8 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
   // Task/job counters are scoped to a save. Do not let controls or draft nonces
   // from the old namespace attach themselves to matching IDs in the new one.
   view.invalidateOrderAuthority();
+  paintedHeads = null;
+  renderScheduler.reset();
   state = result.state;
   accountedClock.rebase(sample);
   adoptedLaunches = state.stats.launches;
@@ -400,11 +451,16 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
 function observeWorldAdoption(): void {
   if (state.stats.launches === adoptedLaunches) return;
   view.invalidateOrderAuthority();
+  paintedHeads = null;
+  renderScheduler.reset();
   adoptedLaunches = state.stats.launches;
 }
 
 function persist(nextStatus?: string): void {
   observeWorldAdoption();
+  const beforeStatus = status;
+  const beforeNotice = notice;
+  const beforeMode = saveSession.mode;
   const result = saveSession.save(state, Date.now(), accountedClock.lastTickAt);
   if (result.ok) {
     if (nextStatus) status = nextStatus;
@@ -412,6 +468,8 @@ function persist(nextStatus?: string): void {
     status = result.message;
     notice = saveSession.notice;
   }
+  if (status !== beforeStatus || notice !== beforeNotice || saveSession.mode !== beforeMode) renderScheduler.invalidate();
+  view.observeContexts(state, saveSession.mode === "ready");
 }
 
 function sampleClock(): ClockSample {

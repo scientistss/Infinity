@@ -1,3 +1,4 @@
+import type { GameState } from "../game/types";
 import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
 import { isUnitId, unitById } from "../data/units";
@@ -53,6 +54,8 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   let transportInitialized = false;
   const rows = new Map<number, HTMLElement>();
   let latest: OrdersView | null = null;
+  let latestState: GameState | null = null;
+  let writable = true, bootstrapped = false;
   let nonce: number | null = null;
   let planetSignature = "";
   let attempted = false;
@@ -92,7 +95,9 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   function review() {
     const caps = budget(), auth = transport();
     node(root,"#order-transport-fields").hidden = !enabled.checked;
-    const available = latest?.donorShips.find(p => p.planetId === donor.value)?.ships.find(s => s.id === ship.value)?.count;
+    const available = latestState
+      ? latestState.planets.find(p => p.id === donor.value)?.units[ship.value as typeof ORDER_TRANSPORT_SHIPS[number]]
+      : latest?.donorShips.find(p => p.planetId === donor.value)?.ships.find(s => s.id === ship.value)?.count;
     text(root,"#order-donor-stock", `来源星球现有该舰种 ${available ?? 0} 艘；选择和数量不会自动调整。`);
     text(root, "#order-review", `确认：${planet.selectedOptions[0]?.textContent ?? "请选择星球"} · ${ORDER_KIND_LABEL[kind.value as OrderKind]} ${target.selectedOptions[0]?.textContent ?? ""} · ${kind.value === "shipyard" ? "额外" : "目标"} ${goal.value}${kind.value === "shipyard" ? " 个" : " 级"}；净支出上限：${ORDER_RESOURCES.map(([id,label]) => `${label} ${caps[id]}`).join(" / ")}${auth ? `；单源运输：${donor.selectedOptions[0]?.textContent ?? auth.donorPlanetId} → 执行星球，${ship.selectedOptions[0]?.textContent ?? auth.ship} × ${auth.count}，${auth.speedPercent}%，最多 ${auth.maxTrips} 次；毛发出上限：${ORDER_RESOURCES.map(([id,label]) => `${label} ${auth.grossCargoCap[id]}`).join(" / ")}` : "；未授权运输"}`);
     text(root, "#order-draft-status", retired ? "存档已替换，旧草稿授权已失效。请检查目标和预算，编辑表单或点“新计划”后再创建。" : attempted ? "本次创建已提交；重复点击不会再次创建。修改表单或点“新计划”可重新授权。" : "切换顶部当前星球不会更改这个计划的付款星球。");
@@ -103,7 +108,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     // retired its authority. Only genuinely changed values or New plan renew it.
     if (!explicitNew && signature === lastDraftSignature) { review(); return; }
     lastDraftSignature = signature;
-    nonce = latest?.nextTaskId ?? null;
+    nonce = latestState?.orders.nextTaskId ?? latest?.nextTaskId ?? null;
     attempted = false;
     retired = false;
     review();
@@ -122,7 +127,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   node(root, "#order-new").addEventListener("click", () => edited(true));
   form.addEventListener("submit", event => {
     event.preventDefault();
-    if (nonce === null || attempted) return;
+    if (!writable || nonce === null || attempted) return;
     const common = {planetId: planet.value, expectedNextTaskId: nonce, budget: budget(), transport:transport()};
     let request: CreateOrderRequest;
     if (kind.value === "building" && isBuildingId(target.value)) request = {...common, kind: "building", building: target.value, targetLevel: Number(goal.value)};
@@ -136,7 +141,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   });
   node(root, "#order-list").addEventListener("click", event => {
     const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-order-action]") : null;
-    if (!button || button.disabled || !node(root,"#order-list").contains(button)) return;
+    if (!writable || !button || button.disabled || !node(root,"#order-list").contains(button)) return;
     const taskId = Number(button.dataset.taskId), type = button.dataset.orderAction;
     const authority = taskButtons.get(button);
     if (!authority || authority.taskId !== taskId || authority.type !== type || !Number.isSafeInteger(taskId) || taskId <= 0) return;
@@ -148,8 +153,8 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     if (type === "order-pause" || type === "order-resume" || type === "order-cancel" || type === "order-dismiss") onAction({type, taskId});
   });
   populateTargets();
-  const update = (model: OrdersView, ready = true) => {
-    latest = model;
+  type DraftContext = Pick<OrdersView, "planets" | "donorShips" | "initialPlanetId" | "nextTaskId">;
+  function updateDraftContext(model: DraftContext) {
     if (nonce === null && !retired) nonce = model.nextTaskId;
     const signature = JSON.stringify(model.planets);
     if (signature !== planetSignature) {
@@ -173,7 +178,26 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     }
     if (lastDraftSignature === null) lastDraftSignature = draftSignature();
     review();
-    for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button")) input.disabled = !ready || (!!input.closest("#order-transport-fields") && !enabled.checked);
+    for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button")) input.disabled = !writable || (!!input.closest("#order-transport-fields") && !enabled.checked);
+  }
+  function observe(state: GameState, ready: boolean) {
+    latestState = state; writable = ready;
+    if (bootstrapped) return;
+    // Preserve the startup draft's payer, donor, preferred ship, and counter even
+    // if Orders is first opened only after navigating to another active planet.
+    // The one-time bootstrap excludes every order row and its transport ledger.
+    bootstrapped = true;
+    updateDraftContext({
+      planets: state.planets.map(p => ({id:p.id, name:`${p.name} [${p.coordinates.galaxy}:${p.coordinates.system}:${p.coordinates.position}]`})),
+      donorShips: state.planets.map(p => ({planetId:p.id, ships:ORDER_TRANSPORT_SHIPS.map(id => ({id, count:p.units[id]}))})),
+      initialPlanetId: state.activePlanetId,
+      nextTaskId: state.orders.nextTaskId,
+    });
+  }
+  const update = (model: OrdersView, ready = true) => {
+    latest = model; writable = ready;
+    bootstrapped = true;
+    updateDraftContext(model);
     const list = node(root, "#order-list");
     const ids = new Set(model.rows.map(row => row.id));
     for (const [id,row] of rows) if (!ids.has(id)) {for (const button of row.querySelectorAll<HTMLButtonElement>("button")) taskButtons.delete(button);row.remove();rows.delete(id);}
@@ -208,6 +232,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     node(root,"#order-empty").hidden = model.rows.length > 0;
   };
   return {
+    observe,
     update,
     invalidateOrderAuthority() {
       // Keep the user's visible draft for review, but require a deliberate edit
@@ -216,6 +241,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
       retired = true;
       nonce = null;
       latest = null;
+      latestState = null;
       attempted = false;
       taskButtons = new WeakMap<HTMLButtonElement, ButtonAuthority>();
       rows.clear();

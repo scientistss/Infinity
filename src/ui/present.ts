@@ -1,7 +1,7 @@
 import { activePlanet, withPlanet, selectPlanet } from "../game/empire";
 import { CURVATURE_TECH, curvatureById } from "../data/curvature-tech";
 import { arcadeSymbolDef } from "../data/arcade";
-import { arcadeView, type ArcadeView } from "./arcade-present";
+import { arcadeView, arcadeVisible, type ArcadeView } from "./arcade-present";
 import { CARD_CATALOG, SLOT_RULES } from "../data/protocol-cards";
 import { protocolSentence, slotFields, slotUnlockHint, unlockProgress, unlockedSlotCount, type ParamField } from "../automation/engine";
 import { offlineCapSeconds, type OfflineCatchup } from "../core/offline";
@@ -37,7 +37,7 @@ import {
 import { expansionScore, scrapeAmount, warpGain } from "../game/logic";
 import { usedFields } from "../game/planet";
 import { SILO_SLOTS_PER_LEVEL, unitById } from "../data/units";
-import { shipyardView, type ShipyardView } from "./shipyard-present";
+import { shipyardView, shipyardVisible, type ShipyardView } from "./shipyard-present";
 import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../game/queue";
 import type { CompletedBuild } from "../game/queue";
 import {
@@ -316,6 +316,35 @@ export interface PresentInput {
 }
 
 export function present(state: GameState, input: PresentInput): ViewModel {
+  return presentModel(state, input, null);
+}
+
+/**
+ * Match the original view's locked-tab fallback before choosing a page body.
+ * Extension tab IDs pass through: they share chrome but have their own presenters.
+ */
+export function resolveVisibleTab(state: GameState, requestedTab: string): string {
+  switch (requestedTab) {
+    case "research": return researchVisible(state) ? requestedTab : "facilities";
+    case "shipyard":
+    case "defense": return shipyardVisible(state) ? requestedTab : "facilities";
+    case "darkmatter": return darkMatterVisible(state) ? requestedTab : "facilities";
+    case "arcade": return arcadeVisible(state) ? requestedTab : "facilities";
+    default: return requestedTab;
+  }
+}
+
+/**
+ * A fresh projection of the current state, never a cache of an earlier world.
+ * Shared chrome and paid queues stay complete; hidden page bodies are typed empty
+ * values. Navigation must immediately project the newly visible page before paint.
+ */
+export function presentVisible(state: GameState, input: PresentInput, visibleTab: string): ViewModel {
+  return presentModel(state, input, resolveVisibleTab(state, visibleTab));
+}
+
+function presentModel(state: GameState, input: PresentInput, visibleTab: string | null): ViewModel {
+  const include = (tab: string): boolean => visibleTab === null || visibleTab === tab;
   const eco = economy(state);
   const open = unlockedSlotCount(state);
   const unspent = unspentCores(state);
@@ -330,13 +359,13 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     energy: energyLine(eco),
     energyShort: eco.efficiency < 1,
     queue: queueView(state),
-    research: researchPanel(state),
-    shipyard: shipyardView(state),
-    darkMatter: darkMatterView(state),
-    arcade: arcadeView(state),
-    buildings: activeBuildings().map((def) => buildingView(state, eco, def)),
-    production: PRODUCTION_IDS.map((id) => productionSetting(state, id)),
-    overview: overviewView(state, eco),
+    research: researchPanel(state, include("research")),
+    shipyard: shipyardView(state, visibleTab === null ? "both" : visibleTab === "shipyard" ? "ships" : visibleTab === "defense" ? "defenses" : "none"),
+    darkMatter: darkMatterView(state, include("darkmatter")),
+    arcade: include("arcade") ? arcadeView(state) : hiddenArcadeView(state),
+    buildings: include("facilities") ? activeBuildings().map((def) => buildingView(state, eco, def)) : [],
+    production: include("facilities") ? PRODUCTION_IDS.map((id) => productionSetting(state, id)) : [],
+    overview: overviewView(state, eco, include("overview")),
     score: formatAmount(expansionScore(state)),
     gain: formatCount(warpGain(state)),
     canPrestige: warpGain(state).gte(1),
@@ -346,25 +375,53 @@ export function present(state: GameState, input: PresentInput): ViewModel {
     offlineCap: `${formatDuration(offlineCapSeconds(state))}（基础 ${OFFLINE_BASE_HOURS} 小时，曲率科技每次 +${OFFLINE_TECH_STEP_HOURS} 小时，最高 ${OFFLINE_MAX_HOURS} 小时）`,
     protocolEnergy: energyLine(eco),
     protocolMeta: `槽位 ${open}/${SLOT_RULES.hardCap} · 机器人工厂每 ${SLOT_RULES.roboticsPerLevels} 级 +1 · 计算机技术每 ${SLOT_RULES.computerPerLevels} 级 +1`,
-    catalog: CARD_CATALOG.map((entry) => ({
+    catalog: include("protocol") ? CARD_CATALOG.map((entry) => ({
       id: entry.id,
       label: entry.labelZh,
       unlocked: state.unlockedCards.includes(entry.id),
       hint: unlockProgress(state, entry.id),
-    })),
-    slots: presentSlots(state, open),
-    achievements: ACHIEVEMENTS.map((def) => {
+    })) : [],
+    slots: include("protocol") ? presentSlots(state, open) : [],
+    achievements: include("achievements") ? ACHIEVEMENTS.map((def) => {
       const unlocked = state.unlocked.includes(def.id);
       const progress = def.progress(state);
       const current = progress.amount ? formatAmount(progress.current) : formatCount(progress.current);
       const goal = progress.amount ? formatAmount(progress.goal) : formatCount(progress.goal);
       return { id: def.id, unlocked, progress: unlocked ? "已达成 · +1%" : `${current} / ${goal}` };
-    }),
+    }) : [],
     achievementSummary: achievementSummary(state),
     offline: presentOffline(input.catchup),
-    techs: CURVATURE_TECH.map((node) => techView(state, node.id)),
+    techs: include("curvature") ? CURVATURE_TECH.map((node) => techView(state, node.id)) : [],
     unspentLine: `未花费 ${formatCount(unspent)} / 已花费 ${formatCount(spentCores(state))} · 被动 ${passiveLabel(unspent)}`,
     scrapeLabel: `手动采集 +${formatAmount(big(scrapeAmount(state)))} 金属`,
+  };
+}
+
+/** Only visibility is consumed by the original view while the ring page is hidden. */
+function hiddenArcadeView(state: GameState): ArcadeView {
+  return {
+    visible: arcadeVisible(state),
+    runsCount: 0,
+    runs: "",
+    beacon: "",
+    pity: "",
+    jackpot: "",
+    betLine: "",
+    bets: [],
+    topUpLabel: "",
+    topUpEnabled: false,
+    topUpTitle: "",
+    canRun: false,
+    prize: "",
+    tiles: [],
+    odds: [],
+    luckyRows: [],
+    history: [],
+    historySignature: "",
+    stats: [],
+    statsLine: "",
+    last: [],
+    autoHint: "",
   };
 }
 
@@ -455,8 +512,17 @@ export function speedupButtons(
 
 const RES_SHORT: Record<ResourceId, string> = { metal: "金属", crystal: "晶体", deuterium: "重氢" };
 
-function darkMatterView(state: GameState): DarkMatterView {
-  const visible = state.stats.darkMatterEarned > 0 || state.darkMatter.gt(0);
+function darkMatterVisible(state: GameState): boolean {
+  return state.stats.darkMatterEarned > 0 || state.darkMatter.gt(0);
+}
+
+function darkMatterView(state: GameState, includeBody = true): DarkMatterView {
+  const chrome = {
+    visible: darkMatterVisible(state),
+    chip: formatDm(state.darkMatter),
+    summary: `现有 ${formatDm(state.darkMatter)} 暗物质 · 累计获得 ${formatDm(state.stats.darkMatterEarned)}。来源：每个新成就 +${DM_ACHIEVEMENT_REWARD}；深空星环机（天体物理学 1 级后开放）。`,
+  };
+  if (!includeBody) return { ...chrome, shop: [], packages: [], inventory: [], boosters: [] };
   const shop: ShopItemView[] = SHOP_ITEMS.map((def) => {
     const price = `${formatDm(def.dm)} 暗物质`;
     if (def.kind === "booster") {
@@ -512,9 +578,7 @@ function darkMatterView(state: GameState): DarkMatterView {
     .filter((booster) => booster.until > now)
     .map((booster) => `${RES_SHORT[booster.res]}矿 +${booster.pct}% · 剩余 ${formatDuration(Math.ceil(booster.until - now))}`);
   return {
-    visible,
-    chip: formatDm(state.darkMatter),
-    summary: `现有 ${formatDm(state.darkMatter)} 暗物质 · 累计获得 ${formatDm(state.stats.darkMatterEarned)}。来源：每个新成就 +${DM_ACHIEVEMENT_REWARD}；深空星环机（天体物理学 1 级后开放）。`,
+    ...chrome,
     shop,
     packages,
     inventory,
@@ -566,13 +630,13 @@ function researchQueueView(state: GameState): QueueView {
   };
 }
 
-function researchPanel(state: GameState): ResearchPanelView {
+function researchPanel(state: GameState, includeCards = true): ResearchPanelView {
   const total = Object.values(state.research.levels).reduce((sum, level) => sum + level, 0);
   return {
     visible: researchVisible(state),
     queue: researchQueueView(state),
     summary: `研究总等级 ${total} · 研究速度 ×${RESEARCH_SPEED} · 研究等级在发射殖民舰后保留`,
-    items: RESEARCH.map((def) => researchView(state, def)),
+    items: includeCards ? RESEARCH.map((def) => researchView(state, def)) : [],
   };
 }
 
@@ -726,11 +790,20 @@ function productionSetting(state: GameState, id: ProductionBuildingId): Producti
 
 // ---------- overview ----------
 
-function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
+function overviewView(state: GameState, eco: EconomySnapshot, includeTables = true): OverviewView {
   const planet = activePlanet(state);
   const b = planet.buildings;
   const g = eco.global;
   const plasma = state.research.levels.plasma_tech;
+  const chrome = {
+    planet: planet.name,
+    temperature: `最高温度 ${planet.tempMax}°C`,
+    fields: `${usedFields(planet)} / ${planet.fieldsMax}`,
+    global: `全局倍率 ${formatMultiplier(big(g))}（未花费曲率核心、成就、产线翻倍）· 宇宙速度 ×${ECONOMY_SPEED}${
+      plasma > 0 ? ` · 等离子技术 ${plasma} 级：矿产 +${(PLASMA_BONUS.metal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.crystal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.deuterium * plasma * 100).toFixed(2)}%` : ""
+    }`,
+  };
+  if (!includeTables) return { ...chrome, production: [], energy: [], energySummary: energyLine(eco) };
   const fmt = (n: number) => (n === 0 ? "—" : formatRate(big(n)));
   const mine = (id: "metal_mine" | "crystal_mine" | "deuterium_synth") => {
     const res = id === "metal_mine" ? "metal" : id === "crystal_mine" ? "crystal" : "deuterium";
@@ -777,12 +850,7 @@ function overviewView(state: GameState, eco: EconomySnapshot): OverviewView {
     { key: "deuterium_synth", cells: [`重氢合成器（${b.deuterium_synth} 级）`, `−${formatAmount(big(use("deuterium_synth")))}`] },
   ];
   return {
-    planet: planet.name,
-    temperature: `最高温度 ${planet.tempMax}°C`,
-    fields: `${usedFields(planet)} / ${planet.fieldsMax}`,
-    global: `全局倍率 ${formatMultiplier(big(g))}（未花费曲率核心、成就、产线翻倍）· 宇宙速度 ×${ECONOMY_SPEED}${
-      plasma > 0 ? ` · 等离子技术 ${plasma} 级：矿产 +${(PLASMA_BONUS.metal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.crystal * plasma * 100).toFixed(2)}% / +${(PLASMA_BONUS.deuterium * plasma * 100).toFixed(2)}%` : ""
-    }`,
+    ...chrome,
     production,
     energy,
     energySummary: energyLine(eco),

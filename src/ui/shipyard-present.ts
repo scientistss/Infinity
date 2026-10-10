@@ -179,11 +179,14 @@ function shipyardQueueView(state: GameState): QueueView {
   };
 }
 
-export function shipyardView(state: GameState): ShipyardView {
+/** Keep the queue/chrome live without computing cards for a hidden page. */
+export type ShipyardBody = "both" | "ships" | "defenses" | "none";
+
+export function shipyardView(state: GameState, body: ShipyardBody = "both"): ShipyardView {
   const planet = activePlanet(state);
   const visible = shipyardVisible(state);
-  const ships = visible ? SHIPS.map((def) => unitCard(state, def)) : [];
-  const defenses = visible ? DEFENSES.map((def) => unitCard(state, def)) : [];
+  const ships = visible && (body === "both" || body === "ships") ? SHIPS.map((def) => unitCard(state, def)) : [];
+  const defenses = visible && (body === "both" || body === "defenses") ? DEFENSES.map((def) => unitCard(state, def)) : [];
   const fleet = SHIPS.reduce((sum, def) => sum + (def.id === "solar_satellite" ? 0 : planet.units[def.id]), 0);
   return {
     visible,
