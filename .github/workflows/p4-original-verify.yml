@@ -14,7 +14,7 @@ jobs:
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -78,6 +78,11 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > save-session-review-save.json
+          node --import tsx scripts/accounted-clock-fixture.ts > accounted-clock-review-save.json
+          python scripts/browser-accounted-clock.py --fixture accounted-clock-review-save.json --session-fixture save-session-review-save.json --output accounted-clock-evidence
+          node --import tsx scripts/native-background-fixture.ts > native-background-review-save.json
+          xvfb-run -a --server-args='-screen 0 1440x1100x24' node scripts/browser-native-background.mjs --fixture native-background-review-save.json
           node --import tsx scripts/expansion-navigation-fixture.ts > expansion-navigation-review-save.json
           python scripts/browser-expansion-navigation.py --fixture expansion-navigation-review-save.json
           node --import tsx scripts/prestige-preview-fixture.ts > prestige-preview-review-save.json
@@ -88,7 +93,6 @@ jobs:
           python scripts/browser-research-templates.py --fixture research-templates-review-save.json
           node --import tsx scripts/deep-dashboard-fixture.mjs > deep-dashboard-review.json
           python scripts/browser-deep-dashboard.py
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > save-session-review-save.json
           python scripts/browser-save-session.py --fixture save-session-review-save.json
           node --import tsx scripts/orders-transport-fixture.ts > orders-transport-review-save.json
           python scripts/browser-orders-transport.py --fixture orders-transport-review-save.json
@@ -126,6 +130,10 @@ jobs:
             prestige-preview-review-save.json
             expansion-navigation-evidence
             expansion-navigation-review-save.json
+            accounted-clock-evidence
+            accounted-clock-review-save.json
+            native-background-evidence
+            native-background-review-save.json
             deep-fixtures
             test-results.json
             original-ui-report.json

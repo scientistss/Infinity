@@ -134,7 +134,7 @@ export interface SaveFile {
   revision: typeof SAVE_REVISION;
   version: number;
   savedAt: number;
-  /** Wall clock of the last simulated tick. */
+  /** Wall-clock watermark through which the snapshot has accounted for time. */
   lastTickAt: number;
   state: SerializedState;
 }
@@ -236,13 +236,13 @@ export function deserializeState(raw: unknown): GameState {
   return refreshUnlocks(markEnergyShortage(state));
 }
 
-export function exportSave(state: GameState, savedAt = Date.now()): string {
+export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = savedAt): string {
   const file: SaveFile = {
     schema: SAVE_SCHEMA,
     revision: SAVE_REVISION,
     version: SAVE_VERSION,
     savedAt,
-    lastTickAt: savedAt,
+    lastTickAt,
     state: serializeState(state),
   };
   return JSON.stringify(file, null, 2);

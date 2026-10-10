@@ -79,11 +79,11 @@ export class SaveSession {
   }
 
   /** Saves are disabled after any unresolved storage failure or conflict. */
-  save(state: GameState, now = Date.now()): SaveResult {
+  save(state: GameState, now = Date.now(), lastTickAt = now): SaveResult {
     if (this.mode !== "ready") return this.blocked();
     let raw: string;
     try {
-      raw = this.prepare(state, now);
+      raw = this.prepare(state, now, lastTickAt);
     } catch (error) {
       return this.invalid(error);
     }
@@ -131,7 +131,7 @@ export class SaveSession {
   }
 
   /** Export protected bytes from memory, even if localStorage is currently unreadable. */
-  export(state: GameState, now = Date.now()): { raw: string; protected: boolean } {
+  export(state: GameState, now = Date.now(), lastTickAt = now): { raw: string; protected: boolean } {
     if (this.mode !== "ready") {
       if (this.protectedRaw !== null) return { raw: this.protectedRaw, protected: true };
       if (this.expectedRaw !== null && this.expectedRaw !== undefined) {
@@ -146,7 +146,7 @@ export class SaveSession {
         }
       }
     }
-    return { raw: exportSave(state, now), protected: false };
+    return { raw: exportSave(state, now, lastTickAt), protected: false };
   }
 
   /** Reread instead of trusting potentially queued/stale event.newValue bytes. */
@@ -185,8 +185,8 @@ export class SaveSession {
     return { ok: true, state, raw, intent };
   }
 
-  private prepare(state: GameState, now: number): string {
-    const raw = exportSave(state, now);
+  private prepare(state: GameState, now: number, lastTickAt = now): string {
+    const raw = exportSave(state, now, lastTickAt);
     // Prevent accidentally serializing an invalid live state into the only current slot.
     importSave(raw);
     return raw;

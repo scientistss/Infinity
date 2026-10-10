@@ -112,6 +112,18 @@ Reset never removes the current key or waits for an eventual autosave. It perfor
 
 Ordinary saves validate serialization and perform the same current-slot comparisons and readback, without creating a new archive on every simulation save. A failed ordinary save freezes the current in-memory view and retains the last observed original in memory for export.
 
+## Accounted snapshot time
+
+`savedAt` records serialization time; `lastTickAt` records the simulation watermark represented by that snapshot. The production entry point keeps a paired wall/monotonic epoch and only advances the watermark after adopting a successful live tick or offline catch-up. Fifteen-second autosaves, exports, unload and hidden-page saves do not consume unprocessed time. A page that is hidden without animation frames can therefore write its unchanged state without erasing the interval a later resume or reload must simulate.
+
+The existing five-second live/offline branch, thirty-second offline notice, two-hour base/eight-hour maximum cap, event segmentation and protocol/finite-plan cadences are unchanged. A capped catch-up consumes its whole observed raw interval, including the deliberately discarded excess; reloading cannot reclaim that excess. Loading a compatible file still performs no startup write. The initial epoch is captured before loading and corresponds to the same time supplied to catch-up. Failed migration remains readable and frozen.
+
+A successful current import or reset adopts a new paired epoch. Reset samples after confirmation; file import samples after its asynchronous read, immediately before the verified replacement transaction. Failed, cancelled and retired imports do not reset the active world's clock. Manual curvature retains the existing time watermark and its save-before-adopt guarantee; it does not restart elapsed time. Protected-session exports continue to return the exact cached source bytes.
+
+`exportSave`, `SaveSession.save` and `SaveSession.export` accept an optional third `lastTickAt` argument. Existing one/two-argument callers retain their previous behavior. Revision 8 already contains both timestamps, so this correction neither changes schema nor adds migration authority. Wall-clock adjustments and operating systems where the monotonic clock stops during full device sleep are outside this correction; it does not claim universal clock synchronization.
+
+Verification deliberately separates controlled boundaries from native lifecycle evidence. `browser-accounted-clock.py` controls Date, performance, animation-frame and interval delivery, while retaining the production HTTP bundle and native storage backing; independent whole-state expectations call the actual engine. `browser-native-background.mjs` launches a separate headed Chrome under Xvfb with native clocks, timers, storage and visibility, uses ordinary tab activation, and requires genuine hidden visibility plus a stopped animation-frame heartbeat and multiple native autosaves before testing reload/resume. If that native condition is not established, the check fails rather than substituting synthetic visibility. Actual pass results belong to the exact commit's CI report.
+
 ## Recovery backups
 
 The legacy backup key is `infinity.original-p4.save.v1.backup`. Existing contents of that key are never rotated away. New distinct originals use `.backup.1` through `.backup.63`; an identical verified copy is reused. Archive writes are append-only and bounded. Full archive slots, quota failures or failed readback abort replacement. No automatic cleanup deletes the user's sole preserved copy.

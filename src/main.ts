@@ -8,6 +8,7 @@ import { spaceView } from "./ui/space-present";
 import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
 import { catchUp, type OfflineCatchup } from "./core/offline";
+import { AccountedClock, type ClockSample } from "./core/accounted-clock";
 import { unlockBanner } from "./data/achievements";
 import { evaluatePrestige, scrape, scrapeAmount, tick } from "./game/logic";
 import { curvatureById } from "./data/curvature-tech";
@@ -48,7 +49,9 @@ const app = document.querySelector("#app");
 if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 
 const store = localStorageSafe();
-const saveSession = new SaveSession(store);
+const startupClock = sampleClock();
+const accountedClock = new AccountedClock(startupClock);
+const saveSession = new SaveSession(store, startupClock.wallAt);
 const loaded = saveSession.loaded;
 let notice = saveSession.notice;
 let status = saveSession.message;
@@ -63,7 +66,6 @@ const view = mountView(app, (action) => {
 });
 render();
 
-let lastFrame = performance.now();
 window.requestAnimationFrame(frame);
 
 window.setInterval(() => persist("已自动保存"), AUTOSAVE_MS);
@@ -79,8 +81,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function frame(now: number): void {
-  const gap = (now - lastFrame) / 1000;
-  lastFrame = now;
+  const gap = accountedClock.gapSeconds(now);
   // Protected progress is read-only. A failed migration must not become a new live game.
   if (saveSession.mode !== "ready") {
     render();
@@ -90,6 +91,9 @@ function frame(now: number): void {
   if (gap >= BACKGROUND_NOTICE_SECONDS) {
     const result = catchUp(state, gap);
     state = result.state;
+    // Consume the whole observed gap, including time discarded by the existing
+    // offline cap. A later save/reload must not reclaim that discarded portion.
+    accountedClock.account(now);
     if (result.appliedSeconds >= OFFLINE_MODAL_SECONDS) catchup = result;
     const unlocked = unlockBanner(result.newAchievementIds);
     if (unlocked) banner = unlocked;
@@ -97,6 +101,7 @@ function frame(now: number): void {
   } else if (gap > 0) {
     const before = state.unlocked;
     state = tick(state, gap);
+    accountedClock.account(now);
     const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (unlocked) banner = unlocked;
   }
@@ -316,7 +321,7 @@ async function handleAction(action: UiAction): Promise<void> {
         // Do not use persist(): it observes/adopts the global world before saving.
         // Read-back success is required before changing visible state or retiring
         // old-world controls. An uncertain write remains protected by SaveSession.
-        const saved = saveSession.save(evaluation.next);
+        const saved = saveSession.save(evaluation.next, Date.now(), accountedClock.lastTickAt);
         if (saved.ok) {
           state = evaluation.next;
           status = "已发射殖民舰并存入本地";
@@ -331,21 +336,29 @@ async function handleAction(action: UiAction): Promise<void> {
     persist("已保存到本地");
   } else if (action.type === "export") {
     try {
-      const exported = saveSession.export(state);
+      const exported = saveSession.export(state, Date.now(), accountedClock.lastTickAt);
       view.setTransferText(exported.raw);
       download(exported.raw);
       status = exported.protected ? "已导出受保护原始存档" : "已导出 JSON";
     } catch { status = "原始存档目前无法读取，未导出；请恢复本地存储权限后重试"; }
   } else if (action.type === "import-text") {
-    applyReplacement(saveSession.importText(action.text), "导入");
+    const sample = sampleClock();
+    applyReplacement(saveSession.importText(action.text, sample.wallAt), "导入", sample);
   } else if (action.type === "import-file") {
-    const result = await saveSession.importFile(action.file);
+    let sample: ClockSample | null = null;
+    const result = await saveSession.importFile(action.file, () => {
+      // Capture after the asynchronous read, immediately before its transaction.
+      // The old world's waiting time must never advance the replacement world.
+      sample = sampleClock();
+      return sample.wallAt;
+    });
     // A superseded read must not overwrite a newer action's state, text, or status.
     if (!saveSession.isCurrentFileResult(result) || (!result.ok && result.code === "stale")) return;
-    applyReplacement(result, "导入");
+    applyReplacement(result, "导入", sample);
   } else if (action.type === "reset") {
     if (!window.confirm("备份当前原始存档并重新开始？新存档写入成功后才会替换当前进度。")) return;
-    applyReplacement(saveSession.reset(), "重置");
+    const sample = sampleClock();
+    applyReplacement(saveSession.reset(sample.wallAt), "重置", sample);
   }
   if (
     action.type === "scrape" ||
@@ -361,17 +374,19 @@ async function handleAction(action: UiAction): Promise<void> {
   render();
 }
 
-function applyReplacement(result: ReplacementResult, action: "导入" | "重置"): void {
+function applyReplacement(result: ReplacementResult, action: "导入" | "重置", sample: ClockSample | null): void {
   if (!result.ok) {
     status = `${action}失败，当前进度未改动：${result.message}`;
     notice = saveSession.notice;
     return;
   }
   if (!saveSession.isCurrentReplacement(result)) return;
+  if (sample === null) throw new Error("A committed replacement must have a paired clock sample");
   // Task/job counters are scoped to a save. Do not let controls or draft nonces
   // from the old namespace attach themselves to matching IDs in the new one.
   view.invalidateOrderAuthority();
   state = result.state;
+  accountedClock.rebase(sample);
   adoptedLaunches = state.stats.launches;
   catchup = null;
   banner = null;
@@ -390,13 +405,17 @@ function observeWorldAdoption(): void {
 
 function persist(nextStatus?: string): void {
   observeWorldAdoption();
-  const result = saveSession.save(state);
+  const result = saveSession.save(state, Date.now(), accountedClock.lastTickAt);
   if (result.ok) {
     if (nextStatus) status = nextStatus;
   } else {
     status = result.message;
     notice = saveSession.notice;
   }
+}
+
+function sampleClock(): ClockSample {
+  return { wallAt: Date.now(), frameAt: performance.now() };
 }
 
 function download(json: string): void {
