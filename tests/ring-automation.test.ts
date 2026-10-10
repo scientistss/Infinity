@@ -16,6 +16,8 @@ import { activePlanet, selectPlanet, withPlanet } from "../src/game/empire";
 import { abandonColony, quoteFlight, sendFleet, type Fleet, type FleetRequest } from "../src/game/fleet";
 import { prestige, tick } from "../src/game/logic";
 import { createPlanet } from "../src/game/planet";
+import { deserializeState, serializeState } from "../src/game/save";
+import { createInitialState } from "../src/game/state";
 import type { GameState } from "../src/game/types";
 import { stateWith, withResearch } from "./helpers";
 
@@ -50,7 +52,9 @@ function armed(state: GameState, count = state.arcade.runs.length, maxDeuterium 
 }
 
 function withColony(state: GameState): GameState {
-  const colony = createPlanet("colony-test", { galaxy: 1, system: 51, position: 8 });
+  // These fixtures start with one homeworld, whose random system can itself be 51.
+  const system = activePlanet(state).coordinates.system === 51 ? 52 : 51;
+  const colony = createPlanet("colony-test", { galaxy: 1, system, position: 8 });
   colony.buildings = { ...activePlanet(state).buildings };
   colony.resources = { metal: big(10), crystal: big(20), deuterium: big(300000) };
   return { ...state, planets: [...state.planets, colony] };
@@ -256,6 +260,53 @@ describe("gross spending and settlement snapshots", () => {
     expect(source.resources.deuterium.lt(sourceBefore.deuterium)).toBe(true);
     expect(state.arcade.bets.metal).toBe(12);
     expect(state.arcade.autoBatch!.bets).toEqual(frozen);
+  });
+
+  it("rejects duplicate coordinates without spending or consuming a ticket, while a distinct colony settles", () => {
+    const seeded = createInitialState(87, 773);
+    let state = ready(1, "jackpot");
+    // Seed 87 deterministically puts the homeworld at the old colony fixture's location.
+    state = {
+      ...state,
+      universe: seeded.universe,
+      deepSpace: seeded.deepSpace,
+      planets: [{ ...activePlanet(state), coordinates: { ...activePlanet(seeded).coordinates } }],
+    };
+    const sourceId = state.activePlanetId, sourceCoordinates = activePlanet(state).coordinates;
+    expect(sourceCoordinates).toEqual({ galaxy: 1, system: 51, position: 8 });
+    state = selectPlanet(armed(setBet(withColony(state), "crystal", 2).state, 1, "10000000000"), "colony-test");
+    expect(() => deserializeState(serializeState(state))).not.toThrow();
+
+    const invalid = {
+      ...state,
+      planets: state.planets.map((planet) => planet.id === "colony-test"
+        ? { ...planet, coordinates: { ...sourceCoordinates } }
+        : planet),
+    };
+    expect(() => deserializeState(serializeState(invalid))).toThrow("星球坐标重复");
+    const rejected = revealRun(invalid, "auto");
+    expect(rejected.ok).toBe(false);
+    expect(rejected.result).toBeNull();
+    expect(rejected.reason).toContain("存档安全");
+    expect(rejected.state.planets).toEqual(invalid.planets);
+    expect(rejected.state.darkMatter).toEqual(invalid.darkMatter);
+    expect(rejected.state.arcade.runs).toEqual(invalid.arcade.runs);
+    expect(rejected.state.arcade.seed).toBe(invalid.arcade.seed);
+    expect(rejected.state.arcade.stats).toEqual(invalid.arcade.stats);
+    expect(rejected.state.arcade.history).toEqual(invalid.arcade.history);
+    expect(rejected.state.arcade.autoBatch).toMatchObject({ armed: false, completed: 0, spentDeuterium: "0" });
+
+    const settled = revealRun(state, "auto");
+    expect(settled.ok).toBe(true);
+    expect(settled.state.arcade.stats.autoRuns).toBe(1);
+    expect(settled.state.arcade.runs).toHaveLength(0);
+    expect(settled.state.arcade.autoBatch!.spentDeuterium).toBe(String(2 * betUnitDeut(selectPlanet(state, sourceId))));
+    expect(settled.state.planets.find((planet) => planet.id === sourceId)!.resources.crystal.gt(
+      state.planets.find((planet) => planet.id === sourceId)!.resources.crystal,
+    )).toBe(true);
+    expect(settled.state.activePlanetId).toBe("colony-test");
+    expect(activePlanet(settled.state).resources).toEqual(activePlanet(state).resources);
+    expect(() => deserializeState(serializeState(settled.state))).not.toThrow();
   });
 
   it("replays an already-paid charge for zero spend and without duplicating rewards", () => {
