@@ -751,7 +751,11 @@ async def work():
           fixtures['current']['state']['planets'][0]['name'] != incoming['state']['planets'][0]['name'])
     incoming_path = out / 'synthetic-native-selected-import.json'
     incoming_path.write_text(json.dumps(incoming, ensure_ascii=False, indent=2))
-    executable = args.chromium or shutil.which('chromium') or shutil.which('google-chrome')
+    # Match browser-prerequisites.sh: an unrelated runner Chromium shim is not
+    # evidence that the verified official Chrome binary can launch.
+    executable = args.chromium or shutil.which('google-chrome') or shutil.which('google-chrome-stable')
+    check('runtime', 'explicit browser or prerequisite-verified official Chrome is available', bool(executable))
+    report['runtime']['executable'] = executable
     browser = await playwright.chromium.launch(headless=True, executable_path=executable, timeout=10000)
     report['runtime']['browser'] = browser.version
     selected = [
