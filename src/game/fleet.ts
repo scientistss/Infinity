@@ -1,7 +1,7 @@
 import { DEEP } from "../data/deep-space";
 import { expeditionSlots, chargeReservations, storedRunLimit, type ChargeOrder } from "./deep-state";
 import { finishCharge, finishChargeReturn, recycleDebris } from "./deep-space";
-import { betUnitDeut, productionMe } from "./arcade";
+import { betUnitDeut, canIssueRunId, productionMe, stopRingBatch } from "./arcade";
 import { DRIVE_BONUS, SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { activePlanet, withPlanet } from "./empire";
 import { big, isValidAmount } from "./decimal";
@@ -61,6 +61,7 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
   if (!request || !MISSIONS.includes(request.mission)) return fail("任务类型无效");
   if (!validCoordinates(request.target,request.mission === "charge" || request.mission === "recycle")) return fail("目标坐标无效；第 16 位仅接受充能和回收");
   if(request.mission === "charge"){
+    if (!canIssueRunId(state, chargeReservations(state))) return fail("开奖次数编号已用尽或已被在途充能预留");
     if(!Number.isFinite(productionMe(state)) || !Number.isFinite(betUnitDeut(state)) || betUnitDeut(state)>1e190)return fail("充能奖励计算超过当前数值上限");
     if(request.target.position!==16)return fail("充能目标必须为第 16 位深空");
     if(!Number.isInteger(request.holdSlots)||request.holdSlots!<1||request.holdSlots!>3)return fail("驻留必须为 1–3 段");
@@ -228,6 +229,7 @@ export function abandonColony(state: GameState, id: string): FleetResult {
   const planet = state.planets.find((p) => p.id === id);
   if (!planet || planet.id === HOMEWORLD_ID) return { state, ok: false, reason: "不能放弃母星" };
   if (state.fleets.some((f) => f.originId === id || sameCoordinates(f.target, planet.coordinates)) || state.research.queue.some((q) => q.planetId === id)) return { state, ok: false, reason: "仍有相关舰队或研究订单，不能放弃该星球" };
+  if (state.arcade.autoBatch?.armed && state.arcade.autoBatch.planetId === id) state = stopRingBatch(state, "来源星球已放弃，自动批次已停止");
   const planets = state.planets.filter((p) => p.id !== id);
   return { state: { ...state, planets, deepSpace:{...state.deepSpace,offers:state.deepSpace.offers.filter(o=>o.planetId!==id)}, activePlanetId: state.activePlanetId === id ? planets[0]!.id : state.activePlanetId }, ok: true, reason: "殖民地已放弃；其库存、建筑与驻留舰船不退款" };
 }

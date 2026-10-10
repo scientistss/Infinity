@@ -1,5 +1,5 @@
 import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
-import { STORAGE_KEY } from "./content";
+import { SAVE_REVISION, STORAGE_KEY } from "./content";
 import { deserializeState, exportSave, importSave, preserveRawSave, type KeyValueStore } from "./save";
 import { createInitialState } from "./state";
 import type { GameState } from "./types";
@@ -53,12 +53,13 @@ export class SaveSession {
       this.loaded = emptyCatchup(restored);
       readable = true;
       const loaded = catchUp(restored, (now - file.lastTickAt) / 1000);
-      if ((JSON.parse(raw) as { revision: number }).revision === 2) {
+      const sourceRevision = (JSON.parse(raw) as { revision: number }).revision;
+      if (sourceRevision !== SAVE_REVISION) {
         // Migration is a replacement too: do not show migrated progress on a failed commit.
         const candidate = this.prepare(loaded.state, now);
         const committed = this.writeCandidate(candidate, true);
         if (!committed.ok) return;
-        this.notice = "同源 v9/r2 存档已备份并升级为 r3。";
+        this.notice = `同源 v9/r${sourceRevision} 存档已备份并升级为 r${SAVE_REVISION}；旧星环自动卡已停用，请重新确认有限批次。`;
         this.message = "已升级并保存本地存档";
       }
       this.loaded = loaded;

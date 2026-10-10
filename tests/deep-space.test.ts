@@ -91,8 +91,21 @@ describe("merchant and physical salvage",()=>{
 
 describe("deep save validation and compatibility",()=>{
  it.each(['outbound','holding','return'])("round-trips %s exactly",phase=>{let s=depart();if(phase!=='outbound')s=hold(s);if(phase==='return')s=settle(seedFor(s,'metal'));expect(serializeState(clone(s))).toEqual(serializeState(s));});
- it("backed-up r2 migration preserves old fleet and pending beacons",()=>{const s=ready(),file=JSON.parse(exportSave(s,1000));file.revision=2;delete file.state.deepSpace;const raw=JSON.stringify(file),store=mem(raw),loaded=loadGame(store,1000);expect(loaded.state.planets).toEqual(s.planets);expect(loaded.state.arcade).toEqual(s.arcade);expect(store.data[STORAGE_KEY+'.backup']).toBe(raw);expect(store.data['infinity.save.v1']).toBe('EXISTING LIVE');expect(store.data[STORAGE_KEY]).toBe(raw);expect(loaded.state.deepSpace.completed).toBe(0);});
- it("r2 upgrade refuses to proceed when backup cannot be read",()=>{const r=JSON.parse(exportSave(ready(),1));r.revision=2;delete r.state.deepSpace;const raw=JSON.stringify(r),store:KeyValueStore={getItem:k=>k===STORAGE_KEY?raw:null,setItem:()=>{},removeItem:()=>{}};expect(()=>loadGame(store,1)).toThrow('备份');});
+ it("backed-up r2 migration preserves old fleet and pending beacons",()=>{
+  const s=ready(),file=JSON.parse(exportSave(s,1000));
+  file.revision=2;delete file.state.deepSpace;delete file.state.arcade.nextRunId;delete file.state.arcade.autoBatch;
+  for(const run of file.state.arcade.runs)delete run.id;
+  const raw=JSON.stringify(file),store=mem(raw),loaded=loadGame(store,1000);
+  expect(loaded.state.planets).toEqual(s.planets);
+  const {nextRunId,autoBatch,...arcade}=loaded.state.arcade;
+  expect({...arcade,runs:arcade.runs.map(({id:_id,...run})=>run)}).toEqual(file.state.arcade);
+  expect(arcade.runs.map(run=>run.id)).toEqual(arcade.runs.map((_,index)=>index+1));
+  expect(nextRunId).toBe(arcade.runs.length+1);expect(autoBatch).toBeNull();
+  expect(store.data[STORAGE_KEY+'.backup']).toBe(raw);expect(store.data['infinity.save.v1']).toBe('EXISTING LIVE');
+  expect(store.data[STORAGE_KEY]).toBe(raw);expect(loaded.state.deepSpace.completed).toBe(0);
+ });
+ it("r3 migration preserves deep charge outcomes, receipts, RNG and economy",()=>{const s=settle(seedFor(hold(),'metal')),file=JSON.parse(exportSave(s,1000));file.revision=3;delete file.state.arcade.nextRunId;delete file.state.arcade.autoBatch;for(const run of file.state.arcade.runs)delete run.id;const raw=JSON.stringify(file),loaded=importSave(raw).state;expect(loaded.deepSpace).toEqual(file.state.deepSpace);expect(loaded.fleets).toEqual(file.state.fleets);expect(loaded.planets).toEqual(file.state.planets);expect(loaded.arcade.seed).toBe(file.state.arcade.seed);expect(loaded.arcade.runs.map(({id:_id,...run})=>run)).toEqual(file.state.arcade.runs);expect(loaded.arcade.runs.map(run=>run.id)).toEqual([1]);expect(loaded.arcade.nextRunId).toBe(2);expect(loaded.arcade.autoBatch).toBeNull();});
+ it("r2 upgrade refuses to proceed when backup cannot be read",()=>{const r=JSON.parse(exportSave(ready(),1));r.revision=2;delete r.state.deepSpace;delete r.state.arcade.nextRunId;delete r.state.arcade.autoBatch;for(const run of r.state.arcade.runs)delete run.id;const raw=JSON.stringify(r),store:KeyValueStore={getItem:k=>k===STORAGE_KEY?raw:null,setItem:()=>{},removeItem:()=>{}};expect(()=>loadGame(store,1)).toThrow('备份');});
  it.each([
   ['absent deep state',(f:any)=>{delete f.state.deepSpace;}],['negative count',(f:any)=>{f.state.deepSpace.completed=-1;}],
   ['future revision',(f:any)=>{f.revision=999;}],['r2 smuggled state',(f:any)=>{f.revision=2;}],
@@ -101,6 +114,7 @@ describe("deep save validation and compatibility",()=>{
   ['invalid bet',(f:any)=>{f.state.fleets[0].charge.stake=5;}],['invalid target',(f:any)=>{f.state.fleets[0].target.position=3;}],
   ['unsupported items',(f:any)=>{f.state.fleets[0].charge.items.other=1;}],['no receipt',(f:any)=>{f.state.arcade.runs=[{source:'charge',outcome:{main:{tile:0,big:false,u:.2,v:.2},lucky:null,forced:null}}];}],
  ])('rejects %s',(_name,mutate)=>{const s=depart(),file=JSON.parse(exportSave(s,1));mutate(file);expect(()=>importSave(JSON.stringify(file))).toThrow();});
+ it("reserves a safe ticket ID for each in-flight charge when importing",()=>{const file=JSON.parse(exportSave(depart(),1));file.state.arcade.nextRunId=Number.MAX_SAFE_INTEGER;expect(()=>importSave(JSON.stringify(file))).toThrow('安全票号');file.state.arcade.nextRunId=Number.MAX_SAFE_INTEGER-1;expect(importSave(JSON.stringify(file)).state.arcade.nextRunId).toBe(Number.MAX_SAFE_INTEGER-1);});
  it("finished charge receipts cannot duplicate IDs on import",()=>{const s=settle(seedFor(hold(),'metal'));const file=JSON.parse(exportSave(s,1));file.state.arcade.runs.push(file.state.arcade.runs[0]);expect(()=>importSave(JSON.stringify(file))).toThrow();});
  it("non-cargo return callback is idempotent",()=>{const s=settle(seedFor(hold(),'dark_matter')),f=s.fleets[0]!;const due={...s,fleets:[{...f,remaining:0,elapsed:f.remaining}]};const a=finishChargeReturn(due,due.fleets[0]!);expect(finishChargeReturn(a,due.fleets[0]!)).toBe(a);});
  it("merchant offers have bounded independent ratios",()=>{const s=ready();for(let seed=0;seed<50;seed++){const {state}=createOffer(s,s.activePlanetId,seed,true);const o=state.deepSpace.offers[0]!;expect(o.ratios.metal).toBeGreaterThanOrEqual(2.55);expect(o.ratios.metal).toBeLessThanOrEqual(3.45);expect(clone(state).deepSpace.offers).toEqual(state.deepSpace.offers);}});

@@ -55,3 +55,18 @@
 }
 
 .ring-visual .ring-version { color:var(--muted); font-size:.66rem; font-weight:normal; margin-left:.6rem; }
+
+/* Bounded automation is secondary to the original manual controls. */
+.ring-visual .ring-auto { border-block:1px solid var(--line,#34343c); margin:12px 0; padding:10px 0; font-size:.75rem; overflow-wrap:anywhere; }
+.ring-visual .ring-auto h3 { font-size:.85rem; margin:0 0 8px; }
+.ring-visual .ring-auto p { margin:6px 0; line-height:1.5; }
+.ring-visual .ring-auto small { display:block; color:var(--muted); margin-top:8px; line-height:1.6; }
+.ring-visual .ring-auto-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+.ring-visual .ring-auto-fields label { min-width:0; display:flex; flex-direction:column; gap:5px; }
+.ring-visual .ring-auto-fields label:first-child { grid-column:1/-1; }
+.ring-visual .ring-auto-fields input,.ring-visual .ring-auto-fields select { box-sizing:border-box; width:100%; min-width:0; }
+.ring-visual .ring-auto-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.ring-visual #ring-auto-prerequisite,.ring-visual #ring-auto-validation,.ring-visual #ring-auto-stop-reason { color:var(--muted); }
+@media(max-width:600px) {
+ .ring-visual .ring-auto input,.ring-visual .ring-auto select,.ring-visual .ring-auto button { min-height:44px; }
+}

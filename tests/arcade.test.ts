@@ -40,8 +40,8 @@ function opened(seed = 12345, extra: Partial<Record<string, number>> = {}): Game
 }
 
 function withRun(state: GameState, tile: number, big = false, u = 0.5, v = 0.5): GameState {
-  const run: PendingRun = { source: "beacon", outcome: { main: { tile, big, u, v }, lucky: null, forced: null } };
-  return { ...state, arcade: { ...state.arcade, runs: [...state.arcade.runs, run] } };
+  const run: PendingRun = { id: state.arcade.nextRunId, source: "beacon", outcome: { main: { tile, big, u, v }, lucky: null, forced: null } };
+  return { ...state, arcade: { ...state.arcade, nextRunId: state.arcade.nextRunId + 1, runs: [...state.arcade.runs, run] } };
 }
 
 const tileOf = (symbol: string) => BOARD.indexOf(symbol as (typeof BOARD)[number]);
@@ -304,44 +304,45 @@ describe("bets and top-up", () => {
 });
 
 describe("auto runner protocol", () => {
-  it("unlocks after 10 manual runs and opens runs on its own, offline included", () => {
+  it("unlocks after 10 manual runs but equipping alone never opens future runs, offline included", () => {
     let state = opened();
     for (let i = 0; i < 10; i += 1) state = revealRun(withRun(state, tileOf("empty")), "manual").state;
     state = tick(state, 0.01);
     expect(state.unlockedCards).toContain("auto_runner");
     state = equipCard(state, 0, "auto_runner").state;
     const away = catchUp(state, 3 * 3600);
-    expect(away.arcadeRuns.length).toBeGreaterThanOrEqual(3);
-    expect(away.state.arcade.runs).toHaveLength(0);
-    expect(away.state.arcade.stats.autoRuns).toBe(away.arcadeRuns.length);
+    expect(state.protocols.slots[0]!.card!.enabled).toBe(false);
+    expect(away.arcadeRuns).toHaveLength(0);
+    expect(away.state.arcade.runs).toHaveLength(ARCADE.beaconMax);
+    expect(away.state.arcade.stats.autoRuns).toBe(0);
   });
 
-  it("conditions switch between stored runs and pity counters; the bet action edits standing bets", () => {
+  it("conditions still switch between runs and pity, while automatic bet edits are unavailable", () => {
     let state = opened();
     for (let i = 0; i < 10; i += 1) state = revealRun(withRun(state, tileOf("metal")), "manual").state;
     state = equipCard(tick(state, 0.01), 0, "auto_runner").state;
-    expect(protocolSentence(state.protocols.slots[0]!.card!)).toBe("当星环机有开奖次数，若开奖次数 ≥ 1，则按常驻押注开完全部开奖。");
+    expect(protocolSentence(state.protocols.slots[0]!.card!)).toBe("当星环机有开奖次数，若开奖次数 ≥ 1，则按已授权快照开奖 1 次。");
     state = patchSlot(state, 0, "condition.0.kind", "pityGte");
     state = patchSlot(state, 0, "condition.0.pity", "jackpot");
     state = patchSlot(state, 0, "condition.0.value", "45");
     state = patchSlot(state, 0, "action.kind", "setBet");
     state = patchSlot(state, 0, "action.units", "3");
-    expect(protocolSentence(state.protocols.slots[0]!.card!)).toBe("当星环机有开奖次数，若大奖保底计数 ≥ 45，则把金属陨石的常驻押注改为 3 注。");
+    expect(protocolSentence(state.protocols.slots[0]!.card!)).toBe("当星环机有开奖次数，若大奖保底计数 ≥ 45，则按已授权快照开奖 1 次。");
     state = { ...state, arcade: { ...state.arcade, pity: { empty: 0, jackpot: 46 } } };
     state = tick(withRun(state, tileOf("empty")), 1.5);
-    expect(state.arcade.bets.metal).toBe(3);
+    expect(state.arcade.bets.metal).toBe(0);
   });
 });
 
 describe("save", () => {
-  it("round-trips the machine; missing arcade loads as a fresh one; bad tiles are rejected", () => {
+  it("round-trips the machine; current r4 requires safety state and rejects bad tiles", () => {
     let state = grantRun(setBet(opened(), "crystal", 3).state, "topup").state;
     state = revealRun(withRun(state, tileOf("metal")), "manual").state;
     const restored = deserializeState(importSave(exportSave(state, 1)).state);
     expect(serializeState(restored).arcade).toEqual(serializeState(state).arcade);
     const file = JSON.parse(exportSave(state, 1));
     delete file.state.arcade;
-    expect(deserializeState(importSave(JSON.stringify(file)).state).arcade.runs).toHaveLength(0);
+    expect(() => importSave(JSON.stringify(file))).toThrow();
     const bad = JSON.parse(exportSave(state, 1));
     bad.state.arcade.runs[0].outcome.main.tile = 40;
     expect(() => importSave(JSON.stringify(bad))).toThrow();

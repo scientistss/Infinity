@@ -23,7 +23,9 @@ function project(current) {
   const s = nowSave.serializeState(current);
   const { planets, activePlanetId: _active, deepSpace: _deep, universe: _universe, fleets: _fleets, messages: _messages, nextFleetId: _nextFleetId, ...empire } = s;
   const { id: _id, coordinates: _coordinates, resources, ...planet } = planets[0];
-  return { ...empire, resources, planet, research: { ...s.research, queue: s.research.queue.map(({planetId: _payer, ...o})=>o) } };
+  const { nextRunId: _nextRunId, autoBatch: _autoBatch, ...legacyArcade } = s.arcade;
+  legacyArcade.runs = s.arcade.runs.map(({ id: _ticketId, ...run }) => run);
+  return { ...empire, arcade: legacyArcade, resources, planet, research: { ...s.research, queue: s.research.queue.map(({planetId: _payer, ...o})=>o) } };
 }
 let checked=0;
 for(let seed=1;seed<=16;seed++) {
@@ -35,7 +37,7 @@ for(let seed=1;seed<=16;seed++) {
     s.arcade.seed=seed*991;s.manualClicks=100;
     Object.assign(s.research.levels,{combustion_drive:2,energy_tech:3,astrophysics:1,computer_tech:2});
   }
-  const check=()=>{assert.deepEqual(project(current),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
+  const check=()=>{assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
   old=oldLogic.tick(old,0.1);current=nowLogic.tick(current,0.1);check();
   old=oldQueue.enqueue(old,"metal_mine","manual").state;current=nowQueue.enqueue(current,"metal_mine","manual").state;check();
   old=oldResearch.enqueueResearch(old,"computer_tech","manual").state;current=nowResearch.enqueueResearch(current,"computer_tech","manual").state;check();

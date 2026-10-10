@@ -9,12 +9,14 @@ import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
 import { curvatureById } from "./data/curvature-tech";
 import { buyCurvature } from "./prestige/tree";
 import {
+  armAutoRunner,
   clearSlot,
   equipCard,
   equipFirstEmpty,
   moveSlot,
   patchSlot,
   setProductionPct,
+  stopAutoRunner,
   toggleSlot,
 } from "./automation/engine";
 import { buildingById } from "./data/buildings";
@@ -187,6 +189,15 @@ async function handleAction(action: UiAction): Promise<void> {
     state = result.state;
     status = result.reason;
     if (result.ok) persist();
+  } else if (action.type === "ring-auto-arm") {
+    const result = armAutoRunner(state, action.slotIndex, {planetId: action.planetId, count: action.count, maxDeuterium: action.maxDeuterium});
+    state = result.state;
+    status = result.reason;
+    if (result.ok) persist();
+  } else if (action.type === "ring-auto-stop") {
+    state = stopAutoRunner(state);
+    status = "已停止自动开奖；重新授权后才会继续";
+    persist();
   } else if (action.type === "arcade-run") {
     const result = revealRun(state, "manual");
     state = result.state;
@@ -210,6 +221,7 @@ async function handleAction(action: UiAction): Promise<void> {
     status = result.reason;
     persist();
   } else if (action.type === "arcade-bet-clear") {
+    state = stopAutoRunner(state);
     state = { ...state, arcade: { ...state.arcade, bets: { metal: 0, crystal: 0, deuterium: 0, drifter: 0 } } };
     status = "已清空押注";
     persist();

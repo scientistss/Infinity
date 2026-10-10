@@ -25,6 +25,7 @@ parser.add_argument("--chromium", default=None)
 args = parser.parse_args()
 fixtures = json.loads(Path(args.fixture).read_text())
 KEY, BACKUP = fixtures["key"], fixtures["backupKey"]
+SAVE_REVISION = fixtures["saveRevision"]
 LEGACY = "infinity.save.v1"
 LEGACY_RAW = "SYNTHETIC LEGACY BYTES: must remain untouched"
 out = Path(args.output)
@@ -47,6 +48,18 @@ def check(name, condition):
 def raw_fixture(which="current"):
     value = copy.deepcopy(fixtures[which])
     value["savedAt"] = value["lastTickAt"] = int(time.time() * 1000)
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def legacy_fixture(revision):
+    value = json.loads(raw_fixture())
+    value["revision"] = revision
+    if revision == 2:
+        del value["state"]["deepSpace"]
+    del value["state"]["arcade"]["nextRunId"]
+    del value["state"]["arcade"]["autoBatch"]
+    for run in value["state"]["arcade"]["runs"]:
+        del run["id"]
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
@@ -337,51 +350,53 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        case = "supported same-schema r2 startup migration"
-        r2 = json.loads(raw_fixture())
-        r2["revision"] = 2
-        del r2["state"]["deepSpace"]
-        r2_raw = json.dumps(r2, ensure_ascii=False, indent=2)
-        context, page = boot(r2_raw)
-        migrated = verify_commit(page, r2_raw, "已升级并保存本地存档")
-        check("supported migration produces revision 3", json.loads(migrated)["revision"] == 3)
-        check("migration retains original planet", planet(page) == name_of(r2_raw))
-        check("migration backup is byte-for-byte r2 original", raw(page, BACKUP) == r2_raw)
-        context.close()
+        for revision in (2, 3):
+            case = f"supported same-schema r{revision} startup migration"
+            legacy_raw = legacy_fixture(revision)
+            context, page = boot(legacy_raw)
+            migrated = verify_commit(page, legacy_raw, "已升级并保存本地存档")
+            migrated_file = json.loads(migrated)
+            check(f"supported migration produces revision {SAVE_REVISION}", migrated_file["revision"] == SAVE_REVISION)
+            check("migration never creates spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
+            check("migration retains original planet", planet(page) == name_of(legacy_raw))
+            check(f"migration backup is byte-for-byte r{revision} original", raw(page, BACKUP) == legacy_raw)
+            context.close()
 
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for target, fault_mode in (("all", "throw"), ("backup", "drop")):
-            case = f"r2 startup migration fault: {target} {fault_mode}"
-            r2 = json.loads(raw_fixture())
-            r2["revision"] = 2
-            del r2["state"]["deepSpace"]
-            r2_raw = json.dumps(r2, ensure_ascii=False, indent=2)
-            context, page = boot(r2_raw, startup_fault={
-                "operation": "write", "target": target, "mode": fault_mode})
-            check("initial write denial does not hide readable r2 source", planet(page) == name_of(r2_raw))
-            check("failed startup migration preserves exact r2 current bytes", raw(page) == r2_raw)
-            expect(page.locator('[data-bind="notice"]')).to_contain_text("原件已保留")
-            check("startup backup fault was actually exercised", any(
-                row["operation"] == "write-" + fault_mode and row.get("key") == BACKUP
-                and row.get("injected") for row in events(page)))
-            check("failed startup backup never attempts a current write", not any(
-                row["operation"] == "write-attempt" and row["key"] == KEY for row in events(page)))
-            frozen_time = page.locator('[data-bind="played"]').text_content()
-            frozen_metal = page.locator('[data-bind="amount-metal"]').text_content()
-            page.wait_for_timeout(1_200)
-            check("readable r2 source simulation time remains frozen", page.locator('[data-bind="played"]').text_content() == frozen_time)
-            check("readable r2 source resources remain frozen", page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
-            page.locator('[data-tab="overview"]').click()
-            page.locator('[data-bind="action-scrape-ov"]').click()
-            check("protected r2 source also rejects manual collection", page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
-            select_save(page)
-            exported = download_raw(page, f"r2-startup-{target}-{fault_mode}-original.json")
-            check("failed startup migration exports exact original r2 bytes", exported == r2_raw)
-            check("failed startup migration never claims success", not any(
-                row["operation"] == "ui-status" and row["text"] == "已升级并保存本地存档"
-                for row in events(page)))
-            capture_audit(page, "startup migration fault retains readable frozen source")
-            context.close()
+        for revision in (2, 3):
+            for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
+                case = f"r{revision} startup migration fault: {target} {fault_mode}"
+                legacy_raw = legacy_fixture(revision)
+                context, page = boot(legacy_raw, startup_fault={
+                    "operation": "write", "target": target, "mode": fault_mode})
+                check(f"initial write denial does not hide readable r{revision} source", planet(page) == name_of(legacy_raw))
+                check(f"failed startup migration preserves exact r{revision} current bytes", raw(page) == legacy_raw)
+                expect(page.locator('[data-bind="notice"]')).to_contain_text("原件已保留")
+                fault_key = KEY if target == "current" else BACKUP
+                check("startup write fault was actually exercised", any(
+                    row["operation"] == "write-" + fault_mode and row.get("key") == fault_key
+                    and row.get("injected") for row in events(page)))
+                if target == "current":
+                    check("failed current replacement retains exact backup", raw(page, BACKUP) == legacy_raw)
+                else:
+                    check("failed startup backup never attempts a current write", not any(
+                        row["operation"] == "write-attempt" and row["key"] == KEY for row in events(page)))
+                frozen_time = page.locator('[data-bind="played"]').text_content()
+                frozen_metal = page.locator('[data-bind="amount-metal"]').text_content()
+                page.wait_for_timeout(1_200)
+                check(f"readable r{revision} source simulation time remains frozen", page.locator('[data-bind="played"]').text_content() == frozen_time)
+                check(f"readable r{revision} source resources remain frozen", page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
+                page.locator('[data-tab="overview"]').click()
+                page.locator('[data-bind="action-scrape-ov"]').click()
+                check(f"protected r{revision} source also rejects manual collection", page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
+                select_save(page)
+                exported = download_raw(page, f"r{revision}-startup-{target}-{fault_mode}-original.json")
+                check(f"failed startup migration exports exact original r{revision} bytes", exported == legacy_raw)
+                check("failed startup migration never claims success", not any(
+                    row["operation"] == "ui-status" and row["text"] == "已升级并保存本地存档"
+                    for row in events(page)))
+                capture_audit(page, "startup migration fault retains readable frozen source")
+                context.close()
 
         classification = "HTTP / native Storage backing / injected write fault"
         for action in ("import", "reset"):

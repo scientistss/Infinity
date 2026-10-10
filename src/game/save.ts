@@ -9,7 +9,7 @@ import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
 import { isCatalogId, isResId, isStoredResId, refreshUnlocks } from "../automation/engine";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
-import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, SAVE_SCHEMA, STORAGE_KEY } from "./content";
+import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, SAVE_REVISION, SAVE_SCHEMA, STORAGE_KEY } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
 import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
@@ -21,7 +21,7 @@ import { RESEARCH_IDS, isResearchId, type ResearchId } from "../data/research";
 import { createResearch, type ResearchOrder, type ResearchState } from "./research";
 import { INVENTORY_IDS, type InventoryItemId } from "../data/dark-matter";
 import type { Booster } from "./boosters";
-import { cloneArcade, createArcade, emptyHits, type ArcadeState, type LightRoll, type PendingRun } from "./arcade";
+import { cloneArcade, createArcade, emptyHits, isRingAmount, compareRingAmounts, type ArcadeState, type LightRoll, type PendingRun, type RingAutoBatch } from "./arcade";
 import { ARCADE, ARCADE_SYMBOLS, BET_SYMBOLS, BOARD, LUCKY_TABLE, isArcadeSymbol, isBetSymbol } from "../data/arcade";
 import { createDefaultProtocols, createInitialState, emptyProtocolSlot, emptyStats } from "./state";
 import {
@@ -97,7 +97,7 @@ export interface SerializedState {
   /** Optional (added during v7); missing means empty. */
   items?: Record<InventoryItemId, number>;
   boosters?: Booster[];
-  arcade?: ArcadeState;
+  arcade: ArcadeState;
   lifetime: Record<ResourceId, string>;
   warpCores: string;
   curvature: Record<CurvatureId, number>;
@@ -122,7 +122,7 @@ export interface SerializedState {
 
 export interface SaveFile {
   schema: typeof SAVE_SCHEMA;
-  revision: 3;
+  revision: typeof SAVE_REVISION;
   version: number;
   savedAt: number;
   /** Wall clock of the last simulated tick. */
@@ -130,7 +130,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2 → r3 is migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2/r3 → r4 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -209,7 +209,9 @@ export function deserializeState(raw: unknown): GameState {
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
   Object.assign(state, readSpaceState(raw, state));
   state.deepSpace=readDeepState(raw.deepSpace,state);
+  validateRingBatchReferences(state);
   if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
+  if(chargeReservations(state)>Number.MAX_SAFE_INTEGER-state.arcade.nextRunId)throw Error("充能任务超出剩余安全票号");
   const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
   if(new Set(receipts).size!==receipts.length)throw Error("充能回放凭证重复");
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
@@ -219,7 +221,7 @@ export function deserializeState(raw: unknown): GameState {
 export function exportSave(state: GameState, savedAt = Date.now()): string {
   const file: SaveFile = {
     schema: SAVE_SCHEMA,
-    revision: 3,
+    revision: SAVE_REVISION,
     version: SAVE_VERSION,
     savedAt,
     lastTickAt: savedAt,
@@ -241,12 +243,10 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3) throw Error("原版 P4 存档修订不兼容（需要 r2/r3）；原件保留，未导入");
-  if(parsed.revision===2){
-    if(!isRecord(parsed.state)||!isRecord(parsed.state.universe))throw Error("r2 宇宙数据缺失");
-    if("deepSpace" in parsed.state || (Array.isArray(parsed.state.fleets)&&parsed.state.fleets.some(f=>isRecord(f)&&(f.mission==="charge"||f.mission==="recycle"||"charge" in f))))throw Error("r2 不能夹带深空数据");
-    parsed.state={...parsed.state,deepSpace:createDeepState(Number(parsed.state.universe.seed))};
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r${SAVE_REVISION}）；原件保留，未导入`);
   }
+  if (parsed.revision !== SAVE_REVISION) parsed.state = migrateLegacyState(parsed.state, parsed.revision);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -254,12 +254,60 @@ export function importSave(json: string): SaveFile {
     typeof parsed.lastTickAt === "number" && Number.isFinite(parsed.lastTickAt) ? parsed.lastTickAt : parsed.savedAt;
   return {
     schema: SAVE_SCHEMA,
-    revision: 3,
+    revision: SAVE_REVISION,
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
     state: serializeState(deserializeState(parsed.state)),
   };
+}
+
+/** Add metadata without rerolling tickets or inferring any spending authorization. */
+function migrateLegacyState(raw: unknown, revision: 2 | 3): Record<string, unknown> {
+  if (!isRecord(raw)) throw Error("存档状态格式不正确");
+  const arcade = raw.arcade;
+  if (arcade !== undefined && !isRecord(arcade)) throw Error("星环机数据格式不正确");
+  if (isRecord(arcade) && ("nextRunId" in arcade || "autoBatch" in arcade ||
+      (Array.isArray(arcade.runs) && arcade.runs.some(run => isRecord(run) && "id" in run)))) {
+    throw Error(`r${revision} 不能夹带 r4 星环授权数据`);
+  }
+  let migrated = { ...raw };
+  if (revision === 2) {
+    if (!isRecord(raw.universe)) throw Error("r2 宇宙数据缺失");
+    if ("deepSpace" in raw ||
+        (Array.isArray(raw.fleets) && raw.fleets.some(f => isRecord(f) && (f.mission === "charge" || f.mission === "recycle" || "charge" in f))) ||
+        (isRecord(arcade) && Array.isArray(arcade.runs) && arcade.runs.some(run => isRecord(run) && (run.source === "charge" || "receipt" in run)))) {
+      throw Error("r2 不能夹带深空数据");
+    }
+    migrated = { ...migrated, deepSpace: createDeepState(Number(raw.universe.seed)) };
+  }
+  if (isRecord(arcade)) {
+    if (arcade.runs !== undefined && !Array.isArray(arcade.runs)) throw Error("星环机开奖次数无效");
+    const runs = (arcade.runs ?? []) as unknown[];
+    migrated.arcade = {
+      ...arcade,
+      runs: runs.map((run, index) => {
+        if (!isRecord(run)) throw Error("星环机开奖数据格式不正确");
+        return { ...run, id: index + 1 };
+      }),
+      nextRunId: runs.length + 1,
+      autoBatch: null,
+    };
+  } else {
+    migrated.arcade = createArcade();
+  }
+  // Old enabled runner/bet cards never become permission to spend during catch-up.
+  if (isRecord(raw.protocols) && Array.isArray(raw.protocols.slots)) {
+    migrated.protocols = {
+      ...raw.protocols,
+      slots: raw.protocols.slots.map(slot => {
+        if (!isRecord(slot) || !isRecord(slot.card) || !isRecord(slot.card.action) ||
+            (slot.card.action.kind !== "runLights" && slot.card.action.kind !== "setBet")) return slot;
+        return { ...slot, card: { ...slot.card, enabled: false } };
+      }),
+    };
+  }
+  return migrated;
 }
 
 export function writeSave(store: KeyValueStore, state: GameState, savedAt = Date.now()): void {
@@ -285,7 +333,7 @@ export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
   const raw = store.getItem(STORAGE_KEY);
   if (raw === null) return { ...emptyCatchup(createInitialState()), notice: null };
   const file = importSave(raw);
-  if (JSON.parse(raw).revision === 2) backupRawSave(store);
+  if (JSON.parse(raw).revision !== SAVE_REVISION) preserveRawSave(store, raw);
   const elapsed = (now - file.lastTickAt) / 1000;
   return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
 }
@@ -447,7 +495,7 @@ function readPendingRun(raw: unknown, index: number): PendingRun {
   }
   const receipt=source==="charge"?readReceipt(raw.receipt):undefined;
   if(source!=="charge"&&raw.receipt!==undefined)throw Error("信标不能夹带充能凭证");
-  return { source, outcome: { main: readLight(outcome.main, label), lucky, forced }, ...(receipt?{receipt}:{}) };
+  return { id: readInteger(raw.id, `${label}票号`, 1, Number.MAX_SAFE_INTEGER), source, outcome: { main: readLight(outcome.main, label), lucky, forced }, ...(receipt?{receipt}:{}) };
 }
 
 function readFinite(raw: unknown, label: string, fallback: number): number {
@@ -456,15 +504,21 @@ function readFinite(raw: unknown, label: string, fallback: number): number {
   return raw;
 }
 
-/** Ring machine state; optional (absent = fresh machine). */
+/** Current ring state requires explicit ticket identity and authorization fields. */
 function readArcade(raw: unknown): ArcadeState {
-  if (raw === undefined) return createArcade();
   if (!isRecord(raw)) throw new Error("星环机数据格式不正确");
   const arcade = createArcade(readInteger(raw.seed, "星环机随机数状态", 0, 0xffffffff));
   if (raw.runs !== undefined) {
     if (!Array.isArray(raw.runs) || raw.runs.length > DEEP.maxStoredRuns) throw new Error("星环机开奖次数无效");
     arcade.runs = raw.runs.map(readPendingRun);
   }
+  arcade.nextRunId = readInteger(raw.nextRunId, "星环机下一票号", 1, Number.MAX_SAFE_INTEGER);
+  const runIds = arcade.runs.map(run => run.id);
+  if (new Set(runIds).size !== runIds.length) throw Error("星环机票号重复");
+  if (runIds.some((id, index) => index > 0 && id <= runIds[index - 1]!)) throw Error("星环机票号顺序无效");
+  if (runIds.some(id => id >= arcade.nextRunId)) throw Error("星环机下一票号过期");
+  arcade.autoBatch = readRingAutoBatch(raw.autoBatch);
+  if (arcade.autoBatch?.ticketIds.some(id => id >= arcade.nextRunId)) throw Error("星环机授权票号超出计数器");
   arcade.beaconRequired = Math.min(
     ARCADE.beaconSeconds * 3,
     Math.max(1, readFinite(raw.beaconRequired, "信标冷却", ARCADE.beaconSeconds)),
@@ -527,6 +581,46 @@ function readArcade(raw: unknown): ArcadeState {
     };
   }
   return arcade;
+}
+
+function readRingAutoBatch(raw: unknown): RingAutoBatch | null {
+  if (raw === null) return null;
+  if (!isRecord(raw) || typeof raw.armed !== "boolean") throw Error("星环机自动批次授权无效");
+  if (!Array.isArray(raw.ticketIds) || raw.ticketIds.length < 1 || raw.ticketIds.length > Math.min(40, DEEP.maxStoredRuns)) {
+    throw Error("星环机自动批次票数无效");
+  }
+  const ticketIds = raw.ticketIds.map(id => readInteger(id, "星环机授权票号", 1, Number.MAX_SAFE_INTEGER));
+  if (new Set(ticketIds).size !== ticketIds.length) throw Error("星环机授权票号重复");
+  if (ticketIds.some((id, index) => index > 0 && id <= ticketIds[index - 1]!)) throw Error("星环机授权票号顺序无效");
+  const completed = readInteger(raw.completed, "星环机自动批次游标", 0, ticketIds.length);
+  if (raw.armed && completed === ticketIds.length) throw Error("已完成的星环机自动批次不能保持授权");
+  if (!isRingAmount(raw.maxDeuterium) || !isRingAmount(raw.spentDeuterium)) throw Error("星环机自动批次预算必须是有效数字字符串");
+  if (compareRingAmounts(raw.spentDeuterium, raw.maxDeuterium) > 0) throw Error("星环机自动批次花费超过预算");
+  if (!isRecord(raw.bets) || Object.keys(raw.bets).some(symbol => !isBetSymbol(symbol))) throw Error("星环机自动批次押注无效");
+  const bets = {} as RingAutoBatch["bets"];
+  let total = 0;
+  for (const symbol of BET_SYMBOLS) {
+    bets[symbol] = readInteger(raw.bets[symbol], `星环机自动批次押注 ${symbol}`, 0, 1000);
+    total += bets[symbol];
+  }
+  if (total > Math.floor(ARCADE.betMaxSeconds / ARCADE.betUnitSeconds)) throw Error("星环机自动批次押注超过上限");
+  if (typeof raw.stopReason !== "string" || raw.stopReason.length > 240) throw Error("星环机自动批次停止原因无效");
+  return { armed: raw.armed, planetId: readPlanetId(raw.planetId), ticketIds, completed,
+    maxDeuterium: raw.maxDeuterium, spentDeuterium: raw.spentDeuterium, bets, stopReason: raw.stopReason };
+}
+
+function validateRingBatchReferences(state: GameState): void {
+  const batch = state.arcade.autoBatch;
+  if (!batch) return;
+  // Retired snapshots are audit history and may outlive a planet or its capacity.
+  if (!batch.armed) return;
+  if (batch.ticketIds.length > storedRunLimit(state)) throw Error("星环机自动批次票数超出上限");
+  if (!state.planets.some(planet => planet.id === batch.planetId)) throw Error("星环机自动批次出资星球不存在");
+  const pendingIds = state.arcade.runs.map(run => run.id);
+  if (batch.ticketIds.slice(0, batch.completed).some(id => pendingIds.includes(id)) ||
+      batch.ticketIds.slice(batch.completed).some((id, index) => pendingIds[index] !== id)) {
+    throw Error("星环机自动批次剩余票号与待开奖顺序不一致");
+  }
 }
 
 function serializeResearch(research: ResearchState): SerializedState["research"] {

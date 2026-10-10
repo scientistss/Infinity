@@ -256,12 +256,12 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
     template: {
       trigger: { kind: 'runsReady' },
       conditions: [{ kind: 'runsGte', value: 1 }],
-      action: { kind: 'runLights', count: 'all' },
+      action: { kind: 'runLights', count: 1 },
     },
     unlocks: {
       triggers: ['runsReady'],
       conditions: ['runsGte', 'pityGte'],
-      actions: ['runLights', 'setBet'],
+      actions: ['runLights'],
     },
   },
   {

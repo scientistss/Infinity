@@ -34,6 +34,10 @@ jobs:
           git archive 69eca7107980cce3c4c24ce4736a91993c051fbd | tar -x -C "$RUNNER_TEMP/original-p3"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-p3/node_modules"
           node --import tsx scripts/check-original-parity.mjs "$RUNNER_TEMP/original-p3" > parity-report.json
+          mkdir -p "$RUNNER_TEMP/pre-r4"
+          git archive ebf75a755aa87f0b452bf427eb6cda833e26990d | tar -x -C "$RUNNER_TEMP/pre-r4"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-r4/node_modules"
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-r4" > save-revision-report.json
           npm run sim -- 60 | tee balance-report.txt
       - name: Browser prerequisites
         timeout-minutes: 4
@@ -62,6 +66,8 @@ jobs:
           python scripts/browser-deep-dashboard.py
           node --import tsx scripts/save-session-fixture.ts > save-session-review-save.json
           python scripts/browser-save-session.py --fixture save-session-review-save.json
+          node --import tsx scripts/ring-automation-fixture.ts > ring-automation-review-save.json
+          python scripts/browser-ring-automation.py --fixture ring-automation-review-save.json
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
@@ -78,10 +84,12 @@ jobs:
             ring-evidence
             dashboard-evidence
             save-session-evidence
+            ring-automation-evidence
             deep-fixtures
             test-results.json
             original-ui-report.json
             parity-report.json
+            save-revision-report.json
             balance-report.txt
             preview.log
           retention-days: 7

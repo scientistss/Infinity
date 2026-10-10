@@ -33,8 +33,9 @@ import { addInventory, freeStorage, grantDarkMatter } from "./dark-matter";
 import { economy } from "./economy";
 import { formatAmount, formatDm, formatDuration } from "./format";
 import { cumulativeCost, researchCost } from "./formulas";
-import { big } from "./decimal";
+import { big, isValidAmount } from "./decimal";
 import { Rng, freshSeed } from "./rng";
+import { deserializeState, serializeState } from "./save";
 import type { GameState, ResourceId } from "./types";
 
 export type RunSource = "beacon" | "topup" | "bonus" | "charge";
@@ -56,6 +57,8 @@ export interface RunOutcome {
 }
 
 export interface PendingRun {
+  /** Stable, monotonically issued identity. Revealing never creates an identity. */
+  id: number;
   source: RunSource;
   outcome: RunOutcome;
   /** Already resolved into a fleet. Revealing never grants its rewards twice. */
@@ -85,11 +88,13 @@ export interface ArcadeStats {
 export interface ArcadeState {
   seed: number;
   runs: PendingRun[];
+  nextRunId: number;
+  autoBatch: RingAutoBatch | null;
   beaconProgress: number;
   beaconRequired: number;
   /** Game-time stamps of deuterium top-ups (last 24 h set the price). */
   topUps: number[];
-  /** Standing bets in units, kept between runs and used by auto runs. */
+  /** Standing manual bets. Automatic batches use their own frozen snapshot. */
   bets: Record<BetSymbol, number>;
   /** Pity counters at roll time (decide future rolls) and at reveal time (shown on screen). */
   rollPity: { empty: number; jackpot: number };
@@ -98,6 +103,23 @@ export interface ArcadeState {
   position: number;
   history: ArcadeHistoryEntry[];
   stats: ArcadeStats;
+}
+
+export interface RingAutoBatch {
+  armed: boolean;
+  planetId: string;
+  ticketIds: number[];
+  completed: number;
+  maxDeuterium: string;
+  spentDeuterium: string;
+  bets: Record<BetSymbol, number>;
+  stopReason: string;
+}
+
+export interface ArmRingBatchRequest {
+  planetId: string;
+  count: number;
+  maxDeuterium: string;
 }
 
 export interface RunLight {
@@ -204,6 +226,8 @@ export function createArcade(seed: number = freshSeed()): ArcadeState {
   return {
     seed: seed >>> 0,
     runs: [],
+    nextRunId: 1,
+    autoBatch: null,
     beaconProgress: 0,
     beaconRequired: ARCADE.beaconSeconds,
     topUps: [],
@@ -290,17 +314,38 @@ export function rollOutcome(arcade: ArcadeState, minBig = false, customWeights?:
 
 /** Grant and pre-roll one run. Refused when the store is full. */
 export function grantRun(state: GameState, source: RunSource, minBig = false): { state: GameState; granted: boolean } {
-  if (source === "charge" || state.arcade.runs.length + chargeReservations(state) >= storedRunLimit(state)) return { state, granted: false };
+  if (source === "charge" || !canIssueRunId(state, chargeReservations(state)) || state.arcade.runs.length + chargeReservations(state) >= storedRunLimit(state)) return { state, granted: false };
   const rolled = rollOutcome(state.arcade, minBig);
-  const arcade = { ...rolled.arcade, runs: [...state.arcade.runs, { source, outcome: rolled.outcome }] };
+  const id = state.arcade.nextRunId;
+  const arcade = { ...rolled.arcade, nextRunId: id + 1, runs: [...state.arcade.runs, { id, source, outcome: rolled.outcome }] };
   return { state: { ...state, arcade }, granted: true };
+}
+
+export function isRunId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** MAX_SAFE_INTEGER is an exhausted counter, never an issued ticket. */
+export function canIssueRunId(state: GameState, reservedIds = 0): boolean {
+  const next = state.arcade.nextRunId;
+  return isRunId(next) && next < Number.MAX_SAFE_INTEGER - reservedIds && validPendingIds(state)
+    && (!state.arcade.autoBatch || state.arcade.autoBatch.ticketIds.every((id) => isRunId(id) && id < next));
+}
+
+function validPendingIds(state: GameState): boolean {
+  let previous = 0;
+  return isRunId(state.arcade.nextRunId) && state.arcade.runs.every((run) => {
+    const valid = isRunId(run.id) && run.id > previous && run.id < state.arcade.nextRunId;
+    previous = run.id;
+    return valid;
+  });
 }
 
 // ---------- beacon ----------
 
 /** Seconds until the next beacon run, or Infinity while locked or full (beacons stop at 3 stored runs). */
 export function nextBeaconIn(state: GameState): number {
-  if (!arcadeUnlocked(state) || state.arcade.runs.length >= ARCADE.beaconMax) return Number.POSITIVE_INFINITY;
+  if (!arcadeUnlocked(state) || !canIssueRunId(state, chargeReservations(state)) || state.arcade.runs.length >= ARCADE.beaconMax) return Number.POSITIVE_INFINITY;
   return Math.max(0, state.arcade.beaconRequired - state.arcade.beaconProgress);
 }
 
@@ -309,7 +354,7 @@ function settleBeacon(state: GameState): { state: GameState; granted: number } {
   let granted = 0;
   for (let guard = 0; guard < 8; guard += 1) {
     const arcade = current.arcade;
-    if (arcade.runs.length >= ARCADE.beaconMax || arcade.beaconProgress + EPS < arcade.beaconRequired) break;
+    if (arcade.runs.length >= ARCADE.beaconMax || !canIssueRunId(current, chargeReservations(current)) || arcade.beaconProgress + EPS < arcade.beaconRequired) break;
     const progress = Math.max(0, arcade.beaconProgress - arcade.beaconRequired);
     current = withArcade(current, { beaconProgress: progress, beaconRequired: ARCADE.beaconSeconds });
     const result = grantRun(current, "beacon");
@@ -584,6 +629,111 @@ export function totalBetUnits(state: GameState): number {
   return BET_SYMBOLS.reduce((sum, symbol) => sum + state.arcade.bets[symbol], 0);
 }
 
+/** Only explicit finite, nonnegative decimal strings can authorize a spending cap. */
+export function isRingAmount(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 1000 || !/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) return false;
+  try {
+    const exponent = value.toLowerCase().split("e")[1];
+    if (exponent !== undefined && !Number.isSafeInteger(Number(exponent))) return false;
+    const amount = big(value.toLowerCase());
+    return isValidAmount(amount) && /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(amount.toString());
+  } catch {
+    return false;
+  }
+}
+
+/** Exact decimal comparison avoids widening an authorization through float rounding. */
+export function compareRingAmounts(left: string, right: string): number {
+  const a = ringAmountParts(left), b = ringAmountParts(right);
+  if (a.digits === "0" || b.digits === "0") return a.digits === b.digits ? 0 : a.digits === "0" ? -1 : 1;
+  const magnitudeA = BigInt(a.digits.length) + a.scale, magnitudeB = BigInt(b.digits.length) + b.scale;
+  if (magnitudeA !== magnitudeB) return magnitudeA > magnitudeB ? 1 : -1;
+  const length = Math.max(a.digits.length, b.digits.length);
+  const digitsA = a.digits.padEnd(length, "0"), digitsB = b.digits.padEnd(length, "0");
+  return digitsA === digitsB ? 0 : digitsA > digitsB ? 1 : -1;
+}
+
+function ringAmountParts(value: string): { digits: string; scale: bigint } {
+  const [mantissa, exponent = "0"] = value.toLowerCase().split("e");
+  const [whole, fraction = ""] = mantissa!.split(".");
+  const digits = `${whole}${fraction}`.replace(/^0+/, "");
+  if (!digits) return { digits: "0", scale: 0n };
+  const trimmed = digits.replace(/0+$/, "");
+  return { digits: trimmed, scale: BigInt(exponent) + BigInt(digits.length - trimmed.length - fraction.length) };
+}
+
+/** Bounded integer arithmetic preserves every debit; pathological imported scales stop safely. */
+function addRingSpend(spent: string, cost: number): string | null {
+  if (cost === 0) return spent;
+  const a = ringAmountParts(spent), b = ringAmountParts(String(cost));
+  if (a.digits === "0") return String(cost);
+  const scale = a.scale < b.scale ? a.scale : b.scale;
+  const shiftA = a.scale - scale, shiftB = b.scale - scale;
+  if (BigInt(a.digits.length) + shiftA > 980n || BigInt(b.digits.length) + shiftB > 980n) return null;
+  const sum = BigInt(a.digits) * 10n ** shiftA + BigInt(b.digits) * 10n ** shiftB;
+  const digits = sum.toString();
+  return scale >= 0n && BigInt(digits.length) + scale <= 980n ? digits + "0".repeat(Number(scale)) : `${digits}e${scale}`;
+}
+
+function validBatchBets(bets: Record<BetSymbol, number>): boolean {
+  return !!bets && BET_SYMBOLS.every((symbol) => Number.isSafeInteger(bets[symbol]) && bets[symbol] >= 0)
+    && BET_SYMBOLS.reduce((sum, symbol) => sum + bets[symbol], 0) <= maxBetUnits();
+}
+
+/** Stop is global: every slot shares this one authority and spending cursor. */
+export function stopRingBatch(state: GameState, reason = "已手动停止自动批次"): GameState {
+  const stopReason = reason.slice(0, 240);
+  const autoBatch = state.arcade.autoBatch
+    ? { ...state.arcade.autoBatch, armed: false, stopReason }
+    : null;
+  const slots = state.protocols.slots.map((slot) => slot.card?.action.kind === "runLights"
+    ? { ...slot, card: { ...slot.card, enabled: false }, lamp: "gray" as const, reason: stopReason }
+    : slot);
+  return { ...withArcade(state, { autoBatch }), protocols: { ...state.protocols, slots } };
+}
+
+export function armRingBatch(state: GameState, request: ArmRingBatchRequest): ArcadeResult {
+  const fail = (reason: string): ArcadeResult => ({ state, ok: false, reason });
+  if (state.arcade.autoBatch?.armed) return fail("已有自动批次，请先停止或完成当前批次");
+  if (!arcadeUnlocked(state)) return fail("需要天体物理学 1 级");
+  if (state.arcade.stats.manualRuns < 10) return fail("需要先手动开奖 10 次");
+  if (!state.planets.some((planet) => planet.id === request.planetId)) return fail("批次来源星球不存在");
+  if (!Number.isInteger(request.count) || request.count < 1 || request.count > storedRunLimit(state)) return fail("批次数量无效");
+  if (request.count > state.arcade.runs.length) return fail("现有开奖次数不足，不能授权未来次数");
+  if (!validPendingIds(state)) return fail("开奖次数编号无效，无法授权");
+  if (!isRingAmount(request.maxDeuterium)) return fail("重氢总支出上限无效");
+  if (!validBatchBets(state.arcade.bets)) return fail("押注快照无效");
+  const autoBatch: RingAutoBatch = {
+    armed: true,
+    planetId: request.planetId,
+    ticketIds: state.arcade.runs.slice(0, request.count).map((run) => run.id),
+    completed: 0,
+    maxDeuterium: request.maxDeuterium.toLowerCase(),
+    spentDeuterium: "0",
+    bets: { ...state.arcade.bets },
+    stopReason: "",
+  };
+  return { state: withArcade(state, { autoBatch }), ok: true, reason: `已授权现有 ${request.count} 次开奖，重氢总支出不超过 ${autoBatch.maxDeuterium}` };
+}
+
+function batchBlockedReason(state: GameState): string {
+  const batch = state.arcade.autoBatch;
+  if (!batch?.armed) return batch?.stopReason || "尚未授权自动批次";
+  if (!arcadeUnlocked(state) || state.arcade.stats.manualRuns < 10) return "自动开奖尚未解锁";
+  if (!state.planets.some((planet) => planet.id === batch.planetId)) return "批次来源星球已不存在";
+  if (!Array.isArray(batch.ticketIds) || batch.ticketIds.length < 1 || batch.ticketIds.length > storedRunLimit(state)
+    || !Number.isSafeInteger(batch.completed) || batch.completed < 0 || batch.completed >= batch.ticketIds.length
+    || !batch.ticketIds.every((id, index) => isRunId(id) && id < state.arcade.nextRunId && (index === 0 || id > batch.ticketIds[index - 1]!))
+    || !validPendingIds(state)) return "自动批次编号或进度无效";
+  if (!isRingAmount(batch.maxDeuterium) || !isRingAmount(batch.spentDeuterium)
+    || compareRingAmounts(batch.spentDeuterium, batch.maxDeuterium) > 0 || !validBatchBets(batch.bets)) return "自动批次支出或押注无效";
+  const remaining = batch.ticketIds.slice(batch.completed);
+  if (!remaining.every((id, index) => state.arcade.runs[index]?.id === id)
+    || state.arcade.runs.some((run) => batch.ticketIds.slice(0, batch.completed).includes(run.id))) return "已授权开奖次数发生变化，请重新授权";
+  if (state.arcade.runs[0]?.source === "charge" && !state.arcade.runs[0].receipt) return "充能回放缺少已结算凭证";
+  return "";
+}
+
 export function setBet(state: GameState, symbol: BetSymbol, units: number): ArcadeResult {
   if (!Number.isInteger(units) || units < 0) return { state, ok: false, reason: "注数无效" };
   const others = totalBetUnits(state) - state.arcade.bets[symbol];
@@ -592,7 +742,7 @@ export function setBet(state: GameState, symbol: BetSymbol, units: number): Arca
   const name = arcadeSymbolDef(symbol).nameZh;
   const bets = { ...state.arcade.bets, [symbol]: next };
   const capped = next < units ? `（合计上限 ${maxBetUnits()} 注）` : "";
-  return { state: withArcade(state, { bets }), ok: true, reason: `押注${name} ${next} 注${capped}` };
+  return { state: withArcade(stopRingBatch(state, "手动调整押注，自动批次已停止"), { bets }), ok: true, reason: `押注${name} ${next} 注${capped}` };
 }
 
 // ---------- reveal ----------
@@ -611,8 +761,62 @@ function settleBets(state: GameState, ctx: { unit: number; active: boolean }, sy
   };
 }
 
-/** Reveal the oldest stored run. Bets are charged in deuterium first; without enough deuterium the run goes unbet. */
+/** Manual reveals keep legacy behavior; automatic reveals require explicit, bounded authority. */
 export function revealRun(state: GameState, mode: RevealMode): ArcadeResult & { result: RunResult | null } {
+  if (mode === "manual") return settleRun(stopRingBatch(state, "手动开奖，自动批次已停止"), mode);
+  const blocked = batchBlockedReason(state);
+  if (blocked) return { state: stopRingBatch(state, blocked), ok: false, reason: blocked, result: null };
+  const batch = state.arcade.autoBatch!;
+  const standingBets = state.arcade.bets;
+  const local = withArcade(selectPlanet(state, batch.planetId), { bets: { ...batch.bets } });
+  const run = local.arcade.runs[0]!;
+  const cost = run.source === "charge" ? 0 : totalBetUnits(local) * betUnitDeut(local);
+  let reason = "";
+  const production = run.source === "charge" ? 0 : productionMe(local);
+  if (!Number.isFinite(cost) || cost < 0 || cost > 1e190
+    || !Number.isFinite(production) || production < 0 || production > 1e190
+    || !Number.isFinite(local.arcade.stats.betSpent + cost * ME_FACTOR.deuterium)
+    || !Number.isFinite(local.arcade.stats.betWon + cost * 1000)) reason = "下一次开奖超过当前安全数值范围";
+  const nextSpent = reason ? null : addRingSpend(batch.spentDeuterium, cost);
+  if (!reason && nextSpent === null) reason = "批次支出无法安全精确记录，自动批次已停止";
+  else if (!reason && compareRingAmounts(nextSpent!, batch.maxDeuterium) > 0) reason = "下一次押注将超过重氢总支出上限";
+  else if (!reason && activePlanet(local).resources.deuterium.lt(cost)) reason = "来源星球重氢不足，自动批次已停止";
+  if (!reason && cost > 0) {
+    const wallet = activePlanet(local).resources.deuterium;
+    const after = wallet.sub(cost), debit = wallet.sub(after);
+    // The existing wallet uses floating mantissas. Reject a lost or materially
+    // rounded debit; ordinary arithmetic tolerates at most one part per billion.
+    if (!after.lt(wallet) || debit.sub(cost).abs().gt(big(cost).mul(1e-9))) reason = "来源星球余额无法安全记录本次扣款，自动批次已停止";
+  }
+  if (reason) return { state: stopRingBatch(state, reason), ok: false, reason, result: null };
+  let step: ReturnType<typeof settleRun>;
+  try {
+    step = settleRun(local, mode);
+  } catch {
+    const reason = "开奖数据无法安全结算，自动批次已停止";
+    return { state: stopRingBatch(state, reason), ok: false, reason, result: null };
+  }
+  if (!step.ok) return { ...step, state: stopRingBatch(state, step.reason) };
+  const updated: RingAutoBatch = {
+    ...batch,
+    completed: batch.completed + 1,
+    spentDeuterium: nextSpent!,
+  };
+  let next = withArcade({ ...step.state, activePlanetId: state.activePlanetId }, { bets: standingBets, autoBatch: updated });
+  if (updated.completed === updated.ticketIds.length) next = stopRingBatch(next, "已完成授权批次");
+  try {
+    // Settlement is immutable. Validate the entire prospective save before adopting it,
+    // including inventory/ship limits and any ticket minted by a tailwind.
+    deserializeState(serializeState(next));
+  } catch {
+    const reason = "开奖结果超过存档安全范围，自动批次已停止";
+    return { state: stopRingBatch(state, reason), ok: false, reason, result: null };
+  }
+  return { ...step, state: next };
+}
+
+/** Apply a pre-rolled outcome. Called only through the public reveal guard above. */
+function settleRun(state: GameState, mode: RevealMode): ArcadeResult & { result: RunResult | null } {
   const run = state.arcade.runs[0];
   if (!run) return { state, ok: false, reason: "没有可用开奖次数", result: null };
   if (run.source === "charge") {
@@ -713,15 +917,19 @@ export function revealRun(state: GameState, mode: RevealMode): ArcadeResult & { 
 
 /** Reveal every stored run. */
 export function revealAll(state: GameState, mode: RevealMode): ArcadeResult & { results: RunResult[] } {
-  let current = state;
+  let current = mode === "manual" ? stopRingBatch(state, "手动开奖，自动批次已停止") : state;
   const results: RunResult[] = [];
-  for (let guard = 0; guard < storedRunLimit(state) + 4 && current.arcade.runs.length > 0; guard += 1) {
+  let reason = "没有可用开奖次数";
+  for (let guard = 0; guard < storedRunLimit(state) + 4; guard += 1) {
     const step = revealRun(current, mode);
-    if (!step.result) break;
     current = step.state;
+    reason = step.reason;
+    if (!step.result) break;
     results.push(step.result);
+    if (mode === "auto" && !current.arcade.autoBatch?.armed) break;
+    if (current.arcade.runs.length === 0) break;
   }
-  if (results.length === 0) return { state, ok: false, reason: "没有可用开奖次数", results };
+  if (results.length === 0) return { state: current, ok: false, reason, results };
   return { state: current, ok: true, reason: summarizeResults(results), results };
 }
 
@@ -747,6 +955,7 @@ export function topUpPrice(state: GameState): number {
 
 export function topUpReason(state: GameState): string {
   if (!arcadeUnlocked(state)) return "需要天体物理学 1 级";
+  if (!canIssueRunId(state, chargeReservations(state))) return "开奖次数编号已用尽或无效";
   if (state.arcade.runs.length + chargeReservations(state) >= storedRunLimit(state)) return `开奖次数与在途预留已存满（${storedRunLimit(state)}）`;
   const price = topUpPrice(state);
   if (activePlanet(state).resources.deuterium.lt(price)) return `重氢不足（需要 ${formatAmount(big(price))}）`;

@@ -1,4 +1,4 @@
-import { activePlanet, withPlanet } from "../game/empire";
+import { activePlanet, withPlanet, selectPlanet } from "../game/empire";
 import {
   CARD_CATALOG,
   SLOT_RULES,
@@ -38,8 +38,8 @@ import {
   researchSecondsFor,
 } from "../game/research";
 import { emptyProtocolSlot } from "../game/state";
-import { revealAll, revealRun, setBet, maxBetUnits } from "../game/arcade";
-import { BET_SYMBOLS, arcadeSymbolDef, isBetSymbol } from "../data/arcade";
+import { armRingBatch, revealAll, revealRun, stopRingBatch, type ArcadeResult, type ArmRingBatchRequest } from "../game/arcade";
+import { arcadeSymbolDef } from "../data/arcade";
 import type { GameState, ProtocolSlotState } from "../game/types";
 
 export interface ProtocolResult {
@@ -249,6 +249,7 @@ export function equipCard(state: GameState, index: number, cardId: string): Prot
   if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(state, cardId)}` };
   if (!isOpenSlot(state, index)) return { state, status: slotUnlockHint(state, index) || "槽位未开启" };
   const card = instantiate(cardId);
+  if (state.protocols.slots[index]?.card?.action.kind === "runLights") state = stopAutoRunner(state);
   return {
     state: writeSlot(state, index, { card, elapsed: 0, lamp: "gray", reason: "已装配" }),
     status: `已装配${catalogEntry(cardId).labelZh}`,
@@ -268,13 +269,35 @@ export function toggleSlot(state: GameState, index: number, enabled: boolean): G
   if (!isOpenSlot(state, index)) return state;
   const slot = state.protocols.slots[index];
   if (!slot?.card) return state;
+  if (!enabled && slot.card.action.kind === "runLights") return stopAutoRunner(state);
   const card: ProtocolCard = { ...slot.card, enabled };
   return writeSlot(state, index, { ...slot, card, lamp: "gray", reason: enabled ? "已启用" : "已关闭" });
 }
 
 export function clearSlot(state: GameState, index: number): GameState {
   if (!isOpenSlot(state, index)) return state;
+  if (state.protocols.slots[index]?.card?.action.kind === "runLights") state = stopAutoRunner(state);
   return writeSlot(state, index, emptyProtocolSlot());
+}
+
+/** A plain switch is never authority. Only this explicit request creates a batch. */
+export function armAutoRunner(state: GameState, slotIndex: number, request: ArmRingBatchRequest): ArcadeResult {
+  const slot = state.protocols.slots[slotIndex];
+  if (!isOpenSlot(state, slotIndex)) return { state, ok: false, reason: "自动跑灯槽位未开启" };
+  if (!slot?.card || slot.card.id !== "auto_runner" || slot.card.action.kind !== "runLights"
+    || !state.unlockedCards.includes("auto_runner")) return { state, ok: false, reason: "请先装配已解锁的自动跑灯卡" };
+  const armed = armRingBatch(state, request);
+  if (!armed.ok) return armed;
+  return {
+    ...armed,
+    state: writeSlot(armed.state, slotIndex, {
+      ...slot, card: { ...slot.card, enabled: true }, elapsed: 0, lamp: "gray", reason: armed.reason,
+    }),
+  };
+}
+
+export function stopAutoRunner(state: GameState): GameState {
+  return stopRingBatch(state);
 }
 
 export function moveSlot(state: GameState, from: number, to: number): GameState {
@@ -294,6 +317,10 @@ export function patchSlot(state: GameState, index: number, path: string, value: 
   if (!slot?.card) return state;
   const card = structuredClone(slot.card) as ProtocolCard;
   if (!applyPatch(state, card, path, value)) return state;
+  if (slot.card.action.kind === "runLights" || card.action.kind === "runLights") {
+    state = stopRingBatch(state, "协议参数已修改，请重新授权自动批次");
+    card.enabled = false;
+  }
   return writeSlot(state, index, { ...slot, card, elapsed: 0, lamp: "gray", reason: "已调整参数" });
 }
 
@@ -503,21 +530,8 @@ export function slotFields(state: GameState, card: ProtocolCard): ParamField[] {
       value: String(action.count),
       options: [
         { value: "1", label: "1 次" },
-        { value: "all", label: "全部" },
+        { value: "all", label: "本批次剩余" },
       ],
-    });
-  } else if (action.kind === "setBet") {
-    fields.push({
-      path: "action.symbol",
-      label: "押注符号",
-      value: action.symbol,
-      options: BET_SYMBOLS.map((symbol) => ({ value: symbol, label: arcadeSymbolDef(symbol).nameZh })),
-    });
-    fields.push({
-      path: "action.units",
-      label: "注数",
-      value: String(action.units),
-      options: Array.from({ length: maxBetUnits() + 1 }, (_, n) => ({ value: String(n), label: `${n} 注` })),
     });
   } else if (action.kind === "buildUnits") {
     fields.push({ path: "action.unit", label: "单位", value: action.unit, options: unitOptions() });
@@ -599,10 +613,12 @@ function runSlot(state: GameState, index: number, periodSeconds: number): GameSt
       reason: `等待间隔 ${Math.floor(elapsed)}/${card.trigger.seconds} 秒`,
     });
   }
-  const waiting = triggerReady(state, card.trigger);
+  const source = card.action.kind === "runLights" ? state.arcade.autoBatch?.planetId : undefined;
+  const conditionState = source && state.planets.some((planet) => planet.id === source) ? selectPlanet(state, source) : state;
+  const waiting = triggerReady(conditionState, card.trigger);
   if (waiting) return writeSlot(state, index, { ...slot, elapsed, lamp: "gray", reason: waiting });
 
-  const failed = failedCondition(state, card);
+  const failed = failedCondition(conditionState, card);
   const spent = card.trigger.kind === "interval" ? 0 : elapsed;
   if (failed) return writeSlot(state, index, { ...slot, elapsed: spent, lamp: "red", reason: failed });
 
@@ -653,6 +669,7 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
   }
   if (action.kind === "enqueueCheapest") return enqueueCheapest(state, action.group);
   if (action.kind === "runLights") {
+    if (card.id !== "auto_runner") return { state, ok: false, reason: "请使用自动跑灯卡授权批次" };
     if (action.count === 1) {
       const result = revealRun(state, "auto");
       return { state: result.state, ok: result.ok, reason: result.ok ? `自动开奖：${result.reason}` : result.reason };
@@ -661,10 +678,7 @@ function applyAction(state: GameState, card: ProtocolCard): { state: GameState; 
     return { state: result.state, ok: result.ok, reason: result.ok ? `自动${result.reason}` : result.reason };
   }
   if (action.kind === "setBet") {
-    if (state.arcade.bets[action.symbol] === action.units) {
-      return { state, ok: true, reason: `${arcadeSymbolDef(action.symbol).nameZh}已押 ${action.units} 注` };
-    }
-    return setBet(state, action.symbol, action.units);
+    return { state, ok: false, reason: "自动修改押注已停用，请手动设置并授权新批次" };
   }
   if (action.kind === "buildUnits") return buildUnitsAction(state, action.unit, action.count);
   const result = enqueue(state, action.building, "protocol");
@@ -881,7 +895,7 @@ function instantiate(id: CardCatalogId): ProtocolCard {
   const entry = catalogEntry(id);
   return {
     id: entry.id,
-    enabled: true,
+    enabled: id !== "auto_runner",
     trigger: structuredClone(entry.template.trigger) as Trigger,
     conditions: structuredClone(entry.template.conditions) as Condition[],
     action: structuredClone(entry.template.action) as Action,
@@ -953,8 +967,7 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
     else if (value === "setProduction") card.action = { kind: "setProduction", building: "metal_mine", pct: 100 };
     else if (value === "enqueueResearch") card.action = { kind: "enqueueResearch", tech: "energy_tech" };
     else if (value === "enqueueCheapest") card.action = { kind: "enqueueCheapest", group: "mines" };
-    else if (value === "runLights") card.action = { kind: "runLights", count: "all" };
-    else if (value === "setBet") card.action = { kind: "setBet", symbol: "metal", units: 1 };
+    else if (value === "runLights") card.action = { kind: "runLights", count: 1 };
     else if (value === "buildUnits") card.action = { kind: "buildUnits", unit: "solar_satellite", count: 1 };
     else card.action = { kind: "enqueue", building: "metal_mine", levels: 1 };
     return true;
@@ -977,16 +990,6 @@ function applyPatch(state: GameState, card: ProtocolCard, path: string, value: s
   }
   if (path === "action.count" && card.action.kind === "runLights" && (value === "1" || value === "all")) {
     card.action = { kind: "runLights", count: value === "1" ? 1 : "all" };
-    return true;
-  }
-  if (path === "action.symbol" && card.action.kind === "setBet" && isBetSymbol(value)) {
-    card.action = { ...card.action, symbol: value };
-    return true;
-  }
-  if (path === "action.units" && card.action.kind === "setBet") {
-    const units = Number(value);
-    if (!Number.isInteger(units) || units < 0 || units > maxBetUnits()) return false;
-    card.action = { ...card.action, units };
     return true;
   }
   if (path === "action.unit" && card.action.kind === "buildUnits" && isUnitId(value)) {
@@ -1092,7 +1095,7 @@ function availableKinds<K extends string>(state: GameState, current: K, group: "
     if (!state.unlockedCards.includes(entry.id)) continue;
     for (const kind of entry.unlocks[group] ?? []) kinds.add(kind as K);
   }
-  return [...kinds];
+  return [...kinds].filter((kind) => group !== "actions" || kind !== "setBet");
 }
 
 function triggerPhrase(trigger: Trigger): string {
@@ -1144,7 +1147,7 @@ function actionPhrase(action: Action): string {
   if (action.kind === "setProduction") return `将${buildingById(action.building).nameZh}产量设为 ${action.pct}%`;
   if (action.kind === "enqueueResearch") return `研究 ${researchById(action.tech).nameZh} +1 级`;
   if (action.kind === "enqueueCheapest") return `入队${CHEAPEST_LABEL[action.group]}中最便宜的下一级`;
-  if (action.kind === "runLights") return action.count === 1 ? "按常驻押注开奖 1 次" : "按常驻押注开完全部开奖";
+  if (action.kind === "runLights") return action.count === 1 ? "按已授权快照开奖 1 次" : "完成已授权批次的剩余开奖";
   if (action.kind === "setBet") return `把${arcadeSymbolDef(action.symbol).nameZh}的常驻押注改为 ${action.units} 注`;
   if (action.kind === "buildUnits") {
     const name = unitById(action.unit).nameZh;

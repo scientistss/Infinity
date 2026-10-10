@@ -2,7 +2,7 @@ import { DEEP, chargeChances } from "../data/deep-space";
 import { ARCADE, BOARD, BET_SYMBOLS, arcadeSymbolDef, type BetSymbol, type ArcadeSymbol } from "../data/arcade";
 import { SHIP_IDS, unitById } from "../data/units";
 import { INVENTORY_IDS, INVENTORY_LABEL } from "../data/dark-matter";
-import { rollOutcome, prizeCap, productionMe, drifterShips, shipValueMe, type RunOutcome, type RunLight } from "./arcade";
+import { canIssueRunId, rollOutcome, prizeCap, productionMe, drifterShips, shipValueMe, type RunOutcome, type RunLight } from "./arcade";
 import { grantDarkMatter, addInventory } from "./dark-matter";
 import { fightEncounter } from "./encounter-combat";
 import { createOffer, merchantCreationReason } from "./merchant";
@@ -84,6 +84,12 @@ function enemyFleet(fleet:Fleet,alien:boolean,u:number):ShipCounts {
 export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet:Fleet|null} {
   const live=state.fleets.find(f=>f.id===input.id);
   if(!live?.charge||live.charge.phase!=="holding"||live.returning||live.remaining>1e-9||live.charge.reportId)return {state,fleet:live??null};
+  if (!canIssueRunId(state)) {
+    // A malformed/exhausted counter must not reroll, pay out, or crash the simulation.
+    // Return the unchanged expedition; its existing escrow is refunded on arrival.
+    const fleet: Fleet = { ...live, returning: true, elapsed: 0, remaining: live.duration, charge: { ...live.charge, phase: "return" } };
+    return { state: { ...state, fleets: state.fleets.map((candidate) => candidate.id === live.id ? fleet : candidate) }, fleet };
+  }
   const rolled=rollCharge(state,live);let next=rolled.state;
   const charge:ChargeOrder={...live.charge,phase:"return",items:{},dm:0,reportId:`charge-${live.id}`};
   let fleet:Fleet={...live,charge,ships:{...live.ships},cargo:{...live.cargo},returning:true,elapsed:0,remaining:live.duration};
@@ -179,7 +185,16 @@ export function finishCharge(state:GameState,input:Fleet):{state:GameState;fleet
   else lines.push(`舰船和货物返回出发星球；切换界面不改变归属。剩余返航 ${Math.ceil(fleet.remaining)} 秒`);
   const report:ChargeReport={id:charge.reportId!,fleetId:live.id,originId:live.originId,at:state.totalTime.toNumber(),target:{...live.target},slots:charge.slots,rawSymbol:rolled.rawSymbol,symbol,protection:rolled.protection,outcome,lines:lines.slice(0,DEEP.maxReceiptLines),returned:false,destroyed,battle};
   if(next.arcade.runs.length>=storedRunLimit(next))throw Error("充能预留开奖槽失效，停止以防丢失结果");
-  next={...next,deepSpace:{...next.deepSpace,reports:retainChargeReports([...next.deepSpace.reports,report], next.fleets)},arcade:{...next.arcade,runs:[...next.arcade.runs,{source:"charge",outcome,receipt:{reportId:report.id,originId:live.originId,lines:report.lines,lights}}]}};
+  const runId = next.arcade.nextRunId;
+  next = {
+    ...next,
+    deepSpace: { ...next.deepSpace, reports: retainChargeReports([...next.deepSpace.reports, report], next.fleets) },
+    arcade: {
+      ...next.arcade,
+      nextRunId: runId + 1,
+      runs: [...next.arcade.runs, { id: runId, source: "charge", outcome, receipt: { reportId: report.id, originId: live.originId, lines: report.lines, lights } }],
+    },
+  };
   next={...next,fleets:destroyed?next.fleets.filter(f=>f.id!==live.id):next.fleets.map(f=>f.id===live.id?fleet:f)};
   return {state:next,fleet:destroyed?null:fleet};
 }

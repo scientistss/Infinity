@@ -1,3 +1,4 @@
+import pkg from "../../package.json";
 import { chargePreview, deepFlightDetails } from "./deep-present";
 import { expeditionSlots } from "../game/deep-state";
 import { SPACE, coordinateKey, distance, npcAt, planetProperties, positionBonus, type Coordinates } from "../game/galaxy";
@@ -32,7 +33,7 @@ export function spaceView(state:GameState,cursor:Coordinates,request:FleetReques
     planets:state.planets.map(p=>({id:p.id,name:p.name,coordinate:coordinateKey(p.coordinates),stock:`金属 ${formatAmount(p.resources.metal)} · 晶体 ${formatAmount(p.resources.crystal)} · 重氢 ${formatAmount(p.resources.deuterium)}`,selected:p.id===home.id,canAbandon:p.id!==HOMEWORLD_ID})),
     messages:state.messages.slice().reverse().map(m=>({id:m.id,text:m.text,time:`游戏 ${formatDuration(Math.floor(m.at))}`})),
     seed:String(state.universe.seed),
-    phase:`原版续作 · 深空扩展 v0.6.0-alpha.1 · 宇宙 ${SPACE.galaxies}×${SPACE.systems}×${SPACE.positions}+深空`,
+    phase:`原版续作 · 深空扩展 v${pkg.version} · 宇宙 ${SPACE.galaxies}×${SPACE.systems}×${SPACE.positions}+深空`,
     // Explicit structured text: no unit count is fabricated from a decorative picture.
     zero:formatAmount(big(0)),
   };

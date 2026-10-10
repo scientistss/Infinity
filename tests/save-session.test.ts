@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { STORAGE_KEY } from "../src/game/content";
-import { BACKUP_KEY, MAX_SAVE_BACKUPS, exportSave, importSave, preserveRawSave, type KeyValueStore } from "../src/game/save";
+import { SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
+import { BACKUP_KEY, MAX_SAVE_BACKUPS, exportSave, importSave, deserializeState, serializeState, preserveRawSave, type KeyValueStore } from "../src/game/save";
 import { SaveSession, type ReplacementResult } from "../src/game/save-session";
 import { createInitialState } from "../src/game/state";
+import { grantRun } from "../src/game/arcade";
+import { big } from "../src/game/decimal";
+import { catchUp } from "../src/core/offline";
 
 const NOW = 1_000_000;
 function game(clicks = 17) {
@@ -11,10 +14,13 @@ function game(clicks = 17) {
   return { ...state, manualClicks: clicks };
 }
 function raw(clicks = 17) { return exportSave(game(clicks), NOW); }
-function r2() {
-  const file = JSON.parse(raw());
-  file.revision = 2;
-  delete file.state.deepSpace;
+function legacy(revision: 2 | 3, source = raw()) {
+  const file = JSON.parse(source);
+  file.revision = revision;
+  if (revision === 2) delete file.state.deepSpace;
+  delete file.state.arcade.nextRunId;
+  delete file.state.arcade.autoBatch;
+  for (const run of file.state.arcade.runs) delete run.id;
   return JSON.stringify(file);
 }
 
@@ -91,18 +97,18 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([]);
   });
 
-  it("commits a supported r2 upgrade only after preserving its exact original", () => {
-    const source = r2(), store = new MemoryStore(source);
+  it.each([2, 3] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
+    const source = legacy(revision), store = new MemoryStore(source);
     const session = new SaveSession(store, NOW);
     expect(session.mode).toBe("ready");
     expect(session.loaded.state.manualClicks).toBe(17);
     expect(store.data[BACKUP_KEY]).toBe(source);
-    expect(JSON.parse(store.data[STORAGE_KEY]!).revision).toBe(3);
+    expect(JSON.parse(store.data[STORAGE_KEY]!).revision).toBe(SAVE_REVISION);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
   });
 
-  it("retains readable r2 progress frozen when backup quota is full", () => {
-    const source = r2(), store = new MemoryStore(source);
+  it.each([2, 3] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
+    const source = legacy(revision), store = new MemoryStore(source);
     store.write = () => { throw new Error("quota full"); };
     const session = new SaveSession(store, NOW + 5000);
     expect(session.mode).toBe("protected");
@@ -111,6 +117,88 @@ describe("SaveSession load and version protection", () => {
     expect(session.notice).not.toContain("临时初始画面");
     expect(store.data[STORAGE_KEY]).toBe(source);
     expect(session.export(game(99))).toEqual({ raw: source, protected: true });
+  });
+
+  it.each([2, 3] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
+    for (const fault of ["backup-write", "backup-read", "backup-noop", "current-write", "current-read", "current-noop", "current-write-then-throw"] as const) {
+      const source = legacy(revision), store = new MemoryStore(source);
+      let currentWritten = false;
+      store.write = (key, value) => {
+        if (fault === "backup-write" && key === BACKUP_KEY) throw Error("backup denied");
+        if (fault === "backup-noop" && key === BACKUP_KEY) return false;
+        if (fault === "current-write" && key === STORAGE_KEY) throw Error("current denied");
+        if (fault === "current-noop" && key === STORAGE_KEY) return false;
+        if (key === STORAGE_KEY) currentWritten = true;
+        if (fault === "current-write-then-throw" && key === STORAGE_KEY) {
+          store.data[key] = value;
+          throw Error("uncertain write");
+        }
+      };
+      store.read = key => {
+        if (fault === "backup-read" && key === BACKUP_KEY && store.data[key] !== undefined) throw Error("backup read denied");
+        if (fault === "current-read" && key === STORAGE_KEY && currentWritten) throw Error("current read denied");
+        return undefined;
+      };
+      const session = new SaveSession(store, NOW + 5000);
+      expect(session.mode, fault).toBe("protected");
+      expect(session.loaded.state.manualClicks, fault).toBe(17);
+      expect(session.loaded.appliedSeconds, fault).toBe(0);
+      expect(session.loaded.state.totalTime.eq(0), fault).toBe(true);
+      expect(session.notice, fault).not.toContain("临时初始画面");
+      expect(session.export(game(99)), fault).toEqual({ raw: source, protected: true });
+      expect(session.save(game(99)), fault).toMatchObject({ ok: false });
+      if (fault !== "current-read" && fault !== "current-write-then-throw") expect(store.data[STORAGE_KEY], fault).toBe(source);
+      if (fault.startsWith("current")) expect(store.data[BACKUP_KEY], fault).toBe(source);
+    }
+  });
+
+  it.each([2, 3] as const)("disables old runner and setBet cards before r%d offline catch-up", revision => {
+    let state = game();
+    state.research.levels.astrophysics = 1;
+    state.arcade.stats.manualRuns = 10;
+    state.arcade.bets.metal = 1;
+    state.planets[0]!.resources.deuterium = big(100000);
+    for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
+    state.unlockedCards.push("auto_runner");
+    state.protocols.slots[0]!.card = { id: "auto_runner", enabled: true,
+      trigger: { kind: "interval", seconds: 1 }, conditions: [], action: { kind: "runLights", count: "all" } };
+    state.protocols.slots[1]!.card = { id: "auto_runner", enabled: true,
+      trigger: { kind: "interval", seconds: 1 }, conditions: [], action: { kind: "setBet", symbol: "metal", units: 12 } };
+    // Independently retain legitimate offline achievements/bonus tickets while disabling spending.
+    const control = deserializeState(serializeState(state));
+    for (const slot of control.protocols.slots.slice(0, 2)) slot.card!.enabled = false;
+    const expected = catchUp(control, 60).state;
+    const source = legacy(revision, exportSave(state, NOW)), store = new MemoryStore(source);
+    const session = new SaveSession(store, NOW + 60000);
+    expect(session.mode).toBe("ready");
+    expect(session.loaded.appliedSeconds).toBe(60);
+    expect(session.loaded.state.arcade).toEqual(expected.arcade);
+    expect(session.loaded.state.arcade.runs.slice(0, state.arcade.runs.length)).toEqual(state.arcade.runs);
+    expect(session.loaded.state.unlocked).toEqual(expected.unlocked);
+    expect(session.loaded.state.darkMatter).toEqual(expected.darkMatter);
+    expect(session.loaded.state.arcade.stats.betSpent).toBe(0);
+    expect(session.loaded.state.arcade.stats.autoRuns).toBe(0);
+    expect(session.loaded.state.arcade.bets).toEqual(state.arcade.bets);
+    expect(session.loaded.state.planets[0]!.resources.deuterium.eq(100000)).toBe(true);
+    expect(session.loaded.state.arcade.autoBatch).toBeNull();
+    expect(session.loaded.state.protocols.slots.slice(0, 2).map(slot => slot.card?.enabled)).toEqual([false, false]);
+    expect(store.data[BACKUP_KEY]).toBe(source);
+  });
+
+  it("reloads r4 without replenishing the finite budget or resetting its consumed cursor", () => {
+    let state = game();
+    for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
+    const ticketIds = state.arcade.runs.map(run => run.id);
+    state.arcade.runs.shift();
+    state.arcade.autoBatch = { armed: true, planetId: state.activePlanetId, ticketIds, completed: 1,
+      maxDeuterium: "100", spentDeuterium: "65", bets: { ...state.arcade.bets }, stopReason: "" };
+    const source = exportSave(state, NOW), store = new MemoryStore(source), session = new SaveSession(store, NOW);
+    expect(session.mode).toBe("ready");
+    expect(session.loaded.state.arcade.autoBatch).toEqual(state.arcade.autoBatch);
+    expect(store.writes).toEqual([]);
+    expect(session.save(session.loaded.state, NOW)).toEqual({ ok: true });
+    const reopened = new SaveSession(store, NOW);
+    expect(reopened.loaded.state.arcade.autoBatch).toEqual(state.arcade.autoBatch);
   });
 
   it("does not falsely report an unreadable startup as a missing save", () => {

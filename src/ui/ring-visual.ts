@@ -1,10 +1,14 @@
-/** Scoped enhancement of the original ring machine. No simulation, wallet or save writes. */
+/** Scoped ring presentation; explicit actions are forwarded to the guarded application handler. */
 import { ARCADE_SYMBOLS, BET_SYMBOLS, BOARD, arcadeSymbolDef, type ArcadeSymbol } from "../data/arcade";
 import { DEEP } from "../data/deep-space";
 import type { GameState } from "../game/types";
 import { chargeDeliveryStatus } from "../game/deep-state";
 import { historyKey, historySource, ringArtUrl, ringOdds, ringQueue, validOddsSource, type RingOddsSource } from "./ring-model";
+import { ringAutoInput, ringAutoView } from "./ring-auto-model";
 import "./ring-visual.css";
+
+export type RingAction = { type: "ring-auto-arm"; slotIndex: number; planetId: string; count: number; maxDeuterium: string }
+  | { type: "ring-auto-stop" };
 
 function node<T extends HTMLElement = HTMLElement>(root: ParentNode, selector: string): T {
   const el = root.querySelector<T>(selector);
@@ -26,7 +30,7 @@ function fold(parent: HTMLElement, title: string, children: HTMLElement[]): HTML
   const detail = document.createElement("details"); detail.className = "ring-details";
   detail.append(make("summary", "", title), ...children); parent.append(detail); return detail;
 }
-export function installRingVisual(root: HTMLElement): (state: GameState) => void {
+export function installRingVisual(root: HTMLElement, onAction: (action: RingAction) => void): (state: GameState) => void {
   const panel = node(root, '[data-tab-panel="arcade"]'); panel.classList.add("ring-visual");
   node(panel,"#arcade-title").append(make("small","ring-version","图像版 · R1"));
   const side = node(panel, ".arcade-side"), screen = node(panel, ".arcade-screen");
@@ -58,6 +62,15 @@ export function installRingVisual(root: HTMLElement): (state: GameState) => void
   const shortcuts = make("div", "ring-shortcuts"); shortcuts.innerHTML = '<button type="button" data-ring="charge">派舰充能</button><button type="button" data-ring="deep">查看深空报告</button>';
   side.append(shortcuts);
 
+  const automatic = make("section", "ring-auto");
+  automatic.setAttribute("aria-labelledby", "ring-auto-title");
+  automatic.innerHTML = '<h3 id="ring-auto-title">有限自动开奖</h3><p id="ring-auto-status" role="status" aria-live="polite"></p><p id="ring-auto-progress"></p><p id="ring-auto-frozen"></p><p id="ring-auto-source"></p><p id="ring-auto-bets"></p><div class="ring-auto-fields"><label>自动跑灯槽位<select id="ring-auto-slot" aria-describedby="ring-auto-prerequisite"></select></label><label>本批次数<input id="ring-auto-count" type="number" min="0" max="40" step="1" value="0" inputmode="numeric" /></label><label>总扣费上限（重氢）<input id="ring-auto-cap" type="text" value="0" inputmode="decimal" maxlength="100" /></label></div><p id="ring-auto-prerequisite"></p><p id="ring-auto-validation" role="status"></p><div class="ring-auto-actions"><button type="button" data-ring="auto-arm">授权本批次</button><button type="button" data-ring="auto-stop" disabled>停止自动开奖</button></div><p id="ring-auto-stop-reason" role="status"></p><small>只包含授权时已有的前 N 次；重氢上限按总扣费计算，赢回不补充额度。不会自动加注购买次数，未来信标、顺风奖励不续入。手动开奖或改押注会停止本批次；装配或开关卡片不等于授权。离线也只执行已授权范围。</small>';
+  node(side, ".arcade-controls").after(automatic);
+  const autoSlot = node<HTMLSelectElement>(automatic, "#ring-auto-slot");
+  const autoCount = node<HTMLInputElement>(automatic, "#ring-auto-count");
+  const autoCap = node<HTMLInputElement>(automatic, "#ring-auto-cap");
+  let slotSignature = "";
+
   const inspect = make("div", "ring-inspect"); inspect.innerHTML = '<label>查看基础概率<select id="ring-odds-source"><option value="beacon">信标／加注</option><option value="charge-1">充能 · 1 段</option><option value="charge-2">充能 · 2 段</option><option value="charge-3">充能 · 3 段</option></select></label><p id="ring-tile-info" role="status" aria-live="polite">点击图块查看概率与规则，不会改变开奖。</p>';
   node(panel, ".arcade-layout").after(inspect);
   const odds = make("div", "ring-odds-table"); odds.innerHTML = `<div class="space-table-scroll"><table class="ov-table"><thead><tr><th>事件</th><th>当前来源基础概率</th></tr></thead><tbody>${ARCADE_SYMBOLS.map(s => `<tr><td>${arcadeSymbolDef(s).nameZh}</td><td data-ring-odds="${s}"></td></tr>`).join("")}</tbody></table></div><p class="muted">基础概率不含保底与黑洞保护的改判；历史统计混合不同来源，不能据此直接校验本表。</p>`;
@@ -68,6 +81,28 @@ export function installRingVisual(root: HTMLElement): (state: GameState) => void
   node(panel, '[data-bind="arcade-history"]').after(historyDetail);
   let state: GameState | null = null, selectedTile: number | null = null, source: RingOddsSource = "beacon", selectedHistory: string | null = null;
   let lastHero = "", lastHistory = "", lastReceipt = "", historyFocus: HTMLElement | null = null;
+  function paintAuto() {
+    if (!state) return;
+    const model = ringAutoView(state), signature = JSON.stringify(model.slots);
+    if (signature !== slotSignature) {
+      slotSignature = signature;
+      const selected = autoSlot.value;
+      autoSlot.replaceChildren(...(model.slots.length ? model.slots : [{index: -1, label: "暂无可用槽位"}]).map(slot => {
+        const option = document.createElement("option"); option.value = String(slot.index); option.textContent = slot.label; return option;
+      }));
+      if (model.slots.some(slot => String(slot.index) === selected)) autoSlot.value = selected;
+    }
+    autoCount.max = String(model.maxCount);
+    for (const [id, value] of [["status", model.status], ["progress", model.progress], ["frozen", model.frozen], ["source", model.source], ["bets", model.bets], ["prerequisite", model.prerequisite], ["stop-reason", model.stopReason]]) text(automatic, `#ring-auto-${id}`, value!);
+    const input = ringAutoInput(state, autoSlot.value, autoCount.value, autoCap.value);
+    text(automatic, "#ring-auto-validation", model.armed || model.prerequisite ? "" : input.reason);
+    const arm = node<HTMLButtonElement>(automatic, '[data-ring="auto-arm"]');
+    arm.disabled = !input.valid;
+    arm.textContent = state.arcade.autoBatch ? "重新授权本批次" : "授权本批次";
+    node<HTMLButtonElement>(automatic, '[data-ring="auto-stop"]').disabled = !model.armed;
+  }
+  automatic.addEventListener("input", paintAuto);
+  autoSlot.addEventListener("change", paintAuto);
   const tiles = BOARD.map((symbol, i) => {
     const tile = node(panel, `[data-tile="${i}"]`);
     node(tile, ".arcade-glyph").replaceChildren(image(symbol));
@@ -105,6 +140,12 @@ export function installRingVisual(root: HTMLElement): (state: GameState) => void
     const chip = target?.closest<HTMLElement>("[data-ring-history]");
     if (chip && state) { selectedHistory = chip.dataset.ringHistory!; historyFocus = chip; paintHistory(); historyDetail.focus({preventScroll:true}); }
     const button = target?.closest<HTMLElement>("[data-ring]");
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    if (button?.dataset.ring === "auto-arm" && state) {
+      const input = ringAutoInput(state, autoSlot.value, autoCount.value, autoCap.value);
+      if (input.valid) onAction({type: "ring-auto-arm", slotIndex: input.slotIndex, planetId: state.activePlanetId, count: input.count, maxDeuterium: input.maxDeuterium});
+    }
+    if (button?.dataset.ring === "auto-stop") onAction({type: "ring-auto-stop"});
     if (button?.dataset.ring === "close-history") { selectedHistory = null; paintHistory(); historyFocus?.focus({preventScroll:true}); }
     if (button?.dataset.ring === "charge") node<HTMLButtonElement>(root, '#space-deep [data-deep="charge"]').click();
     if (button?.dataset.ring === "deep") node<HTMLButtonElement>(root, '[data-tab="deep"]').click();
@@ -123,6 +164,7 @@ export function installRingVisual(root: HTMLElement): (state: GameState) => void
   paintOdds();
   return next => {
     state = next; if (panel.hidden) return;
+    paintAuto();
     const q = ringQueue(next);
     text(panel, "#ring-next", q.next); text(panel, '[data-bind="arcade-run"]', q.action);
     text(panel, "#ring-direct", `信标等奖励 ${q.direct}`); text(panel, "#ring-charge", `充能回放 ${q.charge}`); text(panel, "#ring-reserved", `出航预留 ${q.reserved} · 总容量 ${q.limit}`);

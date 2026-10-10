@@ -5,16 +5,26 @@ The production entry point (`src/main.ts`) uses `src/game/save-session.ts` for e
 ## Supported formats
 
 - Current storage key: `infinity.original-p4.save.v1`.
-- Current schema: `infinity-original-p4`, version **9**, revision **3**.
-- The only supported older import is **the same schema, version 9, revision 2**. Its existing universe, fleets and game progress are read using the existing r2 rules; `deepSpace` is initialized. An r2 file carrying r3-only deep-space data is rejected.
+- Current schema: `infinity-original-p4`, version **9**, revision **4**.
+- Supported older imports are **the same schema, version 9, revisions 2 and 3**. The r2 → r3 step preserves its universe, fleets and game progress while initializing `deepSpace`; r2 files carrying deep-space fields are rejected. The r3 → r4 step assigns stable ticket IDs in existing pending order, initializes the next ID and leaves finite automatic-reveal authorization empty. Both older revisions reject r4-only fields instead of silently discarding them.
 - v1/v5/v7/v8, later versions, r1/unknown revisions, other route schemas and malformed files are not converted or silently reset. They remain protected. Retaining original bytes does not imply compatibility.
 - The previous site's `infinity.save.v1` is never used as the current game and is never overwritten. Its existing export control remains available.
+
+## Finite ring authorization in r4
+
+`SAVE_REVISION` in `src/game/content.ts` is the canonical revision used by exports, migration handling, browser fixtures and release metadata. Current r4 data must include `arcade.nextRunId`, `arcade.autoBatch` (explicitly `null` when absent) and an `id` on every pending run. Missing or malformed authorization is rejected, never erased or converted to a fresh allowance.
+
+Pending IDs are positive, unique, strictly increasing safe integers, with a safe next counter greater than every pending or recorded batch ID. In-flight charge reservations must also fit in the remaining safe ID range. A finite batch snapshots a strictly increasing prefix of genuine pending ticket IDs, its source planet, the bet allocation, gross deuterium cap, cumulative spend and completed cursor. The cap and spend are finite nonnegative Decimal strings; spend cannot exceed the cap. Bet allocations, ID count, cursor and a maximum 240-character stop reason are validated strictly. A batch has at most 40 tickets, and an armed batch also respects the current stored-run limit.
+
+An armed batch must have remaining tickets, an existing source planet and remaining snapshot IDs equal to the current pending prefix. Consumed snapshot IDs cannot remain pending. Stopped history may reference tickets or a planet that no longer exist and may survive a reduced storage limit. No history record grants new spending permission.
+
+For r2/r3 migration, every saved `runLights` or `setBet` card is disabled before offline catch-up. Existing outcomes, charge receipts, RNG, bet amounts, economy and ticket order are retained. An old enabled unlimited card cannot authorize a finite batch or spend during migration. Reloading an r4 partial batch retains its original snapshot, source, cap, accumulated spend and cursor; normal authorized catch-up may advance that same remaining allowance, never replenish it. The old r3 reader rejects r4 instead of downgrading its authorization fields.
 
 ## Open and protection
 
 A missing key (`null`) permits a fresh game to save normally. An empty string is a corrupt save, not an absent save.
 
-Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
+Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2/r3 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
 
 If a source cannot be read or parsed, the UI explicitly labels its initial display as a temporary placeholder. Protected/conflicted/unavailable sessions do not simulate time or accept gameplay mutations. Export, import, explicit reset and recovery notices remain accessible. Obtaining `window.localStorage` does not perform a write probe: a full quota must not hide readable saved progress.
 
@@ -24,7 +34,7 @@ A protected session may retry an explicitly requested valid import or reset afte
 
 ## Replacement order
 
-Import, reset and r2 upgrade use this order:
+Import, reset and r2/r3 upgrade use this order:
 
 1. Parse and validate the supported schema and state, then deserialize the candidate.
 2. Serialize the candidate and validate the serialized output before touching storage.
@@ -34,7 +44,7 @@ Import, reset and r2 upgrade use this order:
 6. Write the new current bytes, unless they already match, and read them back exactly.
 7. Only after success may the UI replace its live state, dismiss old notices and report completion.
 
-Reset never removes the current key and waits for an eventual autosave. It performs the same verified replacement immediately. Invalid imports do not write backups or change current state.
+Reset never removes the current key or waits for an eventual autosave. It performs the same verified replacement immediately. Invalid imports do not write backups or change current state.
 
 Ordinary saves validate serialization and perform the same current-slot comparisons and readback, without creating a new archive on every simulation save. A failed ordinary save freezes the current in-memory view and retains the last observed original in memory for export.
 
@@ -54,6 +64,6 @@ File imports capture a latest-intent token. A newer import/reset, any subsequent
 
 ## Compatibility APIs and verification
 
-`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2 compatibility path preserves the raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
+`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2/r3 compatibility path preserves the exact raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
 
-`tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2 upgrade and quota failure, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.
+`tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2/r3 upgrade, disabled legacy automation, partial-batch reload and migration write/read/quota failures, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.

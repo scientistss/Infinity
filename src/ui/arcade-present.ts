@@ -188,7 +188,7 @@ export function arcadeView(state: GameState): ArcadeView {
   const lastEntry = arcade.history[arcade.history.length - 1];
   const manual = arcade.stats.manualRuns;
   const autoHint = state.unlockedCards.includes("auto_runner")
-    ? "协议卡「自动跑灯」已解锁：有开奖次数时按常驻押注自动开奖（离线也会开）。"
+    ? "协议卡「自动跑灯」已解锁；装配默认关闭。请在「有限自动开奖」指定次数和重氢总上限，明确授权当前批次（离线同样受限）。"
     : `手动开奖 ${Math.min(manual, ARCADE.autoCardManualRuns)}/${ARCADE.autoCardManualRuns} 次后解锁协议卡「自动跑灯」。`;
 
   return {

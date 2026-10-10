@@ -1,5 +1,5 @@
 import { installDeepDashboard } from "./deep-dashboard";
-import { installRingVisual } from "./ring-visual";
+import { installRingVisual, type RingAction } from "./ring-visual";
 import pkg from "../../package.json";
 import type { GameState, ResourceId } from "../game/types";
 import { DEEP, chargeChances } from "../data/deep-space";
@@ -9,7 +9,7 @@ import { expeditionSlots, storedRunLimit, chargeReservations, chargeDeliveryStat
 import { tradeQuote } from "../game/merchant";
 import { formatDuration, formatAmount } from "../game/format";
 import { big } from "../game/decimal";
-export type DeepAction={type:"summon-merchant"}|{type:"trade";offer:string;sell:ResourceId;buy:ResourceId;amount:string}|{type:"export-legacy"};
+export type DeepAction=RingAction|{type:"summon-merchant"}|{type:"trade";offer:string;sell:ResourceId;buy:ResourceId;amount:string}|{type:"export-legacy"};
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 const resources='<option value="metal">金属</option><option value="crystal">晶体</option><option value="deuterium">重氢</option>';
 export function deepPanelHtml():string{return `
@@ -33,7 +33,7 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
  save?.insertAdjacentHTML('beforeend','<p class="muted">以前指挥界面版本的存档仍保存在原键中，不会自动清除或混合导入。</p><button type="button" data-deep="export-legacy">导出旧站原始存档</button>');
  const arcade=root.querySelector('[data-tab-panel="arcade"]');
  arcade?.insertAdjacentHTML('afterbegin','<p class="muted">信标规则保持原样；舰队充能请到“深空”或“舰队”页。充能回放不再次发奖，奖励在舰队返航后进入出发星球。统计含两类回放，不应直接与信标概率对比。</p>');
- const updateRing=installRingVisual(root);
+ const updateRing=installRingVisual(root,onAction);
  const updateDashboard=installDeepDashboard(root);
  root.addEventListener('click',e=>{
   const b=e.target instanceof Element?e.target.closest<HTMLButtonElement>('[data-deep]'):null;if(!b||b.disabled)return;

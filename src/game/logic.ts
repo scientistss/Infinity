@@ -23,7 +23,7 @@ import {
 import { applySeedStock, manualClickMultiplier, scoreMultiplier } from "../prestige/tree";
 import { createInitialState } from "./state";
 import { nextBoosterExpiry, pruneBoosters } from "./boosters";
-import { accrueBeacons, cloneArcade, grantRun, nextBeaconIn } from "./arcade";
+import { accrueBeacons, cloneArcade, grantRun, nextBeaconIn, stopRingBatch } from "./arcade";
 import { DM_ACHIEVEMENT_REWARD } from "../data/dark-matter";
 import { advanceShipyard, nextShipyardEvent, type CompletedUnits } from "./shipyard";
 import { RESOURCE_IDS, type GameState } from "./types";
@@ -305,7 +305,7 @@ export function prestige(state: GameState): GameState {
       card: slot.card ? structuredClone(slot.card) : null,
     })),
   };
-  return applyAchievementUnlocks(refreshUnlocks(applySeedStock(next)));
+  return applyAchievementUnlocks(refreshUnlocks(applySeedStock(stopRingBatch(next, "重置后需要重新授权自动批次"))));
 }
 
 /** Metal from one manual collect: max(10, one second of metal output), ×10 with the curvature tech. */
