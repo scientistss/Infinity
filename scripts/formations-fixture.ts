@@ -20,7 +20,9 @@ base.research.levels.computer_tech = 3;
 const colony = createPlanet("formation-colony", {...base.planets[0]!.coordinates, position:base.planets[0]!.coordinates.position === 9 ? 10 : 9});
 colony.name = "合成编成第二星球"; base.planets.push(colony);
 for (const planet of base.planets) {
-  planet.resources = {metal:big(1_000_000),crystal:big(1_000_000),deuterium:big(1_000_000)};
+  // Keep synthetic wallets at or below 100,000 so strict native integer-debit checks
+  // do not conflate legacy million-scale wallet serialization rounding with the exact order ledger.
+  planet.resources = {metal:big(100_000),crystal:big(100_000),deuterium:big(100_000)};
   planet.buildings = {...planet.buildings, shipyard:2, robotics_factory:2, research_lab:2};
   planet.productionPct = {...planet.productionPct,metal_mine:0,crystal_mine:0,deuterium_synth:0,solar_plant:0,fusion_reactor:0};
 }

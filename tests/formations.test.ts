@@ -13,13 +13,14 @@ import {
 } from "../src/game/formations";
 import { prestige, tick } from "../src/game/logic";
 import { FORMATION_PRICE_REASON, preparePaidJob, zeroOrderMoney } from "../src/game/order-ledger";
+import { addOrderAmounts, compareOrderAmounts, subtractOrderAmounts } from "../src/game/order-money";
 import type { CreateOrderRequest } from "../src/game/order-state";
 import * as orders from "../src/game/orders";
 import { createPlanet } from "../src/game/planet";
-import { deserializeState, serializeState } from "../src/game/save";
+import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { advanceShipyard, cancelUnits, enqueueUnits, MAX_PLANET_UNITS, unitCost, unitSeconds } from "../src/game/shipyard";
 import { createInitialState } from "../src/game/state";
-import type { GameState } from "../src/game/types";
+import { RESOURCE_IDS, type GameState } from "../src/game/types";
 import { rich, stateWith, withResearch } from "./helpers";
 
 function ready(): GameState { return withResearch(rich(stateWith({ shipyard: 4 }), 1e8), { combustion_drive: 6, computer_tech: 3 }); }
@@ -266,6 +267,47 @@ describe("one reviewed finite replenishment", () => {
 });
 
 describe("formation plans use the real existing paid queue", () => {
+  it("retains exact finite ledgers at the 1e6 wallet representation boundary without repeat payment", () => {
+    // Canonicalize existing achievement/card unlocks through the real reader before the baseline.
+    let state = deserializeState(serializeState(tick(rich(ready(), 1e6), 0)));
+    activePlanet(state).units.light_fighter = 3;
+    const manual = enqueueUnits(state, "light_fighter", 2, "manual");
+    expect(manual.ok).toBe(true);
+    state = design(manual.state, { small_cargo: 3, light_fighter: 10 });
+    const request = review(state);
+    expect(request.lines.map(line => [line.unit, line.quantity])).toEqual([["small_cargo", 3], ["light_fighter", 5]]);
+    expect(request.totalBudget.crystal).toBe("11000");
+    const before = activePlanet(state).resources.crystal.toString();
+    expect(before).toBe("998000");
+    const created = createFormationReplenishment(state, request);
+    expect(created.ok).toBe(true);
+    const paid = orders.advanceOrderPlans(created.state, 10);
+    expect(paid.orders.tasks.map(task => task.charged.crystal)).toEqual(["6000", "5000"]);
+    const charged = addOrderAmounts(paid.orders.tasks[0]!.charged.crystal, paid.orders.tasks[1]!.charged.crystal);
+    expect(charged).toBe("11000");
+    for (const task of paid.orders.tasks) for (const resource of RESOURCE_IDS) {
+      expect(compareOrderAmounts(task.charged[resource], task.budget[resource])).toBe(0);
+      expect(task.refunded[resource]).toBe("0");
+    }
+    // The existing BigNumber wallet representation differs from the exact ledger by 1e-10.
+    // Keep this original numeric boundary covered with exact string arithmetic, never Number subtraction.
+    const after = activePlanet(paid).resources.crystal.toString();
+    expect(after).toBe("986999.9999999999");
+    const actualDelta = subtractOrderAmounts(before, after);
+    expect(actualDelta).toBe("11000.0000000001");
+    const gap = subtractOrderAmounts(actualDelta!, charged!);
+    expect(gap).toBe("0.0000000001");
+    expect(compareOrderAmounts(gap!, "0.000000001")).toBe(-1);
+    expect(paid.orders.nextJobId).toBe(4);
+    expect(activePlanet(paid).shipyardQueue.map(job => [job.source, job.count])).toEqual([["manual", 2], ["plan", 3], ["plan", 5]]);
+    let repeated = paid;
+    for (let i = 0; i < 3; i++) repeated = orders.advanceOrderPlans(repeated, 10);
+    expect(serializeState(repeated)).toEqual(serializeState(paid));
+    const restored = deserializeState(importSave(exportSave(repeated, 1234)).state);
+    expect(serializeState(restored)).toEqual(serializeState(paid));
+    expect(activePlanet(restored).resources.crystal.toString()).toBe(after);
+    expect(serializeState(orders.advanceOrderPlans(restored, 10))).toEqual(serializeState(paid));
+  });
   it("pays actual exact batches, credits partial completions, refunds remaining, reloads and finishes only fixed quantity", () => {
     let state = replenish(design(ready(), { light_fighter: 5 }));
     state = orders.advanceOrderPlans(state, 10);
