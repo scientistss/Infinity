@@ -1,7 +1,7 @@
 name: Verify original P4
 on:
   push:
-    branches: ['feat/p4-original-*', 'dev/p4-original-69eca71', 'release/original-*']
+    branches: ['feat/p4-original-*', 'dev/p4-original-69eca71', 'release/original-*', 'codex/infinity-rebuild-*']
   pull_request:
     branches: ['main', 'dev/p4-original-69eca71']
   workflow_dispatch:

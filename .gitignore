@@ -12,3 +12,9 @@ coverage
 
 __pycache__/
 *.pyc
+
+# Generated synthetic browser fixtures and evidence
+*-review-save.json
+deep-dashboard-review.json
+deep-fixtures/
+*-evidence/

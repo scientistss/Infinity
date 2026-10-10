@@ -9,7 +9,7 @@
     "build": "node scripts/check-ui-baseline.mjs && node scripts/check-ring-art.mjs && tsc --noEmit && vite build && node scripts/write-release.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "sim": "tsx scripts/balance-sim.ts"
+    "sim": "node --import tsx scripts/balance-sim.ts"
   },
   "dependencies": {
     "break_infinity.js": "^2.2.0"
