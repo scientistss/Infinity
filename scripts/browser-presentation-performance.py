@@ -363,19 +363,27 @@ PROBE = r"""(() => {
  document.addEventListener('change',event=>{
   if(event.target instanceof HTMLInputElement&&event.target.type==='file')p.fileSelections.push({at:performance.now(),trusted:event.isTrusted,files:[...event.target.files].map(file=>({name:file.name,size:file.size,type:file.type}))});
  },true);
- window.__nativePresentationProbe={snapshot:(full=true)=>{
+ window.__nativePresentationProbe={snapshot:(full=true,verifyImport=false)=>{
    const status=document.querySelector('[data-bind="status"]')?.textContent??null;
    const notice=document.querySelector('[data-bind="notice-text"]')?.textContent??'';
    const protectedState=/受保护|自动保存暂停|已暂停写入|本地存储不可用|临时初始画面/.test((status??'')+notice);
+   const currentRaw=full?localStorage.getItem(key):null,readAt=performance.now();
+   let currentByteProof=null;
+   if(verifyImport){
+    const actual=JSON.parse(currentRaw),expected=JSON.parse(p.seeded);
+    expected.savedAt=actual.savedAt;expected.lastTickAt=actual.lastTickAt;
+    currentByteProof={matches:JSON.stringify(expected,null,2)===currentRaw,savedAt:actual.savedAt,
+     lastTickAt:actual.lastTickAt,stringChars:currentRaw.length,readAt};
+   }
    return {...(full?p:{}),now:performance.now(),hidden:document.hidden,visibility:document.visibilityState,
     ready:!!document.querySelector('[data-bind="energy-chip"]'),status,notice,protectedState,frameCount:p.frames.length,longTaskCount:p.longTasks.length,inputCount:p.inputs.length,visibilityEventCount:p.visibilityEvents.length,
-    ...(full?{currentRaw:localStorage.getItem(key)}:{frameCount:p.frames.length,longTaskCount:p.longTasks.length})};
+    ...(full?{currentRaw,currentReadAt:readAt}:{}),...(verifyImport?{currentByteProof}:{})};
  }};
 })();"""
 
 
-def snapshot(page, full=True, instrument=True):
-    action=lambda:page.evaluate('full=>window.__nativePresentationProbe.snapshot(full)',full)
+def snapshot(page, full=True, instrument=True, verify_import=False):
+    action=lambda:page.evaluate('({full,verifyImport})=>window.__nativePresentationProbe.snapshot(full,verifyImport)',{'full':full,'verifyImport':verify_import})
     return phase_call('snapshot.bulk' if full else 'snapshot.light',action) if instrument else action()
 
 
@@ -517,18 +525,59 @@ def run(browser, profile, variant, repetition, order):
            file:{type:file.type,disabled:file.disabled,accept:file.accept}};
         }'''))
         before_replacement=snapshot(page)
+        # Install only AFTER every steady-state CPU/input measurement. This
+        # read-only observer captures the first import terminal DOM update in its
+        # microtask, before a later native autosave can replace the committed raw.
+        witness_id=f"{args.invocation_id}:{profile['profile']}:{variant}:{repetition}"
+        phase_call('persistence.arm-terminal-witness',lambda:page.evaluate(r'''({key,name,size,id}) => {
+          const statusNode=document.querySelector('[data-bind="status"]');
+          const initialStatus=statusNode.textContent;
+          if(!['已保存到本地','已自动保存'].includes(initialStatus))throw Error('Persistence witness requires a fresh ready-save status, never an earlier import result');
+          let selected=null,selectionCount=0,witness=null;
+          const terminal=status=>status==='已导入并存入本地'||status.startsWith('导入失败')||/文件读取期间出现了更新的操作|受保护|已暂停写入|本地存储不可用/.test(status);
+          const onFile=event=>{
+            if(event.target!==document.querySelector('[data-bind="import-file"]')||!(event.target instanceof HTMLInputElement)||event.target.type!=='file')return;
+            selectionCount++;
+            const files=[...event.target.files];
+            if(!event.isTrusted||files.length!==1||files[0].name!==name||files[0].size!==size)throw Error('Unexpected native file selection for persistence witness');
+            if(selected!==null)throw Error('Persistence witness cannot reuse a prior file selection');
+            selected=Object.freeze({at:performance.now(),wallAt:Date.now(),trusted:event.isTrusted,
+              name:files[0].name,size:files[0].size,priorRaw:localStorage.getItem(key)});
+          };
+          const observer=new MutationObserver(()=>{
+            const status=statusNode.textContent;
+            if(witness||!selected||!terminal(status))return;
+            const observed=window.__nativePresentationProbe.snapshot(true,true);
+            const backups=Object.keys(localStorage).filter(k=>k.startsWith(key+'.backup'))
+              .map(key=>Object.freeze({key,value:localStorage.getItem(key)}));
+            witness=Object.freeze({id,initialStatus,selectionCount,selected,status:observed.status,
+              notice:observed.notice,at:observed.now,hidden:observed.hidden,visibility:observed.visibility,
+              protectedState:observed.protectedState,currentRaw:observed.currentRaw,
+              currentByteProof:Object.freeze(observed.currentByteProof),backups:Object.freeze(backups)});
+            observer.disconnect();document.removeEventListener('change',onFile,true);
+          });
+          observer.observe(statusNode,{subtree:true,childList:true,characterData:true});
+          document.addEventListener('change',onFile,true);
+          window.__nativePersistenceWitness=()=>witness;
+        }''',{'key':profile['key'],'name':file_path.name,'size':len(file_bytes),'id':witness_id}))
         persistence_cpu_before=metrics(cdp);persistence_started=time.perf_counter()
         phase_call('persistence.select-native-file',lambda:page.locator('[data-bind="import-file"]').set_input_files(str(file_path.resolve()),timeout=30000))
         # File.text and the replacement transaction are genuinely asynchronous.
         # Wait for a terminal DOM result; a fixed sleep is not an acknowledgement.
-        completion=phase_call('persistence.await-file-result',lambda:page.wait_for_function('''() => {
-          const status=document.querySelector('[data-bind="status"]')?.textContent??'';
-          const notice=document.querySelector('[data-bind="notice-text"]')?.textContent??'';
-          return status==='已导入并存入本地'||status.startsWith('导入失败')||/文件读取期间出现了更新的操作|受保护|已暂停写入|本地存储不可用/.test(status+notice)
-           ? {status,notice,at:performance.now(),hidden:document.hidden,visibility:document.visibilityState} : false;
-        }''',polling=50,timeout=30000).json_value())
+        completion=phase_call('persistence.await-file-result',lambda:page.wait_for_function(
+            '() => window.__nativePersistenceWitness?.() || false',polling=50,timeout=30000).json_value())
         persistence_cpu_after=metrics(cdp)
-        run['nativePersistence']['completion']=completion
+        run['nativePersistence']['completion']={key:completion[key] for key in ('status','notice','at','hidden','visibility')}
+        check('first terminal witness belongs to the exact single trusted file selection',
+            completion['id']==witness_id and completion['initialStatus'] in ('已保存到本地','已自动保存') and completion['selectionCount']==1
+            and completion['selected']['trusted'] and completion['selected']['name']==file_path.name
+            and completion['selected']['size']==len(file_bytes) and completion['at']>=completion['selected']['at'])
+        run['nativePersistence']['terminalWitness']={'id':completion['id'],'initialStatus':completion['initialStatus'],
+            'selectionCount':completion['selectionCount'],'selectedAt':completion['selected']['at'],
+            'selectedWallAt':completion['selected']['wallAt'],'terminalAt':completion['at'],
+            'preFileNativeReadSha256':digest(completion['selected']['priorRaw'] or ''),
+            'committedNativeReadSha256':digest(completion['currentRaw'] or ''),
+            'scope':'Read-only observer installed after CPU sampling; first terminal DOM microtask bound to one trusted expected file change, native current and backups captured synchronously.'}
         run['nativePersistence']['diagnostics']={'hostElapsedMs':(time.perf_counter()-persistence_started)*1000,
             'cpu':delta(persistence_cpu_before,persistence_cpu_after),'rawMetricsBefore':persistence_cpu_before,'rawMetricsAfter':persistence_cpu_after,
             'scope':'Separate post-measurement persistence diagnostic span, including normal game work during native file selection/async completion and controller waits; never part of steady-state comparison.'}
@@ -541,20 +590,21 @@ def run(browser, profile, variant, repetition, order):
         check('browser selected the actual full-size JSON file',any(file['name']==file_path.name and file['size']==len(file_bytes) for event in run['nativePersistence']['fileSelections'] for file in event['files']))
         run['nativePersistence']['remainedVisible']=not before_replacement['hidden'] and not completion['hidden'] and not replacement['hidden'] and not any(event['hidden'] for event in visibility_events)
         check('native file persistence remains visible',run['nativePersistence']['remainedVisible'])
-        # Compare the entire native stored string against the original payload
-        # with only the actual transaction envelope timestamps substituted.
-        byte_proof=phase_call('persistence.verify-current-bytes',lambda:page.evaluate('''({key,source}) => {
-          const raw=localStorage.getItem(key),actual=JSON.parse(raw),expected=JSON.parse(source);
-          expected.savedAt=actual.savedAt;expected.lastTickAt=actual.lastTickAt;
-          return {matches:JSON.stringify(expected,null,2)===raw,savedAt:actual.savedAt,lastTickAt:actual.lastTickAt,stringChars:raw.length};
-        }''',{'key':profile['key'],'source':initialized['seeded']}))
-        run['nativePersistence']['currentByteProof']=byte_proof
+        # Compare the entire native stored string in the SAME synchronous snapshot
+        # that reads it at the first terminal DOM change. A later independent read may
+        # legitimately observe its next autosave rather than this import result.
+        # Only transaction envelope timestamps are substituted; no state is masked.
+        byte_proof=completion['currentByteProof']
+        run['nativePersistence']['currentByteProof']={**byte_proof,
+            'observedRawSha256':digest(completion['currentRaw'] or ''),
+            'scope':'Full native current-slot read and exact source comparison in the first terminal DOM microtask; normal later autosaves remain enabled.'}
         run['nativePersistence']['replacementStatus']=replacement['status']
-        backups=phase_call('persistence.read-backups',lambda:page.evaluate('(key)=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup")).map(key=>({key,value:localStorage.getItem(key)}))',profile['key']))
+        backups=completion['backups']
         run['nativePersistence']['backups']=[{'key':row['key'],'sha256':digest(row['value'] or ''),
             'stringChars':len((row['value'] or '').encode('utf-16-le'))//2,
             'matchesPreImportNativeRead':row['value']==before_replacement['currentRaw'],
-            'matchesManualSaveNativeRead':row['value']==saved['currentRaw']} for row in backups]
+            'matchesManualSaveNativeRead':row['value']==saved['currentRaw'],
+            'matchesNativeFileChangeRead':row['value']==completion['selected']['priorRaw']} for row in backups]
         run['nativePersistence']['manualSavedSha256']=digest(saved['currentRaw'] or '')
         run['nativePersistence']['preImportNativeReadSha256']=digest(before_replacement['currentRaw'] or '')
         run['nativePersistence']['postImportNativeReadSha256']=digest(replacement['currentRaw'] or '')
@@ -562,8 +612,8 @@ def run(browser, profile, variant, repetition, order):
         run['nativePersistence']['protectedAfterManualSave']=saved['protectedState']
         run['nativePersistence']['protectedAfterReplacement']=replacement['protectedState']
         run['nativePersistence']['manualSaveSucceeded']=saved['status']=='已保存到本地' and bool(saved['currentRaw']) and not saved['protectedState']
-        run['nativePersistence']['replacementSucceeded']=completion['status']=='已导入并存入本地' and bool(replacement['currentRaw']) and not replacement['protectedState'] and byte_proof['matches']
-        run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesPreImportNativeRead'] or row['matchesManualSaveNativeRead'] for row in run['nativePersistence']['backups'])
+        run['nativePersistence']['replacementSucceeded']=completion['status']=='已导入并存入本地' and bool(completion['currentRaw']) and not completion['protectedState'] and not replacement['protectedState'] and byte_proof['matches']
+        run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesNativeFileChangeRead'] for row in run['nativePersistence']['backups'])
         run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes'] and run['nativePersistence']['remainedVisible']
         checkpoint('persistence.result','after',qualified=run['nativePersistence']['qualified'],status=completion['status'])
         check('native import commits exact current bytes and preserves exact prior backup bytes',run['nativePersistence']['qualified'])
