@@ -1,4 +1,5 @@
 import type { OrderState } from "./order-state";
+import type { ResearchTemplateState } from "./research-template-state";
 import type { DeepState } from "./deep-state";
 import type { Universe } from "./galaxy";
 import type { Fleet, FleetMessage } from "./fleet";
@@ -87,6 +88,8 @@ export interface PlayerStats {
 export interface GameState {
   /** Finite local plans and globally stable paid queue identities. */
   orders: OrderState;
+  /** Reusable research goals; authorization is created separately through finite plans. */
+  researchTemplates: ResearchTemplateState;
   /** Canonical per-planet inventories and independent local queues (P4-1). */
   planets: PlanetState[];
   activePlanetId: string;

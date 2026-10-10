@@ -1,3 +1,4 @@
+import { readResearchTemplates, serializeResearchTemplates, migrateResearchTemplates, rejectLegacyResearchTemplateFields } from "./research-templates-save";
 import { migrateLegacyOrders, migrateTransportOrders, rejectLegacyTransportFields, readOrders, serializeOrders, validateOrderReferences, validateOrderTransportReferences } from "./orders-save";
 import type { PaidJobIdentity } from "./order-state";
 import { compareOrderAmounts, isOrderAmount } from "./order-money";
@@ -89,6 +90,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 }
 
 export interface SerializedState {
+  researchTemplates: ReturnType<typeof serializeResearchTemplates>;
   orders: ReturnType<typeof serializeOrders>;
   planets: SerializedPlanet[];
   activePlanetId: string;
@@ -135,7 +137,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2/r3/r4/r5 → r6 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2/r3/r4/r5/r6 → r7 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -158,6 +160,7 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
+    researchTemplates: serializeResearchTemplates(state.researchTemplates),
     orders: serializeOrders(state.orders),
     planets: state.planets.map(serializePlanet),
     activePlanetId: state.activePlanetId,
@@ -195,7 +198,9 @@ export function deserializeState(raw: unknown): GameState {
   if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
   state.activePlanetId = readPlanetId(raw.activePlanetId);
   if (!ids.has(state.activePlanetId)) throw new Error("当前星球不存在");
-  state.orders = readOrders(raw.orders);
+  state.researchTemplates = readResearchTemplates(raw.researchTemplates);
+  // The orders subformat remains r6 even though the save envelope is r7.
+  state.orders = readOrders(raw.orders, 6);
   state.research = readResearch(raw.research);
   if (state.research.queue.some(o => !ids.has(o.planetId))) throw new Error("研究出资星球不存在");
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
@@ -239,7 +244,7 @@ export function exportSave(state: GameState, savedAt = Date.now()): string {
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate a file. Only the current version and original-P4 schema is accepted; anything else throws without touching the current game. */
+/** Validate current v9/r7 or explicitly migrate same-schema r2–r6; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -252,12 +257,17 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r${SAVE_REVISION}）；原件保留，未导入`);
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r${SAVE_REVISION}）；原件保留，未导入`);
   }
   if (parsed.revision !== SAVE_REVISION) {
-    rejectLegacyTransportFields(parsed.state);
-    parsed.state = migrateTransportOrders(parsed.revision === 5 ? parsed.state : migrateLegacyState(parsed.state, parsed.revision));
+    rejectLegacyResearchTemplateFields(parsed.state);
+    // r6 already owns real transport authority and must bypass the r5 migration.
+    if (parsed.revision !== 6) {
+      rejectLegacyTransportFields(parsed.state);
+      parsed.state = migrateTransportOrders(parsed.revision === 5 ? parsed.state : migrateLegacyState(parsed.state, parsed.revision));
+    }
+    parsed.state = migrateResearchTemplates(parsed.state);
   }
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");

@@ -1,3 +1,4 @@
+import { applyResearchTemplateAction } from "./game/research-templates";
 import { applyOrderAction } from "./game/orders";
 import { ordersView } from "./ui/orders-present";
 import { summonMerchant, trade } from "./game/merchant";
@@ -51,6 +52,7 @@ let notice = saveSession.notice;
 let status = saveSession.message;
 
 let state: GameState = loaded.state;
+let adoptedLaunches = state.stats.launches;
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
 let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
@@ -101,11 +103,13 @@ function frame(now: number): void {
 }
 
 function render(): void {
+  observeWorldAdoption();
   view.update(present(state, { status, banner, notice, catchup }));
   view.setOrigin(activePlanet(state).coordinates);
   view.updateSpace(spaceView(state, view.cursor(), view.readRequest()), status);
   view.updateDeep(state);
   view.updateOrders(ordersView(state), saveSession.mode === "ready");
+  view.updateResearchTemplates(state, saveSession.mode === "ready");
 }
 
 async function handleAction(action: UiAction): Promise<void> {
@@ -117,7 +121,13 @@ async function handleAction(action: UiAction): Promise<void> {
     return;
   }
   const before = state.unlocked;
-  if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "order-retry-dock" || action.type === "cancel-paid-job") {
+  if (action.type === "research-template-create" || action.type === "research-template-edit" || action.type === "research-template-delete" || action.type === "research-template-apply") {
+    const result = applyResearchTemplateAction(state, action);
+    const changed = result.state !== state;
+    state = result.state; status = result.reason;
+    if (changed) persist();
+    view.completeResearchTemplateAction(status, result.ok && saveSession.mode === "ready");
+  } else if (action.type === "order-create" || action.type === "order-pause" || action.type === "order-resume" || action.type === "order-cancel" || action.type === "order-dismiss" || action.type === "order-retry-dock" || action.type === "cancel-paid-job") {
     const result = applyOrderAction(state, action);
     const changed = result.state !== state;
     state = result.state;
@@ -325,6 +335,7 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
   // from the old namespace attach themselves to matching IDs in the new one.
   view.invalidateOrderAuthority();
   state = result.state;
+  adoptedLaunches = state.stats.launches;
   catchup = null;
   banner = null;
   notice = null;
@@ -332,7 +343,16 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
   view.setTransferText(action === "导入" ? result.raw : "");
 }
 
+/** One adoption guard covers manual, protocol and offline curvature launches.
+ * A cancelled or rejected launch leaves the generation untouched. */
+function observeWorldAdoption(): void {
+  if (state.stats.launches === adoptedLaunches) return;
+  view.invalidateOrderAuthority();
+  adoptedLaunches = state.stats.launches;
+}
+
 function persist(nextStatus?: string): void {
+  observeWorldAdoption();
   const result = saveSession.save(state);
   if (result.ok) {
     if (nextStatus) status = nextStatus;

@@ -310,15 +310,45 @@ describe("r6 strict transport structure and identity", () => {
   });
 });
 
+describe("r6 to r7 retains the complete existing transport state", () => {
+  it.each(["pending", "paid-research", "outbound", "returning"])("adds only empty intent to %s source state", scenario => {
+    const file = scenario === "pending" ? pendingFile() : scenario === "paid-research" ? paidFile("research") : tripFile(scenario);
+    file.revision = 6; delete file.state.researchTemplates;
+    const original = structuredClone(file), imported = read(file);
+    expect(file).toEqual(original);
+    const { researchTemplates, ...projection } = imported.state;
+    expect(researchTemplates).toEqual({ nextTemplateId: 1, templates: [] });
+    expect(projection).toEqual(file.state);
+    expect(read(imported)).toEqual(imported);
+  });
+  it("keeps paid r6 research and transport receipts frozen when migration backup fails", () => {
+    for (const file of [paidFile("research"), tripFile()]) {
+      file.revision = 6; delete file.state.researchTemplates;
+      const raw = JSON.stringify(file), data = new Map([[STORAGE_KEY, raw]]);
+      const store = { getItem: (key: string) => data.get(key) ?? null,
+        setItem: () => { throw Error("synthetic quota failure"); }, removeItem: (key: string) => { data.delete(key); } };
+      const session = new SaveSession(store, 6000);
+      expect(session.mode).toBe("protected");
+      expect(session.loaded.appliedSeconds).toBe(0);
+      const { researchTemplates, ...projection } = serializeState(session.loaded.state);
+      expect(researchTemplates).toEqual({ nextTemplateId: 1, templates: [] });
+      expect(projection).toEqual(file.state);
+      expect(session.export(session.loaded.state, 6000)).toEqual({ raw, protected: true });
+      expect(data.get(STORAGE_KEY)).toBe(raw);
+    }
+  });
+});
+
 describe("r5 transport migration is additive and cannot erase smuggled authority", () => {
   function r5(): any {
     const file = paidFile("shipyard");
     const task = file.state.orders.tasks[0];
-    file.revision = 5; delete file.state.orders.nextWorkId; delete task.transport; delete task.currentWork;
+    file.revision = 5; delete file.state.researchTemplates; delete file.state.orders.nextWorkId; delete task.transport; delete task.currentWork;
     return file;
   }
   it("preserves paid local identities, partial progress and all original ledgers", () => {
     const file = r5(), first = read(file), projected = structuredClone(first.state) as any;
+    expect(projected.researchTemplates).toEqual({ nextTemplateId: 1, templates: [] }); delete projected.researchTemplates;
     expect(projected.orders.nextWorkId).toBe(1); delete projected.orders.nextWorkId;
     for (const task of projected.orders.tasks) {
       expect(task.transport).toBeNull(); expect(task.currentWork).toBeNull(); delete task.transport; delete task.currentWork;

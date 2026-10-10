@@ -5,8 +5,8 @@ The production entry point (`src/main.ts`) uses `src/game/save-session.ts` for e
 ## Supported formats
 
 - Current storage key: `infinity.original-p4.save.v1`.
-- Current schema: `infinity-original-p4`, version **9**, revision **6**.
-- Supported older imports are **the same schema, version 9, revisions 2, 3, 4 and 5**. The r2 → r3 step preserves its universe, fleets and game progress while initializing `deepSpace`; r2 files carrying deep-space fields are rejected. The r3 → r4 step assigns stable ticket IDs in existing pending order, initializes the next ID and leaves finite automatic-reveal authorization empty. Both older revisions reject r4-only fields instead of silently discarding them.
+- Current schema: `infinity-original-p4`, version **9**, revision **7**.
+- Supported older imports are **the same schema, version 9, revisions 2, 3, 4, 5 and 6**. The r2 → r3 step preserves its universe, fleets and game progress while initializing `deepSpace`; r2 files carrying deep-space fields are rejected. The r3 → r4 step assigns stable ticket IDs in existing pending order, initializes the next ID and leaves finite automatic-reveal authorization empty. Both older revisions reject r4-only fields instead of silently discarding them.
 - v1/v5/v7/v8, later versions, r1/unknown revisions, other route schemas and malformed files are not converted or silently reset. They remain protected. Retaining original bytes does not imply compatibility.
 - The previous site's `infinity.save.v1` is never used as the current game and is never overwritten. Its existing export control remains available.
 
@@ -30,7 +30,7 @@ Budget, cumulative charged and refunded amounts are exact bounded decimal string
 
 The r4 → r5 step adds an empty plan list and assigns existing paid-job IDs deterministically: planets in saved order, building queue then shipyard queue per planet, followed by global research. It preserves saved costs, timers, payer IDs, queue progress and economy. Existing ship batches get `orderedCount = count` with catalog unit-price snapshots, so migration never invents historical unit completion. Existing r4 ring tickets and finite authorization remain intact. Only r2/r3 migrations disable the legacy ring cards, as above. Every older revision rejects r5-only orders, identities and snapshot fields rather than interpreting them as fresh permission or silently downgrading them.
 
-Native browser migration fixtures are generated from the actual verified r2/r3/r4/r5 source serializers, not by relabeling a current file. The generator accepts their absolute source directories in revision order; the browser suite checks all four migrations, armed r4 authority, exact backups and frozen views for injected migration failures. All fixtures are synthetic.
+Native browser migration fixtures are generated from the actual verified r2/r3/r4/r5/r6 source serializers, not by relabeling a current file. The generator accepts their absolute source directories in revision order; the browser suite checks all five migrations, armed r4 authority, exact backups and frozen views for injected migration failures. All fixtures are synthetic.
 
 ## Single-source transport authority in r6
 
@@ -50,13 +50,29 @@ The reader verifies `net + reserved <= budget`, nonrefundable fuel is covered by
 
 The r5 → r6 migration first rejects any new transport/work/owner fields, even null, and validates the old exact task schema. It preserves all real r5 plan ledgers, paid identities, completed watermarks, costs, timers, fleet cargo and existing ring authority. It adds only `transport = null`, `currentWork = null`, `nextWorkId = 1` and fleet `orderTransport = null`. Revisions 2–4 retain their existing migration chain before the same additive step. Their old paid jobs and fleets are never inferred to authorize transport. All older revisions reject smuggled r6 fields instead of silently dropping them.
 
-Synthetic unit boundary fixtures are separate from real historical-source proof. `scripts/save-session-fixture.ts` requires four absolute verified r2, r3, r4 and r5 source directories. It produces actual source-exported legacy files, an armed r4 file, and a real r5 paid local plan plus ordinary transport. The native browser suite covers all four migrations and byte-exact backup/failure behavior, including preserving readable r5 paid work when a backup fails. `scripts/check-order-migration.mjs` independently compares complete old-schema projections from real old serializers and queue primitives. The old r5 reader must reject r6 rather than strip its authority.
+Synthetic unit boundary fixtures are separate from real historical-source proof. `scripts/save-session-fixture.ts` requires five absolute verified r2, r3, r4, r5 and r6 source directories. It produces actual source-exported legacy files, an armed r4 file, and a real r5 paid local plan plus ordinary transport. The native browser suite covers all five migrations and byte-exact backup/failure behavior, including preserving readable r5 paid work when a backup fails. `scripts/check-order-migration.mjs` independently compares complete old-schema projections from real old serializers and queue primitives. The old r5 reader must reject r6 rather than strip its authority.
+
+## Pure research intent in r7
+
+Revision 7 adds a mandatory `researchTemplates = { nextTemplateId, templates }` library and leaves the orders subformat at revision 6. A library contains at most 32 templates. Each template contains exactly `id`, `revision`, `name` and `goals`; each goal contains exactly `tech` and `targetLevel`. No payer, budget, charge/refund ledger, queue receipt, task/run identity, status or transport authority may be saved in a template. Unknown object fields are rejected rather than stripped. Serialization validates and independently copies the library, each template, each goal array and each goal.
+
+IDs are unique positive safe integers strictly below `nextTemplateId` and below `Number.MAX_SAFE_INTEGER`. The next counter may equal that maximum as an exhausted sentinel. Revisions are positive safe integers; an exhausted revision remains readable but cannot be edited again. Names are trimmed, nonempty, contain at most 64 Unicode code points and reject C0/C1 controls. Duplicate names are allowed. Each template contains 1–16 distinct known technologies in canonical catalog order, with absolute integer goals from 1 to 1000. The reader and domain actions use the same name/goal validation.
+
+The r6 → r7 branch adds only an empty library. It explicitly bypasses the older transport migration so original transport authorization, pending work, reservations, real outbound/returning fleets, receipts, paid research, paused plans, economic values and timers remain intact. Revisions 2–5 follow their existing migration chain and then receive the same empty library. Before migration, all r2–r6 sources reject even null/empty `researchTemplates` or `nextTemplateId` fields, including nested smuggling. Generic old `id`, `revision` and `name` fields are not prohibited.
+
+Upgrade notices distinguish their source: r6 preserves existing plans and transport; r5 preserves plans while transport starts empty; r2–r4 start with empty plans and transport. Every source starts with empty research intent. Migration and catch-up do not apply a template or create new authorization. Normal existing paid work or previously authorized plans still follow the unchanged simulation rules.
+
+Real-history verification archives r6 commit `bc6f5a475336dca1bb02d4f1061ee01ba9c5d9c4`. `scripts/legacy-r6-fixture.ts` uses only that historical source's creation, order pass, research payment, pause, fleet advance, recall and serializer APIs to produce anonymous synthetic outbound and returning scenarios. The deterministic migration check compares the complete old state after removing only the new library. The actual old r6 reader must reject a current r7 file containing a nonempty library. The preceding r5-reader/r6-file guard remains separately exercised with archived code.
+
+The native HTTP suite adds source-r6 migration, exact backups, full prior-state projection comparison, paid-research/transport retention, and cross-tab conflicts. Its r6 no-catch-up cases explicitly control only the wall-clock envelope to isolate migration; fault cases retain native Storage backing and explicitly inject backup/current write throw/drop or post-write read denial. A current write followed by readback denial is treated as uncertain: the candidate may be on disk, the readable pre-catch-up source stays frozen, and export returns cached source bytes without a rollback claim. These checks supplement the unchanged earlier failure matrix. They are verification specifications; a run is successful only when its report says so.
+
+Imported r7 libraries replace the current library rather than merge IDs. A verified reset creates an empty library. Existing finite orders and paid work are separate from templates; editing or deleting intent cannot rewrite their authorization. SaveSession's current comparison, backup, verification and asynchronous intent rules are unchanged.
 
 ## Open and protection
 
 A missing key (`null`) permits a fresh game to save normally. An empty string is a corrupt save, not an absent save.
 
-Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2/r3/r4/r5 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
+Current compatible saves load without a startup write. The live simulation applies the existing offline rules. An r2/r3/r4/r5/r6 upgrade is persisted only after its original bytes have a verified backup. If that upgrade cannot finish, the validated pre-catchup progress remains visible and frozen. The UI does not present an uncommitted migrated game as successful.
 
 If a source cannot be read or parsed, the UI explicitly labels its initial display as a temporary placeholder. Protected/conflicted/unavailable sessions do not simulate time or accept gameplay mutations. Export, import, explicit reset and recovery notices remain accessible. Obtaining `window.localStorage` does not perform a write probe: a full quota must not hide readable saved progress.
 
@@ -66,7 +82,7 @@ A protected session may retry an explicitly requested valid import or reset afte
 
 ## Replacement order
 
-Import, reset and r2/r3/r4/r5 upgrade use this order:
+Import, reset and r2/r3/r4/r5/r6 upgrade use this order:
 
 1. Parse and validate the supported schema and state, then deserialize the candidate.
 2. Serialize the candidate and validate the serialized output before touching storage.
@@ -96,6 +112,6 @@ File imports capture a latest-intent token. A newer import/reset, any subsequent
 
 ## Compatibility APIs and verification
 
-`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2/r3/r4/r5 compatibility path preserves the exact raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
+`importSave`, `exportSave`, `readSave`, `writeSave`, `clearSave`, `backupRawSave` and `loadGame` remain available to existing tests and non-production callers. `loadGame` now throws for every unsupported version instead of returning a fresh reset. Its r2/r3/r4/r5/r6 compatibility path preserves the exact raw source and returns the parsed projection, but does not replace the current key. `writeSave` and `clearSave` remain intentionally low-level, unguarded helpers; production must not use them directly.
 
-`tests/transport-save.test.ts` covers strict transport structure, historical ownership, pending/paid reservations, actual fleet phases, blocked returns, exact limits and additive r5 migration. `tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2/r3/r4/r5 upgrade, disabled legacy automation, partial-batch reload and migration write/read/quota failures, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.
+`tests/research-templates-save.test.ts` covers strict r7 shape, bounded goals, name/ID boundaries, deep-copy isolation, forbidden execution fields, additive empty-library migration, old-revision smuggling, library replacement and reset. `tests/transport-save.test.ts` covers strict transport structure, historical ownership, pending/paid reservations, actual fleet phases, blocked returns, exact limits and additive r5 migration. `tests/save-session.test.ts` covers current/missing/corrupt/incompatible saves, r2/r3/r4/r5/r6 upgrade, disabled legacy automation, partial-batch reload and migration write/read/quota failures, verified replacements, backup/current/read failures, uncertain writes, safe reset/retry, equal writes, competing tabs, bounded non-destructive backups and asynchronous file-intent races. Existing save/empire compatibility assertions were updated from implicit reset to protection. Native-browser verification lives in `scripts/browser-save-session.py`; it checks the actual production controls and browser storage rather than introducing product-only test hooks.

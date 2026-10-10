@@ -145,13 +145,16 @@ AUDIT = r"""(() => {
     /\[native code\]/.test(Function.prototype.toString.call(set));
   window.__saveAudit = [];
   window.__saveFault = null;
+  window.__saveWrittenKeys = new Set();
+  window.__saveNativeRead = k => get.call(localStorage, k);
   const watched = k => k === key || k === backup || k.startsWith(backup + '.');
   const log = event => window.__saveAudit.push(event);
   Storage.prototype.getItem = function(k) {
     k = String(k);
     const fault = window.__saveFault;
     if (this === localStorage && fault && fault.operation === 'read' &&
-        (fault.target === 'current' ? k === key : k.startsWith(backup))) {
+        (fault.target === 'current' ? k === key : k.startsWith(backup)) &&
+        (!fault.afterWrite || window.__saveWrittenKeys.has(k))) {
       log({operation: 'read-throw', key: k, injected: true});
       throw new DOMException('Synthetic storage read fault', 'SecurityError');
     }
@@ -174,6 +177,7 @@ AUDIT = r"""(() => {
       throw new Error('Unknown browser test fault');
     }
     set.call(this, k, v);
+    window.__saveWrittenKeys.add(k);
     log({operation: 'write-return', key: k, value: v});
   };
   Storage.prototype.removeItem = function(k) {
@@ -314,9 +318,19 @@ try:
         invalid = copy.deepcopy(fixtures["paidR5"])
         invalid["revision"] = SAVE_REVISION
         invalid["state"]["orders"]["nextWorkId"] = 1
+        invalid["state"]["researchTemplates"] = {"nextTemplateId": 1, "templates": []}
         for task in invalid["state"]["orders"]["tasks"]:
             task["transport"], task["currentWork"] = None, None
         invalids["synthetic r6 missing mandatory fleet owner tag"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = json.loads(raw_fixture("imported"))
+        del invalid["state"]["researchTemplates"]
+        invalids["r7 missing mandatory research intent"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = json.loads(raw_fixture("imported"))
+        invalid["state"]["researchTemplates"]["budget"] = None
+        invalids["r7 library smuggles budget"] = json.dumps(invalid, ensure_ascii=False)
+        invalid = copy.deepcopy(fixtures["transportR6"]["outbound"])
+        invalid["state"]["researchTemplates"] = {"nextTemplateId": 1, "templates": []}
+        invalids["actual r6 source smuggles empty r7 intent"] = json.dumps(invalid, ensure_ascii=False)
         for label, invalid in invalids.items():
             case = "invalid import: " + label
             clear_audit(page)
@@ -361,7 +375,7 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3, 4, 5):
+        for revision in (2, 3, 4, 5, 6):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
@@ -370,6 +384,7 @@ try:
             check(f"supported migration produces revision {SAVE_REVISION}", migrated_file["revision"] == SAVE_REVISION)
             check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
             check("migration never creates finite order authorization", migrated_file["state"]["orders"]["tasks"] == [])
+            check("migration never invents research intent", migrated_file["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
             check("migration retains original planet", planet(page) == name_of(legacy_raw))
             check(f"migration backup is byte-for-byte r{revision} original", raw(page, BACKUP) == legacy_raw)
             context.close()
@@ -399,6 +414,7 @@ try:
         context, page = boot(paid_raw)
         migrated = json.loads(verify_commit(page, paid_raw, "已升级并保存本地存档"))
         migrated_orders = copy.deepcopy(migrated["state"]["orders"])
+        check("r5 migration adds an empty research intent library", migrated["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
         check("r5 upgrade introduces only an empty work counter", migrated_orders.pop("nextWorkId") == 1)
         for task in migrated_orders["tasks"]:
             check("real r5 paid plan never becomes transport permission",
@@ -424,8 +440,69 @@ try:
         check("failed paid r5 upgrade retains readable source", planet(page) == name_of(paid_raw))
         context.close()
 
+        # These files come from the actual archived r6 serializer and actual dispatch,
+        # paid-research, pause and recall primitives. Only the wall-clock envelope is
+        # explicitly held in the future to isolate migration from offline simulation.
+        classification = "HTTP / native localStorage / actual r6 source / controlled no-catchup timestamp"
+        for phase in ("outbound", "returning"):
+            case = f"actual r6 {phase} complete transport and paid-research migration"
+            r6_value = copy.deepcopy(fixtures["transportR6"][phase])
+            check("fixture is genuinely source-r6, with no r7 field", r6_value["revision"] == 6 and "researchTemplates" not in r6_value["state"])
+            r6_value["savedAt"] = r6_value["lastTickAt"] = int(time.time() * 1000) + 60_000
+            r6_raw = json.dumps(r6_value, ensure_ascii=False, indent=2)
+            context, page = boot(r6_raw)
+            migrated = json.loads(verify_commit(page, r6_raw, "已升级并保存本地存档"))
+            projection = copy.deepcopy(migrated["state"])
+            check("r6 migration creates exactly an empty intent library", projection.pop("researchTemplates") == {"nextTemplateId": 1, "templates": []})
+            check("r6 complete prior state projection is unchanged", projection == r6_value["state"])
+            check("r6 genuine unpaid work and in-flight phase remain", projection["orders"]["tasks"][0]["currentWork"]["stage"] == "pending" and projection["orders"]["tasks"][0]["transport"]["trips"][0]["phase"]["kind"] == phase)
+            check("r6 real paid research remains owned by its paused plan", len(projection["research"]["queue"]) == 1 and projection["research"]["queue"][0]["source"] == "plan" and all(t["status"] == "paused" for t in projection["orders"]["tasks"]))
+            expect(page.locator('[data-bind="notice"]')).to_contain_text("运输授权、回执")
+            check("r6 migration notice does not claim old plans were empty", "有限计划为空" not in page.locator('[data-bind="notice"]').inner_text())
+            screenshot(page, f"r6-{phase}-migration.png")
+            page.reload(wait_until="networkidle")
+            select_save(page)
+            check("r6 exact source backup survives native reload", raw(page, BACKUP) == r6_raw)
+            check("r7 migration state remains current on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
+            context.close()
+
+        classification = "HTTP / native Storage / actual r6 source / injected migration fault"
+        for fault in ({"operation": "write", "target": "backup", "mode": "throw"},
+                      {"operation": "write", "target": "backup", "mode": "drop"},
+                      {"operation": "write", "target": "current", "mode": "throw"},
+                      {"operation": "write", "target": "current", "mode": "drop"},
+                      {"operation": "read", "target": "backup", "afterWrite": True},
+                      {"operation": "read", "target": "current", "afterWrite": True}):
+            case = "actual r6 paid transport source migration fault: " + json.dumps(fault, sort_keys=True)
+            r6_value = copy.deepcopy(fixtures["transportR6"]["outbound"])
+            r6_value["savedAt"] = r6_value["lastTickAt"] = int(time.time() * 1000) + 60_000
+            r6_raw = json.dumps(r6_value, ensure_ascii=False, indent=2)
+            context, page = boot(r6_raw, startup_fault=fault)
+            expect(page.locator('[data-bind="notice"]')).to_contain_text("原件已保留")
+            frozen_time, frozen_metal = page.locator('[data-bind="played"]').text_content(), page.locator('[data-bind="amount-metal"]').text_content()
+            page.wait_for_timeout(1_200)
+            check("failed r6 migration freezes readable simulation", page.locator('[data-bind="played"]').text_content() == frozen_time and page.locator('[data-bind="amount-metal"]').text_content() == frozen_metal)
+            check("failed r6 migration keeps the readable original planet", planet(page) == name_of(r6_raw))
+            check("failed r6 migration exports the exact original despite readback failure", download_raw(page, f"r6-{fault['operation']}-{fault['target']}-{fault.get('mode', 'readback')}-original.json") == r6_raw)
+            expected_event = "read-throw" if fault["operation"] == "read" else "write-" + fault["mode"]
+            check("r6 source fault was actually exercised", any(row["operation"] == expected_event and row.get("injected") for row in events(page)))
+            persisted = page.evaluate("key => window.__saveNativeRead(key)", KEY)
+            uncertain_write = fault["operation"] == "read" and fault["target"] == "current"
+            if uncertain_write:
+                check("uncertain r6 write remains on disk without a false rollback claim", json.loads(persisted)["revision"] == SAVE_REVISION)
+            else:
+                check("r6 original bytes survive denied or dropped replacement", persisted == r6_raw)
+            check("r6 failed migration never announces success", not any(row["operation"] == "ui-status" and row["text"] == "已升级并保存本地存档" for row in events(page)))
+            capture_audit(page, "actual r6 migration fault and exact protected export")
+            page.evaluate("window.__saveFault = null")
+            clear_audit(page)
+            page.locator('[data-action="save"]').click()
+            check("r6 failure cannot silently unlock writes after fault is removed", not any(row["operation"] == "write-attempt" for row in events(page)))
+            capture_audit(page, "actual r6 source remains protected")
+            context.close()
+
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3, 4, 5):
+        for revision in (2, 3, 4, 5, 6):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)
@@ -543,6 +620,32 @@ try:
         check("closing conflicted tab does not overwrite current save", raw(second) == committed)
         context.close()
 
+        classification = "HTTP / native localStorage / actual r6 source / trusted cross-tab conflict"
+        case = "actual r6 migrated transport source remains protected against competing-tab replacement"
+        r6_value = copy.deepcopy(fixtures["transportR6"]["outbound"])
+        r6_value["savedAt"] = r6_value["lastTickAt"] = int(time.time() * 1000) + 60_000
+        r6_raw = json.dumps(r6_value, ensure_ascii=False, indent=2)
+        context, first = boot(r6_raw)
+        first_baseline = verify_commit(first, r6_raw, "已升级并保存本地存档")
+        second = context.new_page()
+        active_page = second
+        attach_page(second)
+        second.goto(args.url, wait_until="networkidle")
+        select_save(second)
+        clear_audit(first)
+        clear_audit(second)
+        import_text(second, raw_fixture("imported"))
+        committed = verify_commit(second, first_baseline, "已导入并存入本地")
+        expect(first.locator('[data-bind="notice"]')).to_contain_text("其他标签页")
+        check("actual r6 migrated page receives a trusted conflict event", any(row["operation"] == "storage-event" and row.get("trusted") for row in events(first)))
+        first.locator('[data-action="save"]').click()
+        reset(first, True)
+        check("stale migrated-r6 tab cannot overwrite competing current bytes", raw(second) == committed)
+        check("stale migrated-r6 tab exports its exact transport-bearing baseline", download_raw(first, "r6-conflicted-tab-original.json") == first_baseline)
+        check("r6 original migration backup remains immutable across conflict", raw(second, BACKUP) == r6_raw)
+        check("stale migrated-r6 controls cannot attempt a current write", not any(row["operation"] == "write-attempt" and row["key"] == KEY for row in events(first)))
+        context.close()
+
         classification = "HTTP / native localStorage"
         case = "reset cancellation and successful durable replacement"
         original = raw_fixture()
@@ -559,6 +662,7 @@ try:
         reset_raw = verify_commit(page, original, "已重置并存入本地")
         check("reset changes the displayed planet to a fresh game", planet(page) != name_of(original))
         reset_state = json.loads(reset_raw)["state"]
+        check("reset commits an empty research intent library", reset_state["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
         check("reset commits a single fresh planet", len(reset_state["planets"]) == 1)
         check("reset commits empty progress", reset_state["manualClicks"] == 0 and
               all(level == 0 for level in reset_state["planets"][0]["buildings"].values()))

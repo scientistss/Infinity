@@ -1,4 +1,5 @@
 import { createOrderState } from "./order-state";
+import { createResearchTemplateState } from "./research-template-state";
 import { createDeepState } from "./deep-state";
 import { homeCoordinates } from "./galaxy";
 import { emptyCurvature } from "../prestige/tree";
@@ -66,6 +67,7 @@ export function createInitialState(seed?: number): GameState {
   const worldSeed = seed === undefined ? arcade.seed : seed >>> 0;
   return {
     orders: createOrderState(),
+    researchTemplates: createResearchTemplateState(),
     planets: [{ ...createPlanet(HOMEWORLD_ID, homeCoordinates(worldSeed)), resources: startingResources() }],
     universe: {seed: worldSeed, layout: "ring-v1"},
     fleets: [], messages: [], nextFleetId: 1,

@@ -1,16 +1,18 @@
 /** Compare migrations of real preceding serializers and paid-queue primitives.
  * Inputs are synthetic, pre-funded states; this is not natural player progression.
- * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root
+ * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root r6-root
  */
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { importSave } from "../src/game/save.ts";
+import { createLegacyR6Fixtures } from "./legacy-r6-fixture.ts";
 
 const roots = process.argv.slice(2);
-if (roots.length !== 4) throw Error("Provide verified source directories for r2, r3, r4 and r5");
+if (roots.length !== 5) throw Error("Provide verified source directories for r2, r3, r4, r5 and r6");
 function priorProjection(state, revision) {
   const s = structuredClone(state);
+  delete s.researchTemplates;
   for (const fleet of s.fleets ?? []) delete fleet.orderTransport;
   if (revision < 5) {
     delete s.orders;
@@ -33,7 +35,7 @@ function priorProjection(state, revision) {
   return s;
 }
 const reports = [];
-for (let index = 0; index < roots.length; index++) {
+for (let index = 0; index < 4; index++) {
   const revision = index + 2;
   const load = file => import(pathToFileURL(resolve(roots[index], `src/game/${file}.ts`)).href);
   const [factory, save, queue, research, yard, logic, decimal] = await Promise.all(
@@ -89,6 +91,7 @@ for (let index = 0; index < roots.length; index++) {
   const old = save.importSave(raw).state;
   const migrated = importSave(raw).state;
   assert.deepEqual(priorProjection(migrated, revision), priorProjection(old, revision), `r${revision} economic/timing state changed`);
+  assert.deepEqual(migrated.researchTemplates,{nextTemplateId:1,templates:[]},"Migration cannot invent research intent");
   assert.equal(migrated.orders.nextWorkId,1,"Migration cannot invent pending-work authorizations");
   assert.ok(migrated.orders.tasks.every(t=>t.transport===null && t.currentWork===null),"Old plans do not authorize new logistics");
   assert.ok(migrated.fleets.every(f=>f.orderTransport===null),"Old fleets remain ordinary unowned missions");
@@ -112,4 +115,27 @@ for (let index = 0; index < roots.length; index++) {
     reports.push({sourceRevision:revision,paidJobs:jobs.length,paidPlans:3,planShipsCompleted:2,remainingShips:3,ordinaryFleets:1,result:"passed"});
   }
 }
-console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport",synthetic:true,revisions:reports,result:"passed"}, null, 2));
+// r6 is its own additive branch: the complete old state must survive unchanged,
+// including pending transport, real outbound/returning fleets, paid research and paused tasks.
+const r6Save = await import(pathToFileURL(resolve(roots[4], "src/game/save.ts")).href);
+for (const [phase, actual] of Object.entries(await createLegacyR6Fixtures(resolve(roots[4]), 1_000_000))) {
+  const raw = JSON.stringify(actual), old = r6Save.importSave(raw).state;
+  const migrated = importSave(raw).state;
+  const { researchTemplates, ...fullR6Projection } = migrated;
+  assert.deepEqual(researchTemplates, { nextTemplateId: 1, templates: [] });
+  assert.deepEqual(fullR6Projection, old, `r6 ${phase}: complete old state changed`);
+  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r7 round trip changed migrated r6 work");
+  assert.equal(migrated.orders.tasks.length, 2);
+  assert.ok(migrated.orders.tasks.every(task => task.status === "paused"));
+  assert.equal(migrated.orders.tasks[0].currentWork.stage, "pending");
+  assert.equal(migrated.orders.tasks[0].transport.trips[0].phase.kind, phase);
+  assert.equal(migrated.research.queue.length, 1);
+  assert.equal(migrated.research.queue[0].source, "plan");
+  assert.ok(migrated.orders.tasks[1].activeJob);
+  assert.equal(migrated.fleets.length, 1);
+  assert.deepEqual(migrated.fleets[0].orderTransport, {
+    taskId: migrated.orders.tasks[0].id, workId: migrated.orders.tasks[0].currentWork.workId,
+  });
+  reports.push({sourceRevision:6,phase,pausedPlans:2,paidResearchJobs:1,pendingTransportWork:1,ownedFleets:1,fullPriorProjection:"unchanged",result:"passed"});
+}
+console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport; complete real r6 outbound/returning transport and paid research",synthetic:true,revisions:reports,result:"passed"}, null, 2));

@@ -1,3 +1,5 @@
+import { researchTemplatesPanelHtml, installResearchTemplatesPanel } from "./research-templates-panel";
+import type { ResearchTemplateAction } from "../game/research-template-state";
 import { ordersPanelHtml, installOrdersPanel } from "./orders-panel";
 import type { OrderAction } from "../game/order-state";
 import { deepPanelHtml, installDeepPanel, type DeepAction } from "./deep-panel";
@@ -7,7 +9,7 @@ import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
 import type { SpaceView } from "./space-present";
-export type UiAction = OriginalAction | DeepAction | OrderAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
+export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {const n=root.querySelector<T>(sel);if(!n)throw Error(`缺少界面节点 ${sel}`);return n;}
@@ -40,8 +42,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
-  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()));
+  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-messages"></div>`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
+  const templatePanel=installResearchTemplatesPanel(root,onAction);
   // Each surface owns its rendered capabilities; rebuilding the fleet tab must
   // not retire the deep dashboard's stable, focused timer controls.
   let deepFleetButtons = new WeakMap<HTMLButtonElement, number>();
@@ -85,8 +88,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
-  return {...original, updateDeep, updateOrders:orderPanel.update,
-    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates:templatePanel.update, completeResearchTemplateAction:templatePanel.completeAction,
+    invalidateOrderAuthority(){original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

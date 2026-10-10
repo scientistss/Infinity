@@ -3,6 +3,7 @@ declare const process: { argv: string[]; stdout: { write(text: string): void } }
 import { SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
 import { BACKUP_KEY, exportSave } from "../src/game/save";
 import { createInitialState } from "../src/game/state";
+import { createLegacyR6Fixtures } from "./legacy-r6-fixture";
 
 function fixture(name: string, seed: number) {
   const state = createInitialState(seed);
@@ -11,10 +12,10 @@ function fixture(name: string, seed: number) {
   return JSON.parse(exportSave(state, Date.now()));
 }
 
-// Usage: node --import tsx scripts/save-session-fixture.ts /absolute/r2 /absolute/r3 /absolute/r4 /absolute/r5
+// Usage: node --import tsx scripts/save-session-fixture.ts /absolute/r2 /absolute/r3 /absolute/r4 /absolute/r5 /absolute/r6
 const roots = process.argv.slice(2);
-if (roots.length !== 4 || roots.some(root => !root.startsWith("/"))) {
-  throw Error("Provide absolute verified source directories for r2, r3, r4 and r5; legacy fixtures must use their real serializers");
+if (roots.length !== 5 || roots.some(root => !root.startsWith("/"))) {
+  throw Error("Provide absolute verified source directories for r2, r3, r4, r5 and r6; legacy fixtures must use their real serializers");
 }
 const legacy: Record<string, unknown> = {};
 const legacySources: Array<{ revision: number; schema: string; version: number; generatedBy: string }> = [];
@@ -68,9 +69,10 @@ for (let index = 0; index < roots.length; index++) {
     armedR4 = JSON.parse(saved.exportSave(result.state, Date.now()));
   }
 }
+const transportR6 = await createLegacyR6Fixtures(roots[4]!, Date.now());
 process.stdout.write(JSON.stringify({
   description: "Synthetic fixtures only; no player data. Legacy files are produced by verified source-revision serializers.",
   key: STORAGE_KEY, saveRevision: SAVE_REVISION, backupKey: BACKUP_KEY,
   current: fixture("合成当前母星", 20261001), imported: fixture("合成导入母星", 20261002),
-  newer: fixture("合成后续母星", 20261003), legacy, legacySources, armedR4, paidR5,
+  newer: fixture("合成后续母星", 20261003), legacy, legacySources, armedR4, paidR5, transportR6,
 }, null, 2));

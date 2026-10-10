@@ -1,0 +1,24 @@
+/* Additive intent library; original artwork, stylesheet, and navigation are unchanged. */
+.research-templates { margin-top:24px; padding:16px; border:1px solid var(--border,#2b3547); border-radius:12px; overflow-wrap:anywhere; }
+.research-templates > summary { cursor:pointer; font-weight:700; font-size:1.05rem; }
+.template-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:18px; margin-top:16px; align-items:start; }
+.template-layout > *, .template-goals > *, .template-budget-row > * { min-width:0; }
+.template-library, .template-goals, .template-budget-list, .template-review-rows { display:grid; gap:10px; }
+.template-library article { display:grid; gap:8px; }
+.template-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.template-actions button { max-width:100%; white-space:normal; }
+.template-editor label, .template-apply > label { display:flex; flex-direction:column; gap:6px; margin:12px 0; }
+.template-editor input, .template-editor select, .template-apply select, .template-budget-row input { box-sizing:border-box; width:100%; min-width:0; }
+.template-goal { display:grid; grid-template-columns:minmax(0,1fr) 88px auto; gap:8px; align-items:end; }
+.template-goal label { margin:0; }
+.template-budget-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.template-budget-row label { display:flex; flex-direction:column; gap:6px; }
+.template-budget-list fieldset { min-width:0; padding:10px; border:1px solid var(--border,#2b3547); border-radius:8px; }
+.template-budget-list legend { max-width:100%; }
+.template-review { padding:12px; border:1px solid var(--border,#2b3547); border-radius:8px; margin-top:12px; }
+.template-review p, .template-mapping p { line-height:1.6; }
+.template-review-rows article { padding:10px 0; border-bottom:1px solid var(--border,#2b3547); }
+.research-templates [hidden] { display:none !important; }
+.template-note { line-height:1.6; }
+@media(max-width:900px) { .template-layout { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:420px) { .research-templates { padding:10px; } .template-goal { grid-template-columns:minmax(0,1fr) 72px; } .template-goal button { grid-column:1/-1; justify-self:start; } .template-budget-row { grid-template-columns:minmax(0,1fr); } }

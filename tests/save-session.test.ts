@@ -14,9 +14,11 @@ function game(clicks = 17) {
   return { ...state, manualClicks: clicks };
 }
 function raw(clicks = 17) { return exportSave(game(clicks), NOW); }
-function legacy(revision: 2 | 3 | 4 | 5, source = raw()) {
+function legacy(revision: 2 | 3 | 4 | 5 | 6, source = raw()) {
   const file = JSON.parse(source);
   file.revision = revision;
+  delete file.state.researchTemplates;
+  if (revision === 6) return JSON.stringify(file);
   for (const fleet of file.state.fleets) delete fleet.orderTransport;
   if (revision === 5) {
     delete file.state.orders.nextWorkId;
@@ -111,7 +113,7 @@ describe("SaveSession load and version protection", () => {
     expect(store.writes).toEqual([]);
   });
 
-  it.each([2, 3, 4, 5] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
+  it.each([2, 3, 4, 5, 6] as const)("commits a supported r%d upgrade only after preserving its exact original", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     const session = new SaveSession(store, NOW);
     expect(session.mode).toBe("ready");
@@ -119,9 +121,14 @@ describe("SaveSession load and version protection", () => {
     expect(store.data[BACKUP_KEY]).toBe(source);
     expect(JSON.parse(store.data[STORAGE_KEY]!).revision).toBe(SAVE_REVISION);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
+    expect(session.loaded.state.researchTemplates).toEqual({ nextTemplateId: 1, templates: [] });
+    expect(session.notice).toContain("研究模板为空");
+    if (revision === 6) expect(session.notice).toContain("运输授权、回执");
+    else if (revision === 5) expect(session.notice).toContain("已有有限计划");
+    else expect(session.notice).toContain("有限计划与单源运输授权为空");
   });
 
-  it.each([2, 3, 4, 5] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
+  it.each([2, 3, 4, 5, 6] as const)("retains readable r%d progress frozen when backup quota is full", (revision) => {
     const source = legacy(revision), store = new MemoryStore(source);
     store.write = () => { throw new Error("quota full"); };
     const session = new SaveSession(store, NOW + 5000);
@@ -133,7 +140,7 @@ describe("SaveSession load and version protection", () => {
     expect(session.export(game(99))).toEqual({ raw: source, protected: true });
   });
 
-  it.each([2, 3, 4, 5] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
+  it.each([2, 3, 4, 5, 6] as const)("protects readable r%d progress through each migration verification failure", (revision) => {
     for (const fault of ["backup-write", "backup-read", "backup-noop", "current-write", "current-read", "current-noop", "current-write-then-throw"] as const) {
       const source = legacy(revision), store = new MemoryStore(source);
       let currentWritten = false;

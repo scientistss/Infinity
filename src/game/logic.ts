@@ -284,6 +284,7 @@ export function prestige(state: GameState): GameState {
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
   next.orders = terminateOrdersForPrestige(state);
+  next.researchTemplates = { nextTemplateId: state.researchTemplates.nextTemplateId, templates: state.researchTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.warpCores = state.warpCores.add(gain);
   next.curvature = { ...state.curvature };
   next.research = { levels: { ...state.research.levels }, queue: [] };
