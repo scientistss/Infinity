@@ -10,6 +10,7 @@ import copy
 import json
 import shutil
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -29,6 +30,8 @@ checks, errors, failed_requests = [], [], []
 completed = False
 case = 'setup'
 active_page = None
+last_saved_synthetic_state = None
+failure_diagnostics = None
 browser = None
 EPOCH = int(time.time() * 1000)
 MODE = 'HTTP / native localStorage / synthetic controlled simulation timestamps'
@@ -37,6 +40,7 @@ MODE = 'HTTP / native localStorage / synthetic controlled simulation timestamps'
 def check(name, condition):
     checks.append({'case': case, 'name': name, 'passed': bool(condition), 'classification': MODE})
     if not condition:
+        capture_failure(active_page)
         raise AssertionError(f'{case}: {name}')
 
 
@@ -105,7 +109,9 @@ def ring(page):
 
 
 def read(page):
-    return json.loads(page.evaluate('(key) => localStorage.getItem(key)', KEY))['state']
+    global last_saved_synthetic_state
+    last_saved_synthetic_state = json.loads(page.evaluate('(key) => localStorage.getItem(key)', KEY))['state']
+    return last_saved_synthetic_state
 
 
 def save(page):
@@ -134,8 +140,42 @@ def screenshot(page, name):
     page.screenshot(path=str(out / name), full_page=True)
 
 
+def capture_failure(page):
+    global failure_diagnostics
+    if failure_diagnostics is not None:
+        return
+    failure_diagnostics = {'case': case, 'lastSavedSyntheticState': last_saved_synthetic_state}
+    if page is None:
+        return
+    try:
+        failure_diagnostics['persistedSyntheticStateAtFailure'] = json.loads(page.evaluate('(key) => localStorage.getItem(key)', KEY))['state']
+        failure_diagnostics['ui'] = page.evaluate('''() => Object.fromEntries(
+            ['#ring-auto-status', '#ring-auto-progress', '#ring-auto-stop-reason',
+             '#ring-auto-prerequisite', '[data-bind="status"]', '[data-bind="arcade-runs"]']
+            .map(selector => [selector, document.querySelector(selector)?.textContent ?? null]))''')
+        failure_diagnostics['clock'] = page.evaluate('''() => ({now: Date.now(),
+            performanceNow: performance.now(), marker: sessionStorage.getItem('ring-automation-clock')})''')
+    except Exception as error:
+        failure_diagnostics['readError'] = str(error)
+    try:
+        screenshot(page, 'failure.png')
+    except Exception as error:
+        failure_diagnostics['screenshotError'] = str(error)
+
+
+@contextmanager
+def capture_before_playwright_closes():
+    try:
+        yield
+    except BaseException:
+        # Also catches Playwright expect/timeouts, before sync_playwright exits
+        # and tears down the browser needed for the screenshot and native reads.
+        capture_failure(active_page)
+        raise
+
+
 try:
-    with sync_playwright() as playwright:
+    with sync_playwright() as playwright, capture_before_playwright_closes():
         executable = args.chromium or shutil.which('google-chrome') or shutil.which('chromium')
         options = {'headless': True, 'args': ['--no-sandbox']}
         if executable:
@@ -308,16 +348,14 @@ try:
         browser.close()
         browser = None
 finally:
-    if not completed and active_page is not None:
-        try:
-            screenshot(active_page, 'failure.png')
-        except Exception:
-            pass
+    if not completed:
+        capture_failure(active_page)
     report = {'completed': completed, 'mode': MODE, 'url': args.url,
               'fixture': fixtures.get('description'),
               'timing': 'Explicit synthetic Date.now, performance.now and RAF timestamps; native animation frames, browser input, HTTP and localStorage. No natural progression claim.',
               'passed': sum(row['passed'] for row in checks), 'checks': checks,
-              'errors': errors, 'failedRequests': failed_requests}
+              'errors': errors, 'failedRequests': failed_requests,
+              'failureDiagnostics': failure_diagnostics}
     (out / 'ring-automation-browser-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps({'completed': completed, 'passed': report['passed'], 'total': len(checks),
                       'failedCase': None if completed else case, 'errors': errors}, ensure_ascii=False))

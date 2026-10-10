@@ -57,6 +57,8 @@ jobs:
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
+          node --import tsx scripts/ring-automation-fixture.ts > ring-automation-review-save.json
+          python scripts/browser-ring-automation.py --fixture ring-automation-review-save.json
           python scripts/browser-p4-1.py --fixture p4-1-review-save.json
           python scripts/browser-space.py --fixture space-review-save.json
           python scripts/browser-deep.py
@@ -66,8 +68,6 @@ jobs:
           python scripts/browser-deep-dashboard.py
           node --import tsx scripts/save-session-fixture.ts > save-session-review-save.json
           python scripts/browser-save-session.py --fixture save-session-review-save.json
-          node --import tsx scripts/ring-automation-fixture.ts > ring-automation-review-save.json
-          python scripts/browser-ring-automation.py --fixture ring-automation-review-save.json
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
