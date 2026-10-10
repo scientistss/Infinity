@@ -107,11 +107,19 @@ with sync_playwright() as p:
         }""")
         check('retired cloned and dataset-tampered deep recall nodes are rejected before action',rejected)
         page.locator('[data-deep-flight] [data-space="recall"]').evaluate('(e)=>{window.__freshDeepRecall=e;e.focus()}')
+        # Ordinary fleet rows are intentionally projected only on their own tab.
+        # Prepare a real visible capability before exercising its render boundary.
+        tab('fleet')
+        expect(page.locator('#space-fleets [data-space="recall"]')).to_be_visible()
+        expect(page.locator('#space-fleets [data-space="recall"]')).to_be_enabled()
         # Explicit DOM-render boundary probe: invalidate only the ordinary list's
         # render cache, without changing or injecting any game state.
         page.evaluate("""()=>{window.__ordinaryRecall=document.querySelector('#space-fleets [data-space="recall"]');delete document.querySelector('#space-fleets').dataset.fleetSignature;}""")
         advance(1)
         check('ordinary fleet redraw cannot retire the independent deep capability',page.evaluate("""!window.__ordinaryRecall.isConnected && document.querySelector('#space-fleets [data-space="recall"]')!==window.__ordinaryRecall && document.querySelector('[data-deep-flight] [data-space="recall"]')===window.__freshDeepRecall"""))
+        tab('deep')
+        check('returning to deep preserves its capability after ordinary fleet redraw',page.evaluate("""document.querySelector('[data-deep-flight] [data-space="recall"]')===window.__freshDeepRecall"""))
+        page.locator('[data-deep-flight] [data-space="recall"]').evaluate('(e)=>e.focus()');advance(1)
         check('fresh deep recall still retains focus across ordinary timer updates',page.evaluate('window.__freshDeepRecall===document.activeElement && window.__freshDeepRecall.isConnected'))
         page.locator('[data-deep-flight] [data-space="recall"]').click();advance()
         check('recall uses actual fleet action',page.locator('[data-deep-flight] [aria-current="step"]').get_attribute('data-phase')=='return')

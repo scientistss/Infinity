@@ -261,7 +261,8 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
       nonce = null;
       latest = null;
       latestState = null;
-      writable = false;
+      // Retire capabilities without inventing a protected session or blurring a
+      // live draft. The next observe() applies the replacement's actual readiness.
       attempted = false;
       taskButtons = new WeakMap<HTMLButtonElement, ButtonAuthority>();
       rows.clear();

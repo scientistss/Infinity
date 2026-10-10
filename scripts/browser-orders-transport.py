@@ -69,6 +69,19 @@ def plans(page):
     expect(page.locator('#space-orders')).to_be_visible()
 
 
+def fleet_recall(page):
+    # Lazy fleet projection requires actual navigation before capturing a node.
+    # This setup grants no action and advances neither clock nor saved progress.
+    before_time = page.evaluate('Date.now()')
+    before_raw = page.evaluate('(k)=>localStorage.getItem(k)', KEY)
+    page.locator('[data-tab="fleet"]').click()
+    advance(page)
+    expect(page.locator('#space-fleets [data-space="recall"]')).to_be_visible()
+    expect(page.locator('#space-fleets [data-space="recall"]')).to_be_enabled()
+    check('visible recall setup keeps controlled time and native save unchanged', page.evaluate('Date.now()') == before_time and page.evaluate('(k)=>localStorage.getItem(k)', KEY) == before_raw)
+    plans(page)
+
+
 def read(page):
     global last_saved
     last_saved = json.loads(page.evaluate('(k)=>localStorage.getItem(k)', KEY))['state']
@@ -305,12 +318,14 @@ try:
         context, page = boot()
         create(page); advance(page, 10000); save(page)
         incoming = page.evaluate('(k)=>localStorage.getItem(k)', KEY)
+        fleet_recall(page)
         page.evaluate("""()=>{
           window.__oldRecall=document.querySelector('[data-space="recall"]');
           window.__oldCancel=document.querySelector('[data-order-action="order-cancel"]');
         }""")
         advance(page, 1000); save(page)
         imported = import_raw(page, incoming)
+        fleet_recall(page)
         check('same-ID import rebuilds ordinary fleet control', page.evaluate("!window.__oldRecall.isConnected && document.querySelector('[data-space=\"recall\"]')!==window.__oldRecall"))
         page.evaluate("""()=>{
           document.querySelector('#space-fleets').append(window.__oldRecall);window.__oldRecall.click();window.__oldRecall.remove();
