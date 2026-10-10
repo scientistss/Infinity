@@ -153,6 +153,21 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     if (type === "order-pause" || type === "order-resume" || type === "order-cancel" || type === "order-dismiss") onAction({type, taskId});
   });
   populateTargets();
+  function syncFormDisabled() {
+    for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button")) input.disabled = !writable || (!!input.closest("#order-transport-fields") && !enabled.checked);
+  }
+  function syncDisabled() {
+    syncFormDisabled();
+    // Reuse only the already projected row policy: no ledger projection and no
+    // draft nonce renewal. A blocked return must still prevent Resume.
+    for (const item of latest?.rows ?? []) {
+      const row = rows.get(item.id);
+      if (!row) continue;
+      for (const button of row.querySelectorAll<HTMLButtonElement>("button")) {
+        button.disabled = !writable || (taskButtons.get(button)?.type === "order-resume" && item.retryFleetId !== null);
+      }
+    }
+  }
   type DraftContext = Pick<OrdersView, "planets" | "donorShips" | "initialPlanetId" | "nextTaskId">;
   function updateDraftContext(model: DraftContext) {
     if (nonce === null && !retired) nonce = model.nextTaskId;
@@ -178,11 +193,15 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     }
     if (lastDraftSignature === null) lastDraftSignature = draftSignature();
     review();
-    for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button")) input.disabled = !writable || (!!input.closest("#order-transport-fields") && !enabled.checked);
+    syncFormDisabled();
   }
   function observe(state: GameState, ready: boolean) {
+    const maskChanged = latestState === null || writable !== ready;
     latestState = state; writable = ready;
-    if (bootstrapped) return;
+    if (bootstrapped) {
+      if (maskChanged) syncDisabled();
+      return;
+    }
     // Preserve the startup draft's payer, donor, preferred ship, and counter even
     // if Orders is first opened only after navigating to another active planet.
     // The one-time bootstrap excludes every order row and its transport ledger.
@@ -242,11 +261,13 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
       nonce = null;
       latest = null;
       latestState = null;
+      writable = false;
       attempted = false;
       taskButtons = new WeakMap<HTMLButtonElement, ButtonAuthority>();
       rows.clear();
       node(root,"#order-list").replaceChildren();
       review();
+      syncDisabled();
     },
   };
 }

@@ -51,8 +51,9 @@ INIT=r"""(() => {
  const p={events:[],fault:null,files:[],gateFiles:false};
  Storage.prototype.setItem=function(k,v){
   if(this===localStorage&&String(k)===key){
-   p.events.push({type:'write',at:elapsed,chars:String(v).length,injected:p.fault==='write'});
+   p.events.push({type:'write',at:elapsed,chars:String(v).length,injected:p.fault==='write'||p.fault==='drop'});
    if(p.fault==='write')throw new DOMException('Labeled controlled current-slot fault','QuotaExceededError');
+   if(p.fault==='drop')return; // Labeled acknowledged-but-dropped write; native readback must reject it.
   }
   return set.call(this,k,v);
  };
@@ -124,11 +125,12 @@ def attach(page):
     page.on('requestfailed',lambda request:failed_requests.append({'case':case,'url':request.url}))
 
 
-def boot(which='base',url=None,initial_tab='overview'):
+def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     global active_page
     url=url or args.url;parsed=urlparse(url)
     check('production bundle is served over HTTP(S)',parsed.scheme in ('http','https'))
     seed=copy.deepcopy(fixtures[which]);seed['savedAt']=seed['lastTickAt']=EPOCH
+    if corrupt:seed['state']['formations']['nextFormationId']=0
     context=browser.new_context(viewport={'width':1440,'height':1100},reduced_motion='reduce',accept_downloads=True,
         storage_state={'cookies':[],'origins':[{'origin':f'{parsed.scheme}://{parsed.netloc}','localStorage':[
             {'name':KEY,'value':json.dumps(seed,ensure_ascii=False)}, {'name':'infinity.ui.tab','value':initial_tab}]}]})
@@ -209,8 +211,111 @@ def import_text(page,which='incoming'):
     click(page,'[data-action="import-text"]')
 
 
+def protected_masks(page):
+    for name,selector in [('order draft','#order-form'),('template library','#research-templates'),('formation library','#fleet-formations')]:
+        check(name+' mounted inputs and actions are immediately disabled',page.locator(selector+' input,'+selector+' select,'+selector+' button').evaluate_all('(xs)=>xs.length>0&&xs.every(x=>x.disabled)'))
+    check('all existing order row actions are immediately disabled',page.locator('#order-list button').evaluate_all('(xs)=>xs.every(x=>x.disabled)'))
+
+
+def retain_ready_controls(page):
+    tab(page,'orders');page.locator('#order-budget-metal').fill('12345');frame(page)
+    click(page,'#research-templates > summary');click(page,'#template-new')
+    page.locator('#template-name').fill('待保存研究草稿');frame(page)
+    click(page,'[data-template-id="1"] [data-template-action="select"]')
+    page.locator('#template-payer').select_option(HOME);frame(page)
+    forms(page);click(page,'#formation-new');page.locator('#formation-name').fill('待保存编成草稿')
+    page.locator('[data-formation-unit="small_cargo"]').fill('2');frame(page);arm_old(page)
+    check('ready setup includes existing order rows',page.locator('#order-list button').count()>0)
+    check('ready setup includes live editor and review authority',page.locator('#template-save').is_enabled() and page.locator('#formation-save').is_enabled() and page.locator('#formation-confirm-replenish').is_enabled())
+    page.evaluate('''() => {
+      const selectors=['#order-list button','#template-save','#formation-save','#formation-fill','#formation-confirm-replenish'];
+      window.__protectedControls=selectors.flatMap(selector=>[...document.querySelectorAll(selector)]);
+      const selector='#order-form input,#order-form select,#order-form button,#order-list button,#research-templates input,#research-templates select,#research-templates button,#fleet-formations input,#fleet-formations select,#fleet-formations button';
+      window.__maskNodes={selector,body:document.body,nodes:[...document.querySelectorAll(selector)].map(node=>({node,value:node.value}))};
+    }''')
+
+
+def replay_protected_controls(page,reattach=False):
+    # Deliberate hostile DOM replay, not normal/trusted input. Disabling is a UI
+    # mask; registered-node and current-session authority must still guard writes.
+    page.evaluate('''reattach => {
+      for(const old of window.__protectedControls){
+        const root=document.querySelector(old.dataset.orderAction?'#order-list':old.dataset.templateAction?'#research-templates':'#fleet-formations');
+        const wasDisabled=old.disabled;
+        if(reattach)root.append(old);
+        old.disabled=false;old.click();
+        const clone=old.cloneNode(true);root.append(clone);clone.disabled=false;clone.click();clone.remove();
+        if(old.id==='template-save'||old.id==='formation-save'){
+          const form=document.querySelector(old.id==='template-save'?'#template-editor':'#formation-editor');
+          form.dispatchEvent(new SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:old}));
+        }
+        old.disabled=wasDisabled;
+        if(reattach)old.remove();
+      }
+      document.querySelector('#order-form').dispatchEvent(new SubmitEvent('submit',{bubbles:true,cancelable:true}));
+    }''',reattach)
+
+
 def run_cases():
     global case,completed
+    case='initial protected boot masks folded hidden controls before any RAF'
+    context,page=boot(corrupt=True);baseline=raw(page)
+    check('protected boot stays on overview with both libraries folded',page.locator('[data-tab-panel="overview"]').is_visible() and not page.locator('#research-templates').evaluate('(e)=>e.open') and not page.locator('#fleet-formations').evaluate('(e)=>e.open'))
+    protected_masks(page)
+    check('protected boot does not build hidden library or order rows',page.locator('#formation-library article,#template-library article,#order-list article').count()==0)
+    clear_updates(page)
+    page.evaluate('''() => {
+      for(const id of ['formation-new','template-new']){const button=document.getElementById(id);button.disabled=false;button.click();button.disabled=true;}
+      for(const id of ['order-form','formation-editor','template-editor'])document.getElementById(id).dispatchEvent(new SubmitEvent('submit',{bubbles:true,cancelable:true}));
+      window.__renderProbe.autosave();
+    }''')
+    check('initial protected forced clicks/submits grant no editor authority',page.locator('#formation-editor').is_hidden() and page.locator('#template-editor').is_hidden())
+    check('initial protected replay never writes or paints',raw(page)==baseline and updates(page)==0 and not any(row['type']=='write' for row in page.evaluate('window.__renderProbe.snapshot().events')))
+    context.close()
+
+    for failure in ('autosave-write','import-readback'):
+        case=failure+': hidden mode transition masks controls without projection'
+        context,page=boot();retain_ready_controls(page);tab(page,'save')
+        incoming=copy.deepcopy(fixtures['incoming']);incoming['savedAt']=incoming['lastTickAt']=EPOCH+1
+        page.locator('#transfer').fill(json.dumps(incoming,ensure_ascii=False));frame(page)
+        page.evaluate('''() => {Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});document.dispatchEvent(new Event('visibilitychange'));}''')
+        baseline=raw(page);clear_updates(page)
+        page.evaluate('window.__renderProbe.advance(1)')
+        page.evaluate('fault=>window.__renderProbe.fault(fault)','write' if failure=='autosave-write' else 'drop')
+        if failure=='autosave-write':page.evaluate('window.__renderProbe.autosave()')
+        else:click(page,'[data-action="import-text"]',flush=False)
+        protected_masks(page)
+        check('transition injected an actual current-slot write failure',any(row['type']=='write' and row['injected'] for row in page.evaluate('window.__renderProbe.snapshot().events')))
+        check('hidden protection preserves every mounted node and draft value',page.evaluate('''() => {
+          const {selector,body,nodes}=window.__maskNodes,current=[...document.querySelectorAll(selector)];
+          return document.body===body&&current.length===nodes.length&&nodes.every(({node,value},i)=>current[i]===node&&node.value===value);
+        }'''))
+        check('hidden protection requires no original body projection or RAF',updates(page)==0)
+        writes=len([row for row in page.evaluate('window.__renderProbe.snapshot().events') if row['type']=='write'])
+        replay_protected_controls(page)
+        check('forced protected controls and submissions never write or change native bytes',raw(page)==baseline and len([row for row in page.evaluate('window.__renderProbe.snapshot().events') if row['type']=='write'])==writes)
+        check('forced protected replay still performs no original projection',updates(page)==0)
+        page.evaluate('window.__renderProbe.fault(null)')
+        page.evaluate('window.__renderProbe.autosave()')
+        protected_masks(page)
+        check('clearing storage fault does not implicitly recover authority',raw(page)==baseline)
+        click(page,'[data-action="import-text"]',flush=False)
+        check('explicit verified import recovers the complete incoming state',saved(page)==fixtures['expected']['incoming.initial'])
+        check('recovery masks retire old editor and review authority before a paint',page.locator('#template-save').is_disabled() and page.locator('#formation-save').is_disabled() and page.locator('#formation-confirm-replenish').is_disabled() and page.locator('#template-confirm-apply').is_disabled())
+        check('recovery restores only fresh entry controls without hidden lists',page.locator('#template-new').is_enabled() and page.locator('#formation-new').is_enabled() and page.locator('#order-create').is_enabled() and page.locator('#order-transport-fields input,#order-transport-fields select').evaluate_all('(xs)=>xs.every(x=>x.disabled)') and page.locator('#formation-library article,#template-library article,#order-list article').count()==0)
+        recovered=raw(page);writes=len([row for row in page.evaluate('window.__renderProbe.snapshot().events') if row['type']=='write'])
+        replay_protected_controls(page,reattach=True)
+        check('reattached originals, clones and retired draft submissions have no recovered authority',raw(page)==recovered and len([row for row in page.evaluate('window.__renderProbe.snapshot().events') if row['type']=='write'])==writes)
+        check('recovery and stale replay never project while document is hidden',updates(page)==0)
+        page.evaluate('''() => {delete document.hidden;delete document.visibilityState;document.dispatchEvent(new Event('visibilitychange'));}''');frame(page)
+        tab(page,'orders');click(page,'#order-create')
+        check('visible retired order draft still needs explicit new authority',raw(page)==recovered)
+        click(page,'#order-new');click(page,'#order-create')
+        check('explicit fresh order draft creates exactly one plan after recovery',len(saved(page)['orders']['tasks'])==len(fixtures['expected']['incoming.initial']['orders']['tasks'])+1)
+        click(page,'#template-new');check('explicit new template alone restores its editor',page.locator('#template-save').is_enabled())
+        forms(page);click(page,'#formation-new');check('explicit new formation alone restores its editor',page.locator('#formation-save').is_enabled())
+        context.close()
+
     for name in ('steady60','steady120','actions'):
         case='before/after identical controlled trace '+name
         before,count_before=differential_trace(name,args.before_url)
@@ -398,9 +503,17 @@ def run_cases():
     context.close()
 
     case='genuine cross-tab storage event immediately protects current authority'
-    context,page=boot();baseline=raw(page)
+    context,page=boot();retain_ready_controls(page);tab(page,'overview');baseline=raw(page)
+    page.evaluate('''() => {Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});document.dispatchEvent(new Event('visibilitychange'));}''')
+    clear_updates(page)
     other=context.new_page();attach(other);other.goto(args.url,wait_until='networkidle')
     import_text(other);page.bring_to_front()
+    page.wait_for_function('window.__renderProbe.snapshot().events.some(row=>row.type==="storage"&&row.trusted)',polling=20)
+    protected_masks(page)
+    check('trusted storage conflict masks hidden controls without any original projection',updates(page)==0)
+    replacement=raw(page);replay_protected_controls(page)
+    check('hidden conflict rejects forced old controls without overwriting replacement',raw(page)==replacement and updates(page)==0)
+    page.evaluate('''() => {delete document.hidden;delete document.visibilityState;document.dispatchEvent(new Event('visibilitychange'));}''');frame(page)
     expect(page.locator('[data-bind="status"]')).to_contain_text('其他标签页')
     check('cross-tab event is actual trusted browser storage event',any(row['type']=='storage' and row['trusted'] for row in page.evaluate('window.__renderProbe.snapshot().events')))
     frozen=page.locator('[data-bind="amount-metal"]').text_content();clear_updates(page);frame(page,1000)

@@ -152,7 +152,13 @@ export function installFormationsPanel(root: HTMLElement, onAction: (action: For
   }
   // Observation never projects lists or grants draft/review authority. Explicit
   // handlers read this reference even when the next scheduled paint is skipped.
-  function observe(state: GameState, writable: boolean) { latest = state; ready = writable; }
+  function observe(state: GameState, writable: boolean) {
+    const maskChanged = latest === null || ready !== writable;
+    latest = state; ready = writable;
+    // Protection must reach mounted controls even while their details/tab or the
+    // document is hidden. Ordinary observations still do no DOM/list/quote work.
+    if (maskChanged) syncDisabled();
+  }
   function refreshAuthority() {
     if (!latest) return;
     if (edit?.formation && !valid(edit.formation)) edit = null;

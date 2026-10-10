@@ -203,7 +203,13 @@ export function installResearchTemplatesPanel(root: HTMLElement, onAction: (acti
   }
   // Observation never projects lists or grants draft/review authority. Explicit
   // handlers read this reference even when the next scheduled paint is skipped.
-  function observe(state: GameState, writable: boolean) { latest = state; ready = writable; }
+  function observe(state: GameState, writable: boolean) {
+    const maskChanged = latest === null || ready !== writable;
+    latest = state; ready = writable;
+    // Protection must reach mounted controls even while their details/tab or the
+    // document is hidden. Ordinary observations still do no DOM/list/quote work.
+    if (maskChanged) syncDisabled();
+  }
   function refreshAuthority() {
     if (!latest) return;
     if (edit?.template && !valid(edit.template)) edit = null;
@@ -302,7 +308,7 @@ export function installResearchTemplatesPanel(root: HTMLElement, onAction: (acti
       if (ok && !edit) editor.hidden = true;
     },
     invalidateAuthority() {
-      generation++; latest = null; selected = null; pendingDelete = null; edit = null; review = null;
+      generation++; latest = null; ready = false; selected = null; pendingDelete = null; edit = null; review = null;
       listSignature = "";
       library.replaceChildren();
       // Replace every visible action capability. Same IDs in another save/world
