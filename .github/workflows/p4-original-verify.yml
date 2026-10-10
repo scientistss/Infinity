@@ -74,6 +74,10 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-census/node_modules"
           (cd "$RUNNER_TEMP/pre-census" && GITHUB_SHA=8c19d044fb3c38c601223cd55272c6570c08525d npm run build) > census-before-build.log 2>&1
           node --import tsx scripts/check-shipyard-census-parity.mjs "$RUNNER_TEMP/pre-census" performance-review-save.json render-scheduling-review-save.json > shipyard-census-parity-report.json
+          mkdir -p "$RUNNER_TEMP/pre-format"
+          git archive 9926598f63bbde35389397509412cb7d976c6c44 | tar -x -C "$RUNNER_TEMP/pre-format"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-format/node_modules"
+          (cd "$RUNNER_TEMP/pre-format" && GITHUB_SHA=9926598f63bbde35389397509412cb7d976c6c44 npm run build) > format-before-build.log 2>&1
           python scripts/browser-presentation-performance.py --watchdog-self-test
       - name: Browser prerequisites
         timeout-minutes: 4
@@ -92,7 +96,9 @@ jobs:
           BEFORE_PID=$!
           (cd "$RUNNER_TEMP/pre-census" && npm run preview -- --host 127.0.0.1 --port 4175) > census-before-preview.log 2>&1 &
           CENSUS_BEFORE_PID=$!
-          trap 'kill "$SERVER_PID" "$BEFORE_PID" "$CENSUS_BEFORE_PID" || true' EXIT
+          (cd "$RUNNER_TEMP/pre-format" && npm run preview -- --host 127.0.0.1 --port 4176) > format-before-preview.log 2>&1 &
+          FORMAT_BEFORE_PID=$!
+          trap 'kill "$SERVER_PID" "$BEFORE_PID" "$CENSUS_BEFORE_PID" "$FORMAT_BEFORE_PID" || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
             sleep 1
@@ -103,6 +109,10 @@ jobs:
           done
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4175/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4176/Infinity/release.json > /dev/null; then break; fi
             sleep 1
           done
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" > save-session-review-save.json
@@ -137,7 +147,7 @@ jobs:
           # Correctness gates run before the longer paired native measurement.
           # Preserve its nonzero status; no performance failure is waived.
           PERFORMANCE_STATUS=0
-          python scripts/browser-presentation-performance.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture performance-review-save.json --moderate-fixture render-scheduling-review-save.json || PERFORMANCE_STATUS=$?
+          python scripts/browser-presentation-performance.py --before-url http://127.0.0.1:4176/Infinity/ --expected-before-sha 9926598f63bbde35389397509412cb7d976c6c44 --expected-after-sha "$GITHUB_SHA" --fixture performance-review-save.json --moderate-fixture render-scheduling-review-save.json || PERFORMANCE_STATUS=$?
           exit "$PERFORMANCE_STATUS"
       - name: Archive exact readable source
         if: always()
@@ -185,6 +195,8 @@ jobs:
             census-before-build.log
             census-before-preview.log
             shipyard-census-parity-report.json
+            format-before-build.log
+            format-before-preview.log
             performance-review-save.json
             presentation-model-report.json
             render-scheduling-review-save.json

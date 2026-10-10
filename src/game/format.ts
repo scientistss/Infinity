@@ -1,5 +1,7 @@
 import { big, type BigNumber } from "./decimal";
 
+const integerFormatter = new Intl.NumberFormat("en-US");
+
 /**
  * Antimatter-Dimensions-style scientific notation: values under 1000 keep two
  * decimals so ticks stay visible; everything else is `m.mme+x` (e.g. 1.23e4).
@@ -56,7 +58,7 @@ export function formatPlayed(value: BigNumber): string {
 export function formatDm(value: BigNumber | number): string {
   const n = typeof value === "number" ? value : value.toNumber();
   if (!Number.isFinite(n) || Math.abs(n) >= 1e9) return formatAmount(typeof value === "number" ? big(value) : value);
-  return Math.floor(n).toLocaleString("en-US");
+  return integerFormatter.format(Math.floor(n));
 }
 
 /** Ship / defense counts: whole numbers with thousands separators, scientific from 1e9. */
