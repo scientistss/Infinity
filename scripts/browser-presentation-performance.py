@@ -7,22 +7,28 @@ are NOT claimed as CPU time. Slow EventTiming entries measure native interaction
 latency; double-RAF observations are explicitly paint-opportunity bounds only.
 """
 import argparse
+import faulthandler
 import hashlib
 import json
 import math
+import os
 import platform
 import re
 import shutil
+import signal
 import statistics
+import subprocess
+import sys
+import tempfile
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse, urljoin
-from playwright.sync_api import sync_playwright
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--before-url', required=True)
+parser.add_argument('--before-url')
 parser.add_argument('--after-url', default='http://127.0.0.1:4173/Infinity/')
-parser.add_argument('--fixture', required=True)
+parser.add_argument('--fixture')
 parser.add_argument('--moderate-fixture')
 parser.add_argument('--output', default='presentation-performance-evidence')
 parser.add_argument('--chromium')
@@ -30,12 +36,241 @@ parser.add_argument('--repetitions', type=int, default=3)
 parser.add_argument('--sample-ms', type=int, default=1500)
 parser.add_argument('--warmup-ms', type=int, default=600)
 parser.add_argument('--tabs', default='overview,orders,fleet')
+parser.add_argument('--measurement-worker', action='store_true', help=argparse.SUPPRESS)
+parser.add_argument('--invocation-id', help=argparse.SUPPRESS)
+parser.add_argument('--watchdog-self-test', action='store_true', help='Run stdlib-only supervisor checks; no browser, server or fixture')
 args = parser.parse_args()
+REPORT_NAME = 'presentation-performance-browser-report.json'
+PROGRESS_NAME = 'presentation-performance-progress.json'
+PHASE_TIMEOUT_SECONDS = 90
+WHOLE_TIMEOUT_SECONDS = 8 * 60
+
+
+def atomic_json(path, value):
+    temporary = path.with_name(path.name + '.' + str(os.getpid()) + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2))
+    temporary.replace(path)
+
+
+def read_json(path):
+    try: return json.loads(path.read_text())
+    except (OSError, ValueError): return None
+
+
+def process_identity(pid):
+    try:
+        fields=Path(f'/proc/{pid}/stat').read_text().split(') ',1)[1].split()
+        return {'pid':pid,'parentPid':int(fields[1]),'processGroup':int(fields[2]),'session':int(fields[3]),'startTime':fields[19],'state':fields[0]}
+    except (OSError,IndexError,ValueError):return None
+
+
+PROCESS_TRACKING_METHODS=set()
+
+
+def collect_owned_descendants(root_pid, owned):
+    # PID + kernel start time prevents signaling a reused unrelated process.
+    # Tracking ancestry also covers Chromium's detached process groups.
+    pending=[root_pid,*owned]
+    visited=set()
+    needs_stat_fallback=False
+    while pending:
+        pid=pending.pop()
+        if pid in visited:continue
+        visited.add(pid)
+        identity=process_identity(pid)
+        if not identity or (pid in owned and identity['startTime']!=owned[pid]['startTime']):continue
+        owned[pid]=identity
+        try:thread_children=list(Path(f'/proc/{pid}/task').glob('*/children'))
+        except OSError:thread_children=[]
+        if not thread_children:needs_stat_fallback=True
+        for path in thread_children:
+            try:children=path.read_text().split()
+            except OSError:
+                needs_stat_fallback=True;continue
+            PROCESS_TRACKING_METHODS.add('all-thread-children')
+            pending.extend(int(child) for child in children)
+    if not needs_stat_fallback:return
+    # Some managed Linux environments expose stat/PPID but omit task/*/children.
+    # Read only public ownership metadata, never cmdline or environ. Reconstruct
+    # descendant edges from current PPIDs, anchored in already verified owners.
+    PROCESS_TRACKING_METHODS.add('stat-ppid-fallback')
+    try:entries=list(Path('/proc').iterdir())
+    except OSError:return
+    records={}
+    for entry in entries:
+        if not entry.name.isdecimal():continue
+        identity=process_identity(int(entry.name))
+        if identity:records[identity['pid']]=identity
+    trusted={pid for pid,identity in records.items() if pid in owned and identity['startTime']==owned[pid]['startTime']}
+    if root_pid in records and (root_pid not in owned or records[root_pid]['startTime']==owned[root_pid]['startTime']):
+        trusted.add(root_pid);owned[root_pid]=records[root_pid]
+    changed=True
+    while changed:
+        changed=False
+        for pid,identity in records.items():
+            if pid in trusted or identity['parentPid'] not in trusted:continue
+            if pid in owned and identity['startTime']!=owned[pid]['startTime']:continue
+            owned[pid]=identity;trusted.add(pid);changed=True
+
+
+def live_owned(owned):
+    result=[]
+    for pid,original in owned.items():
+        current=process_identity(pid)
+        if current and current['startTime']==original['startTime'] and current['state']!='Z':result.append(pid)
+    return result
+
+
+def kill_owned_group(process, owned, dump_stack=False):
+    # Never pkill/killall. The worker starts in its own group; detached browser
+    # descendants are additionally limited to verified ancestry and start times.
+    collect_owned_descendants(process.pid,owned)
+    if dump_stack and process.poll() is None:
+        try:os.kill(process.pid,signal.SIGUSR1)
+        except ProcessLookupError:pass
+        time.sleep(.1)
+    collect_owned_descendants(process.pid,owned)
+    signaled=[]
+    for sig in (signal.SIGTERM,signal.SIGKILL):
+        collect_owned_descendants(process.pid,owned)
+        if process.pid in live_owned(owned):
+            try:os.killpg(process.pid,sig)
+            except ProcessLookupError:pass
+        for pid in live_owned(owned):
+            try:os.kill(pid,sig);signaled.append({'pid':pid,'signal':sig.name})
+            except ProcessLookupError:pass
+        try:process.wait(timeout=.5)
+        except subprocess.TimeoutExpired:pass
+        until=time.monotonic()+.5
+        while live_owned(owned) and time.monotonic()<until:time.sleep(.02)
+    remaining=live_owned(owned)
+    return {'observedOwnedPids':sorted(owned),'signals':signaled,'remainingLiveOwnedPids':remaining,
+            'noObservedLiveOwnedDescendants':not remaining,'observedTrackingMethods':sorted(PROCESS_TRACKING_METHODS),'tracking':'Observed Linux /proc all-thread children or stat PPID ancestry plus PID start time, including detached process groups; polling cannot prove absence of never-observed reparented processes'}
+
+
+def supervise(command, directory, invocation, phase_timeout=PHASE_TIMEOUT_SECONDS, whole_timeout=WHOLE_TIMEOUT_SECONDS):
+    directory.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    bootstrap = {'invocationId':invocation, 'phase':'worker.spawn', 'state':'before', 'monotonic':started, 'wallTime':time.time(), 'identity':{}}
+    atomic_json(directory / PROGRESS_NAME, bootstrap)
+    atomic_json(directory / REPORT_NAME, {'completed':False, 'invocationId':invocation, 'phase':bootstrap, 'runs':[], 'checks':[], 'errors':[]})
+    print(json.dumps({'nativePerformance':'supervisor-start', 'invocationId':invocation,
+        'phaseTimeoutSeconds':phase_timeout, 'wholeTimeoutSeconds':whole_timeout}), flush=True)
+    process = None
+    timeout_reason = None
+    last_phase = bootstrap
+    owned={}
+    try:
+        process = subprocess.Popen(command, start_new_session=True)
+        while process.poll() is None:
+            now = time.monotonic()
+            collect_owned_descendants(process.pid,owned)
+            progress = read_json(directory / PROGRESS_NAME)
+            if progress and progress.get('invocationId') == invocation: last_phase = progress
+            if now - started >= whole_timeout:
+                timeout_reason = 'whole-run-timeout'; break
+            if now - last_phase.get('monotonic', started) >= phase_timeout:
+                timeout_reason = 'stale-phase-timeout'; break
+            time.sleep(.1)
+        if timeout_reason:
+            print(json.dumps({'nativePerformance':'watchdog-timeout', 'reason':timeout_reason,
+                'phase':last_phase, 'elapsedSeconds':time.monotonic()-started}), flush=True)
+            cleanup=kill_owned_group(process,owned,dump_stack=True)
+        else:
+            # Even a prematurely exited worker cannot leave its Chromium children.
+            cleanup=kill_owned_group(process,owned)
+        progress=read_json(directory/PROGRESS_NAME)
+        if progress and progress.get('invocationId')==invocation:last_phase=progress
+        result = read_json(directory / REPORT_NAME) or {'runs':[], 'errors':[]}
+        result['supervisor'] = {'invocationId':invocation, 'phaseTimeoutSeconds':phase_timeout,
+            'wholeTimeoutSeconds':whole_timeout, 'elapsedSeconds':time.monotonic()-started,
+            'workerExitCode':process.returncode, 'timeoutReason':timeout_reason,
+            'lastPhase':last_phase, 'ownedProcessGroup':process.pid, 'ownedGroupCleanupAttempted':True,'cleanup':cleanup}
+        if timeout_reason or process.returncode != 0 or not result.get('completed') or not cleanup['noObservedLiveOwnedDescendants']:
+            result['completed'] = False
+            result.setdefault('errors', []).append(timeout_reason or f'worker exited {process.returncode} without completed evidence')
+            for run in result.get('runs', []):
+                if not run.get('completed'): run['qualified'] = False
+            atomic_json(directory / REPORT_NAME, result)
+            return 124 if timeout_reason else process.returncode or 1
+        atomic_json(directory / REPORT_NAME, result)
+        print(json.dumps({'nativePerformance':'supervisor-complete', 'elapsedSeconds':result['supervisor']['elapsedSeconds']}), flush=True)
+        return 0
+    except BaseException as error:
+        if process is not None: cleanup=kill_owned_group(process,owned)
+        result = read_json(directory / REPORT_NAME) or {'runs':[], 'errors':[]}
+        result['completed'] = False
+        result.setdefault('errors', []).append('supervisor: '+str(error))
+        result['supervisor'] = {'lastPhase':last_phase, 'ownedProcessGroup':process.pid if process else None,
+            'ownedGroupCleanupAttempted':process is not None}
+        atomic_json(directory / REPORT_NAME, result)
+        raise
+
+
+def watchdog_self_test():
+    # Deliberately tiny budgets test the external supervisor itself, not browser
+    # performance. The production constants remain exactly 90 and 480 seconds.
+    with tempfile.TemporaryDirectory(prefix='native-performance-watchdog-') as temporary:
+        root = Path(temporary)
+        cases = [('healthy',0,False), ('failed-exit',7,False), ('stalled-call',124,True), ('stalled-cleanup',124,True)]
+        for name, expected, stall in cases:
+            directory = root / name; directory.mkdir()
+            invocation = uuid.uuid4().hex
+            code = """import json,os,signal,subprocess,sys,time
+from pathlib import Path
+out=Path(sys.argv[1]);token=sys.argv[2];name=sys.argv[3]
+signal.signal(signal.SIGUSR1,lambda *_:None)
+phase={'invocationId':token,'phase':'cleanup.close' if name=='stalled-cleanup' else name,'state':'before','monotonic':time.monotonic(),'identity':{'selfTest':name}}
+(out/'presentation-performance-progress.json').write_text(json.dumps(phase))
+report={'completed':name=='healthy','invocationId':token,'phase':phase,'runs':[{'completed':name=='healthy','qualified':name=='healthy'}],'errors':['original-error-retained'] if name=='stalled-cleanup' else []}
+(out/'presentation-performance-browser-report.json').write_text(json.dumps(report))
+if name.startswith('stalled'):
+ child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True)
+ (out/'descendant.pid').write_text(str(child.pid))
+ time.sleep(60)
+sys.exit(7 if name=='failed-exit' else 0)
+"""
+            actual = supervise([sys.executable,'-u','-c',code,str(directory),invocation,name],directory,invocation,
+                               phase_timeout=.5,whole_timeout=3)
+            assert actual == expected, (name,actual,expected)
+            result = read_json(directory / REPORT_NAME)
+            print(json.dumps({'watchdogSelfTest':name,'cleanup':result['supervisor']['cleanup']},ensure_ascii=False),flush=True)
+            assert result['completed'] == (name=='healthy'), name
+            assert result['supervisor']['ownedGroupCleanupAttempted'], name
+            assert result['supervisor']['cleanup']['noObservedLiveOwnedDescendants'], name
+            if stall:
+                assert result['supervisor']['timeoutReason']=='stale-phase-timeout', name
+                assert not result['runs'][0]['qualified'], name
+                pid = int((directory/'descendant.pid').read_text())
+                stat = Path(f'/proc/{pid}/stat')
+                # A killed grandchild can briefly remain a zombie until init reaps it.
+                assert not stat.exists() or stat.read_text().split(') ',1)[1].startswith('Z'), {'case':name,'descendantPid':pid,'cleanup':result['supervisor']['cleanup']}
+            if name=='stalled-cleanup':assert 'original-error-retained' in result['errors']
+            print(json.dumps({'watchdogSelfTest':name,'passed':True}),flush=True)
+    return 0
+
+
+if args.watchdog_self_test:
+    sys.exit(watchdog_self_test())
+if not args.before_url or not args.fixture:
+    parser.error('--before-url and --fixture are required for measurement')
 if args.repetitions < 2 or args.sample_ms < 500 or args.warmup_ms < 100:
     parser.error('At least two paired repetitions, 500ms samples and 100ms warmup are required')
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
+if not args.measurement_worker:
+    invocation = uuid.uuid4().hex
+    command = [sys.executable,'-u',str(Path(__file__).resolve()),*sys.argv[1:],'--measurement-worker','--invocation-id',invocation]
+    sys.exit(supervise(command,out,invocation))
+
+# Only the supervised worker imports/starts Playwright. The independent watchdog
+# remains live even when its greenlet or CDP transport is stuck indefinitely.
+from playwright.sync_api import sync_playwright
+stack_file = (out/'presentation-performance-worker-stack.txt').open('w')
+faulthandler.enable(file=stack_file, all_threads=True)
+faulthandler.register(signal.SIGUSR1, file=stack_file, all_threads=True)
+active_identity = {}
 report = {
-    'completed': False, 'classification': 'actual native browser timings / HTTP / native localStorage / unmodified clocks, RAF and timers',
+    'completed': False, 'invocationId':args.invocation_id, 'phaseHistory':[], 'classification': 'actual native browser timings / HTTP / native localStorage / unmodified clocks, RAF and timers',
     'beforeUrl': args.before_url, 'afterUrl': args.after_url,
     'design': 'Sequential isolated AB/BA repetitions with identical source fixture state payloads. Only savedAt/lastTickAt are rebased at document start using native Date.now to exclude unrelated offline catch-up; every exact seeded envelope hash is recorded. No concurrent game page is kept running.',
     'limits': ['Headless foreground Chromium; not OS-hidden, mobile or display-hardware performance.',
@@ -46,6 +281,35 @@ report = {
                'Native storage seed/save/backup failures are reported as genuine workload blockers, never replaced with memory storage.'],
     'parameters': vars(args), 'runs': [], 'checks': [], 'errors': [], 'profiles': [],
 }
+
+def checkpoint(phase, state, **detail):
+    item = {'invocationId':args.invocation_id, 'phase':phase, 'state':state,
+            'monotonic':time.monotonic(), 'wallTime':time.time(), 'identity':dict(active_identity), **detail}
+    report['phase'] = item
+    report['phaseHistory'].append(item)
+    # Progress first: the supervisor can distinguish slow serialization from a
+    # blocked browser call. Both files are atomic and contain no fixture payload.
+    atomic_json(out/PROGRESS_NAME,item)
+    atomic_json(out/REPORT_NAME,report)
+    print(json.dumps({'nativePerformance':phase,'state':state,'identity':item['identity'],**detail}),flush=True)
+
+
+def brief_error(error):
+    value=str(error)
+    if len(value)<=2400:return value
+    return value[:1800]+' ... [error text truncated; chars='+str(len(value))+'; sha256='+hashlib.sha256(value.encode()).hexdigest()+'] ... '+value[-400:]
+
+
+def phase_call(name, action, **detail):
+    checkpoint(name,'before',**detail)
+    try: result = action()
+    except BaseException as error:
+        report['errors'].append({'phase':name,'identity':dict(active_identity),'error':brief_error(error)})
+        checkpoint(name,'error',error=brief_error(error),**detail)
+        raise
+    checkpoint(name,'after',**detail)
+    return result
+
 
 def digest(text):
     return hashlib.sha256(text.encode()).hexdigest()
@@ -106,12 +370,15 @@ PROBE = r"""(() => {
 })();"""
 
 
-def snapshot(page, full=True):
-    return page.evaluate('full=>window.__nativePresentationProbe.snapshot(full)', full)
+def snapshot(page, full=True, instrument=True):
+    action=lambda:page.evaluate('full=>window.__nativePresentationProbe.snapshot(full)',full)
+    return phase_call('snapshot.bulk' if full else 'snapshot.light',action) if instrument else action()
 
 
-def metrics(cdp):
-    return {item['name']:item['value'] for item in cdp.send('Performance.getMetrics')['metrics']}
+def metrics(cdp, instrument=True):
+    action=lambda:cdp.send('Performance.getMetrics')
+    result=phase_call('cdp.metrics',action) if instrument else action()
+    return {item['name']:item['value'] for item in result['metrics']}
 
 
 def delta(before, after):
@@ -122,21 +389,26 @@ def delta(before, after):
 
 def native_click(page, selector):
     # Genuine browser pointer dispatch; no element.click or synthetic event.
-    page.locator(selector).click(timeout=30000)
+    phase_call('input.native-click',lambda:page.locator(selector).click(timeout=30000),selector=selector)
 
 
 def tab(page, name):
-    if page.locator('[data-bind="offline-modal"]').is_visible(): native_click(page,'[data-action="dismiss-offline"]')
+    if phase_call('navigation.offline-modal',lambda:page.locator('[data-bind="offline-modal"]').is_visible()): native_click(page,'[data-action="dismiss-offline"]')
     native_click(page,f'[data-tab="{name}"]')
-    page.locator(f'[data-tab-panel="{name}"]').wait_for(state='visible')
+    phase_call('navigation.visible-panel',lambda:page.locator(f'[data-tab-panel="{name}"]').wait_for(state='visible'),tab=name)
 
 
 def collect_sample(page, cdp, name):
-    tab(page,name); page.wait_for_timeout(args.warmup_ms)
-    before_probe=snapshot(page,False); before=metrics(cdp); host_start=time.perf_counter()
+    active_identity['sample']=name
+    tab(page,name); phase_call('sample.warmup',lambda:page.wait_for_timeout(args.warmup_ms),milliseconds=args.warmup_ms)
+    # No checkpoints, stdout, file I/O or callbacks added inside the CPU window.
+    # A watchdog stack dump identifies the exact blocked Python line if needed.
+    checkpoint('sample.measure-block','before',operations=['snapshot.light','cdp.metrics.start','native-wait','cdp.metrics.end','snapshot.light'])
+    before_probe=snapshot(page,False,instrument=False); before=metrics(cdp,instrument=False); host_start=time.perf_counter()
     page.wait_for_timeout(args.sample_ms)
-    after=metrics(cdp); after_probe=snapshot(page,False)
+    after=metrics(cdp,instrument=False); after_probe=snapshot(page,False,instrument=False)
     host_elapsed_ms=(time.perf_counter()-host_start)*1000
+    checkpoint('sample.measure-block','after')
     observations=snapshot(page)  # Bulk records and native Storage are read outside the measured window.
     start,end=before_probe['now'],after_probe['now']
     frames=[row['interval'] for row in observations['frames'] if start<row['at']<=end]
@@ -150,6 +422,7 @@ def collect_sample(page, cdp, name):
             'statusBefore':before_probe['status'],'statusAfter':after_probe['status'],
             'noticeBefore':before_probe['notice'],'noticeAfter':after_probe['notice']}
     check('sample remains genuinely visible',not before_probe['hidden'] and not after_probe['hidden'],{'tab':name})
+    checkpoint('sample.complete','after',tab=name)
     return result
 
 
@@ -157,23 +430,31 @@ def run(browser, profile, variant, repetition, order):
     url=args.before_url if variant=='before' else args.after_url
     parsed=urlparse(url)
     check('benchmark bundle is HTTP(S)',parsed.scheme in ('http','https'))
-    context=browser.new_context(viewport={'width':1440,'height':1100},reduced_motion='reduce',accept_downloads=True)
-    context.add_init_script(PROBE.replace('__KEY__',json.dumps(profile['key'])).replace('__SAVE__',json.dumps(profile['save'])))
-    page=context.new_page();page.set_default_timeout(30000)
+    active_identity.clear();active_identity.update(profile=profile['profile'],variant=variant,repetition=repetition,url=url)
     run={'profile':profile['profile'],'variant':variant,'repetition':repetition,'pairOrder':order,'url':url,
          'sourceSaveSha256':digest(profile['save']),'sourceStateSha256':profile['stateSha256'],'samples':[],
-         'pageErrors':[],'failedRequests':[],'qualified':False}
+         'pageErrors':[],'failedRequests':[],'qualified':False,'completed':False}
     report['runs'].append(run)
-    page.on('pageerror',lambda error:run['pageErrors'].append(str(error)))
-    page.on('requestfailed',lambda request:run['failedRequests'].append(request.url))
-    cdp=context.new_cdp_session(page);cdp.send('Performance.enable')
-    before=metrics(cdp);host=time.perf_counter()
+    context=page=cdp=None
+    checkpoint('run.begin','before')
     try:
+        context=phase_call('context.create',lambda:browser.new_context(viewport={'width':1440,'height':1100},reduced_motion='reduce',accept_downloads=True))
+        phase_call('context.init-script',lambda:context.add_init_script(PROBE.replace('__KEY__',json.dumps(profile['key'])).replace('__SAVE__',json.dumps(profile['save']))))
+        page=phase_call('page.create',context.new_page);page.set_default_timeout(30000)
+        page.on('pageerror',lambda error:run['pageErrors'].append(str(error)))
+        page.on('requestfailed',lambda request:run['failedRequests'].append(request.url))
+        cdp=phase_call('cdp.session',lambda:context.new_cdp_session(page))
+        phase_call('cdp.enable',lambda:cdp.send('Performance.enable'))
+        checkpoint('initialization.measure-block','before',operations=['cdp.metrics.start','page.goto','ready-locator','snapshot.light','cdp.metrics.end'])
+        before=metrics(cdp,instrument=False);host=time.perf_counter()
         response=page.goto(url,wait_until='domcontentloaded',timeout=60000)
         check('actual production HTTP response',response is not None and response.status==200,{'url':url})
         page.locator('[data-bind="energy-chip"]').wait_for(timeout=60000)
-        initialized=snapshot(page);after=metrics(cdp)
-        run['initialization']={'hostToReadyMs':(time.perf_counter()-host)*1000,'documentToReadyMs':initialized['now'],
+        ready_light=snapshot(page,False,instrument=False);after=metrics(cdp,instrument=False)
+        initialization_host_ms=(time.perf_counter()-host)*1000
+        checkpoint('initialization.measure-block','after')
+        initialized=snapshot(page)
+        run['initialization']={'hostToReadyMs':initialization_host_ms,'documentToReadyMs':ready_light['now'],
             'nativeSeedMs':initialized['seedMs'],'cpu':delta(before,after),'rawMetricsBefore':before,'rawMetricsAfter':after,
             'longTasks':initialized['longTasks'],'seededAt':initialized['seededAt'],'seededSaveSha256':digest(initialized['seeded']),
             'seededUtf8Bytes':len(initialized['seeded'].encode()),'seededStringChars':len(initialized['seeded'].encode('utf-16-le'))//2}
@@ -192,12 +473,16 @@ def run(browser, profile, variant, repetition, order):
         if run['startupProtected']:
             run['blocker']='Native save session is protected at startup; excluded from ready-gameplay comparison.'
             return
-        page.wait_for_load_state('networkidle')
-        for name in args.tabs.split(','): run['samples'].append(collect_sample(page,cdp,name.strip()))
+        phase_call('initialization.network-idle',lambda:page.wait_for_load_state('networkidle'))
+        for name in args.tabs.split(','):
+            run['samples'].append(collect_sample(page,cdp,name.strip()))
+            checkpoint('sample.recorded','after',tab=name.strip())
+        active_identity.pop('sample',None)
+        checkpoint('inputs.begin','before')
         # Alternate actual nav targets to capture native input dispatch and paint.
         start=snapshot(page,False)['now']
         for name in ('overview','orders','fleet','overview','fleet','orders'):
-            tab(page,name);page.wait_for_timeout(150)
+            tab(page,name);phase_call('input.settle',lambda:page.wait_for_timeout(150),tab=name)
         end=snapshot(page)
         run['interactions']={'startedMs':start,'events':[row for row in end['events'] if row['start']>=start],
             'paintOpportunityBounds':[row for row in end['inputs'] if row['start']>=start],
@@ -205,15 +490,17 @@ def run(browser, profile, variant, repetition, order):
         check('measured navigation inputs are genuine trusted events',all(row['trusted'] for row in run['interactions']['paintOpportunityBounds']))
         # Native persistence qualification happens AFTER CPU samples. Imported
         # replacement intentionally exercises genuine current+backup capacity.
+        checkpoint('persistence.begin','before')
         tab(page,'save');native_click(page,'[data-action="save"]')
         saved=snapshot(page)
         run['nativePersistence']={'manualSaveStatus':saved['status'],'currentChars':len((saved['currentRaw'] or '').encode('utf-16-le'))//2}
-        page.locator('#transfer').fill(initialized['seeded']);before_replacement=snapshot(page)
+        phase_call('persistence.fill-import',lambda:page.locator('#transfer').fill(initialized['seeded']))
+        before_replacement=snapshot(page)
         native_click(page,'[data-action="import-text"]')
-        page.wait_for_timeout(50)
+        phase_call('persistence.import-settle',lambda:page.wait_for_timeout(50))
         replacement=snapshot(page)
         run['nativePersistence']['replacementStatus']=replacement['status']
-        backups=page.evaluate('(key)=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup")).map(key=>({key,value:localStorage.getItem(key)}))',profile['key'])
+        backups=phase_call('persistence.read-backups',lambda:page.evaluate('(key)=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup")).map(key=>({key,value:localStorage.getItem(key)}))',profile['key']))
         run['nativePersistence']['backups']=[{'key':row['key'],'sha256':digest(row['value'] or ''),
             'stringChars':len((row['value'] or '').encode('utf-16-le'))//2,
             'matchesPreImportNativeRead':row['value']==before_replacement['currentRaw'],
@@ -229,24 +516,38 @@ def run(browser, profile, variant, repetition, order):
         run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesPreImportNativeRead'] or row['matchesManualSaveNativeRead'] for row in run['nativePersistence']['backups'])
         run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes']
         run['readyDuringSamples']=not run['startupProtected'] and not any(sample['protectedDuringSample'] for sample in run['samples'])
-        run['qualified']=run['readyDuringSamples'] and not run['pageErrors'] and not run['failedRequests']
+        run['measurementQualified']=run['readyDuringSamples'] and not run['pageErrors'] and not run['failedRequests']
         if not run['readyDuringSamples']:run['blocker']='Native save protection arose during timing; excluded from ready-gameplay aggregates.'
         check('native measurement has no production page errors or failed requests',not run['pageErrors'] and not run['failedRequests'],run['pageErrors'])
+    except BaseException as error:
+        run['error']=brief_error(error)
+        report['errors'].append({'identity':dict(active_identity),'error':brief_error(error)})
+        checkpoint('run.error','error',error=brief_error(error))
+        raise
     finally:
-        cdp.detach();context.close()
+        failed=sys.exc_info()[0] is not None
+        # Persist original failure and partial samples BEFORE potentially blocked
+        # detach/close. No unfinished run is ever accepted by aggregate().
+        checkpoint('run.pre-cleanup','before')
+        if cdp is not None:phase_call('cleanup.cdp-detach',cdp.detach)
+        if context is not None:phase_call('cleanup.context-close',context.close)
+        if not failed:
+            run['completed']=True
+            run['qualified']=bool(run.get('measurementQualified'))
+        checkpoint('run.complete','after',qualified=run['qualified'],completed=run['completed'])
 
 
 def served_identity(request, url):
-    response=request.get(url,timeout=30000)
+    response=phase_call('identity.document',lambda:request.get(url,timeout=30000),url=url)
     check('identity document HTTP response',response.status==200,{'url':url})
-    html=response.body();text=html.decode('utf-8')
+    html=phase_call('identity.document-body',response.body);text=html.decode('utf-8')
     identity={'url':url,'htmlSha256':hashlib.sha256(html).hexdigest(),'assets':[]}
-    release=request.get(urljoin(url,'release.json'),timeout=30000)
-    identity['release']=release.json() if release.status==200 else {'httpStatus':release.status}
+    release=phase_call('identity.release',lambda:request.get(urljoin(url,'release.json'),timeout=30000),url=url)
+    identity['release']=phase_call('identity.release-json',release.json) if release.status==200 else {'httpStatus':release.status}
     for path in sorted(set(re.findall(r'(?:src|href)=[\"\']([^\"\']+\.(?:js|css))(?:[\"\'])',text))):
-        asset_url=urljoin(url,path);asset=request.get(asset_url,timeout=30000)
+        asset_url=urljoin(url,path);asset=phase_call('identity.asset',lambda:request.get(asset_url,timeout=30000),url=asset_url)
         check('served bundle identity asset HTTP response',asset.status==200,{'url':asset_url})
-        body=asset.body();sha=hashlib.sha256(body).hexdigest()
+        body=phase_call('identity.asset-body',asset.body);sha=hashlib.sha256(body).hexdigest()
         release_path=urlparse(asset_url).path.removeprefix(urlparse(url).path)
         expected=identity['release'].get('files',{}).get(release_path)
         identity['assets'].append({'url':asset_url,'sha256':sha,'bytes':len(body),'releaseExpectedSha256':expected})
@@ -257,8 +558,16 @@ def served_identity(request, url):
 
 def aggregate():
     grouped={}
+    pairs={}
     for run in report['runs']:
-        if not run['qualified']:continue
+        pairs.setdefault((run['profile'],run['repetition']),{})[run['variant']]=run
+    matched={key for key,pair in pairs.items() if set(pair)=={'before','after'} and
+             all(run.get('completed') and run['qualified'] for run in pair.values())}
+    report['pairQualification']=[{'profile':profile,'repetition':repetition,'accepted':(profile,repetition) in matched,
+        'variants':{variant:{'completed':run.get('completed',False),'qualified':run['qualified']} for variant,run in pair.items()}}
+        for (profile,repetition),pair in pairs.items()]
+    for run in report['runs']:
+        if (run['profile'],run['repetition']) not in matched:continue
         key=(run['profile'],run['variant'])
         bucket=grouped.setdefault(key,{'startupScriptMs':[],'startupTaskMs':[],'startupHostMs':[],'tabs':{},'eventLatencyMs':[],'paintOpportunityBoundMs':[]})
         bucket['startupScriptMs'].append(run['initialization']['cpu'].get('ScriptDuration'))
@@ -293,35 +602,56 @@ def aggregate():
     report['comparisons']=comparisons
 
 
-profiles=[]
-for path,label in [(args.moderate_fixture,'moderate'),(args.fixture,'combined')]:
-    if not path:continue
-    source=json.loads(Path(path).read_text())
-    ready=source.get('ready',source.get('base'))
-    raw=source.get('save',json.dumps(ready,ensure_ascii=False,indent=2))
-    profile={'profile':source.get('profile',label),'key':source['key'],'ready':ready,'save':raw,
-             'stateSha256':digest(json.dumps(ready['state'],sort_keys=True,separators=(',',':'),ensure_ascii=False))}
-    profiles.append(profile)
-    report['profiles'].append({'profile':profile['profile'],'path':path,'description':source['description'],
-        'sourceSaveSha256':digest(raw),'sourceStateSha256':profile['stateSha256'],'sourceUtf8Bytes':len(raw.encode()),
-        'sourceStringChars':len(raw.encode('utf-16-le'))//2,'manifest':source.get('manifest')})
-with sync_playwright() as playwright:
-    browser=playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
-    report['environment']={'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version}
+def worker_main():
+    playwright=browser=request=None
     try:
-        request=playwright.request.new_context()
-        try:report['servedBundles']={name:served_identity(request,url) for name,url in [('before',args.before_url),('after',args.after_url)]}
-        finally:request.dispose()
+        checkpoint('worker.begin','before')
+        profiles=[]
+        for path,label in [(args.moderate_fixture,'moderate'),(args.fixture,'combined')]:
+            if not path:continue
+            source=phase_call('fixture.read',lambda:json.loads(Path(path).read_text()),profile=label)
+            ready=source.get('ready',source.get('base'))
+            raw=source.get('save',json.dumps(ready,ensure_ascii=False,indent=2))
+            profile={'profile':source.get('profile',label),'key':source['key'],'ready':ready,'save':raw,
+                     'stateSha256':digest(json.dumps(ready['state'],sort_keys=True,separators=(',',':'),ensure_ascii=False))}
+            profiles.append(profile)
+            report['profiles'].append({'profile':profile['profile'],'path':path,'description':source['description'],
+                'sourceSaveSha256':digest(raw),'sourceStateSha256':profile['stateSha256'],'sourceUtf8Bytes':len(raw.encode()),
+                'sourceStringChars':len(raw.encode('utf-16-le'))//2,'manifest':source.get('manifest')})
+        playwright=phase_call('playwright.start',lambda:sync_playwright().start())
+        browser=phase_call('browser.launch',lambda:playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'),headless=True,args=['--no-sandbox']))
+        report['environment']={'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version}
+        request=phase_call('identity.context-create',playwright.request.new_context)
+        report['servedBundles']={}
+        for name,url in [('before',args.before_url),('after',args.after_url)]:
+            report['servedBundles'][name]=served_identity(request,url)
+        phase_call('identity.context-close',request.dispose);request=None
         for profile in profiles:
             for repetition in range(args.repetitions):
                 order=('before','after') if repetition%2==0 else ('after','before')
                 for variant in order:run(browser,profile,variant,repetition,list(order))
-        report['completed']=True
+        report['measurementsCompleted']=True
     except BaseException as error:
-        report['errors'].append(str(error));raise
+        report['errors'].append(brief_error(error))
+        checkpoint('worker.error','error',error=brief_error(error))
+        raise
     finally:
+        failed=sys.exc_info()[0] is not None
         aggregate()
-        (out/'presentation-performance-browser-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
-        print(json.dumps({'completed':report['completed'],'runs':len(report['runs']),'qualifiedRuns':sum(row['qualified'] for row in report['runs']),
-            'comparisons':report.get('comparisons',[])},ensure_ascii=False))
-        browser.close()
+        checkpoint('worker.pre-cleanup','before')
+        if request is not None:phase_call('cleanup.identity-context',request.dispose)
+        if browser is not None:phase_call('cleanup.browser-close',browser.close)
+        if playwright is not None:phase_call('cleanup.playwright-stop',playwright.stop)
+        if not failed:report['completed']=bool(report.get('measurementsCompleted'))
+        checkpoint('worker.complete','after',completed=report['completed'])
+        print(json.dumps({'completed':report['completed'],'runs':len(report['runs']),
+            'qualifiedRuns':sum(row['qualified'] for row in report['runs']),'comparisons':report.get('comparisons',[])},ensure_ascii=False),flush=True)
+
+
+try:
+    worker_main()
+except BaseException as error:
+    # Playwright errors can embed the entire imported save. Keep terminal output
+    # small; partial evidence and the exact named phase have already been saved.
+    print(json.dumps({'nativePerformance':'worker-failed','error':brief_error(error)}),flush=True)
+    sys.exit(1)

@@ -69,6 +69,7 @@ jobs:
           node --import tsx scripts/performance-fixture.ts > performance-review-save.json
           node --import tsx scripts/benchmark-presentation.mjs --fixture performance-review-save.json --before-source "$RUNNER_TEMP/pre-performance" > presentation-model-report.json
           node --import tsx scripts/render-scheduling-fixture.ts > render-scheduling-review-save.json
+          python scripts/browser-presentation-performance.py --watchdog-self-test
       - name: Browser prerequisites
         timeout-minutes: 4
         run: bash scripts/browser-prerequisites.sh
