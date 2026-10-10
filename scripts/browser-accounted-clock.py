@@ -271,9 +271,19 @@ def release_file(page, index):
 
 
 def arm_formation(page):
+    before_clock=page.evaluate('window.__clockSnapshot()')
+    before_raw=raw(page);before_events=len(events(page))
+    # This helper is used only immediately after fresh boot. Never pump RAF from
+    # generic tab(): later cases intentionally retain unaccounted time gaps.
+    check('formation setup begins with zero controlled elapsed time',before_clock['wall']==EPOCH and before_clock['frame']==0)
     tab(page, 'fleet')
     if not page.locator('#fleet-formations').evaluate('e=>e.open'):
         click(page, '#fleet-formations > summary')
+    frame(page)  # Present the newly opened lazy library without advancing time.
+    after_clock=page.evaluate('window.__clockSnapshot()')
+    check('formation library presentation preserves exact controlled clocks and pending callbacks',after_clock==before_clock)
+    check('formation library presentation preserves exact native save bytes',raw(page)==before_raw)
+    check('formation library presentation performs no persistence writes',not any(row['operation'].startswith('write') for row in events(page)[before_events:]))
     click(page, '[data-formation-id="1"] [data-formation-action="select"]')
     page.locator('#formation-payer').select_option(fixtures['homeId'])
     click(page, '#formation-fill'); click(page, '#formation-preview')

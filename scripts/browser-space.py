@@ -56,7 +56,7 @@ with sync_playwright() as p:
   new_id=settled['state']['planets'][1]['id'];page.locator('#planet-select').select_option(new_id);advance();tab('facilities');check('new colony starts without free buildings','等级 0' in page.locator('[data-bind="bld-metal_mine"]').inner_text());snap('new-colony-desktop.png')
   tab('messages');check('colony and return messages exist','已建立' in page.locator('#space-messages').inner_text() and '已返航' in page.locator('#space-messages').inner_text());snap('messages-desktop.png')
   page.locator('#planet-select').select_option('homeworld');advance();tab('galaxy');page.locator('[data-space="route"][data-mission="transport"]').first.click();advance();page.locator('#flight-mission').select_option('transport');page.locator('[data-ship="colony_ship"]').fill('0');advance();expect(page.locator('#space-send')).to_be_enabled();page.locator('#space-send').click();advance();dispatched=read();check('transport is an actual persisted mission',dispatched['state']['fleets'][0]['mission']=='transport')
-  page.locator('[data-space="recall"]').first.click();advance(.4);check('recall produces message','召回' in page.locator('#space-messages').inner_text())
+  page.locator('[data-space="recall"]').first.click();advance(.4);tab('messages');check('recall produces message','召回' in page.locator('#space-messages').inner_text())
   tab('arcade');check('existing 24-cell ring board preserved',page.locator('[data-tile]').count()==24);snap('ring-unchanged.png')
   for width in [390,768,1440]:
    page.set_viewport_size({'width':width,'height':1000})
