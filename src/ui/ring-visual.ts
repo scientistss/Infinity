@@ -41,7 +41,11 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
   fold(side, "信标、充能与风险说明", intro);
   const lead = make("p", "ring-lead", "信标揭晓即结算；舰队充能只回放，物资返航后入港。两种来源使用不同概率。");
   node(panel, ".panel-head").after(lead);
-  const technical = Array.from(side.querySelectorAll<HTMLElement>(":scope > p.muted")).filter(el => el.dataset.bind !== "arcade-betline");
+  const manualProgress = node(side, '[data-bind="arcade-auto"]');
+  manualProgress.id = "ring-manual-progress";
+  manualProgress.classList.add("ring-manual-progress");
+  node(side, ".arcade-controls").after(manualProgress);
+  const technical = Array.from(side.querySelectorAll<HTMLElement>(":scope > p.muted")).filter(el => el.dataset.bind !== "arcade-betline" && el !== manualProgress);
   const betExplanation = technical.find(el => !el.dataset.bind);
   if (betExplanation) betExplanation.textContent = "信标按当前常驻押注扣重氢；命中时额外发放相应资源或舰船。基础赔率为0.9/p，单次押注上限沿用现有规则。保底、额外灯、充能来源与货舱截断会改变总回报，不能把全部玩法简单称为90%回报。舰队充能只在出发时勾选押注并锁定金额，回放不重复扣费。";
   fold(side, "押注、奖池与自动开奖", technical);
@@ -64,8 +68,8 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
 
   const automatic = make("section", "ring-auto");
   automatic.setAttribute("aria-labelledby", "ring-auto-title");
-  automatic.innerHTML = '<h3 id="ring-auto-title">有限自动开奖</h3><p id="ring-auto-status" role="status" aria-live="polite"></p><p id="ring-auto-progress"></p><p id="ring-auto-frozen"></p><p id="ring-auto-source"></p><p id="ring-auto-bets"></p><div class="ring-auto-fields"><label>自动跑灯槽位<select id="ring-auto-slot" aria-describedby="ring-auto-prerequisite"></select></label><label>本批次数<input id="ring-auto-count" type="number" min="0" max="40" step="1" value="0" inputmode="numeric" /></label><label>总扣费上限（重氢）<input id="ring-auto-cap" type="text" value="0" inputmode="decimal" maxlength="100" /></label></div><p id="ring-auto-prerequisite"></p><p id="ring-auto-validation" role="status"></p><div class="ring-auto-actions"><button type="button" data-ring="auto-arm">授权本批次</button><button type="button" data-ring="auto-stop" disabled>停止自动开奖</button></div><p id="ring-auto-stop-reason" role="status"></p><small>只包含授权时已有的前 N 次；重氢上限按总扣费计算，赢回不补充额度。不会自动加注购买次数，未来信标、顺风奖励不续入。手动开奖或改押注会停止本批次；装配或开关卡片不等于授权。离线也只执行已授权范围。</small>';
-  node(side, ".arcade-controls").after(automatic);
+  automatic.innerHTML = '<h3 id="ring-auto-title">有限自动开奖</h3><p id="ring-auto-status" role="status" aria-live="polite"></p><p id="ring-auto-progress"></p><p id="ring-auto-frozen"></p><div id="ring-auto-setup"><p id="ring-auto-source"></p><p id="ring-auto-bets"></p><div class="ring-auto-fields"><label>自动跑灯槽位<select id="ring-auto-slot" aria-describedby="ring-auto-prerequisite"></select></label><label>本批次数<input id="ring-auto-count" type="number" min="0" max="40" step="1" value="0" inputmode="numeric" /></label><label>总扣费上限（重氢）<input id="ring-auto-cap" type="text" value="0" inputmode="decimal" maxlength="100" /></label></div><p id="ring-auto-validation" role="status"></p></div><p id="ring-auto-prerequisite"></p><div class="ring-auto-actions"><button type="button" data-ring="auto-arm">授权本批次</button><button type="button" data-ring="auto-stop" disabled>停止自动开奖</button></div><p id="ring-auto-stop-reason" role="status"></p><small>只包含授权时已有的前 N 次；重氢上限按总扣费计算，赢回不补充额度。不会自动加注购买次数，未来信标、顺风奖励不续入。手动开奖或改押注会停止本批次；装配或开关卡片不等于授权。离线也只执行已授权范围。</small>';
+  manualProgress.after(automatic);
   const autoSlot = node<HTMLSelectElement>(automatic, "#ring-auto-slot");
   const autoCount = node<HTMLInputElement>(automatic, "#ring-auto-count");
   const autoCap = node<HTMLInputElement>(automatic, "#ring-auto-cap");
@@ -84,6 +88,10 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
   function paintAuto() {
     if (!state) return;
     const model = ringAutoView(state), signature = JSON.stringify(model.slots);
+    text(side, "#ring-manual-progress", model.manualHint);
+    automatic.hidden = !model.showPanel;
+    node(automatic, "#ring-auto-setup").hidden = !model.setupAvailable;
+    for (const field of [autoSlot, autoCount, autoCap]) field.disabled = !model.setupAvailable;
     if (signature !== slotSignature) {
       slotSignature = signature;
       const selected = autoSlot.value;
@@ -97,6 +105,7 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
     const input = ringAutoInput(state, autoSlot.value, autoCount.value, autoCap.value);
     text(automatic, "#ring-auto-validation", model.armed || model.prerequisite ? "" : input.reason);
     const arm = node<HTMLButtonElement>(automatic, '[data-ring="auto-arm"]');
+    arm.hidden = !model.setupAvailable;
     arm.disabled = !input.valid;
     arm.textContent = state.arcade.autoBatch ? "重新授权本批次" : "授权本批次";
     node<HTMLButtonElement>(automatic, '[data-ring="auto-stop"]').disabled = !model.armed;

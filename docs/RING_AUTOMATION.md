@@ -35,3 +35,10 @@ Manual odds, pre-rolled outcomes, pity, payouts and the existing insufficient-fu
 Each ticket receives a positive safe integer ID at issuance. IDs are monotonic and never generated during reveal. The maximum safe integer is an exhausted counter, not an issued ID. In-flight charges reserve both queue capacity and ID capacity. Exhausted topups and charge dispatches are rejected before payment; an invalid exhausted due charge returns without a reroll and refunds its existing escrow at arrival.
 
 Revision 4 persists IDs and batch authority. Earlier revisions receive deterministic IDs and have old run-lights and automatic bet-edit cards disabled before offline catch-up. A current armed save must preserve its exact remaining queue prefix, valid source, cap, spent amount and frozen bets. A stopped batch remains reviewable even if its old source no longer exists.
+
+
+## Progressive manual-first controls
+
+The actual manual unlock progress is shown beside the manual reveal buttons. Reaching the displayed threshold alone does not grant a card, equip a slot, or authorize spending: the view follows the actual unlock and slot state. Until a usable runner is equipped, an empty automation form is hidden and its fields disabled; manual controls and bets stay available under their existing rules. Equipped controls remain visible even when the ticket queue is empty.
+
+An existing batch, including a stopped or completed batch, keeps its fixed source, completion count, gross spend and stop reason visible. An armed batch keeps its stop button outside the setup region. Hiding or showing controls preserves the input nodes and creates no new authorization. The existing save-session action guard and domain checks still decide whether an action may run.

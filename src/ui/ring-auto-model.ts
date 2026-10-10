@@ -1,6 +1,6 @@
 /** Read-only batch presentation. Never inspect outcomes or authorize a run here. */
 import { unlockedSlotCount } from "../automation/engine";
-import { BET_SYMBOLS, arcadeSymbolDef, type BetSymbol } from "../data/arcade";
+import { ARCADE, BET_SYMBOLS, arcadeSymbolDef, type BetSymbol } from "../data/arcade";
 import { arcadeUnlocked, betUnitDeut, isRingAmount } from "../game/arcade";
 import { storedRunLimit } from "../game/deep-state";
 import type { GameState } from "../game/types";
@@ -13,20 +13,34 @@ export function ringBetSummary(bets: Record<BetSymbol, number>): string {
 
 export function ringAutoView(state: GameState) {
   const batch = state.arcade.autoBatch;
+  const ringUnlocked = arcadeUnlocked(state);
+  const manualComplete = state.arcade.stats.manualRuns >= ARCADE.autoCardManualRuns;
+  const manualProgress = `${Math.min(state.arcade.stats.manualRuns, ARCADE.autoCardManualRuns)}/${ARCADE.autoCardManualRuns}`;
+  const cardUnlocked = state.unlockedCards.includes("auto_runner");
   const open = unlockedSlotCount(state);
-  const slots = state.unlockedCards.includes("auto_runner") ? state.protocols.slots.flatMap((slot, index) =>
+  const slots = cardUnlocked ? state.protocols.slots.flatMap((slot, index) =>
     index < open && slot.card?.id === "auto_runner" && slot.card.action.kind === "runLights"
       ? [{ index, label: `槽位 ${index + 1} · 自动跑灯` }] : []) : [];
   const source = state.planets.find(planet => planet.id === state.activePlanetId)!;
   const batchSource = batch && state.planets.find(planet => planet.id === batch.planetId);
   const maxCount = Math.min(state.arcade.runs.length, storedRunLimit(state));
-  const prerequisite = !arcadeUnlocked(state) ? "先研究天体物理学 1 级。"
-    : !state.unlockedCards.includes("auto_runner") ? "先手动开奖 10 次解锁「自动跑灯」，再到协议页装配到已开启槽位。"
+  // Presentation follows actual permissions, not just the progress counter or queue.
+  // A reached threshold does not refresh unlocks, equip a card, or authorize a batch.
+  const setupAvailable = ringUnlocked && manualComplete && cardUnlocked && slots.length > 0;
+  const prerequisite = !ringUnlocked ? "先研究天体物理学 1 级。"
+    : !manualComplete ? `先手动开奖 ${ARCADE.autoCardManualRuns} 次解锁「自动跑灯」，再到协议页装配到已开启槽位。`
+    : !cardUnlocked ? `手动开奖 ${manualProgress} 次已达标，等待解锁状态更新；尚不能授权。`
     : !slots.length ? "请到协议页把「自动跑灯」装配到已开启槽位，动作选择「跑灯开奖」。装配默认关闭。"
     : !maxCount ? "暂无待揭晓结果；新信标、奖励和加注不会自动加入已授权批次。" : "";
+  const manualHint = !ringUnlocked ? `先研究天体物理学 1 级开启星环机。自动跑灯解锁进度：${manualProgress} 次手动开奖。`
+    : !manualComplete ? `手动开奖 ${manualProgress} 次 · 达标后解锁「自动跑灯」。`
+    : !cardUnlocked ? prerequisite
+    : !slots.length ? "「自动跑灯」已解锁；到协议页装配到已开启槽位，装配默认关闭。"
+    : "「自动跑灯」已装配；授权范围与状态见下方。装配或开关不等于授权。";
   const currentCost = BET_SYMBOLS.reduce((sum, symbol) => sum + state.arcade.bets[symbol], 0) * betUnitDeut(state);
   return {
-    slots, maxCount, prerequisite, armed: batch?.armed ?? false,
+    slots, maxCount, prerequisite, manualHint, setupAvailable,
+    showPanel: setupAvailable || batch !== null, armed: batch?.armed ?? false,
     source: `当前来源星球：${source.name} [${source.coordinates.galaxy}:${source.coordinates.system}:${source.coordinates.position}]`,
     bets: `待授权押注：${ringBetSummary(state.arcade.bets)}${currentCost > 0 ? ` · 当前单次 ${currentCost} 重氢` : ""}`,
     status: batch?.armed ? "已授权本批次" : batch ? "已停止 · 需重新授权" : "关闭 · 默认未授权",

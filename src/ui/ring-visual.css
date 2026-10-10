@@ -57,6 +57,8 @@
 .ring-visual .ring-version { color:var(--muted); font-size:.66rem; font-weight:normal; margin-left:.6rem; }
 
 /* Bounded automation is secondary to the original manual controls. */
+.ring-visual .ring-manual-progress { font-size:.75rem; line-height:1.6; margin:8px 0 12px; overflow-wrap:anywhere; }
+.ring-visual .ring-auto[hidden],.ring-visual .ring-auto [hidden] { display:none; }
 .ring-visual .ring-auto { border-block:1px solid var(--line,#34343c); margin:12px 0; padding:10px 0; font-size:.75rem; overflow-wrap:anywhere; }
 .ring-visual .ring-auto h3 { font-size:.85rem; margin:0 0 8px; }
 .ring-visual .ring-auto p { margin:6px 0; line-height:1.5; }

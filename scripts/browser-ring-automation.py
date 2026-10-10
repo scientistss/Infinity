@@ -135,6 +135,21 @@ def arm(page, count, cap):
     return read(page)
 
 
+def compact_setup(page, hint):
+    progress = page.locator('#ring-manual-progress')
+    expect(progress).to_be_visible()
+    expect(progress).to_contain_text(hint)
+    check('compact guidance is adjacent to the original manual buttons', progress.evaluate('(e) => e.previousElementSibling?.matches(".arcade-controls") && !e.closest("details")'))
+    expect(page.locator('.ring-auto')).to_be_hidden()
+    expect(page.locator('#ring-auto-setup')).to_be_hidden()
+    for selector in ('#ring-auto-slot', '#ring-auto-count', '#ring-auto-cap', '[data-ring="auto-arm"]'):
+        field = page.locator(selector)
+        expect(field).to_be_hidden()
+        expect(field).to_be_disabled()
+        check('unavailable authorization has no layout and cannot acquire focus: ' + selector,
+              field.bounding_box() is None and field.evaluate('(e) => { e.focus(); return document.activeElement !== e; }'))
+
+
 def screenshot(page, name):
     page.evaluate('Promise.all([...document.images].filter(i => i.getClientRects().length).map(i => i.decode().catch(() => null)))')
     page.screenshot(path=str(out / name), full_page=True)
@@ -150,7 +165,7 @@ def capture_failure(page):
     try:
         failure_diagnostics['persistedSyntheticStateAtFailure'] = json.loads(page.evaluate('(key) => localStorage.getItem(key)', KEY))['state']
         failure_diagnostics['ui'] = page.evaluate('''() => Object.fromEntries(
-            ['#ring-auto-status', '#ring-auto-progress', '#ring-auto-stop-reason',
+            ['#ring-manual-progress', '#ring-auto-status', '#ring-auto-progress', '#ring-auto-stop-reason',
              '#ring-auto-prerequisite', '[data-bind="status"]', '[data-bind="arcade-runs"]']
             .map(selector => [selector, document.querySelector(selector)?.textContent ?? null]))''')
         failure_diagnostics['clock'] = page.evaluate('''() => ({now: Date.now(),
@@ -184,19 +199,23 @@ try:
 
         case = 'locked prerequisites'
         context, page = boot('locked')
-        check('manual unlock guidance is visible', '手动开奖 10 次' in page.locator('#ring-auto-prerequisite').inner_text())
+        compact_setup(page, f'{read(page)["arcade"]["stats"]["manualRuns"]}/10')
+        check('visible manual guidance explains the actual unlock threshold', '解锁' in page.locator('#ring-manual-progress').inner_text())
         check('unavailable protocol is not automatically equipped', all(slot['card'] is None for slot in read(page)['protocols']['slots']))
         check('locked authorization is disabled', page.locator('[data-ring="auto-arm"]').is_disabled())
         context.close()
 
         case = 'equip and plain toggle default to no authority'
         context, page = boot('unequipped')
-        check('unequipped guidance points to protocols', '装配' in page.locator('#ring-auto-prerequisite').inner_text())
+        compact_setup(page, '已解锁')
+        check('visible unequipped guidance points to protocols', '装配' in page.locator('#ring-manual-progress').inner_text())
         page.locator('[data-tab="protocol"]').click()
         page.locator('[data-action="equip-card"][data-card="auto_runner"]').click()
         check('actual UI equip leaves runner disabled', read(page)['protocols']['slots'][0]['card']['enabled'] is False)
         expect(page.locator('[data-bind="slot-enabled-0"]')).not_to_be_checked()
         ring(page)
+        expect(page.locator('#ring-auto-setup')).to_be_visible()
+        check('actual equipment exposes enabled native input fields', all(page.locator(selector).is_visible() and page.locator(selector).is_enabled() for selector in ('#ring-auto-slot', '#ring-auto-count', '#ring-auto-cap')))
         check('initial count and cap both zero', page.locator('#ring-auto-count').input_value() == '0' and page.locator('#ring-auto-cap').input_value() == '0')
         check('initial authorization remains off', '默认未授权' in page.locator('#ring-auto-status').inner_text())
         check('manual reveal stays first', page.locator('.arcade-side').evaluate('(e) => e.querySelector(".arcade-controls").compareDocumentPosition(e.querySelector(".ring-auto")) & Node.DOCUMENT_POSITION_FOLLOWING'))

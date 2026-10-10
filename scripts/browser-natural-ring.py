@@ -4,7 +4,7 @@ Input is a passed infinity-natural-ring-journey-v1 report generated against the
 same save revision as the pinned release. Immutable milestone saves are read by
 native File.text and explicitly confirmed, then persisted in native localStorage.
 
-Manual 9 -> 10 animation cases use native performance/RAF/timers and real elapsed
+Manual 0 -> 1 and 9 -> 10 cases use native performance/RAF/timers and real elapsed
 browser time (Date.now alone is aligned to the source envelope epoch). Exact
 finite-batch/stop/curvature cases explicitly control Date/performance/RAF timestamp
 values, retaining native RAF dispatch and timers, and advance only one live second
@@ -35,8 +35,9 @@ from urllib.parse import unquote, urljoin, urlparse
 
 REPORT_NAME = 'natural-ring-browser-report.json'
 WORK_SECONDS, SUPERVISOR_SECONDS = 210, 225
-WIDTHS = (320, 390, 1440)
+WIDTHS = (320, 390, 768, 1440)
 NAMES = {
+    'first': '04-ring-naturally-unlocked-with-achievement-ticket',
     'nine': '06-nine-manual-locked-with-tenth-ticket-ready',
     'ten': '07-ten-manual-card-unlocked',
     'equipped': '08-equipped-off-current-three-tickets',
@@ -264,7 +265,8 @@ def worker(args):
             'The domain report compresses counted one-second live ticks; this browser run does not replay several hours of human clicking.',
             'Manual animations use native performance/RAF/timers; Date.now is source-epoch aligned, so the entire clock environment is not wholly native.',
             'Finite automation and curvature use explicitly controlled simulation timestamps with native RAF dispatch and native timers; every positive step is one second.',
-            '320/390/1440 are desktop Chromium CSS viewports, not physical mobile-device or background-throttling tests.',
+            '320/390/768/1440 are desktop Chromium CSS viewports, not physical mobile-device or background-throttling tests.',
+            'The first manual continuation begins at milestone 04, earlier than the domain first reveal; ticket identity/outcome and RNG are compared, not later-domain prize amounts or a nonexistent first-after whole-state milestone.',
             'Milestone imports are separate local handoffs. Native reload retains only an existing armed batch remainder; explicit stop/completion/curvature never grants renewed authority.',
             'An independent unwrapped native File.text read hashes selected bytes; the pinned production import path reads the same File, asks native confirm, and persists the complete adopted state.',
         ],
@@ -432,6 +434,36 @@ def worker(args):
             if name == 'arcade':
                 expect(self.page.locator('.ring-visual')).to_be_visible()
 
+        def compact_setup(self, hint, history=False):
+            progress = self.page.locator('#ring-manual-progress')
+            expect(progress).to_be_visible()
+            expect(progress).to_contain_text(hint)
+            check('manual progress is immediately beside the original manual controls', progress.evaluate('(e)=>e.previousElementSibling?.matches(".arcade-controls") && !e.closest("details")'))
+            if history:
+                expect(self.page.locator('.ring-auto')).to_be_visible()
+                for selector in ('#ring-auto-status', '#ring-auto-progress', '#ring-auto-frozen', '#ring-auto-stop-reason'):
+                    expect(self.page.locator(selector)).to_be_visible()
+            else:
+                expect(self.page.locator('.ring-auto')).to_be_hidden()
+            expect(self.page.locator('#ring-auto-setup')).to_be_hidden()
+            for selector in ('#ring-auto-slot', '#ring-auto-count', '#ring-auto-cap', '[data-ring="auto-arm"]'):
+                field = self.page.locator(selector)
+                expect(field).to_be_hidden()
+                expect(field).to_be_disabled()
+                check('compact unavailable control has no layout and cannot acquire focus: ' + selector,
+                      field.bounding_box() is None and field.evaluate('(e)=>{e.focus();return document.activeElement!==e;}'))
+            batch = self.saved()['arcade']['autoBatch']
+            check('compact setup never grants new spending authority',
+                  (batch is not None and not batch['armed']) if history else batch is None)
+
+        def available_setup(self):
+            expect(self.page.locator('.ring-auto')).to_be_visible()
+            expect(self.page.locator('#ring-auto-setup')).to_be_visible()
+            for selector in ('#ring-auto-slot', '#ring-auto-count', '#ring-auto-cap'):
+                field = self.page.locator(selector)
+                expect(field).to_be_visible()
+                check('available setup fields retain native input access: ' + selector, field.is_enabled())
+
         def raw(self):
             return self.page.evaluate('(key)=>localStorage.getItem(key)', key)
 
@@ -545,12 +577,24 @@ def worker(args):
                       all(sample['title'] == '正在揭晓' and bool(sample['lit']) for sample in (animation_before, animation_after)),
                       {'before': animation_before, 'after': animation_after})
             geometry = self.page.locator(selector).bounding_box() if selector else None
-            if selector in ('.arcade-board', '[data-action="arcade-run"]'):
+            if selector in ('.arcade-board', '.arcade-controls', '[data-action="arcade-run"]'):
                 viewport = self.page.viewport_size
                 check('manual entry or animation board is fully visible in actual viewport', geometry and geometry['width'] > 0 and geometry['height'] > 0 and geometry['x'] >= -1 and geometry['y'] >= -1 and geometry['x'] + geometry['width'] <= viewport['width'] + 1 and geometry['y'] + geometry['height'] <= viewport['height'] + 1, geometry)
+            related_geometry = {}
+            if selector == '.arcade-controls':
+                related_geometry['#ring-manual-progress'] = self.page.locator('#ring-manual-progress').bounding_box()
+            if name.startswith('armed-colony-'):
+                related_geometry = {target: self.page.locator(target).bounding_box() for target in
+                                    ('#ring-auto-status', '#ring-auto-progress', '#ring-auto-frozen', '#ring-auto-source', '[data-ring="auto-stop"]')}
+            for target, bounds in related_geometry.items():
+                viewport = self.page.viewport_size
+                check('screenshot includes the actual visible control or context: ' + target,
+                      bounds and bounds['width'] > 0 and bounds['height'] > 0 and bounds['x'] >= -1 and bounds['y'] >= -1
+                      and bounds['x'] + bounds['width'] <= viewport['width'] + 1 and bounds['y'] + bounds['height'] <= viewport['height'] + 1, bounds)
             row = {'case': case, 'file': path.name, 'sha256': sha(path.read_bytes()),
                    'bytes': path.stat().st_size, 'viewport': self.page.viewport_size,
                    'selectorScrolledIntoView': selector, 'targetGeometry': geometry, 'fullPage': False,
+                   'relatedVisibleGeometry': related_geometry,
                    'animationBefore': animation_before, 'animationAfter': animation_after,
                    'clock': self.page.evaluate('window.__naturalRing.clock()')}
             report['screenshots'].append(row)
@@ -729,6 +773,18 @@ def worker(args):
             milestones[alias] = {**milestone, 'evidence': evidence}
             report['sources'].append({'name': name, 'gameSeconds': milestone['gameSeconds'],
                                       **evidence, 'reportSha256': sha(original)})
+        first_arcade = state('first')['arcade']
+        check('first source is naturally open with manual zero and the sole original achievement ticket',
+              first_arcade['stats']['manualRuns'] == first_arcade['stats']['autoRuns'] == 0
+              and first_arcade['autoBatch'] is None and 'auto_runner' not in state('first')['unlockedCards']
+              and len(first_arcade['runs']) == 1 and first_arcade['runs'][0]['id'] == 1 and first_arcade['runs'][0]['source'] == 'bonus')
+        first_ticket = first_arcade['runs'][0]
+        first_witnesses = [row for row in source['tickets'] if row['id'] == first_ticket['id']]
+        check('sole first ticket has the same independently pinned issuance and manual-outcome witness',
+              len(first_witnesses) == 1 and all(first_witnesses[0][field] == first_ticket[field] for field in ('id', 'source', 'outcome'))
+              and first_witnesses[0]['beforeManualRuns'] == 0 and first_witnesses[0]['afterManualRuns'] == 1
+              and first_witnesses[0]['mode'] == 'manual' and first_ticket['outcome']['lucky'] is None)
+        first_witness = first_witnesses[0]
         check('nine-manual source is genuinely locked with a real pending tenth ticket', state('nine')['arcade']['stats']['manualRuns'] == 9 and state('nine')['arcade']['stats']['autoRuns'] == 0 and 'auto_runner' not in state('nine')['unlockedCards'] and len(state('nine')['arcade']['runs']) == 1)
         check('first finite-batch source has natural tickets and no previous auto run', state('equipped')['arcade']['stats']['autoRuns'] == 0 and len(state('equipped')['arcade']['runs']) == 3 and state('equipped')['arcade']['autoBatch'] is None)
         flush()
@@ -751,54 +807,105 @@ def worker(args):
             check('natural report is regenerated for the actual release revision', source['saveRevision'] == release.get('saveRevision') and source['saveVersion'] == release.get('saveVersion'))
             request.dispose()
 
-            for width in WIDTHS:
-                stage = Stage(f'native manual 9 to 10 at {width}px', 'nine', width, controlled=False)
-                check('locked manual-count explanation is visible', '手动开奖 10 次' in stage.page.locator('#ring-auto-prerequisite').inner_text())
-                check('locked card cannot authorize', stage.page.locator('[data-ring="auto-arm"]').is_disabled())
-                stage.page.locator('[data-bind="arcade-skip"]').uncheck()
-                check('skip animation is off', not stage.page.locator('[data-bind="arcade-skip"]').is_checked())
-                check('manual entry precedes finite automation in DOM', bool(stage.page.locator('.arcade-controls').evaluate('(e)=>e.compareDocumentPosition(document.querySelector(".ring-auto")) & Node.DOCUMENT_POSITION_FOLLOWING')))
-                stage.page.wait_for_function('''() => [...document.querySelectorAll('.ring-visual img.ring-art')].filter(e=>e.getClientRects().length).every(e=>e.complete && e.naturalWidth>0)''')
-                check('ring page has no horizontal viewport overflow', stage.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
-                stage.screenshot(f'manual-{width}-entry', '[data-action="arcade-run"]')
-                before = stage.saved()
-                start = time.monotonic()
-                stage.click('[data-action="arcade-run"]', keyboard=width == 390)
-                expect(stage.page.locator('.ring-hero-title')).to_have_text('正在揭晓')
-                stage.screenshot(f'manual-{width}-animation', '.arcade-board')
-                expect(stage.page.locator('.ring-hero-title')).not_to_have_text('正在揭晓', timeout=10000)
-                duration = time.monotonic() - start
-                observations = stage.page.evaluate('window.__naturalRing.animation')
-                positions = {tuple(value['lit']) for value in observations if value['title'] == '正在揭晓' and value['lit']}
-                check('native real-time animation visibly traverses multiple lit tiles', len(positions) >= 3 and duration >= 2.5,
-                      {'distinctLitPositions': len(positions), 'hostElapsedSeconds': duration})
-                after = stage.save('after-tenth-manual')
-                check('one trusted manual reveal consumes only the naturally issued tenth ticket',
-                      after['arcade']['stats']['manualRuns'] == 10 and after['arcade']['stats']['autoRuns'] == 0
-                      and after['arcade']['stats']['runs'] == before['arcade']['stats']['runs'] + 1
-                      and not after['arcade']['runs'] and after['arcade']['seed'] == before['arcade']['seed']
-                      and after['arcade']['nextRunId'] == before['arcade']['nextRunId'])
-                check('tenth result follows the source ticket outcome without rerolling',
-                      after['arcade']['position'] == state('ten')['arcade']['position']
-                      and all(after['arcade']['history'][-1].get(field) == state('ten')['arcade']['history'][-1].get(field) for field in ('symbol', 'big', 'auto'))
-                      and after['arcade']['pity'] == state('ten')['arcade']['pity'])
-                check('tenth manual result unlocks the actual auto-runner card', 'auto_runner' in after['unlockedCards'])
-                stage.screenshot(f'manual-{width}-finished', '.arcade-board')
-                audit = stage.audit('manual-input')
-                check('manual activation was a trusted native button event', any(e['type'] == 'click' and e['action'] == 'arcade-run' and e['trusted'] for e in audit['events']))
-                if width == 390:
-                    check('390px manual action also has trusted Enter input', any(e['type'] == 'keydown' and e['key'] == 'Enter' and e['trusted'] for e in audit['events']))
-                stage.finish()
-
+            for manual_source in ('first', 'nine'):
+                for width in WIDTHS:
+                    first = manual_source == 'first'
+                    prior_count = 0 if first else 9
+                    label = 'first-manual' if first else 'manual'
+                    stage = Stage(f'native manual {prior_count} to {prior_count + 1} at {width}px', manual_source, width, controlled=False)
+                    stage.compact_setup(f'{prior_count}/10')
+                    check('locked card cannot authorize', stage.page.locator('[data-ring="auto-arm"]').is_disabled())
+                    stage.page.locator('[data-bind="arcade-skip"]').uncheck()
+                    check('skip animation is off', not stage.page.locator('[data-bind="arcade-skip"]').is_checked())
+                    check('manual entry precedes finite automation in DOM', bool(stage.page.locator('.arcade-controls').evaluate('(e)=>e.compareDocumentPosition(document.querySelector(".ring-auto")) & Node.DOCUMENT_POSITION_FOLLOWING')))
+                    stage.page.wait_for_function('''() => [...document.querySelectorAll('.ring-visual img.ring-art')].filter(e=>e.getClientRects().length).every(e=>e.complete && e.naturalWidth>0)''')
+                    check('ring page has no horizontal viewport overflow', stage.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                    stage.screenshot(f'{label}-{width}-entry', '.arcade-controls')
+                    before = stage.saved()
+                    start = time.monotonic()
+                    stage.click('[data-action="arcade-run"]', keyboard=width == 390)
+                    expect(stage.page.locator('.ring-hero-title')).to_have_text('正在揭晓')
+                    stage.screenshot(f'{label}-{width}-animation', '.arcade-board')
+                    expect(stage.page.locator('.ring-hero-title')).not_to_have_text('正在揭晓', timeout=10000)
+                    duration = time.monotonic() - start
+                    observations = stage.page.evaluate('window.__naturalRing.animation')
+                    positions = {tuple(value['lit']) for value in observations if value['title'] == '正在揭晓' and value['lit']}
+                    check('native real-time animation visibly traverses multiple lit tiles', len(positions) >= 3 and duration >= 2.5,
+                          {'distinctLitPositions': len(positions), 'hostElapsedSeconds': duration})
+                    after = stage.save('after-first-manual' if first else 'after-tenth-manual')
+                    if first:
+                        check('first native reveal consumes only the original bonus ticket without creating a replacement',
+                              before['arcade']['runs'] == [first_ticket] and not after['arcade']['runs']
+                              and after['arcade']['stats']['runs'] == after['arcade']['stats']['manualRuns'] == 1
+                              and after['arcade']['stats']['autoRuns'] == 0
+                              and after['arcade']['seed'] == before['arcade']['seed'] == first_arcade['seed']
+                              and after['arcade']['nextRunId'] == before['arcade']['nextRunId'] == 2
+                              and after['arcade']['rollPity'] == before['arcade']['rollPity'])
+                        check('first result uses the exact source main tile and witnessed manual history without rerolling',
+                              len(after['arcade']['history']) == 1
+                              and after['arcade']['position'] == first_ticket['outcome']['main']['tile']
+                              and all(after['arcade']['history'][0].get(field) == first_witness['history'].get(field) for field in ('symbol', 'big', 'auto')))
+                        check('one manual reveal leaves the actual card locked and all automation unarmed',
+                              'auto_runner' not in after['unlockedCards'] and after['arcade']['autoBatch'] is None
+                              and all(not slot['card'] or slot['card']['id'] != 'auto_runner' for slot in after['protocols']['slots']))
+                        expect(stage.page.locator('[data-ring-history]')).to_have_count(1)
+                        expect(stage.page.locator('[data-ring-history]')).to_be_visible()
+                        stage.op('first bonus ticket reconciled to pinned source identity and outcome',
+                                 ticketId=first_ticket['id'], sourceTicket=first_ticket,
+                                 observedHistory=after['arcade']['history'][0],
+                                 comparisonScope='Identity, main tile, size, symbol, manual mode and unchanged RNG; no claim of equality to later-domain prize amounts or whole-world state.')
+                        stage.compact_setup('1/10')
+                    else:
+                        check('one trusted manual reveal consumes only the naturally issued tenth ticket',
+                              after['arcade']['stats']['manualRuns'] == 10 and after['arcade']['stats']['autoRuns'] == 0
+                              and after['arcade']['stats']['runs'] == before['arcade']['stats']['runs'] + 1
+                              and not after['arcade']['runs'] and after['arcade']['seed'] == before['arcade']['seed']
+                              and after['arcade']['nextRunId'] == before['arcade']['nextRunId'])
+                        check('tenth result follows the source ticket outcome without rerolling',
+                              after['arcade']['position'] == state('ten')['arcade']['position']
+                              and all(after['arcade']['history'][-1].get(field) == state('ten')['arcade']['history'][-1].get(field) for field in ('symbol', 'big', 'auto'))
+                              and after['arcade']['pity'] == state('ten')['arcade']['pity'])
+                        check('tenth manual result unlocks the actual auto-runner card', 'auto_runner' in after['unlockedCards'])
+                        stage.compact_setup('已解锁')
+                    stage.screenshot(f'{label}-{width}-finished', '.arcade-board')
+                    audit = stage.audit('manual-input')
+                    check('manual activation was a trusted native button event', any(e['type'] == 'click' and e['action'] == 'arcade-run' and e['trusted'] for e in audit['events']))
+                    if width == 390:
+                        check('390px manual action also has trusted Enter input', any(e['type'] == 'keydown' and e['key'] == 'Enter' and e['trusted'] for e in audit['events']))
+                    stage.finish()
             stage = Stage('native equipment defaults off', 'ten')
+            stage.compact_setup('已解锁')
+            stage.page.evaluate('window.__naturalRing.setupNodes=[...document.querySelectorAll("#ring-auto-slot,#ring-auto-count,#ring-auto-cap")]')
             stage.tab('protocol')
             stage.click('[data-action="equip-card"][data-card="auto_runner"]')
             equipped = stage.snapshot('actual-ui-equipped')
             check('real native equipment is disabled with no spending authority', equipped['protocols']['slots'][0]['card']['id'] == 'auto_runner' and equipped['protocols']['slots'][0]['card']['enabled'] is False and equipped['arcade']['autoBatch'] is None)
             expect(stage.page.locator('[data-bind="slot-enabled-0"]')).not_to_be_checked()
             stage.tab('arcade')
+            stage.available_setup()
+            check('empty queue does not hide genuinely equipped default-off controls',
+                  not equipped['arcade']['runs'] and stage.page.locator('[data-ring="auto-arm"]').is_visible()
+                  and stage.page.locator('[data-ring="auto-arm"]').is_disabled())
             check('fresh count and gross budget remain zero', stage.page.locator('#ring-auto-count').input_value() == '0' and stage.page.locator('#ring-auto-cap').input_value() == '0')
+            check('first equipment reveals the original stable input nodes', stage.page.evaluate('window.__naturalRing.setupNodes.every(e=>e===document.getElementById(e.id))'))
             stage.screenshot('equipment-default-off', '.ring-auto')
+            stage.input_text('#ring-auto-count', 1)
+            stage.input_text('#ring-auto-cap', '1234.50')
+            stage.tab('protocol')
+            stage.click('[data-action="slot-clear"][data-index="0"]')
+            stage.tab('arcade')
+            stage.compact_setup('已解锁')
+            stage.tab('protocol')
+            stage.click('[data-action="equip-card"][data-card="auto_runner"]')
+            stage.tab('arcade')
+            stage.available_setup()
+            check('collapse and native re-equipment preserve input nodes and explicit draft values',
+                  stage.page.evaluate('window.__naturalRing.setupNodes.every(e=>e===document.getElementById(e.id))')
+                  and stage.page.locator('#ring-auto-count').input_value() == '1'
+                  and stage.page.locator('#ring-auto-cap').input_value() == '1234.50')
+            restored = stage.snapshot('re-equipped-stable-draft')
+            ring_unchanged(equipped, restored, 'collapse and re-equipment cannot consume or authorize empty-queue results')
+            check('re-equipment still defaults off despite retained draft values', restored['protocols']['slots'][0]['card']['enabled'] is False)
             stage.finish()
 
             stage = Stage('first bounded actual engine batch and native reload', 'equipped')
@@ -819,6 +926,24 @@ def worker(args):
             exact(armed, 'armed', 'trusted authorization and colony selection match complete natural armed state')
             check('arm captures only existing prefix, fixed source, frozen bets and finite gross budget',
                   armed['arcade']['autoBatch'] == expected_batch and expected_batch['ticketIds'] == [row['id'] for row in initial['arcade']['runs'][:2]] and expected_batch['spentDeuterium'] == '0')
+            fixed_name = next(planet['name'] for planet in armed['planets'] if planet['id'] == expected_batch['planetId'])
+            selected_name = next(planet['name'] for planet in armed['planets'] if planet['id'] == armed['activePlanetId'])
+            for width in WIDTHS:
+                stage.page.set_viewport_size({'width': width, 'height': 1000})
+                stage.page.evaluate('window.__naturalRingStep(0)')
+                stage.available_setup()
+                expect(stage.page.locator('#ring-auto-status')).to_have_text('已授权本批次')
+                expect(stage.page.locator('#ring-auto-progress')).to_contain_text('已完成 0/2 次')
+                expect(stage.page.locator('#ring-auto-progress')).to_contain_text(f'已扣重氢 0 / 上限 {expected_batch["maxDeuterium"]}')
+                expect(stage.page.locator('#ring-auto-frozen')).to_contain_text(fixed_name)
+                expect(stage.page.locator('#ring-auto-source')).to_contain_text(selected_name)
+                expect(stage.page.locator('[data-ring="auto-arm"]')).to_be_disabled()
+                expect(stage.page.locator('[data-ring="auto-stop"]')).to_be_visible()
+                expect(stage.page.locator('[data-ring="auto-stop"]')).to_be_enabled()
+                check(f'{width}px armed view cannot change fixed payer, selected colony or authority', stage.saved() == armed)
+                check(f'{width}px armed context and stop controls have no horizontal overflow', stage.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+                stage.screenshot(f'armed-colony-{width}-before-spend', '.ring-auto')
+            stage.op('four actual armed-colony viewports with zero additional simulation time', widths=list(WIDTHS), fixedPayer=expected_batch['planetId'], selectedPlanet=armed['activePlanetId'])
             stage.step()
             partial = stage.save('one-remaining')
             exact(partial, 'partial', 'first actual browser engine pass matches complete natural one-remaining state')
@@ -855,6 +980,10 @@ def worker(args):
             stopped = stage.snapshot('explicit-stop')
             exact(stopped, 'stopped', 'trusted explicit stop matches complete natural stopped state')
             check('stop retains all unspent tickets and budget ledger', stopped['arcade']['runs'] == before['arcade']['runs'] and stopped['arcade']['autoBatch']['completed'] == 0 and stopped['arcade']['autoBatch']['spentDeuterium'] == '0' and not stopped['protocols']['slots'][0]['card']['enabled'])
+            stop_audit = stage.audit('trusted-explicit-stop')
+            check('explicit keyboard stop has trusted native Enter and click events before reload',
+                  any(e['type'] == 'click' and e['ring'] == 'auto-stop' and e['trusted'] for e in stop_audit['events'])
+                  and any(e['type'] == 'keydown' and e['ring'] == 'auto-stop' and e['key'] == 'Enter' and e['trusted'] for e in stop_audit['events']))
             stage.reload()
             toggle(stage)
             stage.step(2)
@@ -862,6 +991,30 @@ def worker(args):
             ring_unchanged(stopped, after, 'stop remains retired across refresh and plain toggle')
             check('stopped engine cannot silently debit naturally saturated wallets after refresh or switch', {p['id']: p['resources'] for p in stopped['planets']} == {p['id']: p['resources'] for p in after['planets']})
             stage.screenshot('explicit-stop-terminal', '.ring-auto')
+            stage.tab('protocol')
+            stage.click('[data-action="slot-clear"][data-index="0"]')
+            stage.tab('arcade')
+            stage.compact_setup('已解锁', history=True)
+            historical = stage.snapshot('unmounted-history-retained')
+            ring_unchanged(after, historical, 'unmounting hides setup without discarding old tickets or the authorization ledger')
+            expect(stage.page.locator('#ring-auto-progress')).to_contain_text(f'已扣重氢 0 / 上限 {stopped["arcade"]["autoBatch"]["maxDeuterium"]}')
+            expect(stage.page.locator('#ring-auto-stop-reason')).to_contain_text(stopped['arcade']['autoBatch']['stopReason'])
+            stage.screenshot('unmounted-stopped-history-retained', '.ring-auto')
+            stage.finish()
+
+            stage = Stage('native pointer stop independently retires existing authority', 'before_stop')
+            before = stage.saved()
+            check('pointer stop begins with actual armed authorization and unspent tickets', before['arcade']['autoBatch']['armed'] and bool(before['arcade']['runs']))
+            stage.click('[data-ring="auto-stop"]')
+            stopped = stage.snapshot('native-pointer-stop')
+            exact(stopped, 'stopped', 'trusted pointer stop independently matches complete natural stopped state')
+            check('pointer stop disarms without consuming a ticket or spending gross budget',
+                  stopped['arcade']['runs'] == before['arcade']['runs'] and stopped['arcade']['stats'] == before['arcade']['stats']
+                  and stopped['arcade']['autoBatch']['spentDeuterium'] == before['arcade']['autoBatch']['spentDeuterium']
+                  and not stopped['arcade']['autoBatch']['armed'] and not stopped['protocols']['slots'][0]['card']['enabled'])
+            stop_audit = stage.audit('trusted-pointer-stop')
+            check('independent pointer stop has a trusted native click event', any(e['type'] == 'click' and e['ring'] == 'auto-stop' and e['trusted'] for e in stop_audit['events']))
+            stage.screenshot('native-pointer-stop-terminal', '.ring-auto')
             stage.finish()
 
             stage = Stage('real curvature UI retires one remaining authorization', 'before_curvature')
@@ -909,7 +1062,7 @@ def worker(args):
             stage.finish()
             check('no uncaught application JS errors', not report['errors'], report['errors'])
             check('no failed native resource requests', not report['failedRequests'], report['failedRequests'])
-            check('every required stage completed', len(report['stages']) == len(WIDTHS) + 6 and all(item['completed'] for item in report['stages']))
+            check('every required stage completed', len(report['stages']) == 2 * len(WIDTHS) + 7 and all(item['completed'] for item in report['stages']))
             report.update(completed=True, result='passed')
             flush()
             browser.close()
