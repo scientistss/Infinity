@@ -11,3 +11,9 @@
 #prestige-preview-status, #prestige-preview-omitted, #prestige-preview-accounting { color:var(--muted,#8b8b95); }
 #prestige-preview-gain { font-variant-numeric:tabular-nums; }
 @media(max-width:420px) { .prestige-preview { padding:10px; } .prestige-preview p { font-size:.8rem; } }
+/* Existing technology text can contain the full passive bonus at extreme core
+   balances. Keep every digit readable within its card without changing the
+   original stylesheet, formatter, numerical rules or artwork. */
+[data-tab-panel="curvature"] [data-bind="unspent-line"],
+[data-tab-panel="curvature"] .tech-card .cost { min-width:0; overflow-wrap:anywhere; }
+[data-tab-panel="curvature"] .tech-card { min-width:0; }

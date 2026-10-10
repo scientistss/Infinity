@@ -9,6 +9,7 @@ import copy
 import hashlib
 import json
 import platform
+import re
 import shutil
 import time
 from pathlib import Path
@@ -28,7 +29,7 @@ ROOT = '#prestige-preview'
 MODE = 'HTTP / native localStorage / anonymous synthetic controlled Date-performance-RAF timestamps'
 EPOCH = int(time.time() * 1000)
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
-checks, errors, failed_requests, audits, timings = [], [], [], [], []
+checks, errors, failed_requests, audits, timings, layout_proofs = [], [], [], [], [], []
 completed, active_page, diagnostics = False, None, None
 case = 'setup'
 
@@ -192,6 +193,53 @@ def snapshot(page, name):
     page.evaluate('scrollTo(0,0)')
     page.screenshot(path=str(out / (name+'-top.png')))
     page.screenshot(path=str(out / (name+'.png')), full_page=True)
+
+
+
+def original_curvature_text_geometry(page):
+    # Range boxes expose the actual laid-out text lines. A narrow paragraph alone
+    # is insufficient proof: overflow:hidden/ellipsis could merely conceal digits.
+    return page.locator('[data-bind="unspent-line"], [data-bind^="tech-preview-"]').evaluate_all(r"""elements => elements.map(element => {
+      const style=getComputedStyle(element), box=element.getBoundingClientRect();
+      const range=document.createRange();range.selectNodeContents(element);
+      const rects=[...range.getClientRects()].filter(rect=>rect.width>0 && rect.height>0);
+      const clippedBy=[];
+      for(let parent=element;parent;parent=parent.parentElement){
+        const css=getComputedStyle(parent), bounds=parent.getBoundingClientRect();
+        const clipsX=['hidden','clip','scroll','auto'].includes(css.overflowX);
+        const clipsY=['hidden','clip','scroll','auto'].includes(css.overflowY);
+        if(rects.some(rect=>(clipsX && (rect.left<bounds.left-1 || rect.right>bounds.right+1)) ||
+          (clipsY && (rect.top<bounds.top-1 || rect.bottom>bounds.bottom+1)))){
+          clippedBy.push(parent.id || parent.getAttribute('data-bind') || parent.tagName.toLowerCase());
+        }
+      }
+      return {bind:element.getAttribute('data-bind'),text:element.textContent,
+        visible:element.getClientRects().length>0 && style.visibility==='visible' && style.display!=='none',
+        rect:{left:box.left,right:box.right,top:box.top,bottom:box.bottom,width:box.width,height:box.height},
+        lineCount:rects.length,scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,
+        scrollHeight:element.scrollHeight,clientHeight:element.clientHeight,
+        allTextInside:rects.length>0 && rects.every(rect=>rect.left>=box.left-1 && rect.right<=box.right+1 && rect.top>=box.top-1 && rect.bottom<=box.bottom+1),
+        whiteSpace:style.whiteSpace,overflowWrap:style.overflowWrap,wordBreak:style.wordBreak,
+        overflowX:style.overflowX,overflowY:style.overflowY,textOverflow:style.textOverflow,
+        lineClamp:style.webkitLineClamp,clippedBy};
+    })""")
+
+
+def overflow_diagnostics(page):
+    return page.evaluate(r"""() => {
+      const rect=box=>({left:box.left,right:box.right,top:box.top,bottom:box.bottom,width:box.width,height:box.height});
+      const overflowing=[...document.querySelectorAll('body *')].flatMap(element=>{
+        const box=element.getBoundingClientRect(),style=getComputedStyle(element);
+        if(!element.getClientRects().length || !box.width || !box.height || style.visibility!=='visible' || style.display==='none')return [];
+        if(box.left>=-1 && box.right<=innerWidth+1 && element.scrollWidth<=element.clientWidth+1)return [];
+        return [{tag:element.tagName.toLowerCase(),id:element.id,classes:element.className,
+          bind:element.getAttribute('data-bind'),text:element.textContent?.slice(0,600),rect:rect(box),
+          scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,scrollHeight:element.scrollHeight,clientHeight:element.clientHeight,
+          style:Object.fromEntries(['display','position','width','minWidth','maxWidth','height','minHeight','maxHeight','whiteSpace','overflowWrap','wordBreak','overflowX','overflowY','textOverflow','contain'].map(key=>[key,style[key]]))}];
+      });
+      return {viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY},document:{scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth},
+        renderedOverflowCount:overflowing.length,elements:overflowing.slice(0,80),omitted:Math.max(0,overflowing.length-80)};
+    }""")
 
 
 def forms(page):
@@ -426,6 +474,8 @@ def run_cases():
 
     case = 'four-width native details focus layout and bounded visible rendering'
     context,page=boot('longAmounts'); preview(page)
+    original_texts={row['bind']:row['text'] for row in original_curvature_text_geometry(page)}
+    check('large-value fixture retains original long passive strings', len(original_texts) == 9 and any(len(part) >= 150 for text in original_texts.values() for part in re.findall(r'\d+',text)))
     page.evaluate('''() => {
       window.__previewMutations=0;
       new MutationObserver(xs=>window.__previewMutations+=xs.length).observe(document.querySelector('#prestige-preview'),{subtree:true,childList:true,characterData:true,attributes:true});
@@ -441,6 +491,10 @@ def run_cases():
         timings.append({'width':width,'sixZeroDeltaFramesWallMilliseconds':elapsed,'classification':'browser-wall measurement; controlled simulation clock; not reset-algorithm benchmark'})
         check(f'{width}px: expanded detail and keyboard focus retained', details.evaluate('(e)=>e.open') and summary.evaluate('(e)=>document.activeElement===e && e===window.__prestigeSummary'))
         check(f'{width}px: no horizontal document overflow', page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'))
+        geometry=original_curvature_text_geometry(page);layout_proofs.append({'width':width,'originalCurvatureText':geometry})
+        check(f'{width}px: original full unspent and technology preview strings unchanged', {row['bind']:row['text'] for row in geometry} == original_texts)
+        check(f'{width}px: original long strings wrap with every text line inside its box', all(row['visible'] and row['allTextInside'] and row['scrollWidth'] <= row['clientWidth']+1 and row['scrollHeight'] <= row['clientHeight']+1 for row in geometry))
+        check(f'{width}px: original long strings have no clipping ellipsis or line clamp', all(not row['clippedBy'] and row['textOverflow'] != 'ellipsis' and row['lineClamp'] in ('none','0','') for row in geometry))
         check(f'{width}px: detail rendering bounded to 20 rows', page.locator('#prestige-preview-rows [data-preview-row]').count() <= 20)
         snapshot(page,'prestige-preview-'+str(width))
         summary.press('Enter');check(f'{width}px: native keyboard detail toggle works',not details.evaluate('(e)=>e.open'))
@@ -470,6 +524,8 @@ with sync_playwright() as playwright:
                 diagnostics['globalStatus']=active_page.locator('[data-bind="status"]').all_text_contents()
                 diagnostics['preview']=active_page.locator(ROOT).all_text_contents()
                 diagnostics['formationStatus']=active_page.locator('#formation-status').all_text_contents()
+                diagnostics['renderedOverflow']=overflow_diagnostics(active_page)
+                diagnostics['originalCurvatureText']=original_curvature_text_geometry(active_page)
                 record_audit(active_page);snapshot(active_page,'failure')
             except Exception as error:
                 diagnostics['captureError']=str(error)
@@ -479,7 +535,7 @@ with sync_playwright() as playwright:
             'timing':'Explicit Date/performance/RAF timestamps. Natural-time old acceptance scripts remain separate and unchanged. Storage fault, candidate-serialization fault and late-node cases are explicitly synthetic.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},
             'passed':sum(row['passed'] for row in checks),'checks':checks,'errors':errors,'failedRequests':failed_requests,
-            'audit':audits,'timings':timings,'failureDiagnostics':diagnostics}
+            'audit':audits,'timings':timings,'layoutProofs':layout_proofs,'failureDiagnostics':diagnostics}
         (out/'prestige-preview-browser-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
         print(json.dumps({'completed':completed,'passed':report['passed'],'total':len(checks),'failedCase':None if completed else case},ensure_ascii=False))
         browser.close()
