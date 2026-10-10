@@ -524,11 +524,79 @@ def run(browser, profile, variant, repetition, order):
                 current_mutations.append({'operationId':persistence_id,'observedHostWall':time.time(),**event})
         cdp.on('DOMStorage.domStorageItemUpdated',observe_current_mutation)
         phase_call('persistence.observe-native-storage-events',lambda:cdp.send('DOMStorage.enable'))
-        tab(page,'save');native_click(page,'[data-action="save"]')
+        tab(page,'save')
+        manual_id=persistence_id+':manual-save'
+        # Bind the synchronous save result to this actual trusted button click.
+        # A later controller read may legitimately see the next autosave status.
+        # Install only after all CPU and navigation measurements; never wrap native
+        # storage, clocks, RAF, or the application's save handler.
+        phase_call('persistence.arm-manual-save-witness',lambda:page.evaluate(r'''({id,key}) => {
+          const button=document.querySelector('[data-action="save"]');
+          const statusNode=document.querySelector('[data-bind="status"]');
+          if(!button||!statusNode||button.disabled)throw Error('A current enabled Save button is required');
+          let clicks=0,witness=null,selectedEvent=null,click=null;
+          const capture=event=>{
+            if(event.target.closest?.('[data-action="save"]')!==button)return;
+            clicks++;
+            if(selectedEvent)return;
+            selectedEvent=event;
+            click=Object.freeze({trusted:event.isTrusted,count:clicks,at:performance.now(),wallAt:Date.now(),
+              enabled:!button.disabled,connected:button.isConnected,priorStatus:statusNode.textContent,
+              priorRaw:localStorage.getItem(key)});
+          };
+          // Production dispatches Save synchronously from the app root's bubble
+          // listener. Document bubbling follows that listener for this exact
+          // event. Do not queue from capture: native events can run a microtask
+          // checkpoint between listeners, before the app handler has run.
+          const complete=event=>{
+            if(event!==selectedEvent||witness)return;
+            const result=window.__nativePresentationProbe.snapshot(true);
+            witness=Object.freeze({id,click,status:result.status,notice:result.notice,
+              at:result.now,wallAt:Date.now(),hidden:result.hidden,visibility:result.visibility,
+              protectedState:result.protectedState,currentRaw:result.currentRaw,
+              buttonConnected:button.isConnected,statusNodeConnected:statusNode.isConnected});
+            document.removeEventListener('click',capture,true);
+            document.removeEventListener('click',complete,false);
+          };
+          document.addEventListener('click',capture,true);
+          document.addEventListener('click',complete,false);
+          window.__nativeManualSaveWitness=()=>witness;
+        }''',{'id':manual_id,'key':profile['key']}))
+        manual_mutation_start=len(current_mutations)
+        native_click(page,'[data-action="save"]')
+        manual=phase_call('persistence.await-manual-save-witness',lambda:page.wait_for_function(
+            '() => window.__nativeManualSaveWitness?.() || false',timeout=10000).json_value())
+        # Preserve the independent later observation, including an autosave that
+        # has overtaken the click's message. It cannot qualify the manual action.
         saved=snapshot(page)
-        run['nativePersistence']={'manualSaveStatus':saved['status'],'currentChars':len((saved['currentRaw'] or '').encode('utf-16-le'))//2,
+        def manual_updates():
+            return [event for event in current_mutations[manual_mutation_start:]
+                if event.get('oldValue')==manual['click']['priorRaw'] and event.get('newValue')==manual['currentRaw']]
+        manual_changed=manual['currentRaw']!=manual['click']['priorRaw']
+        manual_deadline=time.monotonic()+3
+        while manual_changed and not manual_updates() and time.monotonic()<manual_deadline:
+            page.wait_for_timeout(25)
+        manual_events=manual_updates()
+        run['nativePersistence']={'manualSaveStatus':manual['status'],'currentChars':len((manual['currentRaw'] or '').encode('utf-16-le'))//2,
+            'manualSaveWitness':{'id':manual['id'],'click':{key:value for key,value in manual['click'].items() if key!='priorRaw'},
+                'completedAt':manual['at'],'completedWallAt':manual['wallAt'],
+                'priorNativeReadSha256':digest(manual['click']['priorRaw'] or ''),'completedNativeReadSha256':digest(manual['currentRaw'] or ''),
+                'nativeCurrentChanged':manual_changed,'matchingNativeUpdates':len(manual_events),
+                'nativeUpdates':[{'observedHostWall':event['observedHostWall'],'oldSha256':digest(event['oldValue']),
+                    'newSha256':digest(event['newValue'])} for event in manual_events],
+                'writeClassification':'native current update with exact old/new bytes' if manual_changed else 'already durable identical bytes; no current-slot change',
+                'scope':'One actual trusted Save event: capture reads prior bytes and document bubbling reads the synchronous app-root handler result; a same-byte no-op is not reported as a new write.'},
+            'postManualSaveObservation':{'status':saved['status'],'at':saved['now'],'currentSha256':digest(saved['currentRaw'] or ''),
+                'scope':'Independent later native read, retained even if a normal autosave has replaced the status or bytes.'},
             'importRoute':'existing native file input / native File.text / unchanged full rebased seed bytes',
             'giantTextLimitation':'Prior cca22ec baseline combined run timed out filling the 1.90M-character textarea before import; actionability versus browser text insertion cost remains unresolved. This file route does not qualify giant-text editing.'}
+        check('manual save witness belongs to exactly one current trusted enabled button click',
+            manual['id']==manual_id and manual['click']['count']==1 and manual['click']['trusted']
+            and manual['click']['enabled'] and manual['click']['connected'] and manual['buttonConnected']
+            and manual['statusNodeConnected'] and manual['at']>=manual['click']['at']
+            and manual['click']['priorStatus']!='已保存到本地')
+        check('manual save distinguishes exact native current update from already durable no-op',
+            len(manual_events)==(1 if manual_changed else 0) and isinstance(manual['currentRaw'],str) and bool(manual['currentRaw']))
         file_path=out/f"native-import-{profile['profile']}-{variant}-{repetition}.json"
         file_bytes=initialized['seeded'].encode('utf-8')
         phase_call('persistence.prepare-file',lambda:file_path.write_bytes(file_bytes))
@@ -665,16 +733,17 @@ def run(browser, profile, variant, repetition, order):
         run['nativePersistence']['backups']=[{'key':row['key'],'sha256':digest(row['value'] or ''),
             'stringChars':len((row['value'] or '').encode('utf-16-le'))//2,
             'matchesPreImportNativeRead':row['value']==before_replacement['currentRaw'],
-            'matchesManualSaveNativeRead':row['value']==saved['currentRaw'],
+            'matchesManualSaveNativeRead':row['value']==manual['currentRaw'],
+            'matchesPostManualSaveObservation':row['value']==saved['currentRaw'],
             'matchesNativeFileChangeRead':row['value']==completion['selected']['priorRaw'],
             'matchesNativeReplacementOldValue':row['value']==replacements[0]['oldValue'] if needs_confirmation else None} for row in backups]
-        run['nativePersistence']['manualSavedSha256']=digest(saved['currentRaw'] or '')
+        run['nativePersistence']['manualSavedSha256']=digest(manual['currentRaw'] or '')
         run['nativePersistence']['preImportNativeReadSha256']=digest(before_replacement['currentRaw'] or '')
         run['nativePersistence']['postImportNativeReadSha256']=digest(replacement['currentRaw'] or '')
         run['nativePersistence']['currentCharsAfterReplacement']=len((replacement['currentRaw'] or '').encode('utf-16-le'))//2
-        run['nativePersistence']['protectedAfterManualSave']=saved['protectedState']
+        run['nativePersistence']['protectedAfterManualSave']=manual['protectedState']
         run['nativePersistence']['protectedAfterReplacement']=replacement['protectedState']
-        run['nativePersistence']['manualSaveSucceeded']=saved['status']=='已保存到本地' and bool(saved['currentRaw']) and not saved['protectedState']
+        run['nativePersistence']['manualSaveSucceeded']=manual['status']=='已保存到本地' and bool(manual['currentRaw']) and not manual['protectedState']
         run['nativePersistence']['replacementSucceeded']=completion['status']=='已导入并存入本地' and bool(completion['currentRaw']) and not completion['protectedState'] and not replacement['protectedState'] and byte_proof['matches']
         run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesNativeReplacementOldValue'] if needs_confirmation else row['matchesNativeFileChangeRead'] for row in run['nativePersistence']['backups'])
         run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes'] and run['nativePersistence']['remainedVisible']
