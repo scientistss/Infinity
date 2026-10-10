@@ -59,5 +59,5 @@ export function installDeepPanel(root:HTMLElement,onAction:(a:DeepAction)=>void,
   html(root,'#deep-reports',d.reports.slice().reverse().map(r=>`<details class="ov-card" data-report="${r.id}"><summary>#${r.fleetId} · ${arcadeSymbolDef(r.symbol).nameZh} · [${coordinateKey(r.target)}] · ${r.slots} 段 · ${chargeDeliveryStatus(state,r)}</summary><ul>${r.lines.map(t=>`<li>${enc(t)}</li>`).join('')}</ul>${r.battle?`<div class="space-table-scroll"><table class="ov-table"><thead><tr><th>回合</th><th>己方剩余</th><th>敌方剩余</th><th>己方输出</th><th>敌方输出</th></tr></thead><tbody>${r.battle.rounds.map(b=>`<tr><td>${b.round}</td><td>${b.attacker}</td><td>${b.defender}</td><td>${formatAmount(big(b.attackDamage))}</td><td>${formatAmount(big(b.defendDamage))}</td></tr>`).join('')}</tbody></table></div>`:''}</details>`).join('')||'<p class="muted">派出第一支充能舰队后，这里会记录实际结果、保护判定与战报。</p>');
   updateDashboard(state);
  };
- return Object.assign(update,{invalidateFleetAuthority:updateDashboard.invalidateFleetAuthority});
+ return Object.assign(update,{invalidateFleetAuthority:updateDashboard.invalidateFleetAuthority,observeRing:updateRing.observe});
 }

@@ -1,5 +1,8 @@
 /* Only the ring tab. Preserve the original application's layout and theme. */
 .ring-visual .ring-lead { font-size:.8rem; color:var(--muted); margin:.4rem 0 1rem; }
+.ring-visual .ring-protection { font-size:.8rem; line-height:1.6; overflow-wrap:anywhere; }
+.ring-visual .ring-protection-help { font-size:.75rem; color:var(--muted); line-height:1.6; }
+.ring-visual .ring-protection[hidden],.ring-visual .ring-protection-help[hidden] { display:none; }
 .ring-visual .arcade-board { max-width:34rem; width:100%; aspect-ratio:1; grid-template-rows:repeat(7,minmax(0,1fr)); padding:6px; gap:4px; }
 .ring-visual .arcade-tile { min-height:0; cursor:pointer; border-radius:5px; }
 .ring-visual .arcade-glyph { display:flex; width:100%; justify-content:center; min-height:0; }

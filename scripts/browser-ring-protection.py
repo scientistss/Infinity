@@ -1,16 +1,17 @@
-"""Reproduce the known protected-session ring-control mismatch, without a UI fix.
+"""Verify protected-session ring controls, retaining the original mismatch mode.
 
-Only natural journey saves and trusted browser input create game state. Explicit
+Only immutable natural journey saves and ordinary native browser input create game state. Explicit
 current-slot write/readback fault injection and a real same-origin second tab
 exercise SaveSession. Native Storage delegates unchanged outside labeled faults.
 Clocks/RAF/autosave are controlled, as in browser-render-scheduling.py. A CDP
 conditional breakpoint reads the actual module state through its existing pure
 serializer; it does not modify game state, handlers, or the served bundle.
 
-A zero exit means baselineKnownLimitationReproduced, never UI correctness. The
-production tree must remain byte-identical to the pinned baseline. This script
-intentionally has no future-fixed assertion mode until a fix is independently
-specified. Linux bounded process cleanup is reused from browser-natural-ring.py.
+Baseline mode requires the production tree to match the pinned original and means
+baselineKnownLimitationReproduced, never UI correctness. Synchronized mode checks
+immediate presentation and bounded recovery, with explicitly labeled synthetic
+visibility and stale-enabled event replay. CDP observations remain read-only.
+Linux bounded process cleanup is reused from browser-natural-ring.py.
 """
 import argparse
 import hashlib
@@ -35,6 +36,11 @@ BASELINE = '7f17a121ff35822a85d6889a9823f76bccbff227'
 NAMES = {'equipped': '08-equipped-off-current-three-tickets',
          'armed': '10-armed-two-existing-tickets-fixed-home-source',
          'before_stop': '13-armed-before-explicit-stop'}
+RECOVERY_NAMES = {'stopped': '14-stopped-unspent-existing-tickets',
+                  'curved': '16-after-curvature-old-batch-and-slot-disabled'}
+MUTATORS = '[data-action="arcade-run"], [data-action="arcade-all"], [data-action="arcade-bet"], [data-action="arcade-bet-clear"], [data-action="arcade-topup"], [data-ring="auto-arm"], [data-ring="auto-stop"], #ring-auto-slot, #ring-auto-count, #ring-auto-cap'
+RESULTS = {'baseline-mismatch': 'baselineKnownLimitationReproduced',
+           'synchronized-controls': 'synchronizedControlsVerified'}
 CONTROLS = {
     'manual-run': '[data-action="arcade-run"]',
     'manual-all': '[data-action="arcade-all"]',
@@ -182,7 +188,7 @@ def supervise(args):
     if expired or interrupted or survivors or code != 0 or process.returncode != 0:
         result.update(completed=False, result='failed or incomplete')
     atomic_json(report_path, result)
-    passed = result.get('completed') and result.get('result') == 'baselineKnownLimitationReproduced'
+    passed = result.get('completed') and result.get('result') == RESULTS[args.expect]
     print(json.dumps({'completed': bool(passed), 'result': result.get('result'),
                       'checks': len(result.get('checks', [])), 'report': str(report_path)}, ensure_ascii=False))
     return 0 if passed else 1
@@ -200,7 +206,7 @@ INIT = r'''(() => {
  window.cancelAnimationFrame=id=>callbacks.delete(id);
  window.setInterval=(fn,ms,...args)=>{const id=++next;intervals.set(id,{fn,ms,args});return id;};
  window.clearInterval=id=>intervals.delete(id);
- const p={events:[],files:[],observed:[],fault:null,faultWritten:false,readFaults:0,integrity,
+ const p={events:[],files:[],observed:[],handlerObserved:[],replay:null,fault:null,faultWritten:false,readFaults:0,integrity,
   raw:()=>get.call(localStorage,key),
   storage:()=>Object.keys(localStorage).filter(k=>k===key||k.startsWith(key+'.backup')).sort().map(k=>({key:k,raw:get.call(localStorage,k)})),
   clock:()=>({epoch,elapsed,dateNow:Date.now(),performanceNow:performance.now()}),
@@ -240,7 +246,7 @@ INIT = r'''(() => {
  for(const type of ['click','input','change','keydown'])document.addEventListener(type,event=>{
   const target=event.target.closest?.('button,input,select');
   if(target)p.events.push({operation:'ui-'+type,trusted:event.isTrusted,id:target.id,
-   action:target.dataset.action??null,ring:target.dataset.ring??null,bind:target.dataset.bind??null,at:elapsed});
+   action:target.dataset.action??null,ring:target.dataset.ring??null,bind:target.dataset.bind??null,replay:p.replay,at:elapsed});
   if(type==='change'&&target?.matches('[data-bind="import-file"]')){
    const file=target.files[0],row={name:file?.name,size:file?.size,trusted:event.isTrusted,
     beforeRaw:get.call(localStorage,key),text:null,error:null};p.files.push(row);
@@ -271,6 +277,12 @@ def worker(args):
                              'Top-up is an explicitly ready-disabled insufficient-funds control in these natural saves; this run does not reproduce a top-up misleading-enabled defect.']}
     case, active, browser, release, source, key = 'provenance', None, None, None, None, None
     milestones = {}
+    synchronized = args.expect == 'synchronized-controls'
+    if synchronized:
+        report['classification'] = 'bounded synchronized ring controls and recovery acceptance; unchanged domain/SaveSession rules'
+        report['liveStateObservation'] += ' A second read-only breakpoint observes real original guarded-handler entry; it never invokes the handler.'
+        report['limitations'][2] = 'Synthetic stale-enabled dispatch is adversarial handler coverage, never trusted/native user input.'
+        report['limitations'].append('Synthetic document visibility plus stopped controlled RAF exercises immediate DOM retirement; not native operating-system background throttling.')
 
     def flush():
         report.update(activeCase=case, elapsedHostSeconds=round(time.monotonic()-started, 3))
@@ -380,6 +392,15 @@ def worker(args):
                 location = self.cdp.send('Debugger.setBreakpointByUrl', {'url': url, 'lineNumber': line, 'columnNumber': column, 'condition': expression})
                 check('read-only live-state observer bound to actual original frame', len(location.get('locations', [])) == 1, location)
                 self.stage.setdefault('observerBindings', []).append({'page': self.label, 'url': url, 'location': location, 'expression': expression})
+                if synchronized:
+                    # Observe, never invoke or replace, the original guarded handler.
+                    handler_position = text.index('{', anchor.start()) + 1
+                    handler_line = text.count('\n', 0, handler_position)
+                    handler_column = handler_position - (text.rfind('\n', 0, handler_position) + 1)
+                    handler_expression = f'globalThis.__ringProtection.handlerObserved.push(JSON.stringify({{action:{anchor.group(2)},mode:{session}.mode}})),false'
+                    binding = self.cdp.send('Debugger.setBreakpointByUrl', {'url': url, 'lineNumber': handler_line, 'columnNumber': handler_column, 'condition': handler_expression})
+                    check('read-only original action-handler observation resolves once', len(binding.get('locations', [])) == 1, binding)
+                    self.stage.setdefault('observerBindings', []).append({'page': self.label, 'url': url, 'location': binding, 'expression': handler_expression})
                 installed += 1
             check('one complete verified application asset supplies observation', installed == 1)
 
@@ -392,13 +413,14 @@ def worker(args):
             check('controlled wave runs the original frame with a fresh complete-state observation', count >= 1 and self.page.evaluate('window.__ringProtection.observed.length') == before+1 and observed is not None)
             return json.loads(observed)
 
-        def click(self, selector):
+        def click(self, selector, run_frame=True):
             locator = self.page.locator(selector)
             check('native pointer target is visible and enabled: '+selector, locator.is_visible() and locator.is_enabled())
             hit = locator.evaluate('''e=>{e.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=e.getBoundingClientRect(),h=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return h===e||e.contains(h);}''')
             check('native pointer target is unobscured: '+selector, hit)
             locator.click(force=True)
-            self.frame()
+            if run_frame:
+                self.frame()
 
         def tab(self, name):
             check('no unintended offline catch-up modal', not self.page.locator('[data-bind="offline-modal"]').is_visible())
@@ -455,7 +477,7 @@ def worker(args):
         def snapshot(self, label):
             observed = self.frame()
             controls = {name: self.page.locator(selector).evaluate('''e=>({disabled:e.disabled,visible:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length),value:e.value??null,text:e.textContent,title:e.title,html:e.outerHTML})''') for name, selector in CONTROLS.items()}
-            observed.update(controls=controls, storage=self.storage(), clock=self.page.evaluate('window.__ringProtection.clock()'),
+            observed.update(controls=controls, ringDom=self.ring_dom() if synchronized else None, storage=self.storage(), clock=self.page.evaluate('window.__ringProtection.clock()'),
                             status=self.page.locator('[data-bind="status"]').inner_text(),
                             visibleNotice=self.page.locator('[data-bind="notice"]').is_visible(),
                             noticeText=self.page.locator('[data-bind="notice-text"]').inner_text())
@@ -464,9 +486,284 @@ def worker(args):
             self.stage.setdefault('snapshots', []).append({'page': self.label, 'label': label, 'fullStateAndStorage': evidence, 'dom': dom})
             return observed
 
+        def ring_dom(self):
+            return self.page.evaluate('''selector=>{
+              const node=document.querySelector('#ring-protection');
+              return {mutators:[...document.querySelectorAll(selector)].map(e=>({id:e.id,action:e.dataset.action??null,ring:e.dataset.ring??null,symbol:e.dataset.symbol??null,delta:e.dataset.delta??null,disabled:e.disabled,value:e.value??null,visible:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)})),
+                protection:node?{text:node.textContent,hidden:node.hidden,outsideAuto:!node.closest('.ring-auto'),visible:!!(node.offsetWidth||node.offsetHeight||node.getClientRects().length)}:null,
+                autoStatus:document.querySelector('#ring-auto-status')?.textContent??null};
+            }''', MUTATORS)
+
+        def assert_locked(self, dom, message=None):
+            check('all 17 ring mutators including eight bet buttons are disabled', len(dom['mutators']) == 17 and all(e['disabled'] for e in dom['mutators']), dom)
+            bets = {(e['symbol'], e['delta']) for e in dom['mutators'] if e['action'] == 'arcade-bet'}
+            check('disabled bet coverage includes every original symbol and direction', bets == {(symbol, delta) for symbol in ('metal', 'crystal', 'deuterium', 'drifter') for delta in ('-1', '1')})
+            protection = dom['protection']
+            check('ring protection cause is populated outside the conditional automatic panel', protection is not None and not protection['hidden'] and protection['outsideAuto'] and bool(protection['text']))
+            if message is not None:
+                check('ring protection text is the unabridged SaveSession failure cause', protection['text'] == message, protection)
+
+        def assert_ready_notice(self, dom):
+            check('ready world clears and hides the ring protection cause', dom['protection'] is not None and dom['protection']['hidden'] and dom['protection']['text'] == '')
+
+        def assert_frozen(self, value, baseline, mode, label):
+            check('whole live state and every native current/backup byte remain frozen: '+label,
+                  value['state'] == baseline['state'] and value['storage'] == baseline['storage'] and value['mode'] == mode)
+            check('original expected/protected bytes remain exact: '+label, value['protectedRaw'] == baseline['protectedRaw'] and value['expectedRaw'] == baseline['expectedRaw'])
+            self.assert_locked(value['ringDom'], value['message'])
+
+        def verify_fixed_controls(self, baseline, mode):
+            self.export_original(baseline['protectedRaw'], 'before-actions')
+            # Read-only inspection uses real enabled controls and native input.
+            self.click('#ring-odds-source')
+            self.page.keyboard.press('Home')
+            self.page.keyboard.press('ArrowDown')
+            self.page.keyboard.press('Tab')
+            self.frame()
+            check('protected odds source remains selectable by native keyboard', self.page.locator('#ring-odds-source').input_value() == 'charge-1')
+            self.click('[data-tile="0"]')
+            check('protected tile inspection displays the selected source', '充能 1 段' in self.page.locator('#ring-tile-info').inner_text())
+            history = self.page.locator('[data-ring-history]').first
+            check('natural source has inspectable protected history', history.count() == 1 and history.is_visible())
+            history.click(force=True)
+            self.frame()
+            check('history details remain readable while protected', self.page.locator('.ring-history-detail').is_visible() and bool(self.page.locator('#ring-history-lines').inner_text()))
+            self.click('[data-ring="close-history"]')
+            self.tab('save')
+            for selector in ('[data-action="save"]', '[data-action="export"]', '[data-action="import-text"]', '[data-action="reset"]', '[data-bind="import-file"]'):
+                check('recovery/export control remains enabled: '+selector, self.page.locator(selector).is_enabled())
+            self.tab('arcade')
+            self.assert_frozen(self.snapshot('after-read-only-views'), baseline, mode, 'odds/history/recovery views')
+            self.page.evaluate('window.__ringProtection.events.length=0')
+            native_attempts = []
+            for name, selector in CONTROLS.items():
+                target = self.page.locator(selector)
+                check('ordinary disabled target is visible: '+name, target.is_visible() and target.is_disabled())
+                before_handlers = self.page.evaluate('window.__ringProtection.handlerObserved.length')
+                before_events = len(self.audit())
+                before_value = target.evaluate('e=>e.value??null')
+                geometry = target.evaluate('''e=>{document.activeElement?.blur();e.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=e.getBoundingClientRect(),h=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {x:r.x+r.width/2,y:r.y+r.height/2,hit:h===e||e.contains(h)};}''')
+                check('disabled target receives an unobscured native pointer attempt: '+name, geometry['hit'])
+                self.page.mouse.click(geometry['x'], geometry['y'])
+                focused = target.evaluate('e=>{e.focus();return document.activeElement===e;}')
+                self.page.keyboard.press('Enter')
+                self.page.keyboard.press('Space')
+                if name in ('slot', 'count', 'cap'):
+                    self.page.keyboard.press('ArrowUp')
+                after = self.snapshot('native-disabled-'+name)
+                attempt_events = self.audit()[before_events:]
+                check('native disabled pointer/keyboard attempts cannot focus, edit or invoke an action: '+name,
+                      not focused and target.evaluate('e=>e.value??null') == before_value
+                      and self.page.evaluate('window.__ringProtection.handlerObserved.length') == before_handlers
+                      and not any(e['operation'] in ('ui-click', 'ui-input', 'ui-change') for e in attempt_events))
+                self.assert_frozen(after, baseline, mode, 'native disabled '+name)
+                native_attempts.append({'control': name, 'pointer': 'Playwright mouse, native browser input', 'keyboard': ['Enter', 'Space'] + (['ArrowUp'] if name in ('slot', 'count', 'cap') else []), 'disabledFocusRejected': not focused, 'events': attempt_events})
+            self.stage['nativeDisabledAttempts'] = dump_json(case+'-native-disabled-attempts.json', native_attempts)
+            adversarial = []
+            for name in ('manual-run', 'manual-all', 'bet-plus', 'bet-minus', 'clear', 'topup', 'auto-arm', 'auto-stop'):
+                before_handlers = self.page.evaluate('window.__ringProtection.handlerObserved.length')
+                before_events = len(self.audit())
+                # Deliberately forge only presentation capability. This is not
+                # trusted browser input and never creates or assigns game state.
+                self.page.locator(CONTROLS[name]).evaluate('''e=>{
+                  const p=window.__ringProtection,disabled=e.disabled;p.replay='stale-enabled';
+                  try {e.disabled=false;e.click();}
+                  finally {e.disabled=disabled;p.replay=null;}
+                }''')
+                after = self.snapshot('adversarial-'+name)
+                rows = self.audit()[before_events:]
+                handlers = self.page.evaluate('(n)=>window.__ringProtection.handlerObserved.slice(n).map(JSON.parse)', before_handlers)
+                check('stale-enabled replay is explicitly synthetic, never trusted: '+name,
+                      any(e['operation'] == 'ui-click' and not e['trusted'] and e.get('replay') == 'stale-enabled' for e in rows))
+                if not name.startswith('auto-'):
+                    expected_action = 'arcade-bet' if name.startswith('bet-') else 'arcade-bet-clear' if name == 'clear' else 'arcade-topup' if name == 'topup' else 'arcade-'+name.removeprefix('manual-')
+                    check('original main guard actually receives the adversarial arcade action: '+name,
+                          len(handlers) == 1 and handlers[0]['mode'] == mode and handlers[0]['action']['type'] == expected_action, handlers)
+                else:
+                    check('automatic local writable guard rejects stale-enabled replay before main dispatch: '+name, handlers == [], handlers)
+                self.assert_frozen(after, baseline, mode, 'adversarial '+name)
+                check('adversarial replay attempts no storage writes: '+name, not any(e['operation'].startswith('write-') for e in rows))
+                adversarial.append({'control': name, 'label': 'adversarial synthetic stale-enabled replay', 'events': rows, 'originalMainHandlerObservations': handlers})
+            self.stage['adversarialReplay'] = dump_json(case+'-adversarial-replay.json', adversarial)
+            for name in ('slot', 'count', 'cap'):
+                self.page.locator(CONTROLS[name]).evaluate('''e=>{
+                  const p=window.__ringProtection,value=e.value;p.replay='draft-input-change';
+                  try {if(e.tagName==='SELECT')e.selectedIndex=0;else e.value='2';e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}
+                  finally {e.value=value;p.replay=null;}
+                }''')
+                self.assert_frozen(self.snapshot('adversarial-draft-'+name), baseline, mode, 'synthetic draft input/change '+name)
+            self.tab('save')
+            self.tab('arcade')
+            self.assert_frozen(self.snapshot('after-renderer-and-tab-revisit'), baseline, mode, 'original renderer and tab revisit')
+            self.frame(3000)
+            check('actual protected autosave callback is present', self.page.evaluate('window.__ringProtection.autosave()') == 1)
+            self.assert_frozen(self.snapshot('after-tick-autosave'), baseline, mode, '3-second frame and autosave')
+            check('all native, adversarial, draft, renderer and tick probes attempt zero save writes', not any(e['operation'].startswith('write-') for e in self.audit()))
+            self.stage['blockedActionAudit'] = dump_json(case+'-blocked-actions-native-and-labeled-synthetic-audit.json', self.audit())
+
+        def verify_protected_viewports(self, baseline, mode):
+            original_clock = self.page.evaluate('window.__ringProtection.clock()')
+            # Reuse the natural-ring witness: actual header geometry, native
+            # scrolling and hit testing, without changing layout or game state.
+            visibility_probe = r'''position=>{
+              const e=document.querySelector('#ring-protection');
+              const header=()=>{
+                const bar=document.querySelector('.topbar'),r=bar?.getBoundingClientRect();
+                const position=bar?getComputedStyle(bar).position:null;
+                return {position,top:r?.top??0,bottom:r?.bottom??0,
+                  obstruction:r&&['sticky','fixed'].includes(position)&&r.top<innerHeight&&r.bottom>0?Math.min(innerHeight,r.bottom):0};
+              };
+              const r=e.getBoundingClientRect(),before=header();
+              if(position&&(r.top<before.obstruction+8||r.bottom>innerHeight-8)){
+                const desired=before.obstruction+8+Math.max(0,(innerHeight-before.obstruction-16-r.height)/2);
+                window.scrollBy({top:r.top-desired,left:0,behavior:'instant'});
+              }
+              const bounds=e.getBoundingClientRect(),bar=header();
+              const points=[[.1,.1],[.9,.1],[.5,.5],[.1,.9],[.9,.9]].map(([u,v])=>{
+                const x=bounds.left+bounds.width*u,y=bounds.top+bounds.height*v,hit=document.elementFromPoint(x,y);
+                return {x,y,unoccluded:hit!==null&&(hit===e||e.contains(hit)),
+                  hit:hit?{tag:hit.tagName,id:hit.id,className:hit.getAttribute('class')}:null};
+              });
+              return {scrollX,scrollY,header:bar,
+                bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height},points,
+                unoccluded:bounds.width>0&&bounds.height>0&&bounds.left>=0&&bounds.right<=innerWidth
+                  &&bounds.top>=bar.obstruction&&bounds.bottom<=innerHeight&&points.every(p=>p.unoccluded)};
+            }'''
+            for width in (320, 390, 768, 1440):
+                self.page.set_viewport_size({'width': width, 'height': 1000})
+                self.page.locator('#ring-protection').evaluate("e=>e.scrollIntoView({block:'center',inline:'center',behavior:'instant'})")
+                after = self.snapshot('protected-viewport-'+str(width))
+                self.assert_frozen(after, baseline, mode, 'responsive viewport '+str(width))
+                check('responsive reflow advances no controlled simulation time: '+str(width), after['clock'] == original_clock)
+                visible_before = self.page.evaluate(visibility_probe, True)
+                check('protection cause clears the actual header and hit-tests unobscured before capture: '+str(width), visible_before['unoccluded'], visible_before)
+                layout = self.page.evaluate("""()=>{
+                  const e=document.querySelector('#ring-protection'),r=e.getBoundingClientRect();
+                  return {innerWidth:window.innerWidth,innerHeight:window.innerHeight,
+                    documentWidth:document.documentElement.scrollWidth,bodyWidth:document.body.scrollWidth,
+                    cause:{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+                }""")
+                check('protected viewport has no horizontal page overflow: '+str(width),
+                      layout['innerWidth'] == width and max(layout['documentWidth'], layout['bodyWidth']) <= width+1, layout)
+                cause = layout['cause']
+                check('unchanged raw protection cause is visible within the responsive viewport: '+str(width),
+                      after['ringDom']['protection']['visible'] and after['ringDom']['protection']['text'] == baseline['message']
+                      and cause['width'] > 0 and cause['height'] > 0 and cause['left'] >= -1 and cause['right'] <= width+1
+                      and cause['top'] >= -1 and cause['bottom'] <= layout['innerHeight']+1, layout)
+                path = out / (case+'-protected-'+str(width)+'.png')
+                self.page.screenshot(path=str(path), full_page=False, timeout=7000)
+                visible_after = self.page.evaluate(visibility_probe, False)
+                check('protection cause remains unobscured after capture without further scrolling: '+str(width), visible_after['unoccluded'], visible_after)
+                check('responsive capture advances no controlled simulation time: '+str(width), self.page.evaluate('window.__ringProtection.clock()') == original_clock)
+                self.stage.setdefault('responsiveProtection', []).append({
+                    'viewport': {'width': width, 'height': 1000},
+                    'label': 'desktop Chromium viewport reflow, zero controlled simulation advance; not a physical device or native background test',
+                    'layout': layout, 'clock': after['clock'], 'visibilityBefore': visible_before, 'visibilityAfter': visible_after,
+                    'screenshot': {'file': path.name, 'sha256': sha(path.read_bytes()), 'bytes': path.stat().st_size}})
+
+        def replace_natural(self, alias, outcome):
+            self.tab('save')
+            before = self.snapshot('recovery-'+alias+'-'+outcome+'-before')
+            raw_before = self.raw()
+            planet = next(p for p in before['state']['planets'] if p['id'] == before['state']['activePlanetId'])
+            incoming = milestones[alias]['save']
+            required = [f'已读取存档 v{incoming["version"]}/r{incoming["revision"]}。',
+                        f'第 {before["state"]["stats"]["launches"]+1} 轮', f'{len(before["state"]["planets"])} 颗星球',
+                        f'当前“{planet["name"]}”', '读取期间产生的变化也会被替换', '保留当前已保存原件', '写入校验成功后才采用']
+            dialogs = []
+            def answer(dialog):
+                valid = dialog.type == 'confirm' and all(value in dialog.message for value in required)
+                accepted = valid and outcome != 'cancelled'
+                dialogs.append({'type': dialog.type, 'message': dialog.message, 'valid': valid, 'accepted': accepted})
+                dialog.accept() if accepted else dialog.dismiss()
+            self.page.once('dialog', answer)
+            file_index = self.page.evaluate('window.__ringProtection.files.length')
+            event_index = len(self.audit())
+            path = out / milestones[alias]['evidence']['file']
+            self.page.locator('[data-bind="import-file"]').set_input_files(str(path))
+            expected = {'cancelled': '已取消文件导入', 'failed': '导入失败，当前进度未改动', 'success': '已导入并存入本地'}[outcome]
+            expect(self.page.locator('[data-bind="status"]')).to_contain_text(expected)
+            self.page.wait_for_function('(i)=>!!window.__ringProtection.files[i] && window.__ringProtection.files[i].text!==null', arg=file_index)
+            selected = self.page.evaluate('(i)=>window.__ringProtection.files[i]', file_index)
+            check('recovery uses exact immutable natural File.text bytes and native confirmation: '+outcome,
+                  selected['trusted'] and selected['text'] == path.read_text() and selected['size'] == path.stat().st_size
+                  and selected['beforeRaw'] == raw_before and selected['error'] is None and len(dialogs) == 1
+                  and dialogs[0]['valid'] and dialogs[0]['accepted'] == (outcome != 'cancelled'), dialogs)
+            self.tab('arcade')
+            after = self.snapshot('recovery-'+alias+'-'+outcome+'-after')
+            events = self.audit()[event_index:]
+            existing = {row['key']: row['raw'] for row in before['storage'] if row['key'] != key}
+            actual = {row['key']: row['raw'] for row in after['storage'] if row['key'] != key}
+            check('every pre-existing recovery backup retains exact native bytes: '+outcome, all(actual.get(k) == v for k, v in existing.items()))
+            if outcome == 'success':
+                check('explicit verified replacement adopts the complete natural source only after durable write',
+                      after['mode'] == 'ready' and after['state'] == incoming['state'] == json.loads(self.raw())['state'])
+                check('successful replacement preserves actual previous current bytes as a native backup', raw_before in actual.values())
+                self.assert_ready_notice(after['ringDom'])
+            else:
+                check('cancelled or failed replacement never unlocks or adopts the incoming state',
+                      after['mode'] == before['mode'] == 'protected' and after['state'] == before['state']
+                      and self.raw() == raw_before and after['protectedRaw'] == before['protectedRaw'])
+                self.assert_locked(after['ringDom'], after['message'])
+                if outcome == 'cancelled':
+                    check('cancelled native confirmation changes no storage bytes and attempts no write', after['storage'] == before['storage'] and not any(e['operation'].startswith('write-') for e in events))
+                else:
+                    added = {k: v for k, v in actual.items() if k not in existing}
+                    check('failed replacement only preserves the original as an append-only backup', all(v == raw_before for v in added.values()))
+                    attempts = [e for e in events if e['operation'] == 'write-attempt' and e['key'] == key]
+                    check('accepted replacement really attempts the distinct natural candidate and hits targeted write failure', len(attempts) == 1 and json.loads(attempts[0]['value'])['state'] == incoming['state'] and any(e['operation'] == 'write-throw' and e.get('injected') for e in events))
+            self.stage.setdefault('recovery', []).append({'source': alias, 'outcome': outcome, 'dialogs': dialogs,
+                'selectedFile': dump_json(case+'-recovery-'+alias+'-'+outcome+'-selected.json', selected),
+                'audit': dump_json(case+'-recovery-'+alias+'-'+outcome+'-audit.json', events)})
+            return after
+
+        def verify_recovery(self):
+            nonlocal active
+            self.replace_natural('before_stop', 'cancelled')
+            self.replace_natural('before_stop', 'failed')
+            self.page.evaluate('window.__ringProtection.inject(null)')
+            replaced = self.replace_natural('equipped', 'success')
+            check('explicit unarmed source replacement does not revive the old protected batch', replaced['state']['arcade']['autoBatch'] is None)
+            self.type('#ring-auto-count', 1)
+            self.type('#ring-auto-cap', milestones['armed']['save']['state']['arcade']['autoBatch']['maxDeuterium'])
+            ready = self.snapshot('recovery-ready-recomputed')
+            check('ready permissions are recomputed from the replacement and current valid draft', not ready['controls']['auto-arm']['disabled'] and ready['controls']['auto-stop']['disabled'] and all(not ready['controls'][name]['disabled'] for name in ('manual-run', 'manual-all', 'bet-plus', 'bet-minus', 'clear', 'slot', 'count', 'cap')))
+            check('editing recovered drafts leaves the whole adopted state and all storage bytes unchanged', ready['state'] == replaced['state'] and ready['storage'] == replaced['storage'])
+            armed = self.replace_natural('before_stop', 'success')
+            check('legitimate explicit source contains its own existing finite armed batch', armed['state']['arcade']['autoBatch']['armed'] is True and armed['state']['arcade']['autoBatch'] == milestones['before_stop']['save']['state']['arcade']['autoBatch'])
+            saved_raw, saved_storage = self.raw(), self.storage()
+            context = self.page.context
+            # Reopen against actual native storage. Default close does not run
+            # beforeunload and is not evidence of a close-time persist no-op.
+            self.page.close()
+            reloaded = Page(context, self.stage, 'reloaded')
+            active = reloaded
+            reloaded.tab('arcade')
+            loaded = reloaded.snapshot('legitimate-armed-native-reload')
+            check('fresh real HTTP load of actual native saved bytes preserves the legitimate armed contract', loaded['mode'] == 'ready' and loaded['state'] == armed['state'] and reloaded.raw() == saved_raw and reloaded.storage() == saved_storage and not loaded['controls']['auto-stop']['disabled'])
+            check('reload clock has no injected offline gap or batch execution', loaded['clock']['dateNow'] == json.loads(saved_raw)['lastTickAt'] and loaded['clock']['elapsed'] == 0)
+            reloaded.assert_ready_notice(loaded['ringDom'])
+            for alias in ('stopped', 'curved'):
+                adopted = reloaded.replace_natural(alias, 'success')
+                expected = milestones[alias]['save']['state']
+                check('replacement retains the source-specific stopped batch and disabled card: '+alias,
+                      adopted['state']['arcade']['autoBatch'] == expected['arcade']['autoBatch']
+                      and adopted['state']['arcade']['autoBatch']['armed'] is False
+                      and adopted['state']['protocols'] == expected['protocols']
+                      and adopted['controls']['auto-stop']['disabled'])
+                reloaded.tab('save')
+                reloaded.tab('arcade')
+                repeated = reloaded.snapshot('recovery-'+alias+'-revisited')
+                check('renderer/tab revisit cannot revive a previously armed batch in replacement: '+alias,
+                      repeated['state'] == adopted['state'] and repeated['storage'] == adopted['storage']
+                      and repeated['controls']['auto-stop']['disabled'])
+                if alias == 'curved':
+                    check('natural curvature replacement is genuinely a new world', repeated['state']['stats']['launches'] == armed['state']['stats']['launches'] + 1)
+            return reloaded
+
         def audit(self):
             events = self.page.evaluate('window.__ringProtection.events')
-            check('all observed ordinary browser input events are trusted', all(e['trusted'] for e in events if e['operation'].startswith('ui-')))
+            check('all ordinary input is trusted; labeled adversarial replay is separately identified', all(e['trusted'] or (synchronized and e.get('replay') in ('stale-enabled', 'draft-input-change')) for e in events if e['operation'].startswith('ui-')))
             return events
 
         def export_original(self, expected, suffix):
@@ -522,11 +819,14 @@ def worker(args):
         check('domain report dirty status only contains generated artifacts', clean_status(metadata.get('worktreeStatusPorcelain')) and metadata.get('worktreeDirty') == bool(metadata.get('worktreeStatusPorcelain')))
         check('acceptance checkout has no runtime/source edits', clean_status(git('status', '--porcelain=v1', '--untracked-files=all').decode().rstrip('\n')))
         production = ['src', 'public', 'index.html', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts']
-        check('baseline reproduction leaves committed production tree byte-identical', git('diff', '--name-only', BASELINE, args.expected_sha, '--', *production) == b'')
+        if synchronized:
+            check('synchronization preserves original domain, economy, automation and SaveSession bytes', git('diff', '--name-only', BASELINE, args.expected_sha, '--', 'src/game', 'src/core', 'src/data', 'src/automation') == b'')
+        else:
+            check('baseline reproduction leaves committed production tree byte-identical', git('diff', '--name-only', BASELINE, args.expected_sha, '--', *production) == b'')
         report['domainSource']['sourceMetadata'] = metadata
         key = source['storageKey']
         check('actual original native storage key is unchanged', key == 'infinity.original-p4.save.v1')
-        for alias, name in NAMES.items():
+        for alias, name in (NAMES | (RECOVERY_NAMES if synchronized else {})).items():
             matches = [m for m in source['milestones'] if m['name'] == name]
             check('natural milestone occurs exactly once: '+name, len(matches) == 1)
             value = matches[0]
@@ -558,7 +858,12 @@ def worker(args):
                     stage = {'name': case, 'fault': fault, 'source': alias, 'completed': False, 'result': 'running'}
                     report['stages'].append(stage)
                     context = browser.new_context(viewport={'width': 1440, 'height': 1000}, accept_downloads=True, service_workers='block')
-                    context.add_init_script(INIT.replace('__ORIGIN__', json.dumps(origin)).replace('__KEY__', json.dumps(key)).replace('__EPOCH__', str(milestones[alias]['save']['savedAt'])))
+                    epoch = str(milestones[alias]['save']['savedAt'])
+                    if synchronized:
+                        # A real reload starts at its actual saved timestamp: no
+                        # synthetic offline gap consumes an authorized batch.
+                        epoch = f'(()=>{{const raw=Storage.prototype.getItem.call(localStorage,{json.dumps(key)});return raw?Math.max({epoch},JSON.parse(raw).lastTickAt):{epoch};}})()'
+                    context.add_init_script(INIT.replace('__ORIGIN__', json.dumps(origin)).replace('__KEY__', json.dumps(key)).replace('__EPOCH__', epoch))
                     primary = Page(context, stage, 'primary')
                     active = primary
                     primary.import_source(alias)
@@ -587,6 +892,8 @@ def worker(args):
                           and next(p for p in ready['state']['planets'] if p['id'] == 'homeworld')['resources']['deuterium'] == '140000'
                           and ready['controls']['topup']['visible'] and ready['controls']['topup']['disabled']
                           and ready['controls']['topup']['title'] == '重氢不足（需要 2.35e5）', stage['readyDisabledControl'])
+                    if synchronized:
+                        primary.assert_ready_notice(ready['ringDom'])
                     original_raw = primary.raw()
                     original_storage = primary.storage()
                     primary.page.evaluate('window.__ringProtection.events.length=0')
@@ -596,7 +903,33 @@ def worker(args):
                         # One millisecond changes the envelope but no simulation
                         # frame runs until the protected save has returned.
                         primary.page.evaluate('window.__ringProtection.advance(1)')
-                        primary.click('[data-action="save"]')
+                        if synchronized:
+                            observed_before = primary.page.evaluate('window.__ringProtection.observed.length')
+                            if fault == 'write-throw' and alias == 'equipped':
+                                stage['entryVisibility'] = primary.page.evaluate('''() => {
+                                  const p=window.__ringProtection;
+                                  const native={hidden:document.hidden,visibilityState:document.visibilityState};
+                                  const hidden=Object.getOwnPropertyDescriptor(document,'hidden');
+                                  const visibility=Object.getOwnPropertyDescriptor(document,'visibilityState');
+                                  try {
+                                    Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});
+                                    Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>"hidden"});
+                                    const autosaves=p.autosave();
+                                    return {label:'synthetic hidden document, controlled RAF stopped; not native background',native,autosaves,observations:p.observed.length};
+                                  } finally {
+                                    if(hidden)Object.defineProperty(document,'hidden',hidden);else delete document.hidden;
+                                    if(visibility)Object.defineProperty(document,'visibilityState',visibility);else delete document.visibilityState;
+                                  }
+                                }''')
+                                check('one original autosave runs while synthetically hidden without a RAF', stage['entryVisibility']['autosaves'] == 1 and stage['entryVisibility']['observations'] == observed_before, stage['entryVisibility'])
+                            else:
+                                primary.click('[data-action="save"]', run_frame=False)
+                            immediate = primary.ring_dom()
+                            check('protected DOM disables all mutators before first post-failure RAF', primary.page.evaluate('window.__ringProtection.observed.length') == observed_before)
+                            primary.assert_locked(immediate)
+                            stage['immediateProtectionDom'] = dump_json(case+'-immediate-dom.json', immediate)
+                        else:
+                            primary.click('[data-action="save"]')
                         events = primary.audit()
                         attempts = [e for e in events if e['operation'] == 'write-attempt' and e['key'] == key]
                         returns = [e for e in events if e['operation'] == 'write-return' and e['key'] == key]
@@ -620,48 +953,70 @@ def worker(args):
                         check('same-origin second production tab supplies a real trusted current storage event', any(e['trusted'] and e['key'] == key and e['oldValue'] == original_raw and e['newValue'] == expected_other and e['url'] == args.url for e in storage_events), storage_events)
                         check('second tab update used normal confirmed native import with no fault', other.page.evaluate('window.__ringProtection.fault') is None and expected_other != original_raw and primary.raw() == expected_other)
                         stage['secondTabAudit'] = dump_json(case+'-second-native-audit.json', other.audit())
+                        if synchronized:
+                            immediate = primary.ring_dom()
+                            primary.assert_locked(immediate)
+                            stage['immediateProtectionDom'] = dump_json(case+'-immediate-dom.json', immediate)
+                            # The competing writer has finished. Default close
+                            # does not execute beforeunload; no close-save coverage is claimed.
+                            other.page.close()
+                            check('closing completed competing tab preserves its exact current bytes', primary.raw() == expected_other)
                     protected = primary.snapshot('protected')
                     mode = 'conflict' if fault == 'second-tab' else 'protected'
                     check('actual session mode and visible notice corroborate protection', protected['mode'] == mode and protected['visibleNotice'] and ('其他标签页' if fault == 'second-tab' else '原件已保留并受保护') in protected['noticeText'], {'mode': protected['mode'], 'notice': protected['noticeText'], 'status': protected['status']})
                     check('entering protection retains whole original economic state and original bytes', protected['state'] == ready['state'] and protected['protectedRaw'] == original_raw)
-                    mismatches = [name for name in required if protected['controls'][name]['visible'] and not protected['controls'][name]['disabled']]
-                    check('known misleading-enabled UI limitation is actually reproduced', set(required) <= set(mismatches), {'misleadingEnabled': mismatches, 'notASafetyPass': True})
-                    check('known ready-disabled top-up stays disabled across protection', protected['controls']['topup']['disabled'] and protected['controls']['topup']['title'] == ready['controls']['topup']['title'])
-                    stage['misleadingEnabledControls'] = mismatches
-                    baseline_state, baseline_storage = protected['state'], protected['storage']
-                    primary.export_original(original_raw, 'before-actions')
-                    primary.page.evaluate('window.__ringProtection.events.length=0')
-                    targets = ['manual-run', 'manual-all', 'bet-plus', 'bet-minus', 'clear', 'auto-arm' if alias == 'equipped' else 'auto-stop']
-                    for name in targets:
-                        before = len(primary.audit())
-                        primary.click(CONTROLS[name])
-                        after = primary.snapshot('after-'+name)
-                        action_events = primary.audit()[before:]
-                        check('misleading enabled target receives genuine browser click: '+name, any(e['operation'] == 'ui-click' and e['trusted'] and (e.get('action') or e.get('ring')) == ('arcade-bet' if name.startswith('bet-') else 'arcade-bet-clear' if name == 'clear' else 'arcade-topup' if name == 'topup' else 'arcade-'+name.removeprefix('manual-') if name.startswith('manual-') else name) for e in action_events))
-                        check('guard rejects clicked action without any whole-state/native-byte change: '+name, after['state'] == baseline_state and after['storage'] == baseline_storage and after['mode'] == mode)
-                        check('blocked action attempts no native save write: '+name, not any(e['operation'].startswith('write-') for e in action_events))
-                    primary.type('#ring-auto-count', 2)
-                    primary.type('#ring-auto-cap', '19555')
-                    draft = primary.snapshot('after-enabled-inputs')
-                    check('enabled protected inputs can edit drafts but cannot change economic state/storage', draft['state'] == baseline_state and draft['storage'] == baseline_storage)
-                    primary.frame(3000)
-                    check('actual autosave callback is present', primary.page.evaluate('window.__ringProtection.autosave()') == 1)
-                    terminal = primary.snapshot('after-tick-autosave')
-                    check('original application RAF after a 3-second clock advance and autosave leave protected state frozen', terminal['state'] == baseline_state and terminal['storage'] == baseline_storage and terminal['mode'] == mode)
-                    check('all protected actions, draft edits, tick and autosave attempt zero writes', not any(e['operation'].startswith('write-') for e in primary.audit()))
-                    stage['blockedActionAudit'] = dump_json(case+'-blocked-actions-native-audit.json', primary.audit())
+                    if synchronized:
+                        primary.assert_locked(immediate, protected['message'])
+                        primary.assert_locked(protected['ringDom'], protected['message'])
+                        check('first protection observation retains the exact old expected current bytes', protected['expectedRaw'] == original_raw)
+                        check('ring-local raw protection cause is visible on the active ring tab', protected['ringDom']['protection']['visible'])
+                        if alias == 'armed':
+                            check('protected armed status retains authorization but explicitly freezes execution', protected['ringDom']['autoStatus'] == '存档受保护 · 授权记录保留，执行冻结')
+                        check('ready-disabled top-up retains the original affordability title', protected['controls']['topup']['disabled'] and protected['controls']['topup']['title'] == ready['controls']['topup']['title'])
+                        primary.verify_fixed_controls(protected, mode)
+                        if fault == 'write-throw' and alias == 'equipped':
+                            primary.verify_protected_viewports(protected, mode)
+                    else:
+                        mismatches = [name for name in required if protected['controls'][name]['visible'] and not protected['controls'][name]['disabled']]
+                        check('known misleading-enabled UI limitation is actually reproduced', set(required) <= set(mismatches), {'misleadingEnabled': mismatches, 'notASafetyPass': True})
+                        check('known ready-disabled top-up stays disabled across protection', protected['controls']['topup']['disabled'] and protected['controls']['topup']['title'] == ready['controls']['topup']['title'])
+                        stage['misleadingEnabledControls'] = mismatches
+                        baseline_state, baseline_storage = protected['state'], protected['storage']
+                        primary.export_original(original_raw, 'before-actions')
+                        primary.page.evaluate('window.__ringProtection.events.length=0')
+                        targets = ['manual-run', 'manual-all', 'bet-plus', 'bet-minus', 'clear', 'auto-arm' if alias == 'equipped' else 'auto-stop']
+                        for name in targets:
+                            before = len(primary.audit())
+                            primary.click(CONTROLS[name])
+                            after = primary.snapshot('after-'+name)
+                            action_events = primary.audit()[before:]
+                            check('misleading enabled target receives genuine browser click: '+name, any(e['operation'] == 'ui-click' and e['trusted'] and (e.get('action') or e.get('ring')) == ('arcade-bet' if name.startswith('bet-') else 'arcade-bet-clear' if name == 'clear' else 'arcade-topup' if name == 'topup' else 'arcade-'+name.removeprefix('manual-') if name.startswith('manual-') else name) for e in action_events))
+                            check('guard rejects clicked action without any whole-state/native-byte change: '+name, after['state'] == baseline_state and after['storage'] == baseline_storage and after['mode'] == mode)
+                            check('blocked action attempts no native save write: '+name, not any(e['operation'].startswith('write-') for e in action_events))
+                        primary.type('#ring-auto-count', 2)
+                        primary.type('#ring-auto-cap', '19555')
+                        draft = primary.snapshot('after-enabled-inputs')
+                        check('enabled protected inputs can edit drafts but cannot change economic state/storage', draft['state'] == baseline_state and draft['storage'] == baseline_storage)
+                        primary.frame(3000)
+                        check('actual autosave callback is present', primary.page.evaluate('window.__ringProtection.autosave()') == 1)
+                        terminal = primary.snapshot('after-tick-autosave')
+                        check('original application RAF after a 3-second clock advance and autosave leave protected state frozen', terminal['state'] == baseline_state and terminal['storage'] == baseline_storage and terminal['mode'] == mode)
+                        check('all protected actions, draft edits, tick and autosave attempt zero writes', not any(e['operation'].startswith('write-') for e in primary.audit()))
+                        stage['blockedActionAudit'] = dump_json(case+'-blocked-actions-native-audit.json', primary.audit())
                     stage['entryAudit'] = dump_json(case+'-entry-native-audit.json', events)
                     primary.export_original(original_raw, 'after-actions')
                     primary.page.screenshot(path=str(out / (case+'-protected.png')), full_page=True, timeout=7000)
                     stage['screenshot'] = {'file': case+'-protected.png', 'sha256': sha((out / (case+'-protected.png')).read_bytes())}
-                    stage.update(completed=True, result='baselineKnownLimitationReproduced', handlerGuardVerified=True, uiCorrect=False)
+                    if synchronized and fault == 'write-throw' and alias == 'armed':
+                        primary = primary.verify_recovery()
+                    stage.update(completed=True, result=RESULTS[args.expect], handlerGuardVerified=True, uiCorrect=synchronized)
                     flush()
                     context.close()
                     active = None
                     processes()
-            check('all six independent fault/source stages reproduced the exact known limitation', len(report['stages']) == 6 and all(s['completed'] and s['result'] == 'baselineKnownLimitationReproduced' for s in report['stages']))
+            check('all six independent fault/source stages satisfy the selected explicit expectation', len(report['stages']) == 6 and all(s['completed'] and s['result'] == RESULTS[args.expect] for s in report['stages']))
             check('no uncaught application errors or failed resource requests', not report['errors'] and not report['failedRequests'], {'errors': report['errors'], 'failedRequests': report['failedRequests']})
-            report.update(completed=True, result='baselineKnownLimitationReproduced', uiCorrect=False)
+            report.update(completed=True, result=RESULTS[args.expect], uiCorrect=synchronized)
             flush()
             browser.close()
             browser = None
@@ -680,7 +1035,7 @@ def worker(args):
                 report.setdefault('cleanupErrors', []).append(repr(cleanup))
                 report.update(completed=False, result='failed')
         flush()
-    return 0 if report['completed'] and report['result'] == 'baselineKnownLimitationReproduced' else 1
+    return 0 if report['completed'] and report['result'] == RESULTS[args.expect] else 1
 
 
 def main():
@@ -690,7 +1045,7 @@ def main():
     parser.add_argument('--output', default='ring-protection-evidence', help='Must be empty')
     parser.add_argument('--expected-sha', default=os.environ.get('GITHUB_SHA'))
     parser.add_argument('--expected-report-sha256', required=True)
-    parser.add_argument('--expect', required=True, choices=('baseline-mismatch',))
+    parser.add_argument('--expect', required=True, choices=tuple(RESULTS))
     parser.add_argument('--chromium')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--owner-marker', help=argparse.SUPPRESS)

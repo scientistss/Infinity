@@ -4,11 +4,16 @@ import { DEEP } from "../data/deep-space";
 import type { GameState } from "../game/types";
 import { chargeDeliveryStatus } from "../game/deep-state";
 import { historyKey, historySource, ringArtUrl, ringOdds, ringQueue, validOddsSource, type RingOddsSource } from "./ring-model";
-import { ringAutoInput, ringAutoView } from "./ring-auto-model";
+import { ringAutoInput } from "./ring-auto-model";
+import { ringControlsView } from "./ring-controls-model";
 import "./ring-visual.css";
 
 export type RingAction = { type: "ring-auto-arm"; slotIndex: number; planetId: string; count: number; maxDeuterium: string }
   | { type: "ring-auto-stop" };
+
+export type RingVisualUpdate = ((state: GameState) => void) & {
+  observe(state: GameState, writable: boolean, protectionMessage: string): void;
+};
 
 function node<T extends HTMLElement = HTMLElement>(root: ParentNode, selector: string): T {
   const el = root.querySelector<T>(selector);
@@ -30,7 +35,7 @@ function fold(parent: HTMLElement, title: string, children: HTMLElement[]): HTML
   const detail = document.createElement("details"); detail.className = "ring-details";
   detail.append(make("summary", "", title), ...children); parent.append(detail); return detail;
 }
-export function installRingVisual(root: HTMLElement, onAction: (action: RingAction) => void): (state: GameState) => void {
+export function installRingVisual(root: HTMLElement, onAction: (action: RingAction) => void): RingVisualUpdate {
   const panel = node(root, '[data-tab-panel="arcade"]'); panel.classList.add("ring-visual");
   node(panel,"#arcade-title").append(make("small","ring-version","图像版 · R1"));
   const side = node(panel, ".arcade-side"), screen = node(panel, ".arcade-screen");
@@ -41,6 +46,11 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
   fold(side, "信标、充能与风险说明", intro);
   const lead = make("p", "ring-lead", "信标揭晓即结算；舰队充能只回放，物资返航后入港。两种来源使用不同概率。");
   node(panel, ".panel-head").after(lead);
+  const protection = make("p", "ring-protection"), protectionHelp = make("p", "ring-protection-help");
+  protection.id = "ring-protection"; protection.setAttribute("role", "status");
+  protection.setAttribute("aria-live", "polite"); protection.hidden = true;
+  protectionHelp.id = "ring-protection-help"; protectionHelp.hidden = true;
+  lead.after(protection, protectionHelp);
   const manualProgress = node(side, '[data-bind="arcade-auto"]');
   manualProgress.id = "ring-manual-progress";
   manualProgress.classList.add("ring-manual-progress");
@@ -85,13 +95,51 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
   node(panel, '[data-bind="arcade-history"]').after(historyDetail);
   let state: GameState | null = null, selectedTile: number | null = null, source: RingOddsSource = "beacon", selectedHistory: string | null = null;
   let lastHero = "", lastHistory = "", lastReceipt = "", historyFocus: HTMLElement | null = null;
+  let writable = false, observed = false, protectionMessage = "";
+  const mutatingControls = '[data-action="arcade-run"], [data-action="arcade-all"], [data-action="arcade-topup"], [data-action="arcade-bet"], [data-action="arcade-bet-clear"], #ring-auto-slot, #ring-auto-count, #ring-auto-cap, [data-ring="auto-arm"], [data-ring="auto-stop"]';
+  function paintProtection() {
+    if (protection.hidden !== writable) protection.hidden = writable;
+    if (protectionHelp.hidden !== writable) protectionHelp.hidden = writable;
+    const message = writable ? "" : protectionMessage;
+    const help = writable ? "" : "星环操作已冻结；可查看记录，或到存档页导出原件和恢复。";
+    if (protection.textContent !== message) protection.textContent = message;
+    if (protectionHelp.textContent !== help) protectionHelp.textContent = help;
+  }
+  function controlsView() {
+    return ringControlsView(state!, writable, { slot: autoSlot.value, count: autoCount.value, cap: autoCap.value });
+  }
+  function applyControls(controls: ReturnType<typeof ringControlsView>) {
+    node<HTMLButtonElement>(panel, '[data-action="arcade-run"]').disabled = !controls.canRun;
+    node<HTMLButtonElement>(panel, '[data-action="arcade-all"]').disabled = !controls.canRunAll;
+    node<HTMLButtonElement>(panel, '[data-action="arcade-topup"]').disabled = !controls.topUpEnabled;
+    node<HTMLButtonElement>(panel, '[data-action="arcade-bet-clear"]').disabled = !controls.clearEnabled;
+    for (const bet of controls.bets) {
+      node<HTMLButtonElement>(panel, `[data-bind="arcade-bet-add-${bet.symbol}"]`).disabled = !bet.canAdd;
+      node<HTMLButtonElement>(panel, `[data-bind="arcade-bet-sub-${bet.symbol}"]`).disabled = !bet.canSub;
+    }
+    for (const field of [autoSlot, autoCount, autoCap]) field.disabled = !controls.autoFieldsEnabled;
+    node<HTMLButtonElement>(automatic, '[data-ring="auto-arm"]').disabled = !controls.autoArmEnabled;
+    node<HTMLButtonElement>(automatic, '[data-ring="auto-stop"]').disabled = !controls.autoStopEnabled;
+    text(automatic, "#ring-auto-status", controls.autoStatus);
+    paintProtection();
+  }
+  function freezeControls() {
+    // Query mounted controls each time: neither a stale enabled node nor an old
+    // arcade paint can restore a protected operation. No economic projection.
+    for (const control of panel.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>(mutatingControls)) {
+      if (!control.disabled) control.disabled = true;
+    }
+    paintProtection();
+    const batch = state?.arcade.autoBatch;
+    text(automatic, "#ring-auto-status", batch?.armed ? "存档受保护 · 授权记录保留，执行冻结" : batch ? "已停止 · 需重新授权" : "关闭 · 默认未授权");
+  }
   function paintAuto() {
     if (!state) return;
-    const model = ringAutoView(state), signature = JSON.stringify(model.slots);
+    let controls = controlsView();
+    const model = controls.auto, signature = JSON.stringify(model.slots);
     text(side, "#ring-manual-progress", model.manualHint);
     automatic.hidden = !model.showPanel;
     node(automatic, "#ring-auto-setup").hidden = !model.setupAvailable;
-    for (const field of [autoSlot, autoCount, autoCap]) field.disabled = !model.setupAvailable;
     if (signature !== slotSignature) {
       slotSignature = signature;
       const selected = autoSlot.value;
@@ -99,16 +147,16 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
         const option = document.createElement("option"); option.value = String(slot.index); option.textContent = slot.label; return option;
       }));
       if (model.slots.some(slot => String(slot.index) === selected)) autoSlot.value = selected;
+      if (autoSlot.value !== selected) controls = controlsView();
     }
     autoCount.max = String(model.maxCount);
-    for (const [id, value] of [["status", model.status], ["progress", model.progress], ["frozen", model.frozen], ["source", model.source], ["bets", model.bets], ["prerequisite", model.prerequisite], ["stop-reason", model.stopReason]]) text(automatic, `#ring-auto-${id}`, value!);
-    const input = ringAutoInput(state, autoSlot.value, autoCount.value, autoCap.value);
+    for (const [id, value] of [["progress", model.progress], ["frozen", model.frozen], ["source", model.source], ["bets", model.bets], ["prerequisite", model.prerequisite], ["stop-reason", model.stopReason]]) text(automatic, `#ring-auto-${id}`, value!);
+    const input = controls.input;
     text(automatic, "#ring-auto-validation", model.armed || model.prerequisite ? "" : input.reason);
     const arm = node<HTMLButtonElement>(automatic, '[data-ring="auto-arm"]');
     arm.hidden = !model.setupAvailable;
-    arm.disabled = !input.valid;
     arm.textContent = state.arcade.autoBatch ? "重新授权本批次" : "授权本批次";
-    node<HTMLButtonElement>(automatic, '[data-ring="auto-stop"]').disabled = !model.armed;
+    applyControls(controls);
   }
   automatic.addEventListener("input", paintAuto);
   autoSlot.addEventListener("change", paintAuto);
@@ -150,11 +198,11 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
     if (chip && state) { selectedHistory = chip.dataset.ringHistory!; historyFocus = chip; paintHistory(); historyDetail.focus({preventScroll:true}); }
     const button = target?.closest<HTMLElement>("[data-ring]");
     if (button instanceof HTMLButtonElement && button.disabled) return;
-    if (button?.dataset.ring === "auto-arm" && state) {
+    if (button?.dataset.ring === "auto-arm" && state && writable) {
       const input = ringAutoInput(state, autoSlot.value, autoCount.value, autoCap.value);
       if (input.valid) onAction({type: "ring-auto-arm", slotIndex: input.slotIndex, planetId: state.activePlanetId, count: input.count, maxDeuterium: input.maxDeuterium});
     }
-    if (button?.dataset.ring === "auto-stop") onAction({type: "ring-auto-stop"});
+    if (button?.dataset.ring === "auto-stop" && writable && state?.arcade.autoBatch?.armed) onAction({type: "ring-auto-stop"});
     if (button?.dataset.ring === "close-history") { selectedHistory = null; paintHistory(); historyFocus?.focus({preventScroll:true}); }
     if (button?.dataset.ring === "charge") node<HTMLButtonElement>(root, '#space-deep [data-deep="charge"]').click();
     if (button?.dataset.ring === "deep") node<HTMLButtonElement>(root, '[data-tab="deep"]').click();
@@ -171,8 +219,15 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
   });
   node<HTMLSelectElement>(panel, "#ring-odds-source").addEventListener("change", event => { source = validOddsSource((event.target as HTMLSelectElement).value); paintOdds(); });
   paintOdds();
-  return next => {
-    state = next; if (panel.hidden) return;
+  const update = (next: GameState) => {
+    state = next;
+    // The original arcade renderer runs first and can re-enable its buttons.
+    // Protected controls are rechecked even when this tab is hidden; ordinary
+    // hidden paints remain references-only, with recovery handled by observe.
+    if (panel.hidden) {
+      if (!writable) freezeControls();
+      return;
+    }
     paintAuto();
     const q = ringQueue(next);
     text(panel, "#ring-next", q.next); text(panel, '[data-bind="arcade-run"]', q.action);
@@ -208,4 +263,12 @@ export function installRingVisual(root: HTMLElement, onAction: (action: RingActi
     const receipt = report ? `充能凭证 #${report.fleetId} · ${chargeDeliveryStatus(next,report)}。回放不再扣押注或发奖。` : "";
     if (receipt !== lastReceipt) { lastReceipt = receipt; lead.textContent = receipt || "信标揭晓即结算；舰队充能只回放，物资返航后入港。两种来源使用不同概率。"; }
   };
+  return Object.assign(update, { observe(next: GameState, nextWritable: boolean, message: string) {
+    const transition = !observed || writable !== nextWritable;
+    state = next; writable = nextWritable; protectionMessage = message; observed = true;
+    // Ordinary simulation observations only refresh references. Protection must
+    // take effect before RAF/visibility gating, without changing the saved batch.
+    if (!writable) freezeControls();
+    else if (transition) paintAuto();
+  } });
 }

@@ -312,10 +312,21 @@ node --import tsx scripts/check-original-parity.mjs /tmp/infinity-original-p3
 
 阶段 12 修正提交 [7f17a12](https://github.com/scientistss/Infinity/commit/7f17a121ff35822a85d6889a9823f76bccbff227) 的 [CI 38089435022](https://github.com/scientistss/Infinity/actions/runs/38089435022) 于 2026-10-10 22:16 UTC 完整成功：1688 项单元、两条自然领域路线、15 段自然 UI 接续／926 项检查、1728 项展示与调度对照以及全部既有门禁通过；原生持久化 12/12 次、性能配对 6/6 对完整合格。320／390／768／1440 四宽首次开奖、9→10 与已授权切星球均有真实截图；独立查看全部 38 张图，1440 固定来源／完成数／停止控件已避开顶栏，截图前后命中见证通过。键盘与鼠标停止分别从原始 armed 自然状态实际执行。
 
-[归档 11684315182](https://github.com/scientistss/Infinity/actions/runs/38089435022/artifacts/11684315182) 的 ZIP SHA-256 为 `f676f8dff602589c2b580a87600404ddffd24abe6e7638e7161f731c55f17efd`，`release.json` SHA-256 为 `eaf33cf3d324152535232328fbb4761b00c1c57f292ab88d67794f833e91b709`；62 个资源、315 个源码文件全核。精确 0.6.13-alpha.1／v9r9 产物已发布到隔离私人试玩站，旧站保持；开发分支也已推进到 7f17a12。其独立推广 [CI 38090966082](https://github.com/scientistss/Infinity/actions/runs/38090966082) 截至 22:21 UTC 仍在运行，不能与候选运行混同。此前文档与自然验收头 013e7cd 的候选 [CI 38087741635](https://github.com/scientistss/Infinity/actions/runs/38087741635) 和推广 [CI 38089225720](https://github.com/scientistss/Infinity/actions/runs/38089225720) 均完整成功。
+[归档 11684315182](https://github.com/scientistss/Infinity/actions/runs/38089435022/artifacts/11684315182) 的 ZIP SHA-256 为 `f676f8dff602589c2b580a87600404ddffd24abe6e7638e7161f731c55f17efd`，`release.json` SHA-256 为 `eaf33cf3d324152535232328fbb4761b00c1c57f292ab88d67794f833e91b709`；62 个资源、315 个源码文件全核。精确 0.6.13-alpha.1／v9r9 产物已发布到隔离私人试玩站，旧站保持；开发分支也已推进到 7f17a12。其独立推广 [CI 38090966082](https://github.com/scientistss/Infinity/actions/runs/38090966082) 随后于 22:38 UTC 完整成功，1688 项单元、926 项自然浏览器、1728 项展示对照和 12/12 次合格持久化样本均通过；这是独立运行结果，不借用候选结论。此前文档与自然验收头 013e7cd 的候选 [CI 38087741635](https://github.com/scientistss/Infinity/actions/runs/38087741635) 和推广 [CI 38089225720](https://github.com/scientistss/Infinity/actions/runs/38089225720) 均完整成功。
 
 ## 阶段 13A：保护态星环交互的原生复现候选
 
 检查当前保护态的交互一致性：既有 SaveSession／领域动作守卫会拒绝消费并冻结模拟，但星环控件的外观是否及时禁用需要独立原生证据。先通过明确标注的写失败／读回失败注入及同一 origin 的真实双标签冲突复现，再决定最小显示修复；本检查点不修改生产代码。记录「已知缺口复现」不能表述为「控件已经修好」，也不能用测试计数代替原生证据。
 
 复现输入仅用自然路线第 08／10／13 里程碑：未授权与已授权分别检查写入异常、已写入后的读回异常、真实同源第二标签页更新。加注在这些来源中本来就因母星重氢 140000 小于价格 234670 而禁用，仅作负对照，不计入误启用或可信点击覆盖。应用原有 RAF、自动保存入口和 handler 的全状态／原件字节守卫，与控件外观缺口分别记录。浏览器故障为明确注入，时间为受控时间；不声称真机后台节流或自然配额耗尽。
+
+
+阶段 13A 的测试提交 [d5d8e3b](https://github.com/scientistss/Infinity/commit/d5d8e3b1a668f94636bf1ae6bb80658743b7db4f)／[CI 38091640810](https://github.com/scientistss/Infinity/actions/runs/38091640810) 于 2026-10-10 22:51 UTC 完整成功。新增浏览器报告为 `baselineKnownLimitationReproduced`、`uiCorrect: false`：Google Chrome 154.0.8037.97 实际完成 6 段／1038 项见证，在明确注入的当前键写失败、成功写入后的首次读回拒绝，以及真正同源第二标签页更新三类情况下，手动开奖／全部开奖／金属押注增减／清空／授权或停止和三个自动输入仍显得可用。可信点击实际抵达原控件，但现有应用守卫拒绝变更；随后 3 秒受控时间的原 RAF 进入保护分支、自动保存入口仍保持完整状态和原件不变。加注本来不足重氢，作为禁用负对照保留。
+
+读回失败单独证明当前槽已经写入新封套，不能声称磁盘仍是旧字节；导出始终逐字节保留此前原件。真实跨标签事件记录 `isTrusted`、原／新完整字节及来源 URL。6 段均独立记录浏览器内实际生产序列化全态、当前槽、备份、动作事件和截图；有界清理无残留进程。这是 UI 失配的可复现实证，不是安全消费失效，也不是已修复结论。[归档 11684323820](https://github.com/scientistss/Infinity/actions/runs/38091640810/artifacts/11684323820) ZIP SHA-256 为 `36db5ad59616c45e0c8a85c83038ce90738b5fec18b838573d6919aac7e7e99a`，62 个生产资源与已发布 7f17a12 逐字节相同。本次测试候选没有另行部署。
+
+## 阶段 13B：保护态星环权限同步候选
+
+只同步交互呈现与既有 SaveSession 权限：进入保护时，星环经济动作及有限授权控件应立即禁用，不等待下一次重绘；原 renderer 或局部输入重绘不得重新启用。保护原因直接来自保存会话，不能被“导出成功”等一般状态覆盖。概率、历史、导航和原件恢复入口保留。恢复后按新世界、当前队列及当前授权重新计算权限，不保存旧 disabled 快照，不在界面里停止或重建批次。版本候选为 0.6.13-alpha.2，存档仍为 v9/r9；是否完成以该精确提交后续单元、原生与完整 CI 结果为准。
+
+本地候选已重新通过 1713 项单元及构建（含原版 UI／图标门禁）；两条自然领域路线再次通过，成长报告完整数据与 13A 相同，星环报告除源码元数据外完整相同。生产独审确认既有 main／SaveSession／领域守卫未改变；普通隐藏页仍只更新引用，保护态仅在属性值改变时写入禁用状态。原生恢复、保护态布局和整套 CI 尚需对精确提交重新验收，不能借用 13A 的缺口复现结论。

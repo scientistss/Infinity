@@ -76,7 +76,7 @@ const view = mountView(app, (action) => {
   void handleAction(action);
 });
 view.setOrigin(activePlanet(state).coordinates);
-view.observeContexts(state, saveSession.mode === "ready");
+view.observeContexts(state, saveSession.mode === "ready", saveSession.message);
 render();
 
 window.requestAnimationFrame(frame);
@@ -129,7 +129,7 @@ function frame(now: number): void {
 function observePresentationContext(): void {
   // Retire old-world capabilities immediately, even on a skipped/hidden paint.
   observeWorldAdoption();
-  view.observeContexts(state, saveSession.mode === "ready");
+  view.observeContexts(state, saveSession.mode === "ready", saveSession.message);
   // Original speedup controls target the head, unlike stable-ID cancellation.
   // A newly active paid job must not inherit the previous job's displayed button.
   if (!sameQueueHeads(paintedHeads, queueHeads(state))) renderScheduler.invalidate();
@@ -496,7 +496,7 @@ function persist(nextStatus?: string, background = false): void {
     notice = saveSession.notice;
   }
   if (status !== beforeStatus || notice !== beforeNotice || saveSession.mode !== beforeMode) renderScheduler.invalidate();
-  view.observeContexts(state, saveSession.mode === "ready");
+  view.observeContexts(state, saveSession.mode === "ready", saveSession.message);
 }
 
 function sampleClock(): ClockSample {

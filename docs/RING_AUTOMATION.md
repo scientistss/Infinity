@@ -42,3 +42,11 @@ Revision 4 persists IDs and batch authority. Earlier revisions receive determini
 The actual manual unlock progress is shown beside the manual reveal buttons. Reaching the displayed threshold alone does not grant a card, equip a slot, or authorize spending: the view follows the actual unlock and slot state. Until a usable runner is equipped, an empty automation form is hidden and its fields disabled; manual controls and bets stay available under their existing rules. Equipped controls remain visible even when the ticket queue is empty.
 
 An existing batch, including a stopped or completed batch, keeps its fixed source, completion count, gross spend and stop reason visible. An armed batch keeps its stop button outside the setup region. Hiding or showing controls preserves the input nodes and creates no new authorization. The existing save-session action guard and domain checks still decide whether an action may run.
+
+## 存档保护中的星环操作
+
+存档写入、读回校验失败或观察到另一标签页修改时，本页模拟和自动执行遵守 SaveSession 的冻结状态。星环中的开奖、押注、加注、授权、停止及自动输入同步禁用；概率、历史和原件导出仍可查看。保护提示直接显示保存会话原因，不因随后导出成功而消失。
+
+冻结保留已保存的批次记录，并不伪装成一次成功停止。恢复必须走既有的已验证导入／重新开始或刷新路径，按当前实际状态重新计算权限；不会把旧界面的可用状态恢复到新世界。正常刷新可以保留合法、尚未完成的已保存授权；明确停止、曲率清除或替换后失效的旧批次不会由界面重建。
+
+若当前槽已经写入但读回结果不确定，仍须区分当前磁盘内容与本页保留原件。跨标签冲突不能通过点击“停止”或再次授权绕过；先导出本页原件，再按保护提示恢复。
