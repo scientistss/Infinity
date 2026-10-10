@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
-      - name: Natural first-cycle growth and in-flight save continuation
+      - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Original UI and single-world regression
         run: |
