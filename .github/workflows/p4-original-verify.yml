@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Natural first-cycle growth and in-flight save continuation
+        run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Original UI and single-world regression
         run: |
           node scripts/check-ui-baseline.mjs > original-ui-report.json
@@ -169,6 +171,8 @@ jobs:
             native-background-review-save.json
             deep-fixtures
             test-results.json
+            natural-growth-report.json
+            natural-growth-report.log
             original-ui-report.json
             parity-report.json
             prestige-parity-report.json
