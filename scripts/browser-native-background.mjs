@@ -322,17 +322,37 @@ async function reloadWithinBudget(expectHidden) {
   checkNative(loaded);
   check('reload preserves expected native tab visibility', loaded.hidden === expectHidden && loaded.initialHidden === expectHidden &&
     loaded.visibility === (expectHidden ? 'hidden' : 'visible') && loaded.initialVisibility === loaded.visibility);
-  const lifecycle = await poll('trusted beforeunload and pagehide evidence', async () => {
+  // A dying document's pagehide binding was absent in the first real CI run.
+  // Do not infer that the DOM event fired or that Runtime delivered it. Require
+  // the directly observed beforeunload -> native storage write -> new document
+  // chain instead; pagehide, when delivered, is additional exact-byte evidence.
+  const lifecycle = await poll('trusted beforeunload, actual native unload write and new-document evidence', async () => {
     const rows = report.lifecycle.filter(row => row.id === before.id);
     const unload = rows.findLast(row => row.type === 'beforeunload');
     const pagehide = rows.findLast(row => row.type === 'pagehide');
-    return unload?.trusted && pagehide?.trusted ? { unload, pagehide } : null;
+    const documentStart = report.lifecycle.find(row => row.id === loaded.id && row.type === 'document-start');
+    const storageWrite = report.storageEvents.slice(start).find(row => row.snapshot && row.raw === loaded.initialRaw);
+    return unload?.trusted && documentStart && storageWrite ? { unload, pagehide: pagehide ?? null, documentStart, storageWrite,
+      evidence: 'trusted native beforeunload, ordered native DOMStorage write, exact new-document initial source bytes',
+      pagehideDelivery: pagehide ? 'observed; independently validated' : 'not observed; no delivery or occurrence claim' } : null;
   });
   const source = save(loaded.initialRaw);
-  check('new document consumed exact actual post-beforeunload source bytes', lifecycle.pagehide.raw === loaded.initialRaw);
-  check('actual unload source was captured by native DOMStorage events', report.storageEvents.slice(start).some(row => row.raw === loaded.initialRaw));
-  check('actual unload savedAt is within the native reload bracket', source.savedAt >= before.wallNow - 2 && source.savedAt <= loaded.wallNow + 2,
-    { before: before.wallNow, sourceSavedAt: source.savedAt, loaded: loaded.wallNow });
+  check('new document consumed the exact actual native unload-write source bytes', lifecycle.storageWrite.raw === loaded.initialRaw);
+  check('trusted beforeunload, native storage write and new-document observations are ordered',
+    lifecycle.unload.wall >= before.wallNow - 2 && lifecycle.unload.perf >= before.perfNow &&
+    lifecycle.storageWrite.hostMono >= lifecycle.unload.hostMono &&
+    lifecycle.storageWrite.hostMono <= lifecycle.documentStart.hostMono,
+    { beforeWall: before.wallNow, unloadWall: lifecycle.unload.wall, unloadHostMono: lifecycle.unload.hostMono,
+      writeHostMono: lifecycle.storageWrite.hostMono, newDocumentHostMono: lifecycle.documentStart.hostMono });
+  check('actual unload savedAt is after beforeunload and inside the native new-document bracket',
+    source.savedAt >= lifecycle.unload.wall - 2 && source.savedAt <= loaded.startedWall + 2,
+    { before: before.wallNow, beforeunload: lifecycle.unload.wall, sourceSavedAt: source.savedAt,
+      newDocumentStarted: loaded.startedWall, loaded: loaded.wallNow });
+  if (lifecycle.pagehide) {
+    check('observed pagehide is trusted and independently confirms the exact new-document source bytes',
+      lifecycle.pagehide.trusted && lifecycle.pagehide.raw === loaded.initialRaw &&
+      lifecycle.pagehide.perf >= lifecycle.unload.perf && lifecycle.pagehide.wall <= loaded.startedWall + 2);
+  }
   return { before, loaded, source, lifecycle, actualInitialRaw: loaded.initialRaw };
 }
 
