@@ -130,7 +130,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Thrown when a file's version is not {@link SAVE_VERSION}. Test phase: no migration. */
+/** Unsupported versions are protected; only same-schema v9 r2 → r3 is migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -143,12 +143,12 @@ export class SaveVersionError extends Error {
 }
 
 export interface LoadResult extends OfflineCatchup {
-  /** One-time notice, e.g. an outdated save was replaced by a fresh game. */
+  /** Optional load notice. Unsupported saves throw and must remain protected. */
   notice: string | null;
 }
 
 export function outdatedSaveNotice(version: number): string {
-  return `测试版存档格式已更新（v${version} → v${SAVE_VERSION}），旧进度已重置。`;
+  return `存档版本 v${version} 与当前 v${SAVE_VERSION} 不兼容，原件已保留，未重置。`;
 }
 
 export function serializeState(state: GameState): SerializedState {
@@ -268,7 +268,7 @@ export function writeSave(store: KeyValueStore, state: GameState, savedAt = Date
 
 export function readSave(store: KeyValueStore): SaveFile | null {
   const raw = store.getItem(STORAGE_KEY);
-  if (!raw) return null;
+  if (raw === null) return null;
   return importSave(raw);
 }
 
@@ -276,32 +276,16 @@ export function clearSave(store: KeyValueStore): void {
   store.removeItem(STORAGE_KEY);
 }
 
-/** Version number stored in localStorage, or null when absent or unreadable. */
-function storedVersion(raw: string): number | null {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (isRecord(parsed) && typeof parsed.version === "number" && Number.isFinite(parsed.version)) return parsed.version;
-  } catch {
-    // Unreadable JSON falls through to importSave, which reports it.
-  }
-  return null;
-}
-
 /**
- * Load the local save and apply elapsed real time (capped at the offline limit).
- * A save older than the current version is discarded: fresh game plus a one-time notice (design doc §5.9).
- * Newer or corrupt saves throw so the caller can report it.
+ * Low-level compatibility reader. Unsupported, newer and corrupt saves throw;
+ * callers must preserve their raw bytes rather than autosave a fresh game.
+ * Production uses SaveSession for verified writes and replacement transactions.
  */
 export function loadGame(store: KeyValueStore, now = Date.now()): LoadResult {
   const raw = store.getItem(STORAGE_KEY);
-  if (!raw) return { ...emptyCatchup(createInitialState()), notice: null };
-  const version = storedVersion(raw);
-  if (version !== null && version < SAVE_VERSION) {
-    backupRawSave(store);
-    return { ...emptyCatchup(createInitialState()), notice: outdatedSaveNotice(version) };
-  }
+  if (raw === null) return { ...emptyCatchup(createInitialState()), notice: null };
   const file = importSave(raw);
-  if(JSON.parse(raw).revision===2)backupRawSave(store);
+  if (JSON.parse(raw).revision === 2) backupRawSave(store);
   const elapsed = (now - file.lastTickAt) / 1000;
   return { ...catchUp(deserializeState(file.state), elapsed), notice: null };
 }
@@ -591,13 +575,30 @@ function readResearchOrder(raw: unknown, index: number): ResearchOrder {
   return { planetId: readPlanetId(raw.planetId), tech: raw.tech, targetLevel, paid, totalSeconds, remainingSeconds, source };
 }
 
-/** Retain the exact previous bytes before an explicit replacement. Read-back failure aborts. */
+export const BACKUP_KEY = `${STORAGE_KEY}.backup`;
+/** Bounded, append-only recovery slots. A full archive fails closed instead of deleting a backup. */
+export const MAX_SAVE_BACKUPS = 64;
+
+/** Preserve exact bytes, including empty/corrupt saves. Never rotate over an existing original. */
+export function preserveRawSave(store: KeyValueStore, raw: string): string {
+  for (let index = 0; index < MAX_SAVE_BACKUPS; index += 1) {
+    const key = index === 0 ? BACKUP_KEY : `${BACKUP_KEY}.${index}`;
+    const previous = store.getItem(key);
+    if (previous === raw) return key;
+    if (previous !== null) continue;
+    // Recheck the empty slot before writing. localStorage has no atomic compare-and-swap.
+    if (store.getItem(key) !== null) continue;
+    store.setItem(key, raw);
+    if (store.getItem(key) !== raw) throw new Error("原存档备份失败，已停止替换");
+    return key;
+  }
+  throw new Error("存档备份槽已满，已停止替换；请先导出并妥善保留备份");
+}
+
+/** Compatibility helper. Production replacements also compare and verify the current slot. */
 export function backupRawSave(store: KeyValueStore): void {
   const raw = store.getItem(STORAGE_KEY);
-  if (raw === null) return;
-  const key = `${STORAGE_KEY}.backup`;
-  store.setItem(key, raw);
-  if (store.getItem(key) !== raw) throw new Error("原存档备份失败，已停止替换");
+  if (raw !== null) preserveRawSave(store, raw);
 }
 
 function readPlanetId(raw: unknown): string {

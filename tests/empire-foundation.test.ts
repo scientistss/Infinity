@@ -229,14 +229,16 @@ describe("P4-1 isolated save and display", () => {
     expect(loadGame(store,1).state.planets).toHaveLength(1);writeSave(store,twins(),1);
     expect(store.data['infinity.save.v1']).toBe(sentinel);expect(JSON.parse(store.data[STORAGE_KEY]!).schema).toBe(SAVE_SCHEMA);
   });
-  it("backs up an old development save before its no-migration reset", () => {
+  it("protects an old development save without an implicit reset", () => {
     const old=JSON.stringify({version:8,state:{marker:"preserve original bytes"}});const store=memory({[STORAGE_KEY]:old});
-    const result=loadGame(store,1);expect(result.notice).toContain("v8 → v9");expect(store.data[`${STORAGE_KEY}.backup`]).toBe(old);
+    expect(()=>loadGame(store,1)).toThrow("存档版本 v8 已过时");
     expect(store.data[STORAGE_KEY]).toBe(old);
+    expect(store.data[`${STORAGE_KEY}.backup`]).toBeUndefined();
   });
-  it("stops old-save replacement if backup cannot be read back", () => {
-    const old='{"version":8}';const store:KeyValueStore={getItem:k=>k===STORAGE_KEY?old:null,setItem:()=>{},removeItem:()=>{}};
-    expect(()=>loadGame(store,1)).toThrow("备份失败");
+  it("does not attempt to replace an unsupported save even if writes fail", () => {
+    const old='{"version":8}';let writes=0;
+    const store:KeyValueStore={getItem:k=>k===STORAGE_KEY?old:null,setItem:()=>{writes+=1;throw Error("quota");},removeItem:()=>{}};
+    expect(()=>loadGame(store,1)).toThrow("存档版本 v8 已过时");expect(writes).toBe(0);
   });
   it("presenter exposes selection and only the current world's resource values", () => {
     const s=twins();const a=present(s,input),b=present(selectPlanet(s,"colony-test"),input);

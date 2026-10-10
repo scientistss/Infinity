@@ -62,23 +62,18 @@ function busyState() {
 }
 
 describe("save v9", () => {
-  it("a v5 save in localStorage starts a fresh game with a one-time notice", () => {
+  it("protects a v5 local save instead of silently resetting it", () => {
     const store = memoryStore({ [STORAGE_KEY]: V5_SAVE });
-    const loaded = loadGame(store, 1_710_000_100_000);
-    expect(loaded.notice).toBe("测试版存档格式已更新（v5 → v9），旧进度已重置。");
-    expect(activePlanet(loaded.state).resources.metal.toNumber()).toBe(500);
-    expect(loaded.state.warpCores.toNumber()).toBe(0);
-    expect(activePlanet(loaded.state).buildings.metal_mine).toBe(0);
-    expect(loaded.appliedSeconds).toBe(0);
-
-    // After the fresh game is written, the notice does not come back.
-    writeSave(store, loaded.state, 1_710_000_100_000);
-    expect(loadGame(store, 1_710_000_100_000).notice).toBeNull();
+    expect(() => loadGame(store, 1_710_000_100_000)).toThrow(SaveVersionError);
+    expect(store.data[STORAGE_KEY]).toBe(V5_SAVE);
+    expect(Object.keys(store.data)).toEqual([STORAGE_KEY]);
   });
 
-  it("older versions also reset (v1)", () => {
-    const store = memoryStore({ [STORAGE_KEY]: JSON.stringify({ version: 1, savedAt: 1, state: {} }) });
-    expect(loadGame(store).notice).toContain("v1 → v9");
+  it("protects older versions too (v1)", () => {
+    const raw = JSON.stringify({ version: 1, savedAt: 1, state: {} });
+    const store = memoryStore({ [STORAGE_KEY]: raw });
+    expect(() => loadGame(store)).toThrow(SaveVersionError);
+    expect(store.data[STORAGE_KEY]).toBe(raw);
   });
 
   it("importing a v5 file is refused and leaves the current game alone", () => {
@@ -89,12 +84,13 @@ describe("save v9", () => {
     expect(exportSave(current, 42)).toBe(snapshot);
   });
 
-  it("a v7 (P2) save resets too", () => {
+  it("a v7 (P2) save is protected too", () => {
     const file = JSON.parse(exportSave(createInitialState(), 1)) as { version: number };
     file.version = 7;
     expect(() => importSave(JSON.stringify(file))).toThrow("存档版本 v7 已过时");
     const store = memoryStore({ [STORAGE_KEY]: JSON.stringify(file) });
-    expect(loadGame(store).notice).toContain("v7 → v9");
+    expect(() => loadGame(store)).toThrow(SaveVersionError);
+    expect(store.data[STORAGE_KEY]).toBe(JSON.stringify(file));
   });
 
   it("importing a newer version is refused too", () => {

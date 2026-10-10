@@ -45,3 +45,11 @@ node --import tsx scripts/check-original-parity.mjs /tmp/infinity-original-p3
 - 本地 Chromium 原生验收未完成：当前执行环境拒绝 Chromium 的 Unix socket。没有把辅助 inline 模式当作原生通过；由重建分支 CI 执行原生浏览器验收。
 
 阶段报告只记实际已完成的结果。CI 结果与精确提交关联在 GitHub Actions；临时 Actions 产物不是源码的唯一备份，长期源码检查点由远端 Git 历史保留。
+
+阶段 0 远端提交：[`96f5a49`](https://github.com/scientistss/Infinity/commit/96f5a49bcf8547ca2ce51645c27e383484fcbf10)。[对应 CI](https://github.com/scientistss/Infinity/actions/runs/38037250631) 已成功完成；重新执行的原生浏览器检查共 260 项（63 + 47 + 68 + 48 + 34），不是沿用旧报告。
+
+## 阶段 1：安全存档会话
+
+新增 SaveSession，生产入口统一接入；导入/重置先验证、备份、落盘和读回，再替换可见进度。旧版本不再静默重开；兼容 r2 升级失败时保留可读冻结视图。备份槽有界且不自动覆盖已有原件；跨标签观察到变化即停止写入；延迟文件导入以最新操作令牌防止过期结果覆写。
+
+本次本地检查：403 项单元测试（含 44 项 SaveSession 检查）、TypeScript/生产构建、46 项原 UI/美术哈希、15 项星环图标、192 次原引擎比较和 60 分钟模拟通过。新增原生浏览器套件含真实 HTTP/localStorage、双标签与明确标记的故障注入；本地因 Chromium socket 限制未运行，必须以本阶段对应的 GitHub CI 结果确认。跨标签是观察到改动时的保守保护，不宣称 localStorage 提供跨进程原子锁。详见 [安全契约](SAVE_SESSION.md)。

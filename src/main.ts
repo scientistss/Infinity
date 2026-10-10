@@ -3,8 +3,7 @@ import { sendFleet, recallFleet, abandonColony } from "./game/fleet";
 import { spaceView } from "./ui/space-present";
 import "./space.css";
 import { activePlanet, selectPlanet } from "./game/empire";
-import { STORAGE_KEY } from "./game/content";
-import { catchUp, emptyCatchup, type OfflineCatchup } from "./core/offline";
+import { catchUp, type OfflineCatchup } from "./core/offline";
 import { unlockBanner } from "./data/achievements";
 import { prestige, scrape, scrapeAmount, tick } from "./game/logic";
 import { curvatureById } from "./data/curvature-tech";
@@ -27,17 +26,8 @@ import { cancelUnits, orderUnits } from "./game/shipyard";
 import { buyPackage, buyShopItem, speedUp, useInventory } from "./game/dark-matter";
 import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
-import {
-  clearSave,
-  backupRawSave,
-  deserializeState,
-  exportSave,
-  importSave,
-  loadGame,
-  writeSave,
-  type KeyValueStore,
-} from "./game/save";
-import { createInitialState } from "./game/state";
+import type { KeyValueStore } from "./game/save";
+import { SaveSession, type ReplacementResult } from "./game/save-session";
 import type { GameState } from "./game/types";
 import { present } from "./ui/present";
 import { mountView, type UiAction } from "./ui/space-panel";
@@ -51,22 +41,10 @@ const app = document.querySelector("#app");
 if (!(app instanceof HTMLElement)) throw new Error("Missing #app");
 
 const store = localStorageSafe();
-let loaded: OfflineCatchup = emptyCatchup(createInitialState());
-let notice: string | null = null;
-let storageLocked = false;
-let status = store ? "已读取本地存档" : "本地存储不可用，本局不会保存";
-if (store) {
-  try {
-    const result = loadGame(store);
-    loaded = result;
-    notice = result.notice;
-  } catch {
-    loaded = emptyCatchup(createInitialState());
-    storageLocked = true;
-    notice = "存档无法读取：原件已保留，自动保存暂停。导出可取回原件；导入有效存档或明确重新开始才会解除保护。";
-    status = "存档保护模式，当前为临时新局";
-  }
-}
+const saveSession = new SaveSession(store);
+const loaded = saveSession.loaded;
+let notice = saveSession.notice;
+let status = saveSession.message;
 
 let state: GameState = loaded.state;
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
@@ -75,8 +53,6 @@ let banner: string | null = unlockBanner(loaded.newAchievementIds);
 const view = mountView(app, (action) => {
   void handleAction(action);
 });
-// Write the fresh game right away so the "save format updated" notice only shows once.
-if (notice) persist();
 render();
 
 let lastFrame = performance.now();
@@ -84,6 +60,12 @@ window.requestAnimationFrame(frame);
 
 window.setInterval(() => persist("已自动保存"), AUTOSAVE_MS);
 window.addEventListener("beforeunload", () => persist());
+window.addEventListener("storage", (event) => {
+  if (event.storageArea !== store || !saveSession.handleStorageEvent(event.key)) return;
+  status = saveSession.message;
+  notice = saveSession.notice;
+  render();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") persist();
 });
@@ -91,6 +73,12 @@ document.addEventListener("visibilitychange", () => {
 function frame(now: number): void {
   const gap = (now - lastFrame) / 1000;
   lastFrame = now;
+  // Protected progress is read-only. A failed migration must not become a new live game.
+  if (saveSession.mode !== "ready") {
+    render();
+    window.requestAnimationFrame(frame);
+    return;
+  }
   if (gap >= BACKGROUND_NOTICE_SECONDS) {
     const result = catchUp(state, gap);
     state = result.state;
@@ -116,14 +104,23 @@ function render(): void {
 }
 
 async function handleAction(action: UiAction): Promise<void> {
+  saveSession.cancelPendingImport();
+  const recoveryAction = ["save", "export", "export-legacy", "import-text", "import-file", "reset", "dismiss-notice", "dismiss-offline"].includes(action.type);
+  if (saveSession.mode !== "ready" && !recoveryAction) {
+    status = saveSession.message;
+    render();
+    return;
+  }
   const before = state.unlocked;
   if(action.type==="summon-merchant"||action.type==="trade"){
     const result=action.type==="summon-merchant"?summonMerchant(state):trade(state,action.offer,action.sell,action.buy,action.amount);
     state=result.state;status=result.reason;if(result.ok)persist();
   } else if(action.type==="export-legacy"){
-    const raw=store?.getItem("infinity.save.v1");
-    if(raw){view.setTransferText(raw);status="旧站原始存档已放入文本框，请复制另存，不会自动导入本版本";}
-    else status="未找到旧站原始存档";
+    try {
+      const raw = store?.getItem("infinity.save.v1");
+      if (raw !== null && raw !== undefined) { view.setTransferText(raw); status = "旧站原始存档已放入文本框，请复制另存，不会自动导入本版本"; }
+      else status = "未找到旧站原始存档";
+    } catch { status = "无法读取旧站存档，未改动存档"; }
   } else if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
     if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
     const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
@@ -270,26 +267,22 @@ async function handleAction(action: UiAction): Promise<void> {
   } else if (action.type === "save") {
     persist("已保存到本地");
   } else if (action.type === "export") {
-    const json = storageLocked && store ? store.getItem(STORAGE_KEY) ?? exportSave(state) : exportSave(state);
-    view.setTransferText(json);
-    download(json);
-    status = "已导出 JSON";
-    persist();
+    try {
+      const exported = saveSession.export(state);
+      view.setTransferText(exported.raw);
+      download(exported.raw);
+      status = exported.protected ? "已导出受保护原始存档" : "已导出 JSON";
+    } catch { status = "原始存档目前无法读取，未导出；请恢复本地存储权限后重试"; }
   } else if (action.type === "import-text") {
-    applyImport(action.text);
+    applyReplacement(saveSession.importText(action.text), "导入");
   } else if (action.type === "import-file") {
-    applyImport(await action.file.text());
+    const result = await saveSession.importFile(action.file);
+    // A superseded read must not overwrite a newer action's state, text, or status.
+    if (!saveSession.isCurrentFileResult(result) || (!result.ok && result.code === "stale")) return;
+    applyReplacement(result, "导入");
   } else if (action.type === "reset") {
-    if (!window.confirm("清空本地存档并重新开始？")) return;
-    try { if (store) { backupRawSave(store); clearSave(store); } }
-    catch { status = "备份失败，未重置"; render(); return; }
-    storageLocked = false;
-    state = createInitialState();
-    catchup = null;
-    banner = null;
-    notice = null;
-    status = "已重置";
-    view.setTransferText("");
+    if (!window.confirm("备份当前原始存档并重新开始？新存档写入成功后才会替换当前进度。")) return;
+    applyReplacement(saveSession.reset(), "重置");
   }
   if (
     action.type === "scrape" ||
@@ -304,36 +297,28 @@ async function handleAction(action: UiAction): Promise<void> {
   render();
 }
 
-function applyImport(json: string): void {
-  try {
-    const file = importSave(json);
-    const replacement = deserializeState(file.state);
-    if (store) backupRawSave(store);
-    state = replacement;
-    storageLocked = false;
-    catchup = null;
-    banner = null;
-    notice = null;
-    status = "已导入存档";
-    persist("已导入并存入本地");
-    view.setTransferText(exportSave(state, file.savedAt));
-  } catch (error) {
-    // The current game is untouched: importSave throws before anything is replaced.
-    status = `导入失败，当前进度未改动：${error instanceof Error ? error.message : "未知错误"}`;
+function applyReplacement(result: ReplacementResult, action: "导入" | "重置"): void {
+  if (!result.ok) {
+    status = `${action}失败，当前进度未改动：${result.message}`;
+    notice = saveSession.notice;
+    return;
   }
+  if (!saveSession.isCurrentReplacement(result)) return;
+  state = result.state;
+  catchup = null;
+  banner = null;
+  notice = null;
+  status = action === "导入" ? "已导入并存入本地" : "已重置并存入本地";
+  view.setTransferText(action === "导入" ? result.raw : "");
 }
 
 function persist(nextStatus?: string): void {
-  if (storageLocked) { if (nextStatus) status = "存档保护模式，未覆盖原件"; return; }
-  if (!store) {
-    if (nextStatus) status = "无法写入本地存储";
-    return;
-  }
-  try {
-    writeSave(store, state);
+  const result = saveSession.save(state);
+  if (result.ok) {
     if (nextStatus) status = nextStatus;
-  } catch {
-    status = "写入本地存储失败";
+  } else {
+    status = result.message;
+    notice = saveSession.notice;
   }
 }
 
@@ -349,9 +334,8 @@ function download(json: string): void {
 
 function localStorageSafe(): KeyValueStore | null {
   try {
-    const probe = "__infinity_probe__";
-    window.localStorage.setItem(probe, "1");
-    window.localStorage.removeItem(probe);
+    // A write probe could hide readable saves when quota is full. Read/write failures
+    // are handled by SaveSession without losing access to the original bytes.
     return window.localStorage;
   } catch {
     return null;

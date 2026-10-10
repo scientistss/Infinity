@@ -16,7 +16,7 @@
 
 ## 存档与安全
 
-存档键为 `infinity.original-p4.save.v1`，格式要求 `schema: infinity-original-p4`、version 9、revision 3。有效同源 r2 先备份再升级；不支持或损坏的原件进入保护模式，不静默覆盖。
+存档键为 `infinity.original-p4.save.v1`，格式要求 `schema: infinity-original-p4`、version 9、revision 3。有效同源 r2 先备份、写入并读回校验，再确认升级；不支持或损坏的原件进入保护模式，不静默覆盖。导入与重置也只在落盘验证成功后替换当前进度；备份或写入失败会冻结游戏并保留原始导出。其他标签页改动存档后，本页暂停写入，需刷新读取最新进度。
 
 原站 `infinity.save.v1` 保留，游戏提供导出旧站原始存档。**保留旧字节不等于可以跨路线导入。** 原版r1、v8和另一条路线的v9不迁移。导入测试存档前先导出自己的进度。
 
@@ -41,6 +41,9 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 生产包必须通过 HTTP 服务访问，不能直接双击 index.html。素材使用 Vite BASE_URL，不写死根目录。通过主题分支、中文 PR、检查后 squash 合并再发布，不直接推送 main 或强推。
 
 ## 实现与设计文档
+
+- [重建阶段与检查点](docs/REBUILD_CHECKPOINTS.md)：本次基线、验收门槛与每阶段远端保存。
+- [安全存档会话](docs/SAVE_SESSION.md)：导入、备份、失败保护与跨标签边界。
 
 - [深空规则与模型边界](docs/DEEP_SPACE.md)：充能、商人、保护、战斗、回收及暂定平衡值。
 - [深空操作面板 R2](docs/DEEP_DASHBOARD.md)：在途状态、报告筛选及离线弹窗验收修复。
