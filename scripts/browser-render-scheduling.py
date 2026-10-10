@@ -91,8 +91,18 @@ def frame(page,at=None):
 
 def click(page,selector,flush=True):
     # force avoids RAF-based actionability stability polling, but still dispatches
-    # real browser pointer input through Playwright, not element.click().
-    page.locator(selector).click(force=True)
+    # real browser pointer input through Playwright, not element.click(). Center
+    # first: a long retained draft can leave the next tab under the sticky header,
+    # and forced clicks deliberately skip Playwright's ordinary hit-target check.
+    target=page.locator(selector)
+    hit=target.evaluate('''element => {
+      element.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+      const rect=element.getBoundingClientRect(),x=rect.x+rect.width/2,y=rect.y+rect.height/2;
+      const actual=document.elementFromPoint(x,y);
+      return {clear:actual===element||element.contains(actual),x,y,actual:actual?.id||actual?.tagName||null};
+    }''')
+    check('trusted pointer target is unobscured: '+selector,hit['clear'],hit)
+    target.click(force=True)
     if flush:frame(page)
 
 
@@ -179,6 +189,7 @@ def differential_trace(name,url):
 def forms(page):
     tab(page,'fleet')
     if not page.locator('#fleet-formations').evaluate('(e)=>e.open'):click(page,'#fleet-formations > summary')
+    check('trusted native summary opens the formation library',page.locator('#fleet-formations').evaluate('(e)=>e.open'))
 
 
 def arm_old(page):
