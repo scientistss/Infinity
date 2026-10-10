@@ -27,7 +27,7 @@ import { createInitialState } from "./state";
 import { nextBoosterExpiry, pruneBoosters } from "./boosters";
 import { accrueBeacons, cloneArcade, grantRun, nextBeaconIn, stopRingBatch } from "./arcade";
 import { DM_ACHIEVEMENT_REWARD } from "../data/dark-matter";
-import { advanceShipyard, nextShipyardEvent, type CompletedUnits } from "./shipyard";
+import { advanceShipyard, createShipyardFleetCensus, nextShipyardEvent, type CompletedUnits } from "./shipyard";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export { energyReport, globalMultiplier, productionPerSecond, storageCaps, type EnergyReport } from "./economy";
@@ -65,6 +65,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
   while (dtSeconds - t > EPS) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
     const selectedId = current.activePlanetId;
+    // Fleets cannot change before the later advanceFleets boundary; inventories can.
+    const fleetCensus = createShipyardFleetCensus(current.fleets);
     // Freeze all local rates at the same time. Later completions must not boost earlier intervals.
     const snapshots = current.planets.map((p) => ({ id: p.id, eco: economy(selectPlanet(current, p.id)) }));
     let step = dtSeconds - t;
@@ -75,7 +77,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
       const local = selectPlanet(current, snapshot.id);
       const head = activePlanet(local).buildQueue[0];
       if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
-      step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local));
+      step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local, fleetCensus));
     }
     const orderAccrual = accrueOrderPlanTime(current, step);
     const launchesBeforeBoundary = current.stats.launches;
@@ -93,7 +95,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     for (const snapshot of snapshots) {
       current = onPlanet(current, snapshot.id, (local) => {
         const wasBusy = activePlanet(local).shipyardQueue.length > 0;
-        const yard = advanceShipyard(local, step);
+        const yard = advanceShipyard(local, step, true, fleetCensus);
         let result = yard.state;
         if (log) for (const done of yard.completed) addUnits(log.completedUnits, current.planets.length > 1 ? { ...done, planetId: snapshot.id } : done);
         if (snapshot.id === selectedId) shipyardIdle = wasBusy && activePlanet(result).shipyardQueue.length === 0;

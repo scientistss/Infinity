@@ -28,6 +28,8 @@ from urllib.parse import urlparse, urljoin
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--before-url')
 parser.add_argument('--after-url', default='http://127.0.0.1:4173/Infinity/')
+parser.add_argument('--expected-before-sha')
+parser.add_argument('--expected-after-sha')
 parser.add_argument('--fixture')
 parser.add_argument('--moderate-fixture')
 parser.add_argument('--output', default='presentation-performance-evidence')
@@ -534,6 +536,7 @@ def run(browser, profile, variant, repetition, order):
           const initialStatus=statusNode.textContent;
           if(!['已保存到本地','已自动保存'].includes(initialStatus))throw Error('Persistence witness requires a fresh ready-save status, never an earlier import result');
           let selected=null,selectionCount=0,witness=null;
+          const statusChanges=[];
           const terminal=status=>status==='已导入并存入本地'||status.startsWith('导入失败')||/文件读取期间出现了更新的操作|受保护|已暂停写入|本地存储不可用/.test(status);
           const onFile=event=>{
             if(event.target!==document.querySelector('[data-bind="import-file"]')||!(event.target instanceof HTMLInputElement)||event.target.type!=='file')return;
@@ -546,6 +549,7 @@ def run(browser, profile, variant, repetition, order):
           };
           const observer=new MutationObserver(()=>{
             const status=statusNode.textContent;
+            if(selected&&statusChanges.length<64&&statusChanges.at(-1)?.status!==status)statusChanges.push({at:performance.now(),wallAt:Date.now(),status});
             if(witness||!selected||!terminal(status))return;
             const observed=window.__nativePresentationProbe.snapshot(true,true);
             const backups=Object.keys(localStorage).filter(k=>k.startsWith(key+'.backup'))
@@ -559,6 +563,10 @@ def run(browser, profile, variant, repetition, order):
           observer.observe(statusNode,{subtree:true,childList:true,characterData:true});
           document.addEventListener('change',onFile,true);
           window.__nativePersistenceWitness=()=>witness;
+          window.__nativePersistenceDiagnostics=()=>({id,initialStatus,selectionCount,selected,witnessObserved:!!witness,
+            status:statusNode.textContent,statusNodeConnected:statusNode.isConnected,statusChanges:[...statusChanges],
+            at:performance.now(),wallAt:Date.now(),hidden:document.hidden,visibility:document.visibilityState,
+            currentRaw:localStorage.getItem(key),backups:Object.keys(localStorage).filter(k=>k.startsWith(key+'.backup')).map(key=>({key,value:localStorage.getItem(key)}))});
         }''',{'key':profile['key'],'name':file_path.name,'size':len(file_bytes),'id':witness_id}))
         persistence_cpu_before=metrics(cdp);persistence_started=time.perf_counter()
         phase_call('persistence.select-native-file',lambda:page.locator('[data-bind="import-file"]').set_input_files(str(file_path.resolve()),timeout=30000))
@@ -625,6 +633,19 @@ def run(browser, profile, variant, repetition, order):
         run['error']=brief_error(error)
         report['errors'].append({'identity':dict(active_identity),'error':brief_error(error)})
         checkpoint('run.error','error',error=brief_error(error))
+        # Diagnostic reads never qualify a failed measurement or replace its first
+        # terminal witness. Keep native evidence before closing a timed-out page.
+        if page is not None:
+            try:
+                diagnostic=phase_call('failure.native-persistence-snapshot',lambda:page.evaluate('() => window.__nativePersistenceDiagnostics?.() ?? null'))
+                if diagnostic is not None:
+                    path=out/f"failed-persistence-{profile['profile']}-{variant}-{repetition}.json"
+                    path.write_text(json.dumps(diagnostic,ensure_ascii=False),encoding='utf-8')
+                    run['failurePersistenceEvidence']={'path':str(path),'sha256':digest(path.read_text(encoding='utf-8')),
+                        'status':diagnostic['status'],'selectionCount':diagnostic['selectionCount'],'witnessObserved':diagnostic['witnessObserved'],
+                        'statusChanges':diagnostic['statusChanges'],'scope':'Read-only native snapshot after the original failure; not a successful import witness'}
+            except BaseException as diagnostic_error:
+                run['failureEvidenceError']=brief_error(diagnostic_error)
         raise
     finally:
         failed=sys.exc_info()[0] is not None
@@ -727,11 +748,20 @@ def worker_main():
         report['servedBundles']={}
         for name,url in [('before',args.before_url),('after',args.after_url)]:
             report['servedBundles'][name]=served_identity(request,url)
+            expected=args.expected_before_sha if name=='before' else args.expected_after_sha
+            if expected:check('served bundle is the explicitly pinned '+name+' commit',report['servedBundles'][name]['release'].get('sourceSha')==expected)
         phase_call('identity.context-close',request.dispose);request=None
         for profile in profiles:
             for repetition in range(args.repetitions):
                 order=('before','after') if repetition%2==0 else ('after','before')
                 for variant in order:run(browser,profile,variant,repetition,list(order))
+        expected_runs=len(profiles)*args.repetitions*2
+        check('all requested native runs and pairs are complete and qualified',
+            len(report['runs'])==expected_runs and all(run.get('completed') and run.get('qualified')
+                and run.get('nativePersistence',{}).get('qualified') for run in report['runs'])
+            and len({(run['profile'],run['repetition'],run['variant']) for run in report['runs']})==expected_runs,
+            {'expectedRuns':expected_runs,'observedRuns':len(report['runs']),
+             'qualifiedRuns':sum(bool(run.get('qualified')) for run in report['runs'])})
         report['measurementsCompleted']=True
     except BaseException as error:
         report['errors'].append(brief_error(error))

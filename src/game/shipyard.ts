@@ -17,6 +17,7 @@ import {
   unitById,
   type UnitDef,
   type UnitId,
+  type ShipId,
 } from "../data/units";
 import { resourceName } from "./content";
 import { big } from "./decimal";
@@ -28,7 +29,7 @@ import type { OrderSource, PlanetState } from "./planet";
 import { shortfall } from "./queue";
 import { missingRequirements } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
-import { sameCoordinates } from "./galaxy";
+import { coordinateKey, sameCoordinates } from "./galaxy";
 import { cancelledPaidJob, creditPaidJob, preparePaidJob, refundPaidJob } from "./order-ledger";
 import { multiplyOrderAmountInteger } from "./order-money";
 import type { OrderMoney, PaidJobIdentity } from "./order-state";
@@ -80,14 +81,14 @@ export function unitSeconds(state: GameState, id: UnitId): number {
 }
 
 /** Why the shipyard is not working right now ("" when it can work). */
-export function shipyardPausedReason(state: GameState): string {
+export function shipyardPausedReason(state: GameState, fleetCensus?: ShipyardFleetCensus): string {
   const head = activePlanet(state).buildQueue[0];
   if (head && head.totalSeconds > 0) {
     if (head.building === "shipyard") return "造船厂升级中，暂停造船";
     if (head.building === "nanite_factory") return "纳米机器人工厂升级中，暂停造船";
   }
   const batch = activePlanet(state).shipyardQueue[0];
-  if (batch && shipOutputCapacity(state, batch.unit, false) < 1) return "舰船数量达到安全上限，已付费余量暂停";
+  if (batch && shipOutputCapacity(state, batch.unit, false, fleetCensus) < 1) return "舰船数量达到安全上限，已付费余量暂停";
   return "";
 }
 
@@ -100,6 +101,69 @@ function addCount(total: number, count: number, limit: number): number | null {
 }
 
 /**
+ * Fleet-only census for one synchronous tick segment. The source array and nested
+ * fleet data must stay unchanged throughout its use; never retain it across actions.
+ */
+export interface ShipyardFleetCensus {
+  readonly sourceFleets: GameState["fleets"];
+  readonly capacity: (planet: PlanetState, id: ShipId, local: number, empire: number) => number;
+}
+
+/**
+ * Planet inventories and queues remain live: earlier yards in a segment may consume
+ * empire capacity. Only fleets stay fixed until advanceFleets at the segment boundary.
+ * Build the census lazily so idle yards and defenses do not pay for a fleet scan.
+ */
+export function createShipyardFleetCensus(fleets: GameState["fleets"]): ShipyardFleetCensus {
+  type Fleet = GameState["fleets"][number];
+  type Ports = { origins: Map<string, Fleet[]>; deployments: Map<string, Fleet[]> };
+  const empireCounts = new Map<ShipId, number | null>();
+  let ports: Ports | undefined;
+  return {
+    sourceFleets: fleets,
+    capacity(planet, id, local, empire) {
+      let fleetTotal = empireCounts.get(id);
+      if (fleetTotal === undefined) {
+        fleetTotal = 0;
+        for (const fleet of fleets) {
+          fleetTotal = addCount(fleetTotal, fleet.ships[id] ?? 0, Number.MAX_SAFE_INTEGER);
+          if (fleetTotal === null) break;
+        }
+        empireCounts.set(id, fleetTotal);
+      }
+      if (fleetTotal === null) return 0;
+      const empireTotal = addCount(empire, fleetTotal, Number.MAX_SAFE_INTEGER);
+      if (empireTotal === null) return 0;
+      if (!ports) {
+        ports = { origins: new Map(), deployments: new Map() };
+        const append = (index: Map<string, Fleet[]>, key: string, fleet: Fleet): void => {
+          const bucket = index.get(key);
+          if (bucket) bucket.push(fleet);
+          else index.set(key, [fleet]);
+        };
+        for (const fleet of fleets) {
+          append(ports.origins, fleet.originId, fleet);
+          if (!fleet.returning && fleet.mission === "deploy") append(ports.deployments, coordinateKey(fleet.target), fleet);
+        }
+      }
+      for (const fleet of ports.origins.get(planet.id) ?? []) {
+        const total = addCount(local, fleet.ships[id] ?? 0, MAX_PLANET_UNITS);
+        if (total === null) return 0;
+        local = total;
+      }
+      for (const fleet of ports.deployments.get(coordinateKey(planet.coordinates)) ?? []) {
+        // A same-port deployment reserves that port once, just like the original OR.
+        if (fleet.originId === planet.id) continue;
+        const total = addCount(local, fleet.ships[id] ?? 0, MAX_PLANET_UNITS);
+        if (total === null) return 0;
+        local = total;
+      }
+      return Math.min(MAX_PLANET_UNITS - local, Number.MAX_SAFE_INTEGER - empireTotal);
+    },
+  };
+}
+
+/**
  * Prospective output capacity shared by manual, protocol, and plan orders. A fleet is
  * counted once in its per-ShipId empire total, and separately reserves its eventual landing world.
  * Every fleet reserves its home port while recall is possible; an outbound deployment
@@ -107,7 +171,7 @@ function addCount(total: number, count: number, limit: number): number | null {
  * Completion ignores queued reservations so already-paid work can make only the units
  * that still fit if an unrelated reward has consumed capacity since its payment.
  */
-export function shipOutputCapacity(state: GameState, id: UnitId, includeQueued = true): number {
+export function shipOutputCapacity(state: GameState, id: UnitId, includeQueued = true, fleetCensus?: ShipyardFleetCensus): number {
   const planet = activePlanet(state);
   let local = addCount(0, planet.units[id], MAX_PLANET_UNITS);
   if (local === null) return 0;
@@ -129,6 +193,8 @@ export function shipOutputCapacity(state: GameState, id: UnitId, includeQueued =
       empire = total;
     }
   }
+  // A context cannot be reused after any fleet action replaces the source array.
+  if (fleetCensus?.sourceFleets === state.fleets) return fleetCensus.capacity(planet, id as ShipId, local, empire);
   for (const fleet of state.fleets) {
     const fleetCount = fleet.ships[id as (typeof SHIP_IDS)[number]] ?? 0;
     const total = addCount(empire, fleetCount, Number.MAX_SAFE_INTEGER);
@@ -332,11 +398,11 @@ export function shipyardQueueSeconds(state: GameState): number {
  * built, the next satellite (energy changes with each one; at least 1 s apart so tiny unit times do not explode
  * the number of segments).
  */
-export function nextShipyardEvent(state: GameState): number {
+export function nextShipyardEvent(state: GameState, fleetCensus?: ShipyardFleetCensus): number {
   const head = activePlanet(state).shipyardQueue[0];
-  if (!head || shipyardPausedReason(state)) return Number.POSITIVE_INFINITY;
+  if (!head || shipyardPausedReason(state, fleetCensus)) return Number.POSITIVE_INFINITY;
   const per = unitSeconds(state, head.unit);
-  const safeCount = Math.min(head.count, shipOutputCapacity(state, head.unit, false));
+  const safeCount = Math.min(head.count, shipOutputCapacity(state, head.unit, false, fleetCensus));
   const batch = (safeCount - head.progress) * per;
   if (head.unit !== "solar_satellite") return batch;
   return Math.min(batch, Math.max((1 - head.progress) * per, 1));
@@ -350,16 +416,17 @@ export function advanceShipyard(
   state: GameState,
   seconds: number,
   carry = true,
+  fleetCensus?: ShipyardFleetCensus,
 ): { state: GameState; completed: CompletedUnits[] } {
   const completed: CompletedUnits[] = [];
-  if (!(seconds > 0) || activePlanet(state).shipyardQueue.length === 0 || shipyardPausedReason(state)) return { state, completed };
+  if (!(seconds > 0) || activePlanet(state).shipyardQueue.length === 0 || shipyardPausedReason(state, fleetCensus)) return { state, completed };
   let current = state;
   let left = seconds;
   while (left > EPS && activePlanet(current).shipyardQueue.length > 0) {
     const queue = activePlanet(current).shipyardQueue.map(o => ({ ...o }));
     const units = { ...activePlanet(current).units };
     const head = queue[0]!;
-    const capacity = shipOutputCapacity(current, head.unit, false);
+    const capacity = shipOutputCapacity(current, head.unit, false, fleetCensus);
     if (capacity < 1) break;
     const per = unitSeconds(current, head.unit);
     const batch = (head.count - head.progress) * per;

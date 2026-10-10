@@ -344,7 +344,7 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.8-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.9-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
@@ -570,7 +570,7 @@ with sync_playwright() as playwright:
         raise
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
-            'parityMetadataException':'Only the exact galaxy #space-range paragraph version token is normalized after checking the served manifests equal before 0.6.7-alpha.1 and after 0.6.8-alpha.1. All other visible text and controls stay exact.',
+            'parityMetadataException':'Only the exact galaxy #space-range paragraph version token is normalized after checking the served manifests equal before 0.6.7-alpha.1 and after 0.6.9-alpha.1. All other visible text and controls stay exact.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},
