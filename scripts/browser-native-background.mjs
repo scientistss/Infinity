@@ -333,17 +333,25 @@ async function reloadWithinBudget(expectHidden) {
     const documentStart = report.lifecycle.find(row => row.id === loaded.id && row.type === 'document-start');
     const storageWrite = report.storageEvents.slice(start).find(row => row.snapshot && row.raw === loaded.initialRaw);
     return unload?.trusted && documentStart && storageWrite ? { unload, pagehide: pagehide ?? null, documentStart, storageWrite,
-      evidence: 'trusted native beforeunload, ordered native DOMStorage write, exact new-document initial source bytes',
+      evidence: 'trusted native beforeunload, native savedAt bracket, actual DOMStorage write and exact new-document initial source bytes',
       pagehideDelivery: pagehide ? 'observed; independently validated' : 'not observed; no delivery or occurrence claim' } : null;
   });
   const source = save(loaded.initialRaw);
   check('new document consumed the exact actual native unload-write source bytes', lifecycle.storageWrite.raw === loaded.initialRaw);
-  check('trusted beforeunload, native storage write and new-document observations are ordered',
-    lifecycle.unload.wall >= before.wallNow - 2 && lifecycle.unload.perf >= before.perfNow &&
-    lifecycle.storageWrite.hostMono >= lifecycle.unload.hostMono &&
-    lifecycle.storageWrite.hostMono <= lifecycle.documentStart.hostMono,
-    { beforeWall: before.wallNow, unloadWall: lifecycle.unload.wall, unloadHostMono: lifecycle.unload.hostMono,
-      writeHostMono: lifecycle.storageWrite.hostMono, newDocumentHostMono: lifecycle.documentStart.hostMono });
+  check('trusted beforeunload occurs after the native pre-reload observation',
+    lifecycle.unload.wall >= before.wallNow - 2 && lifecycle.unload.perf >= before.perfNow,
+    { beforeWall: before.wallNow, beforePerf: before.perfNow,
+      unloadWall: lifecycle.unload.wall, unloadPerf: lifecycle.unload.perf });
+  // Runtime and DOMStorage notifications may reach the host in a different
+  // order. Record delivery timing, but prove write-before-read with the native
+  // savedAt bracket below and the exact bytes already read by the new document.
+  lifecycle.notificationDelivery = {
+    unloadHostMono: lifecycle.unload.hostMono,
+    writeHostMono: lifecycle.storageWrite.hostMono,
+    newDocumentHostMono: lifecycle.documentStart.hostMono,
+    writeNotificationAfterDocumentMs: lifecycle.storageWrite.hostMono - lifecycle.documentStart.hostMono,
+    classification: 'cross-domain notification delivery only; not the order of native storage operations',
+  };
   check('actual unload savedAt is after beforeunload and inside the native new-document bracket',
     source.savedAt >= lifecycle.unload.wall - 2 && source.savedAt <= loaded.startedWall + 2,
     { before: before.wallNow, beforeunload: lifecycle.unload.wall, sourceSavedAt: source.savedAt,
