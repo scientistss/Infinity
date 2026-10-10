@@ -29,6 +29,8 @@ jobs:
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
+      - name: Natural manual-to-bounded ring progression
+        run: node --import tsx scripts/natural-ring-journey.ts > natural-ring-report.json 2> natural-ring-report.log
       - name: Original UI and single-world regression
         run: |
           node scripts/check-ui-baseline.mjs > original-ui-report.json
@@ -129,6 +131,7 @@ jobs:
             sleep 1
           done
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
+          python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" > save-session-review-save.json
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
@@ -205,6 +208,9 @@ jobs:
             test-results.json
             natural-growth-report.json
             natural-growth-report.log
+            natural-ring-report.json
+            natural-ring-report.log
+            natural-ring-browser-evidence
             original-ui-report.json
             parity-report.json
             prestige-parity-report.json

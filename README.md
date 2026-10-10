@@ -83,3 +83,5 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 ## 许可证
 
 [MIT](LICENSE)。不使用 OGame 版权美术。
+
+自然手动起步、有限星环批次与跨轮失效的连续来源见 [自然星环验收](docs/NATURAL_RING_ACCEPTANCE.md)。
