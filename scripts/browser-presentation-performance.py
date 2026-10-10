@@ -335,8 +335,8 @@ PROBE = r"""(() => {
  const native=fn=>/\[native code\]/.test(Function.prototype.toString.call(fn));
  const p={native:{date:native(Date.now),performance:native(performance.now),raf:native(requestAnimationFrame),
    timeout:native(setTimeout),interval:native(setInterval),get:native(Storage.prototype.getItem),set:native(Storage.prototype.setItem),
-   storage:localStorage instanceof Storage}, frames:[],longTasks:[],events:[],inputs:[],errors:[],started:performance.now(),
-   supported:PerformanceObserver.supportedEntryTypes,seedError:null};
+   storage:localStorage instanceof Storage,fileText:native(File.prototype.text)}, frames:[],longTasks:[],events:[],inputs:[],errors:[],started:performance.now(),
+   supported:PerformanceObserver.supportedEntryTypes,seedError:null,visibilityEvents:[],fileSelections:[]};
  const seedStart=performance.now(), value=JSON.parse(source), now=Date.now();
  value.savedAt=value.lastTickAt=now;
  p.seeded=JSON.stringify(value,null,2); p.seededAt=now;
@@ -359,12 +359,16 @@ PROBE = r"""(() => {
   requestAnimationFrame(first=>{row.firstRAF=first;requestAnimationFrame(second=>{row.afterPaintOpportunity=second;});});
  },true);
  window.addEventListener('error',event=>p.errors.push(String(event.message)));
+ document.addEventListener('visibilitychange',event=>p.visibilityEvents.push({at:performance.now(),hidden:document.hidden,visibility:document.visibilityState,trusted:event.isTrusted}));
+ document.addEventListener('change',event=>{
+  if(event.target instanceof HTMLInputElement&&event.target.type==='file')p.fileSelections.push({at:performance.now(),trusted:event.isTrusted,files:[...event.target.files].map(file=>({name:file.name,size:file.size,type:file.type}))});
+ },true);
  window.__nativePresentationProbe={snapshot:(full=true)=>{
    const status=document.querySelector('[data-bind="status"]')?.textContent??null;
    const notice=document.querySelector('[data-bind="notice-text"]')?.textContent??'';
    const protectedState=/受保护|自动保存暂停|已暂停写入|本地存储不可用|临时初始画面/.test((status??'')+notice);
    return {...(full?p:{}),now:performance.now(),hidden:document.hidden,visibility:document.visibilityState,
-    ready:!!document.querySelector('[data-bind="energy-chip"]'),status,notice,protectedState,
+    ready:!!document.querySelector('[data-bind="energy-chip"]'),status,notice,protectedState,frameCount:p.frames.length,longTaskCount:p.longTasks.length,inputCount:p.inputs.length,visibilityEventCount:p.visibilityEvents.length,
     ...(full?{currentRaw:localStorage.getItem(key)}:{frameCount:p.frames.length,longTaskCount:p.longTasks.length})};
  }};
 })();"""
@@ -411,10 +415,12 @@ def collect_sample(page, cdp, name):
     checkpoint('sample.measure-block','after')
     observations=snapshot(page)  # Bulk records and native Storage are read outside the measured window.
     start,end=before_probe['now'],after_probe['now']
+    aligned_metric_elapsed_ms=(after.get('Timestamp',float('nan'))-before.get('Timestamp',float('nan')))*1000
+    check('CDP CPU metric window has a finite positive aligned timestamp duration',math.isfinite(aligned_metric_elapsed_ms) and aligned_metric_elapsed_ms>0)
     frames=[row['interval'] for row in observations['frames'] if start<row['at']<=end]
     longs=[row for row in observations['longTasks'] if start<=row['start']<end]
     result={'tab':name,'startMs':start,'endMs':end,'nativeElapsedMs':end-start,
-            'hostElapsedMs':host_elapsed_ms,'cpu':delta(before,after),
+            'hostElapsedMs':host_elapsed_ms,'alignedMetricElapsedMs':aligned_metric_elapsed_ms,'cpu':delta(before,after),
             'rawMetricsBefore':before,'rawMetricsAfter':after,'frameIntervalsMs':frames,
             'frameIntervalSummaryMs':summary(frames),'longTasks':longs,'longTaskDurationMs':sum(row['duration'] for row in longs),
             'visibilityBefore':before_probe['visibility'],'visibilityAfter':after_probe['visibility'],
@@ -493,12 +499,56 @@ def run(browser, profile, variant, repetition, order):
         checkpoint('persistence.begin','before')
         tab(page,'save');native_click(page,'[data-action="save"]')
         saved=snapshot(page)
-        run['nativePersistence']={'manualSaveStatus':saved['status'],'currentChars':len((saved['currentRaw'] or '').encode('utf-16-le'))//2}
-        phase_call('persistence.fill-import',lambda:page.locator('#transfer').fill(initialized['seeded']))
+        run['nativePersistence']={'manualSaveStatus':saved['status'],'currentChars':len((saved['currentRaw'] or '').encode('utf-16-le'))//2,
+            'importRoute':'existing native file input / native File.text / unchanged full rebased seed bytes',
+            'giantTextLimitation':'Prior cca22ec baseline combined run timed out filling the 1.90M-character textarea before import; actionability versus browser text insertion cost remains unresolved. This file route does not qualify giant-text editing.'}
+        file_path=out/f"native-import-{profile['profile']}-{variant}-{repetition}.json"
+        file_bytes=initialized['seeded'].encode('utf-8')
+        phase_call('persistence.prepare-file',lambda:file_path.write_bytes(file_bytes))
+        check('native file input receives the exact full rebased payload bytes',file_path.read_bytes()==file_bytes)
+        run['nativePersistence']['inputFile']={'path':str(file_path.resolve()),'sha256':hashlib.sha256(file_bytes).hexdigest(),
+            'utf8Bytes':len(file_bytes),'stringChars':len(initialized['seeded'].encode('utf-16-le'))//2}
+        run['nativePersistence']['preImportDOM']=phase_call('persistence.pre-import-dom',lambda:page.evaluate('''() => {
+          const text=document.querySelector('#transfer'),file=document.querySelector('[data-bind="import-file"]');
+          const rect=text.getBoundingClientRect(),style=getComputedStyle(text);
+          return {visiblePanel:[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden)?.dataset.tabPanel,
+           hidden:document.hidden,visibility:document.visibilityState,activeElement:document.activeElement?.id,
+           transfer:{disabled:text.disabled,readOnly:text.readOnly,valueChars:text.value.length,display:style.display,visibility:style.visibility,width:rect.width,height:rect.height},
+           file:{type:file.type,disabled:file.disabled,accept:file.accept}};
+        }'''))
         before_replacement=snapshot(page)
-        native_click(page,'[data-action="import-text"]')
-        phase_call('persistence.import-settle',lambda:page.wait_for_timeout(50))
+        persistence_cpu_before=metrics(cdp);persistence_started=time.perf_counter()
+        phase_call('persistence.select-native-file',lambda:page.locator('[data-bind="import-file"]').set_input_files(str(file_path.resolve()),timeout=30000))
+        # File.text and the replacement transaction are genuinely asynchronous.
+        # Wait for a terminal DOM result; a fixed sleep is not an acknowledgement.
+        completion=phase_call('persistence.await-file-result',lambda:page.wait_for_function('''() => {
+          const status=document.querySelector('[data-bind="status"]')?.textContent??'';
+          const notice=document.querySelector('[data-bind="notice-text"]')?.textContent??'';
+          return status==='已导入并存入本地'||status.startsWith('导入失败')||/文件读取期间出现了更新的操作|受保护|已暂停写入|本地存储不可用/.test(status+notice)
+           ? {status,notice,at:performance.now(),hidden:document.hidden,visibility:document.visibilityState} : false;
+        }''',polling=50,timeout=30000).json_value())
+        persistence_cpu_after=metrics(cdp)
+        run['nativePersistence']['completion']=completion
+        run['nativePersistence']['diagnostics']={'hostElapsedMs':(time.perf_counter()-persistence_started)*1000,
+            'cpu':delta(persistence_cpu_before,persistence_cpu_after),'rawMetricsBefore':persistence_cpu_before,'rawMetricsAfter':persistence_cpu_after,
+            'scope':'Separate post-measurement persistence diagnostic span, including normal game work during native file selection/async completion and controller waits; never part of steady-state comparison.'}
         replacement=snapshot(page)
+        visibility_events=[event for event in replacement['visibilityEvents'] if event['at']>=before_replacement['now']]
+        run['nativePersistence']['visibilityEvents']=visibility_events
+        run['nativePersistence']['nativeCounts']={'before':{key:before_replacement[key] for key in ('frameCount','longTaskCount','inputCount','visibilityEventCount')},
+            'after':{key:replacement[key] for key in ('frameCount','longTaskCount','inputCount','visibilityEventCount')}}
+        run['nativePersistence']['fileSelections']=[event for event in replacement['fileSelections'] if event['at']>=before_replacement['now']]
+        check('browser selected the actual full-size JSON file',any(file['name']==file_path.name and file['size']==len(file_bytes) for event in run['nativePersistence']['fileSelections'] for file in event['files']))
+        run['nativePersistence']['remainedVisible']=not before_replacement['hidden'] and not completion['hidden'] and not replacement['hidden'] and not any(event['hidden'] for event in visibility_events)
+        check('native file persistence remains visible',run['nativePersistence']['remainedVisible'])
+        # Compare the entire native stored string against the original payload
+        # with only the actual transaction envelope timestamps substituted.
+        byte_proof=phase_call('persistence.verify-current-bytes',lambda:page.evaluate('''({key,source}) => {
+          const raw=localStorage.getItem(key),actual=JSON.parse(raw),expected=JSON.parse(source);
+          expected.savedAt=actual.savedAt;expected.lastTickAt=actual.lastTickAt;
+          return {matches:JSON.stringify(expected,null,2)===raw,savedAt:actual.savedAt,lastTickAt:actual.lastTickAt,stringChars:raw.length};
+        }''',{'key':profile['key'],'source':initialized['seeded']}))
+        run['nativePersistence']['currentByteProof']=byte_proof
         run['nativePersistence']['replacementStatus']=replacement['status']
         backups=phase_call('persistence.read-backups',lambda:page.evaluate('(key)=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup")).map(key=>({key,value:localStorage.getItem(key)}))',profile['key']))
         run['nativePersistence']['backups']=[{'key':row['key'],'sha256':digest(row['value'] or ''),
@@ -512,9 +562,11 @@ def run(browser, profile, variant, repetition, order):
         run['nativePersistence']['protectedAfterManualSave']=saved['protectedState']
         run['nativePersistence']['protectedAfterReplacement']=replacement['protectedState']
         run['nativePersistence']['manualSaveSucceeded']=saved['status']=='已保存到本地' and bool(saved['currentRaw']) and not saved['protectedState']
-        run['nativePersistence']['replacementSucceeded']=replacement['status']=='已导入并存入本地' and bool(replacement['currentRaw']) and not replacement['protectedState']
+        run['nativePersistence']['replacementSucceeded']=completion['status']=='已导入并存入本地' and bool(replacement['currentRaw']) and not replacement['protectedState'] and byte_proof['matches']
         run['nativePersistence']['verifiedPreservedNativeBytes']=any(row['matchesPreImportNativeRead'] or row['matchesManualSaveNativeRead'] for row in run['nativePersistence']['backups'])
-        run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes']
+        run['nativePersistence']['qualified']=run['nativePersistence']['manualSaveSucceeded'] and run['nativePersistence']['replacementSucceeded'] and run['nativePersistence']['verifiedPreservedNativeBytes'] and run['nativePersistence']['remainedVisible']
+        checkpoint('persistence.result','after',qualified=run['nativePersistence']['qualified'],status=completion['status'])
+        check('native import commits exact current bytes and preserves exact prior backup bytes',run['nativePersistence']['qualified'])
         run['readyDuringSamples']=not run['startupProtected'] and not any(sample['protectedDuringSample'] for sample in run['samples'])
         run['measurementQualified']=run['readyDuringSamples'] and not run['pageErrors'] and not run['failedRequests']
         if not run['readyDuringSamples']:run['blocker']='Native save protection arose during timing; excluded from ready-gameplay aggregates.'
@@ -577,7 +629,7 @@ def aggregate():
             tab_group=bucket['tabs'].setdefault(sample['tab'],{'scriptMs':[],'taskMs':[],'scriptMsPerSecond':[],'taskMsPerSecond':[],'longTaskMs':[],'frameIntervalsMs':[]})
             for metric,name in [('ScriptDuration','scriptMs'),('TaskDuration','taskMs')]:
                 value=sample['cpu'].get(metric);tab_group[name].append(value)
-                tab_group[name+'PerSecond'].append(None if value is None else value*1000/sample['nativeElapsedMs'])
+                tab_group[name+'PerSecond'].append(None if value is None else value*1000/sample['alignedMetricElapsedMs'])
             tab_group['longTaskMs'].append(sample['longTaskDurationMs']);tab_group['frameIntervalsMs'].extend(sample['frameIntervalsMs'])
         interactions={}
         for event in run['interactions']['events']:
