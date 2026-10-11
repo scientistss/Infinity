@@ -612,12 +612,29 @@ def import_save(page, value, label, original_raw=None, expected=None, expected_c
     building_tab(page)
 
 
+def prepare_protected_export(page, before):
+    # Navigation has its own narrow preference-write contract. Never ignore UI
+    # keys when asserting that the subsequent protected export writes nothing.
+    check('protected export navigation starts from the complete unchanged overview storage',
+          before.get('infinity.ui.tab') == 'overview' and exact_json(storage(page), before))
+    trusted_click(page, '[data-tab="save"]')
+    after = storage(page)
+    check('overview to save changes only the exact tab preference; all other stored bytes remain identical',
+          exact_json(after, {**before, 'infinity.ui.tab': 'save'}))
+    return after
+
+
 def export_protected(page, original, name):
-    tab(page, 'save')
+    baseline = storage(page)
+    check('protected export begins on the already selected save page',
+          baseline.get('infinity.ui.tab') == 'save'
+          and page.locator('[data-tab="save"]').get_attribute('aria-selected') == 'true')
     with page.expect_download() as pending:
-        page.locator('[data-action="export"]').click()
+        trusted_click(page, '[data-action="export"]')
     path = out / name; pending.value.save_as(str(path))
     check('protected real download exports byte-exact cached original', path.read_bytes() == original.encode())
+    check('protected export preserves the complete save-page storage baseline without any key exception',
+          exact_json(storage(page), baseline))
     evidence.append({'case': case, 'file': name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
 
 
@@ -828,9 +845,11 @@ def protection_case(fault):
     advance(page, 1000); advance(page, 1000); tab(page, 'overview')
     check('protected real frames freeze visible old world and every storage byte', page.locator('[data-bind="played"]').inner_text() == before_ui and exact_json(storage(page), baseline))
     tab(page, 'galaxy'); check('protected read-only galaxy cannot expose live NPC resource snapshots', '抵达时快照' not in page.locator('#space-worlds').inner_text())
+    tab(page, 'overview')
+    export_baseline = prepare_protected_export(page, baseline)
     label = fault['target'] + '-' + fault['operation'] + '-' + fault.get('mode', 'throw')
     export_protected(page, source, 'protected-original-' + label + '.json')
-    check('protected native original export itself cannot mutate any stored key', exact_json(storage(page), baseline))
+    check('protected native original export itself cannot mutate any stored key', exact_json(storage(page), export_baseline))
     audit = page.evaluate('window.__npcFaultAudit')
     check('intended explicit native-storage fault actually triggered', any(row['kind'] == ('readback-throw' if fault['operation'] == 'readback' else 'write-' + fault['mode']) for row in audit), audit)
     artifact = out / ('protection-' + label + '.json')
@@ -947,8 +966,9 @@ try:
         check('genuine native trusted storage event carries exact new external bytes', any(event['trusted'] and event['newValue'] == competing for event in page.evaluate('window.__npcStorage')))
         before = storage(page); advance(page, 1000); advance(page, 1000); tab(page, 'overview')
         check('cross-tab protection freezes actual visible world and does not overwrite competing bytes', page.locator('[data-bind="played"]').inner_text() == prior_played and storage(page) == before and raw(page) == competing)
+        export_baseline = prepare_protected_export(page, before)
         export_protected(page, cached, 'cross-tab-retained-original.json')
-        check('original export does not change competing world or backups', storage(page) == before); context.close()
+        check('original export does not change competing world or backups', storage(page) == export_baseline); context.close()
 
         begin_case('suite integrity')
         check('no app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
