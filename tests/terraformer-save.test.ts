@@ -18,7 +18,7 @@ function projection(state: any): any {
   const verified = structuredClone(state);
   stripVerifiedNpcMetadata(verified, 0);
   const { terraformerGrantJobFloor: _floor, ...rest } = verified;
-  return { ...rest, planets: state.planets.map((planet: any) => {
+  return { ...rest, planets: verified.planets.map((planet: any) => {
     expect(Object.hasOwn(planet, "demolition")).toBe(true);
     expect(planet.demolition).toBeNull();
     const { terraformerFields: _fields, demolition: _demolition, ...old } = planet;

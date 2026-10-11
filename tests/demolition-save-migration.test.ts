@@ -1,4 +1,5 @@
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { stripVerifiedNpcRemainders } from "./helpers";
 import { describe, expect, it } from "vitest";
 import fixedR10 from "./fixtures/demolition-r10.json";
 import { STORAGE_KEY } from "../src/game/content";
@@ -20,7 +21,9 @@ function assertOnlyMigrationMetadata(actual: any, old: any) {
     expect(Object.hasOwn(planet, "demolition")).toBe(true);
     expect(planet.demolition).toBeNull();
   }
-  expect(actual).toEqual(lifted(old));
+  const verified = structuredClone(actual);
+  stripVerifiedNpcRemainders(verified.state);
+  expect(verified).toEqual(lifted(old));
 }
 class Store implements KeyValueStore {
   values = new Map<string, string>();
@@ -142,7 +145,9 @@ describe("r13 migration and import raw-byte protection", () => {
     const session = new SaveSession(store, fixture.oldReaderOutput.lastTickAt + 5000);
     expect(session.mode).toBe(fault === "concurrent" ? "conflict" : "protected");
     expect(session.loaded.appliedSeconds).toBe(0);
-    expect(serializeState(session.loaded.state)).toEqual(lifted(fixture.oldReaderOutput).state);
+    const verified = serializeState(session.loaded.state);
+    stripVerifiedNpcRemainders(verified);
+    expect(verified).toEqual(lifted(fixture.oldReaderOutput).state);
     expect(session.export(session.loaded.state)).toEqual({ raw: fixture.raw, protected: true });
     expect(session.save(session.loaded.state).ok).toBe(false);
     if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(13);

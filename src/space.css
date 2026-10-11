@@ -36,3 +36,10 @@
 .space-panel #npc-attack-options { overflow-wrap:anywhere; }
 .space-panel .flight-detail,.space-panel .flight-route,.space-panel .flight-title { min-width:0; overflow-wrap:anywhere; }
 .space-panel .space-flight > .space-actions { min-width:0; }
+
+/* Exact subunit strings remain readable even at the full 258-character bound. */
+.space-panel .npc-resource-remainder { flex-basis:100%; min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.space-panel .npc-resource-remainder summary { cursor:pointer; color:var(--muted); }
+.space-panel .npc-resource-remainder summary:focus-visible { outline:2px solid var(--good); outline-offset:3px; }
+.space-panel .npc-resource-remainder p { margin:.4rem 0; line-height:1.6; font-size:.8rem; }
+.space-panel .npc-remainder-exact { font-variant-numeric:tabular-nums; }

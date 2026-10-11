@@ -15,10 +15,10 @@ function fixture(name: string, seed: number) {
   return JSON.parse(exportSave(state, Date.now()));
 }
 
-// Usage: node --import tsx scripts/save-session-fixture.ts /absolute/r2 /absolute/r3 /absolute/r4 /absolute/r5 /absolute/r6 /absolute/r7 /absolute/r8 /absolute/r9 /absolute/r10 /absolute/r11
+// Usage: node --import tsx scripts/save-session-fixture.ts /absolute/r2 /absolute/r3 /absolute/r4 /absolute/r5 /absolute/r6 /absolute/r7 /absolute/r8 /absolute/r9 /absolute/r10 /absolute/r11 /absolute/r12
 const roots = process.argv.slice(2);
-if (roots.length !== 10 || roots.some(root => !root.startsWith("/"))) {
-  throw Error("Provide absolute verified source directories for r2, r3, r4, r5, r6, r7, r8, r9, r10 and r11; legacy fixtures must use their real serializers");
+if (roots.length !== 11 || roots.some(root => !root.startsWith("/"))) {
+  throw Error("Provide absolute verified source directories for r2, r3, r4, r5, r6, r7, r8, r9, r10, r11 and r12; legacy fixtures must use their real serializers");
 }
 const legacy: Record<string, unknown> = {};
 const legacySources: Array<{ revision: number; schema: string; version: number; generatedBy: string }> = [];

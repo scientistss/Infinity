@@ -16,7 +16,7 @@ export function npcBattleDetails(report: NpcBattleReceipt) {
     source: `出发星球 ${report.originId} → [${coordinateKey(report.target)}] · 实际游戏时间 ${report.at} 秒`,
     attacker: `我方出征：${counts(battle.attackerBefore)}；永久损失：${losses(battle.attackerBefore, battle.attackerAfter)}；幸存：${counts(battle.attackerAfter)}`,
     defender: `NPC 当时驻军：${counts(battle.defenderBefore)}；永久损失：${losses(battle.defenderBefore, battle.defenderAfter)}；幸存：${counts(battle.defenderAfter)}`,
-    loot: `实际装载：${npcLootText(report.loot)}。仅返抵原出发星球后一次入库。`,
+    loot: `实际装载：${npcLootText(report.loot)}。返抵原出发星球后一次结算；不足 1 的部分保留为该星球待结算权益，不计入普通可花库存。此处仍记录本场完整整数战利品，历史战报不可再次领取。`,
     tech: `本场我方武器 ${report.attackerTech.weapons} / 护盾 ${report.attackerTech.shields} / 装甲 ${report.attackerTech.armour}；NPC 科技均为 0。出航货舱倍率 ×${report.cargoFactor}。`,
   };
 }

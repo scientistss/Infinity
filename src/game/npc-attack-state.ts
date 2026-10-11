@@ -221,9 +221,9 @@ export function validateNpcAttackReferences(state: GameState): void {
 
 /** Reserve only attack-specific names/models. Generic stock/phase/seed remain unrelated data. */
 export function rejectNpcAttackFields(raw: unknown, legacy: boolean, envelope = false): void {
-  const pending: Array<{ value: unknown; path: PropertyKey[]; ancestors: Set<object> }> = [{ value: raw, path: [], ancestors: new Set() }];
+  const pending: Array<{ value: unknown; parent: object | null; path: PropertyKey[]; ancestors: Set<object> }> = [{ value: raw, parent: null, path: [], ancestors: new Set() }];
   while (pending.length) {
-    const { value, path, ancestors } = pending.pop()!;
+    const { value, parent, path, ancestors } = pending.pop()!;
     if (!value || typeof value !== "object") continue;
     if (ancestors.has(value)) throw Error("NPC 存档格式不能包含循环对象");
     const ancestorsNext = new Set(ancestors); ancestorsNext.add(value);
@@ -233,11 +233,24 @@ export function rejectNpcAttackFields(raw: unknown, legacy: boolean, envelope = 
       const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
       if (!("value" in descriptor)) throw Error("NPC 存档格式不接受访问器字段");
       const child: unknown = descriptor.value;
-      if (key === "npcAttack" && (legacy || !inState || statePath.length !== 2 || statePath[0] !== "fleets" || !/^\d+$/.test(String(statePath[1])))) return fail();
+      if (key === "npcAttack" && (legacy || !inState || statePath.length !== 2 || statePath[0] !== "fleets"
+        || !isOwnFleetArrayEntry(parent, statePath[1], value))) return fail();
       if (key === "npcBattles" && (legacy || !inState || statePath.length !== 0)) return fail();
+      if (key === "npcResourceRemainder" && (legacy || !descriptor.enumerable || !inState
+        || statePath.length !== 2 || statePath[0] !== "planets"
+        || !isOwnFleetArrayEntry(parent, statePath[1], value))) return fail();
       if ((key === "model" && (child === NPC_WALLET_MODEL || child === NPC_BATTLE_MODEL)) && legacy) return fail();
       if (legacy && key === "mission" && child === "attack") return fail();
-      if (child && typeof child === "object") pending.push({ value: child, path: [...path, key], ancestors: ancestorsNext });
+      if (child && typeof child === "object") pending.push({ value: child, parent: value, path: [...path, key], ancestors: ancestorsNext });
     }
   }
+}
+
+/** Named array properties must not disguise attack authority that map/JSON would discard. */
+function isOwnFleetArrayEntry(parent: object | null, key: PropertyKey, value: object): boolean {
+  if (!Array.isArray(parent) || Object.getPrototypeOf(parent) !== Array.prototype || typeof key !== "string") return false;
+  const index = Number(key);
+  if (!Number.isInteger(index) || index < 0 || index >= parent.length || String(index) !== key) return false;
+  const field = Object.getOwnPropertyDescriptor(parent, key);
+  return !!field && "value" in field && field.enumerable === true && field.value === value;
 }

@@ -7,6 +7,7 @@ import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
 import type { DemolitionJob } from "./demolition-state";
 import type { PaidJobIdentity } from "./order-state";
+import { createNpcResourceRemainder, type NpcResourceRemainder } from "./npc-remainder";
 
 export type OrderSource = "manual" | "protocol" | "plan";
 
@@ -29,6 +30,8 @@ export interface PlanetState {
   id: string;
   coordinates: Coordinates;
   resources: ResourceAmounts;
+  /** Exact, non-spendable subunit rights carried only by later NPC settlement. */
+  npcResourceRemainder: NpcResourceRemainder;
   name: string;
   /** Max temperature in °C. Drives deuterium output. */
   tempMax: number;
@@ -70,6 +73,7 @@ export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {gala
     id,
     coordinates: { ...coordinates },
     resources: { metal: big(0), crystal: big(0), deuterium: big(0) },
+    npcResourceRemainder: createNpcResourceRemainder(),
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
     fieldsMax,
@@ -95,6 +99,7 @@ export function clonePlanet(planet: PlanetState): PlanetState {
     ...planet,
     coordinates: { ...planet.coordinates },
     resources: { ...planet.resources },
+    npcResourceRemainder: { ...planet.npcResourceRemainder },
     terraformerFields: { ...planet.terraformerFields },
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },

@@ -38,8 +38,12 @@ describe("r11 new markers cannot be silently discarded at unknown locations", ()
   });
   it("checks direct state-reader callers and does not let an aliased planet hide a marker", () => {
     const file = fresh(); file.state.shadow = file.state.planets[0];
-    expect(() => deserializeState(file.state)).toThrow(/拆除/);
-    expect(() => importSave(JSON.stringify(file))).toThrow(/拆除/);
+    // The aliased whole planet now also carries the new NPC authority. Prove
+    // the original demolition boundary separately, then the earlier NPC guard.
+    expect(() => rejectMisplacedDemolitionFields(file.state)).toThrow(/拆除/);
+    expect(() => rejectMisplacedDemolitionFields(file, true)).toThrow(/拆除/);
+    expect(() => deserializeState(file.state)).toThrow("NPC 攻击状态或战报无效");
+    expect(() => importSave(JSON.stringify(file))).toThrow("NPC 攻击状态或战报无效");
   });
   it("does not treat a lookalike nested state/planets path as the authoritative slot", () => {
     const file = fresh(); file.shadow = { state: { planets: [{ demolition: null }] } };

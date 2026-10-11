@@ -1,4 +1,5 @@
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { stripVerifiedNpcRemainders } from "./helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import historical from "./fixtures/demolition-r10.json";
 import actualR11 from "./fixtures/npc-economy-r11.json";
@@ -61,7 +62,9 @@ describe("demolition historical boundary remains r10 forever", () => {
     expect(original.state.terraformerGrantJobFloor).toBe(89);
     expect(original.state.orders.nextJobId).toBe(204);
     const migrated = importSave(source.raw);
-    expect(migrated).toEqual({ ...original, revision: 13,
+    const verified = structuredClone(migrated);
+    stripVerifiedNpcRemainders(verified.state);
+    expect(verified).toEqual({ ...original, revision: 13,
       state: { ...original.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles() } });
     vi.resetModules();
     vi.doMock("../src/game/content", async () => ({

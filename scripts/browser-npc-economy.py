@@ -4,6 +4,7 @@ confirmation, trusted input, rendering and reload remain actual browser behavior
 Separate fault branches explicitly wrap native storage and never claim natural
 quota exhaustion or unchanged disk after uncertain readback. No local run allowed.
 """
+from r13_compatibility import expected_npc_economy
 from contextlib import contextmanager
 import argparse
 import copy
@@ -643,7 +644,7 @@ def flush():
         'case': case, 'url': args.url, 'sourceSha': source_sha, 'fixture': fixtures['description'],
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR10SaveSha256': fixtures['origin']['originalSaveSha256'], 'actualCa5R11Sha256': fixtures['origin']['r11Sha256'],
-        'classification': 'One real r11→r12 age0 native file import, real paid research202/probe203/scouts4/5, actual arrival snapshots and reload. Separate exact-source identity-report/curvature/newgame/offline/protection branches.',
+        'classification': 'One real r11→r13 age0 native file import, real paid research202/probe203/scouts4/5, actual arrival snapshots and reload. Separate exact-source identity-report/curvature/newgame/offline/protection branches.',
         'responsiveScope': '320/390/768/1440 actual frozen report glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only.',
         'timing': timing_report(), 'oracle': 'Every serialized main-loop field equals actual domain milestones; separately frozen research/probe/fuel costs, IDs, arrival ages and stock formulas.',
         'nativeBoundary': 'Browser storage/file/dialog/HTTP are native. Date/performance/RAF timestamps are controlled. Fault-only Storage wrappers are explicit. This runner is not a genuine unmodified-clock background-throttling test.',
@@ -760,15 +761,15 @@ def check_no_early_report(page, state, fleet_id):
 
 
 def independent_report(age):
-    return (f'侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 {25810 + age:.3f} 秒；经济年龄 {age:.3f} 秒。'
+    return (f'侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 {25810 + age:.3f} 秒。'
             f'金属 {500 + age * 5:.3f}/50000.000，固定产量 5.000/秒，生产中；晶体 {250 + age * 2.5:.3f}/30000.000，固定产量 2.500/秒，生产中；'
-            f'重氢 {age:.3f}/10000.000，固定产量 1.000/秒，生产中。历史快照不会随时间更新。')
+            f'重氢 {age:.3f}/10000.000，固定产量 1.000/秒，生产中。轨道驻军：轻型战斗机 4，重型战斗机 0；驻军战斗科技 0。历史快照不会随时间更新。')
 
 
 def arrived_report(page, state, fleet_id, age):
     messages = [m for m in state['messages'] if m['id'] == f'scout-{fleet_id}']
     check('one real arrived immutable snapshot: fleet' + str(fleet_id), len(messages) == 1 and messages[0]['at'] == 25810 + age
-          and messages[0]['text'] == independent_report(age) and state['npcEconomy'] == {'model': 'fixed-production-v1', 'elapsedSeconds': age}, messages)
+          and messages[0]['text'] == independent_report(age) and state['npcEconomy'] == expected_npc_economy([age]), messages)
     tab(page, 'messages')
     check('actual arrival UI shows complete independent report text', page.locator('#space-messages .space-message p').all_text_contents().count(independent_report(age)) == 1)
     return messages[0]
@@ -824,7 +825,7 @@ def offline_once(context, page):
     adopted = save(page)
     whole_state('true-cold-start-offline-7200', adopted, branch['expected']['state'])
     check('true cold start records capped new watermark and NPC adopted age', json.loads(raw(page))['lastTickAt'] == branch['now']
-          and adopted['npcEconomy'] == {'model': 'fixed-production-v1', 'elapsedSeconds': 7266})
+          and adopted['npcEconomy'] == expected_npc_economy([7266]))
     adopted_raw = raw(page)
     capture = page_sources[page]; capture['cdp'].send('Debugger.enable'); capture['responses'].clear(); capture['executed'].clear()
     response = page.reload(wait_until='networkidle'); verify_bundle(page); verify_document_response(response)
@@ -876,18 +877,18 @@ try:
           hashlib.sha256(fixtures['origin']['originalSaveRaw'].encode()).hexdigest() == 'd456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a'
           and hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == fixtures['origin']['r11Sha256']
           and source_report['source']['historicalProducer']['sourceSha'] == 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
-          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 12)
+          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 13)
     for key, row in fixtures['naturalMilestones'].items():
         matches = [m for m in source_report['milestones'] if m['name'] == key]
         check('entire genuine milestone unchanged: ' + key, len(matches) == 1 and exact_json(matches[0], row) and row['strictRoundtrips'] == 2 and row['stateAdoptedFromReload'])
     (out / 'source-npc-natural-report.json').write_bytes(source_bytes)
     with sync_playwright() as playwright, capture_live_failure():
         browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox'])
-        begin_case('one actual ca5 r11 native file import → r12 age0 → paid research/probe/two-scout loop')
+        begin_case('one actual ca5 r11 native file import → r13 age0 → paid research/probe/two-scout loop')
         context, page = boot(fixtures['originalSave']['savedAt'])
         import_save(page, fixtures['originalSave'], 'actual-ca5-produced-r11', original_raw=fixtures['originalSaveRaw'], expected=fixtures['importedSave'])
         baseline = save(page, 'origin-migrated-r11-age-zero')
-        check('r11 historical25810 seconds create age0, no retroactive NPC stock', baseline['totalTime'] == '25810' and baseline['npcEconomy'] == {'model': 'fixed-production-v1', 'elapsedSeconds': 0})
+        check('r11 historical25810 seconds create age0, no retroactive NPC stock', baseline['totalTime'] == '25810' and baseline['npcEconomy'] == expected_npc_economy())
         select(page, '#planet-select', HOME); selected = save(page, 'selected-home')
         tab(page, 'shipyard'); expect(page.locator('[data-bind="ubuild-espionage_probe"]')).to_be_disabled()
         check('probe is genuinely locked before paid combustion3', '燃烧引擎' in page.locator('[data-bind="ureason-espionage_probe"]').inner_text())
@@ -923,11 +924,11 @@ try:
         begin_case('real native close/reopen from final natural save, controlled100000-second gap, one7200 adoption')
         page = offline_once(context, page); context.close()
 
-        begin_case('genuine ca5 identity-only historical reports remain exactly unchanged after r12 migration')
+        begin_case('genuine ca5 identity-only historical reports remain exactly unchanged after r13 migration')
         branch = fixtures['branches']['legacyIdentity']; context, page = boot(branch['save']['savedAt'])
         import_save(page, branch['save'], 'genuine-ca5-identity-only-branch', original_raw=branch['raw'], expected=branch['migratedSave'])
         legacy_state = save(page)
-        check('actual old identity reports retain exact text/time without fabricated new fields', legacy_state['messages'] == branch['save']['state']['messages'] and legacy_state['npcEconomy']['elapsedSeconds'] == 0)
+        check('actual old identity reports retain exact text/time without fabricated new fields', legacy_state['messages'] == branch['save']['state']['messages'] and legacy_state['npcEconomy'] == expected_npc_economy())
         tab(page, 'messages'); text = page.locator('#space-messages').inner_text()
         check('actual old report UI remains identity-only', '战斗与精确情报尚未开放' in text and '抵达时快照' not in text)
         record(page, 'native-historical-identity-reports-preserved'); context.close()
@@ -945,7 +946,7 @@ try:
         import_save(page, branch['base'], 'natural-final-for-real-new-game')
         tab(page, 'save'); confirm_action(page, '[data-action="reset"]', '备份当前原始存档并重新开始？新存档写入成功后才会替换当前进度。')
         fresh = save(page)
-        check('new game has age0, one new planet, no old reports/ships/jobs/time', fresh['npcEconomy'] == {'model': 'fixed-production-v1', 'elapsedSeconds': 0} and fresh['messages'] == [] and fresh['totalTime'] == '0' and len(fresh['planets']) == 1 and not fresh['fleets'] and fresh['nextFleetId'] == 1)
+        check('new game has age0, one new planet, no old reports/ships/jobs/time', fresh['npcEconomy'] == expected_npc_economy() and fresh['messages'] == [] and fresh['totalTime'] == '0' and len(fresh['planets']) == 1 and not fresh['fleets'] and fresh['nextFleetId'] == 1)
         record(page, 'native-newgame-age-zero'); context.close()
 
         for fault in ({'target': 'backup', 'operation': 'write', 'mode': 'throw'},
@@ -972,7 +973,7 @@ try:
 
         begin_case('suite integrity')
         check('no app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('served exact release is v9/r12', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 12)
+        check('served exact release is v9/r13', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 13)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

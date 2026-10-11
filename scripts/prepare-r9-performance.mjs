@@ -8,8 +8,8 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import * as current from '../src/game/save.ts';
-import { prepareRenderClock } from './prepare-r12-render-clock.mjs';
-import {assertR8StatePreserved, liftR8StateToR12, assertHistoricalSource } from './r12-compatibility.mjs';
+import { prepareRenderClock } from './prepare-r13-render-clock.mjs';
+import { expectedNpcEconomy,assertR8StatePreserved, liftR8StateToR13, assertHistoricalSource } from './r13-compatibility.mjs';
 const args=process.argv.slice(2);
 const option=name=>{const index=args.indexOf(name);assert.ok(index>=0&&args[index+1],`Provide ${name}`);return args[index+1];};
 const root=resolve(option('--r8-source')),path=resolve(option('--fixture'));
@@ -32,17 +32,17 @@ assert.deepEqual(old.serializeState(oldState),ready.state,'archived reader prese
 const raw=old.exportSave(oldState,ready.savedAt,ready.lastTickAt);
 assert.deepEqual(JSON.parse(raw),ready,'actual archived native export preserves the whole envelope');
 const migrated=current.importSave(raw);
-assert.equal(migrated.revision,12);
+assert.equal(migrated.revision,13);
 const migrationFloor=ready.state.orders.nextJobId;
-assertR8StatePreserved(migrated.state,ready.state,'real fixture migration',migrationFloor,0);
+assertR8StatePreserved(migrated.state,ready.state,'real fixture migration',migrationFloor, expectedNpcEconomy());
 const afterSave=current.exportSave(current.deserializeState(migrated.state),ready.savedAt,ready.lastTickAt);
-assert.equal(afterSave,JSON.stringify({...ready,revision:12,state:liftR8StateToR12(ready.state,migrationFloor,0)},null,2),'native r12 export differs only by revision, exact empty library and independently checked grant ledger');
+assert.equal(afterSave,JSON.stringify({...ready,revision:13,state:liftR8StateToR13(ready.state,migrationFloor, expectedNpcEconomy())},null,2),'native r13 export differs only by revision, exact empty library and independently checked grant ledger');
 assert.deepEqual(current.importSave(afterSave),migrated,'current native input is strict-reader stable');
 const npcAdoptedTime = fixture.traces && fixture.expected ? await prepareRenderClock(root,fixture) : undefined;
 process.stdout.write(JSON.stringify({...fixture,...(npcAdoptedTime ? {npcAdoptedTime} : {}),pairedNative:{
-  sourceSha,sourceRevision:8,currentRevision:12,
+  sourceSha,sourceRevision:8,currentRevision:13,
   generatedBy:'actual archived r8 strict reader/exportSave, then actual current importSave/exportSave',
   sourceFixtureSha256:sha(sourceRaw),beforeSave:raw,beforeSha256:sha(raw),afterSha256:sha(afterSave),commonR8StateSha256:sha(JSON.stringify(ready.state)),afterSave,
-  stateRule:'Every source-r8 value, scalar type and array position is preserved. The current input adds only empty buildingTemplates, the fixed migration floor, zero-grant planet ledgers, explicit null demolition slots and explicit zero-age fixed-production-v1 NPC metadata and envelope revision 12.',
+  stateRule:'Every source-r8 value, scalar type and array position is preserved. The current input adds only empty buildingTemplates, the fixed migration floor, zero-grant planet ledgers, explicit null demolition slots and explicit zero-age wallet/empty-receipt metadata and envelope revision 13.',
   capacityScope:'Fresh isolated current-version origins, two native copies for replacement. Does not establish capacity for a previously migrated origin with an additional historical backup.',
 }},null,2)+'\n');

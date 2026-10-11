@@ -6,7 +6,8 @@ gate a real File.text() result. These are not claims of naturally occurring quot
 exhaustion or timing races. Run after generating save-session-review-save.json.
 """
 import argparse
-from r12_compatibility import CURRENT_REVISION, npc_elapsed_from_segments, lift_r11_state_to_r12, lift_r10_state_to_r12, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r12, project_verified_r12_metadata
+from r12_compatibility import npc_elapsed_from_segments
+from r13_compatibility import expected_npc_economy, advance_expected_npc_wallet, expected_npc_from_r12_snapshot, CURRENT_REVISION, lift_r11_state_to_r13, lift_r10_state_to_r13, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r13, project_verified_r13_metadata
 import copy
 import hashlib
 import json
@@ -30,12 +31,13 @@ parser.add_argument("--output", default="save-session-evidence")
 parser.add_argument("--chromium", default=None)
 parser.add_argument("--expected-sha", required=True, help="Exact tested release commit for native HTTP/V8 trace identity")
 parser.add_argument("--r10-source", required=True, help="Exact clean ac3 r10 source for independent native startup catch-up expectations")
+parser.add_argument("--r12-source", required=True, help="Exact clean eef r12 source for independent snapshot migration and adopted-segment expectations")
 parser.add_argument("--r11-source", required=True, help="Exact clean ca5 r11 source for independent adopted-segment startup expectations")
 args = parser.parse_args()
 fixtures = json.loads(Path(args.fixture).read_text())
 KEY, BACKUP = fixtures["key"], fixtures["backupKey"]
 SAVE_REVISION = fixtures["saveRevision"]
-assert SAVE_REVISION == CURRENT_REVISION, "Current browser contract requires native r12"
+assert SAVE_REVISION == CURRENT_REVISION, "Current browser contract requires native r13"
 LEGACY = "infinity.save.v1"
 LEGACY_RAW = "SYNTHETIC LEGACY BYTES: must remain untouched"
 out = Path(args.output)
@@ -161,7 +163,7 @@ def capture_startup_migration(page, original, revision):
                                "firstSavedAt": committed["savedAt"], "firstLastTickAt": committed["lastTickAt"],
                                "constructorGapMilliseconds": committed["savedAt"] - source["lastTickAt"]}
         if revision == 10:
-            diagnostic["fullStateDifferencesFromZeroAgeNullSlotLift"] = migration_differences(lift_r10_state_to_r12(source["state"]), committed["state"])
+            diagnostic["fullStateDifferencesFromZeroAgeNullSlotLift"] = migration_differences(lift_r10_state_to_r13(source["state"]), committed["state"])
     (out / f"{prefix}-diagnostic.json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -392,7 +394,7 @@ def verify_r9_trace_navigation(capture, response):
 def verify_r9_replay_result(original, request, result):
     """Validate independent result identity and every saved full-envelope target."""
     check('native replay result is from the exact independent ca5 source and original r9 bytes',
-          result.get('schema') == 'infinity-fixed-r11-native-replay-oracle-v1'
+          result.get('schema') == 'infinity-fixed-r11-native-r13-replay-oracle-v1'
           and result.get('sourceSha') == 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
           and result.get('inputRawSha256') == hashlib.sha256(original.encode('utf-8')).hexdigest()
           and result.get('sourceRevision') == 9
@@ -414,31 +416,31 @@ def verify_r9_replay_result(original, request, result):
               and saved['rawSha256'] == hashlib.sha256(raw_value.encode('utf-8')).hexdigest()
               and exact_json(json.loads(raw_value),saved['expectedEnvelope'])
               and exact_json(saved['expectedEnvelope']['state']['npcEconomy'],
-                  {'model':'fixed-production-v1','elapsedSeconds':saved['npcElapsedSeconds']}))
+                  saved['npcWallet']))
     adoption_inputs = []
     for epoch_index, epoch in enumerate(epochs):
         adoption_inputs.append((epoch_index,-1,'catchUp',(epoch['constructorNow']-json.loads(epoch['sourceRaw'])['lastTickAt'])/1000))
         adoption_inputs.extend((epoch_index,index,'catchUp' if event['gapSeconds']>=5 else 'tick',event['gapSeconds'])
                                for index,event in enumerate(epoch['events']) if event['kind']=='frame' and event['gapSeconds']>0)
     check('every actual startup and positive native frame has exactly one old-engine adoption',len(adoption_inputs)==len(result['adoptions']))
-    age, previous_epoch = 0, 0
+    age, previous_epoch = expected_npc_economy(), 0
     for expected_adoption, adoption in zip(adoption_inputs,result['adoptions']):
         epoch_index,event_index,kind,gap = expected_adoption
         check('old-engine adoption preserves every actual native call boundary and exact input',
               (adoption['epochIndex'],adoption['eventIndex'],adoption['kind'],adoption['gapSeconds']) == expected_adoption)
         if epoch_index != previous_epoch:
-            age = next(saved['npcElapsedSeconds'] for saved in reversed(result['saves']) if saved['epochIndex']==previous_epoch)
+            age = next(saved['npcWallet'] for saved in reversed(result['saves']) if saved['epochIndex']==previous_epoch)
             previous_epoch = epoch_index
         check('each old-engine adoption retains full observed/unobserved state equivalence and the preceding exact age',
-              adoption['oldObservedAndUnobservedStateEqual'] is True and adoption['ageBefore'] == age)
-        age = npc_elapsed_from_segments([age,*adoption['adoptedSegmentsSeconds']])
-        check('ordered actual adopted steps alone determine cumulative NPC age', adoption['npcElapsedSeconds'] == age)
-    check('final cumulative NPC age is never reset at current-revision reload', result['npcElapsedSeconds'] == age
-          and result['epochs'][-1]['npcElapsedSeconds'] == age)
+              adoption['oldObservedAndUnobservedStateEqual'] is True and adoption['walletBefore'] == age)
+        age = advance_expected_npc_wallet(age,adoption['adoptedSegmentsSeconds'])
+        check('ordered actual adopted steps alone determine cumulative NPC age', adoption['npcWallet'] == age)
+    check('final cumulative NPC age is never reset at current-revision reload', result['npcWallet'] == age
+          and result['epochs'][-1]['npcWallet'] == age)
     check('C is the exact normal manual save checkpoint, never a later autosave', checkpoints[-1][2] == 'manual'
-          and result['saves'][-1]['npcElapsedSeconds'] == age
+          and result['saves'][-1]['npcWallet'] == age
           and exact_json(result['saves'][-1]['expectedEnvelope']['state'],
-                         lift_r11_state_to_r12(result['state'],npc_elapsed=age)))
+                         lift_r11_state_to_r13(result['state'],npc_wallet=age)))
     return result
 
 
@@ -561,7 +563,7 @@ def complete_r9_native_replay(page, capture, original, migrated, label, manual_a
     (out / f'r9-{label}-native-replay-input.json').write_text(json.dumps(request,ensure_ascii=False,indent=2),encoding='utf-8')
     (out / f'r9-{label}-constructor-B-current.json').write_bytes(epochs[1]['sourceRaw'].encode('utf-8'))
     (out / f'r9-{label}-manual-C-current.json').write_bytes(current_c.encode('utf-8'))
-    command = ['node','--import','tsx',str(Path(__file__).with_name('r12-native-replay-oracle.mjs')),args.r11_source]
+    command = ['node','--import','tsx',str(Path(__file__).with_name('r13-native-replay-oracle.mjs')),args.r11_source]
     process = subprocess.run(command,input=json.dumps(request),text=True,capture_output=True,timeout=30,check=False,cwd=Path(__file__).resolve().parent.parent)
     (out / f'r9-{label}-native-replay-stdout.json').write_text(process.stdout,encoding='utf-8')
     (out / f'r9-{label}-native-replay-stderr.txt').write_text(process.stderr,encoding='utf-8')
@@ -638,7 +640,7 @@ def expected_r10_startup(original, candidate, observed):
           observed['adoptedTimeObservation'] == 'old-totalTime-add; full unobserved old-state equivalence verified'
           and type(observed['npcElapsedSeconds']) in (int, float) and observed['npcElapsedSeconds'] == npc_elapsed)
     return {**source, "revision": CURRENT_REVISION, "savedAt": now, "lastTickAt": now,
-            "state": lift_r10_state_to_r12(observed["state"], npc_elapsed=npc_elapsed)}
+            "state": lift_r10_state_to_r13(observed["state"], npc_wallet=expected_npc_economy(observed['adoptedSegmentsSeconds']))}
 
 
 def run_r10_startup_oracle(original, candidate):
@@ -698,7 +700,7 @@ def expected_r11_startup(original, candidate, observed):
     check('ca5 adopted segment sequence folds to the exact declared age without nominal-time replacement',
           type(observed['npcElapsedSeconds']) in (int,float) and observed['npcElapsedSeconds'] == age)
     return {**source, 'revision':CURRENT_REVISION, 'savedAt':now, 'lastTickAt':now,
-            'state':lift_r11_state_to_r12(observed['state'],npc_elapsed=age)}
+            'state':lift_r11_state_to_r13(observed['state'],npc_wallet=expected_npc_economy(observed['adoptedSegmentsSeconds']))}
 
 
 def run_r11_startup_oracle(original, candidate):
@@ -714,6 +716,73 @@ def run_r11_startup_oracle(original, candidate):
     (out / (stem+'-oracle.stderr.log')).write_text(result.stderr,encoding='utf-8')
     check('actual pinned ca5 reader and observed/unobserved catch-up subprocess completes',result.returncode == 0)
     expected = expected_r11_startup(original,candidate,json.loads(result.stdout))
+    (out / (stem+'-expected.json')).write_text(json.dumps(expected,ensure_ascii=False,indent=2),encoding='utf-8')
+    (out / (stem+'-diff.json')).write_text(json.dumps(migration_differences(expected,candidate,'$save'),ensure_ascii=False,indent=2),encoding='utf-8')
+    return expected
+
+
+
+def expected_r12_startup(original, candidate, observed):
+    """Full fixed-eef predecessor expectation; only its observed steps set NPC age."""
+    source = json.loads(original)
+    now = candidate['savedAt']
+    check('legacy startup source is a genuine supported old envelope with paired original clocks',
+          type(source['revision']) is int and source['revision'] == 12
+          and source['schema'] == 'infinity-original-p4' and source['version'] == 9
+          and type(source['savedAt']) is int and source['savedAt'] >= 0
+          and type(source['lastTickAt']) is int and source['lastTickAt'] == source['savedAt'])
+    check('eef startup comparison uses a strict current envelope and one observed constructor clock',
+          candidate['schema'] == source['schema'] and candidate['version'] == 9
+          and candidate['revision'] == CURRENT_REVISION and type(now) is int and now >= 0
+          and candidate['lastTickAt'] == now)
+    # Match JS JSON numeric spelling without relaxing any scalar type or value.
+    number = lambda value: int(value) if value == int(value) else value
+    cap = number(min(28800, max(7200, 7200 + max(0, source['state']['offlineBonusHours']) * 3600)))
+    raw_seconds = number(max(0, (now - source['lastTickAt']) / 1000))
+    metadata = {
+        'schema': 'infinity-fixed-r12-startup-oracle-v1',
+        'sourceSha': 'eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81',
+        'dependencyIdentity': {
+            'breakInfinity': {'version':'2.2.0','commonSha256':'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06','esmSha256':'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},
+            'padEnd': {'version':'1.0.2','entrySha256':'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'}},
+        'sourceRevision': source['revision'],
+        'sourceNpc': source['state']['npcEconomy'],
+        'sourceEnvelope': {key:value for key,value in source.items() if key != 'state'},
+        'inputRawSha256': hashlib.sha256(original.encode('utf-8')).hexdigest(),
+        'sourceSavedAt': source['savedAt'], 'sourceLastTickAt': source['lastTickAt'],
+        'constructorNow': now, 'gapMilliseconds': now - source['lastTickAt'],
+        'rawSeconds': raw_seconds, 'capSeconds': cap, 'appliedSeconds': min(raw_seconds,cap),
+        'capped': raw_seconds > cap,
+        'oldObservedAndUnobservedStateEqual': True,
+        'adoptedTimeObservation': 'old-totalTime-add; full unobserved old-state equivalence verified',
+    }
+    check('complete eef oracle identity, source envelope, timing and observation metadata match exactly',
+          set(observed) == set(metadata) | {'state','adoptedSegmentsSeconds','npcElapsedSeconds'}
+          and all(exact_json(observed.get(key),value) for key,value in metadata.items()))
+    age = npc_elapsed_from_segments(observed['adoptedSegmentsSeconds'])
+    check('eef adopted segment sequence folds to the exact declared age without nominal-time replacement',
+          type(observed['npcElapsedSeconds']) in (int,float) and observed['npcElapsedSeconds'] == age)
+    old_state = copy.deepcopy(observed['state'])
+    old_npc = old_state.pop('npcEconomy')
+    check('r12 actual old NPC output exactly preserves its own bounded age rule', old_npc == {'model':'fixed-production-v1','elapsedSeconds':npc_elapsed_from_segments([source['state']['npcEconomy']['elapsedSeconds'], *observed['adoptedSegmentsSeconds']])})
+    wallet = advance_expected_npc_wallet(expected_npc_from_r12_snapshot(source['state']['npcEconomy']), observed['adoptedSegmentsSeconds'])
+    return {**source, 'revision':CURRENT_REVISION, 'savedAt':now, 'lastTickAt':now,
+            'state':lift_r11_state_to_r13(old_state,npc_wallet=wallet)}
+
+
+def run_r12_startup_oracle(original, candidate):
+    # No candidate state, age, balances, IDs or timers enter this old-engine request.
+    request = {'originalRaw': original, 'constructorNow': candidate['savedAt']}
+    command = ['node','--import','tsx',str(Path(__file__).with_name('r13-r12-startup-oracle.mjs')),args.r12_source]
+    result = subprocess.run(command,input=json.dumps(request),text=True,capture_output=True,
+                            timeout=20,check=False,cwd=Path(__file__).resolve().parent.parent)
+    source = json.loads(original)
+    stem = f"r{source['revision']}-eef-startup-{hashlib.sha256(original.encode('utf-8')).hexdigest()[:16]}"
+    (out / (stem+'-original.json')).write_text(original,encoding='utf-8')
+    (out / (stem+'-oracle.stdout.json')).write_text(result.stdout,encoding='utf-8')
+    (out / (stem+'-oracle.stderr.log')).write_text(result.stderr,encoding='utf-8')
+    check('actual pinned eef reader and observed/unobserved catch-up subprocess completes',result.returncode == 0)
+    expected = expected_r12_startup(original,candidate,json.loads(result.stdout))
     (out / (stem+'-expected.json')).write_text(json.dumps(expected,ensure_ascii=False,indent=2),encoding='utf-8')
     (out / (stem+'-diff.json')).write_text(json.dumps(migration_differences(expected,candidate,'$save'),ensure_ascii=False,indent=2),encoding='utf-8')
     return expected
@@ -955,7 +1024,7 @@ try:
         invalid["state"]["buildingTemplates"] = {"nextTemplateId": 1, "templates": []}
         for task in invalid["state"]["orders"]["tasks"]:
             task["transport"], task["currentWork"], task["formationOrigin"] = None, None, None
-        invalid["state"] = lift_legacy_state_to_r12(invalid["state"], source_revision=9, grant_job_floor=invalid["state"]["orders"]["nextJobId"])
+        invalid["state"] = lift_legacy_state_to_r13(invalid["state"], source_revision=9, grant_job_floor=invalid["state"]["orders"]["nextJobId"])
         invalids["synthetic r6 missing mandatory fleet owner tag"] = json.dumps(invalid, ensure_ascii=False)
         invalid = json.loads(raw_fixture("imported"))
         del invalid["state"]["researchTemplates"]
@@ -999,19 +1068,54 @@ try:
             else:
                 invalid["state"]["planets"][0]["demolition"] = value
             invalids["r11 invalid demolition slot: " + label] = json.dumps(invalid, ensure_ascii=False)
+        wallet = expected_npc_economy()
         for label, value in (
-            ('missing', None), ('wrong model', {'model':'other','elapsedSeconds':0}),
-            ('wrong type', {'model':'fixed-production-v1','elapsedSeconds':'0'}),
-            ('negative', {'model':'fixed-production-v1','elapsedSeconds':-1}),
-            ('over bound', {'model':'fixed-production-v1','elapsedSeconds':11901}),
-            ('extra field', {'model':'fixed-production-v1','elapsedSeconds':0,'extra':False}),
+            ('missing', None), ('old model', {'model':'fixed-production-v1','elapsedSeconds':0}),
+            ('wrong model', {**wallet,'model':'other'}), ('wrong type', {**wallet,'now':'0'}),
+            ('negative', {**wallet,'now':-1}), ('horizon', {**wallet,'now':12000}),
+            ('extra field', {**wallet,'extra':False}), ('baseline missing', {**wallet,'baseline':{}}),
+            ('site invalid', {**wallet,'sites':{'1:1:1':{}}}),
         ):
             invalid = json.loads(raw_fixture('imported'))
-            if label == 'missing':
-                del invalid['state']['npcEconomy']
-            else:
-                invalid['state']['npcEconomy'] = value
-            invalids['r12 invalid NPC metadata: ' + label] = json.dumps(invalid, ensure_ascii=False)
+            if label == 'missing': del invalid['state']['npcEconomy']
+            else: invalid['state']['npcEconomy'] = value
+            invalids['r13 invalid NPC wallet: ' + label] = json.dumps(invalid, ensure_ascii=False)
+        for label, value in (('missing', None), ('wrong model', {'model':'wrong','reports':[]}),
+                             ('invalid receipt', {'model':'npc-battle-receipts-v1','reports':[{}]})):
+            invalid = json.loads(raw_fixture('imported'))
+            if label == 'missing': del invalid['state']['npcBattles']
+            else: invalid['state']['npcBattles'] = value
+            invalids['r13 invalid NPC battle state: ' + label] = json.dumps(invalid, ensure_ascii=False)
+        zero_rights = {'metal':'0','crystal':'0','deuterium':'0'}
+        for label, value in (
+            ('missing', None), ('null', None), ('array', []), ('missing resource', {'metal':'0','crystal':'0'}),
+            ('extra key', {**zero_rights,'extra':'0'}), ('number', {**zero_rights,'metal':0}),
+            ('negative zero', {**zero_rights,'metal':'-0'}), ('alias zero', {**zero_rights,'metal':'0.0'}),
+            ('trailing zero', {**zero_rights,'metal':'0.10'}), ('exponent', {**zero_rights,'metal':'1e-3'}),
+            ('negative', {**zero_rights,'metal':'-0.1'}), ('one', {**zero_rights,'metal':'1'}),
+            ('overlength', {**zero_rights,'metal':'0.'+'0'*256+'1'}),
+        ):
+            invalid=json.loads(raw_fixture('imported'))
+            if label=='missing': del invalid['state']['planets'][0]['npcResourceRemainder']
+            else: invalid['state']['planets'][0]['npcResourceRemainder']=value
+            invalids['r13 invalid exact NPC remainder: '+label]=json.dumps(invalid,ensure_ascii=False)
+        for location in ('state','resources'):
+            invalid=json.loads(raw_fixture('imported'))
+            owner=invalid['state'] if location=='state' else invalid['state']['planets'][0]['resources']
+            owner['npcResourceRemainder']=zero_rights
+            invalids['r13 misplaced NPC remainder: '+location]=json.dumps(invalid,ensure_ascii=False)
+        for revision in range(2,13):
+            invalid=copy.deepcopy(fixtures['legacy'][str(revision)])
+            invalid['state']['npcResourceRemainder']=zero_rights
+            invalids[f'actual r{revision} smuggles zero r13 resource rights']=json.dumps(invalid,ensure_ascii=False)
+            if 'planets' in invalid['state']:
+                invalid=copy.deepcopy(fixtures['legacy'][str(revision)])
+                invalid['state']['planets'][0]['npcResourceRemainder']=zero_rights
+                invalids[f'actual r{revision} smuggles planet r13 resource rights']=json.dumps(invalid,ensure_ascii=False)
+            for key, value in (('npcBattles',None), ('npcAttack',None)):
+                invalid = copy.deepcopy(fixtures['legacy'][str(revision)])
+                invalid['state'][key] = value
+                invalids[f'actual r{revision} smuggles r13 exclusive {key}'] = json.dumps(invalid,ensure_ascii=False)
         for revision in range(2, 12):
             invalid = copy.deepcopy(fixtures['legacy'][str(revision)])
             invalid['state']['npcEconomy'] = None
@@ -1072,7 +1176,7 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
+        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
@@ -1089,10 +1193,13 @@ try:
                 floor = 1
             if revision == 10:
                 check("actual r10 startup preserves exact fixed-reader catch-up semantics plus null demolition and independently adopted NPC time", exact_json(migrated_file, run_r10_startup_oracle(legacy_raw, migrated_file)))
+            elif revision == 12:
+                independent = run_r12_startup_oracle(legacy_raw,migrated_file)
+                check('actual r12 snapshot migration plus old witnessed catch-up preserves complete state',exact_json(migrated_file,independent))
             else:
                 independent = run_r11_startup_oracle(legacy_raw,migrated_file)
                 check('actual legacy startup preserves every ca5 field plus independently witnessed NPC age',exact_json(migrated_file,independent))
-                check("migration creates exact zero ledgers with an independently fixed starting payment boundary", assert_zero_grant_metadata(migrated_file["state"], legacy_state, grant_job_floor=floor, npc_elapsed=independent['state']['npcEconomy']['elapsedSeconds']))
+                check("migration creates exact zero ledgers with an independently fixed starting payment boundary", assert_zero_grant_metadata(migrated_file["state"], legacy_state, grant_job_floor=floor, npc_wallet=independent['state']['npcEconomy']))
             check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
             check("migration never creates finite order authorization", migrated_file["state"]["orders"]["tasks"] == [])
             check("migration never invents research intent", migrated_file["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
@@ -1114,7 +1221,7 @@ try:
         (out / "r10-explicit-import-current.json").write_bytes(committed.encode("utf-8"))
         imported = json.loads(committed)
         check("explicit old-r10 import adds only null slots and exact zero-age NPC metadata without elapsed simulation",
-              exact_json(imported["state"], lift_r10_state_to_r12(json.loads(import_raw)["state"])) and
+              exact_json(imported["state"], lift_r10_state_to_r13(json.loads(import_raw)["state"])) and
               imported["revision"] == CURRENT_REVISION and imported["savedAt"] == imported["lastTickAt"])
         context.close()
         classification = "HTTP / native localStorage"
@@ -1145,7 +1252,7 @@ try:
         migrated = json.loads(verify_commit(page, paid_raw, "已升级并保存本地存档"))
         independent = run_r11_startup_oracle(paid_raw,migrated)
         check('paid r5 startup preserves every fixed-ca5 state field and exact observed NPC segments',exact_json(migrated,independent))
-        check("r5 migration independently validates fixed payment boundary and every zero grant ledger", assert_zero_grant_metadata(migrated["state"], paid_value["state"], grant_job_floor=paid_value["state"]["orders"]["nextJobId"], npc_elapsed=independent['state']['npcEconomy']['elapsedSeconds']))
+        check("r5 migration independently validates fixed payment boundary and every zero grant ledger", assert_zero_grant_metadata(migrated["state"], paid_value["state"], grant_job_floor=paid_value["state"]["orders"]["nextJobId"], npc_wallet=independent['state']['npcEconomy']))
         migrated_orders = copy.deepcopy(migrated["state"]["orders"])
         check("r5 migration adds an empty research intent library", migrated["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
         check("r5 upgrade introduces only an empty work counter", migrated_orders.pop("nextWorkId") == 1)
@@ -1185,8 +1292,8 @@ try:
             r6_raw = json.dumps(r6_value, ensure_ascii=False, indent=2)
             context, page = boot(r6_raw)
             migrated = json.loads(verify_commit(page, r6_raw, "已升级并保存本地存档"))
-            check("r6 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"], npc_elapsed=0))
-            projection = project_verified_r12_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"], npc_elapsed=0)
+            check("r6 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"], npc_wallet=expected_npc_economy()))
+            projection = project_verified_r13_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"], npc_wallet=expected_npc_economy())
             check("source has no building template field", "buildingTemplates" not in r6_value["state"])
             check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r6 migration creates exactly an empty intent library", projection.pop("researchTemplates") == {"nextTemplateId": 1, "templates": []})
@@ -1202,7 +1309,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r6 exact source backup survives native reload", raw(page, BACKUP) == r6_raw)
-            check("migrated state remains current r12 on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
+            check("migrated state remains current r13 on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
             context.close()
 
         classification = "HTTP / native Storage / actual r6 source / injected migration fault"
@@ -1252,8 +1359,8 @@ try:
             r7_raw = json.dumps(r7_value, ensure_ascii=False, indent=2)
             context, page = boot(r7_raw)
             migrated = json.loads(verify_commit(page, r7_raw, "已升级并保存本地存档"))
-            check("r7 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"], npc_elapsed=0))
-            projection = project_verified_r12_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"], npc_elapsed=0)
+            check("r7 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"], npc_wallet=expected_npc_economy()))
+            projection = project_verified_r13_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"], npc_wallet=expected_npc_economy())
             check("source has no building template field", "buildingTemplates" not in r7_value["state"])
             check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r7 migration preserves complete nonempty research intent", projection["researchTemplates"] == r7_value["state"]["researchTemplates"])
@@ -1271,7 +1378,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r7 exact source backup survives native reload", raw(page, BACKUP) == r7_raw)
-            check("r7 templates remain complete on native r12 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
+            check("r7 templates remain complete on native r13 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
             context.close()
 
         classification = "HTTP / native Storage / actual r7 source / injected migration fault"
@@ -1322,11 +1429,11 @@ try:
             r8_raw = json.dumps(r8_value, ensure_ascii=False, indent=2)
             context, page = boot(r8_raw)
             migrated = json.loads(verify_commit(page, r8_raw, "已升级并保存本地存档"))
-            check("r8 migration uses the actual r12 envelope", migrated["revision"] == SAVE_REVISION == CURRENT_REVISION)
-            check("r8 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], source, grant_job_floor=source["orders"]["nextJobId"], npc_elapsed=0))
+            check("r8 migration uses the actual r13 envelope", migrated["revision"] == SAVE_REVISION == CURRENT_REVISION)
+            check("r8 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], source, grant_job_floor=source["orders"]["nextJobId"], npc_wallet=expected_npc_economy()))
             check("all r8 values, scalar types and ordered arrays survive only prescribed metadata additions",
                   json.dumps(migrated["state"], sort_keys=True, separators=(",", ":")) ==
-                  json.dumps(lift_legacy_state_to_r12(source, source_revision=8, grant_job_floor=source["orders"]["nextJobId"]), sort_keys=True, separators=(",", ":")))
+                  json.dumps(lift_legacy_state_to_r13(source, source_revision=8, grant_job_floor=source["orders"]["nextJobId"]), sort_keys=True, separators=(",", ":")))
             check("r8 owned transport keeps its genuine flight phase", source["orders"]["tasks"][0]["transport"]["trips"][0]["phase"]["kind"] == phase)
             check("r8 paid partial formation work and research survive", source["orders"]["tasks"][-1]["completedUnits"] == 2
                   and source["planets"][1]["shipyardQueue"][0]["count"] == 1 and len(source["research"]["queue"]) == 1)
@@ -1334,7 +1441,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             reloaded = json.loads(raw(page))
-            check("r8 exact backup and all saved intentions survive native r12 reload", raw(page, BACKUP) == r8_raw
+            check("r8 exact backup and all saved intentions survive native r13 reload", raw(page, BACKUP) == r8_raw
                   and reloaded["revision"] == SAVE_REVISION
                   and reloaded["state"]["buildingTemplates"] == {"nextTemplateId": 1, "templates": []}
                   and reloaded["state"]["researchTemplates"] == source["researchTemplates"]
@@ -1364,13 +1471,13 @@ try:
             source_file["savedAt"] = source_file["lastTickAt"] = int(time.time() * 1000) + 60_000
             source_raw = json.dumps(source_file, ensure_ascii=False, indent=2)
             source = oracle["state"]; floor = source["orders"]["nextJobId"]
-            expected = lift_legacy_state_to_r12(source, source_revision=9, grant_job_floor=floor)
+            expected = lift_legacy_state_to_r13(source, source_revision=9, grant_job_floor=floor)
             startup_host_before = int(time.time() * 1000)
             context, page = boot(source_raw,native_plan=r9_native_plan)
             native_capture = active_native_trace
             committed_raw = verify_commit(page, source_raw, "已升级并保存本地存档")
             committed = json.loads(committed_raw)
-            check("r9 migration is current and independently validates every new grant field", committed["revision"] == CURRENT_REVISION and assert_zero_grant_metadata(committed["state"], source, grant_job_floor=floor, npc_elapsed=0))
+            check("r9 migration is current and independently validates every new grant field", committed["revision"] == CURRENT_REVISION and assert_zero_grant_metadata(committed["state"], source, grant_job_floor=floor, npc_wallet=expected_npc_economy()))
             check("all old r9 fields, scalar types and array positions match the fixed old-reader oracle", exact_json(committed["state"], expected))
             check("existing r9 building templates are preserved completely", exact_json(committed["state"]["buildingTemplates"], source["buildingTemplates"]))
             if row["name"].startswith("complete_world_"):
@@ -1469,7 +1576,7 @@ try:
 
 
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
+        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)

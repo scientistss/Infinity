@@ -255,7 +255,10 @@ class R12CompatibilityTests(unittest.TestCase):
     def test_render_witness_uses_fixed_old_source_and_never_reads_candidate_age(self):
         import ast
         script = ROOT / 'scripts/browser-render-scheduling.py'
-        tree = ast.parse(script.read_text())
+        import subprocess
+        # Preserve the historical r12 consumer contract at its released source.
+        old_source = subprocess.check_output(['git','show','eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81:scripts/browser-render-scheduling.py'],cwd=ROOT,text=True)
+        tree = ast.parse(old_source)
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'expected_npc_elapsed')
         fixtures = {'expected': {'base.initial': {}, 'fractional': {}}, 'npcAdoptedTime': {
             'sourceSha': '4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b',

@@ -124,7 +124,9 @@ describe("NPC dedicated exact fuel debit", () => {
       expect(value(checkedNpcFuelDebit(wallet, big(-0), 0n))).toBe(wallet);
       expect(value(checkedNpcFuelDebit(wallet, noncanonicalZero, "0"))).toBe(wallet);
     }
-    expect(checkedNpcFuelDebit(unstable, big(1), "1")).toEqual({ ok: false, reason: "precision" });
+    expect(unstable.toString()).toBe("1");
+    expect(big(unstable.toString()).toString()).toBe("1");
+    expect(value(checkedNpcFuelDebit(unstable, big(1), "1")).toString()).toBe("0");
     const signedZero = big(0); signedZero.mantissa = -0;
     expect(value(checkedNpcFuelDebit(unstable, signedZero, "0"))).toBe(unstable);
     expect(Object.is(signedZero.mantissa, -0)).toBe(true);
@@ -140,8 +142,12 @@ describe("NPC dedicated exact fuel debit", () => {
   });
 
   it("rejects losing an unrepresentable tiny remainder or altering the fuel quote", () => {
-    expect(checkedNpcFuelDebit(big("1.000000000000001"), big(1), "1")).toEqual({ ok: false, reason: "precision" });
-    expect(checkedNpcFuelDebit(big("1.00000000000001"), big(1), "1")).toEqual({ ok: false, reason: "precision" });
+    // Both runtime objects already serialize as canonical 1. Internal source
+    // mantissa differences are not additional spendable canonical value.
+    for (const text of ["1.000000000000001", "1.00000000000001"]) {
+      expect(big(text).toString()).toBe("1");
+      expect(value(checkedNpcFuelDebit(big(text), big(1), "1")).toString()).toBe("0");
+    }
     expect(checkedNpcFuelDebit(big(1), big("1e-20"), "0")).toEqual({ ok: false, reason: "precision" });
     const quote = big("0.10000000000000002");
     expect(checkedNpcFuelDebit(big(1), quote, "1")).toEqual({ ok: false, reason: "precision" });

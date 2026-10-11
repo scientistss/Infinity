@@ -1,3 +1,4 @@
+from r13_compatibility import expected_npc_economy, exact_json
 """Accounted snapshot regressions against the real HTTP production bundle.
 
 Native localStorage and browser input; Date/performance, requestAnimationFrame and
@@ -223,6 +224,11 @@ def export(page, name):
 
 
 def same_state(value, expected, label='exact whole serialized engine state'):
+    witness=fixtures['npcAdoptedTime'][expected]
+    wallet=expected_npc_economy(witness['adoptedSegmentsSeconds'])
+    check('exact old-engine clock witness and independent H12000 wallet: '+expected,
+          witness['sourceSha']=='ca5ef0c769856f2c4c8925e76a5c7d322822fe1b' and witness['completeOldStateEqual'] is True
+          and exact_json(witness['npcWallet'],wallet) and exact_json(value['state']['npcEconomy'],wallet))
     check(label, value['state'] == EXPECTED[expected])
 
 
@@ -375,19 +381,19 @@ def run_cases():
     for which,cap in (('mixed',7200),('cap8',28800)):
         case=f'controlled {cap//3600}h cap consumes full raw frame gap'
         context,page=boot(which); raw_gap=(cap+3600)*1000
-        check('cap fixture starts at independently fixed zero NPC age',saved(page)['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':0})
+        check('cap fixture starts at independently fixed zero NPC age',saved(page)['state']['npcEconomy']==expected_npc_economy())
         for delta in (15000,15000,15000,raw_gap-45000):
             advance(page,delta); timer(page)
             check('unadvanced autosave never claims simulation time', saved(page)['lastTickAt']==EPOCH)
-            check('hidden autosave never advances NPC age',saved(page)['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':0})
+            check('hidden autosave never advances NPC age',saved(page)['state']['npcEconomy']==expected_npc_economy())
         frame(page); value=saved(page)
         same_state(value,which+'.capped'); envelope(value,raw_gap,raw_gap)
         if which=='cap8':
-            check('actual 8-hour adopted catch-up saturates NPC age at exact 11900',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
+            check('actual 8-hour adopted catch-up saturates baseline stock and adopts exact bounded wallet clock',value['state']['npcEconomy']==EXPECTED[which+'.capped']['npcEconomy'] and value['state']['npcEconomy']['baseline']['stock']==[50000,30000,10000])
         reload_at(page,1000); value=export(page,which+'-cap-reload1')
         same_state(value,which+'.capped.reload1'); envelope(value,raw_gap+1000,raw_gap+1000)
         if which=='cap8':
-            check('reload after consumed 8-hour gap preserves exact saturated NPC age once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
+            check('reload after consumed 8-hour gap preserves exact saturated baseline and adds the one new adopted second',value['state']['npcEconomy']==EXPECTED[which+'.capped.reload1']['npcEconomy'] and value['state']['npcEconomy']['baseline']['stock']==[50000,30000,10000])
         audit(page); context.close()
 
         case=f'compatible startup {cap//3600}h cap also consumes full raw load gap'
@@ -395,11 +401,11 @@ def run_cases():
         reload_at(page,raw_gap); value=save(page)
         same_state(value,which+'.capped'); envelope(value,raw_gap,raw_gap)
         if which=='cap8':
-            check('actual 8-hour adopted catch-up saturates NPC age at exact 11900',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
+            check('actual 8-hour adopted catch-up saturates baseline stock and adopts exact bounded wallet clock',value['state']['npcEconomy']==EXPECTED[which+'.capped']['npcEconomy'] and value['state']['npcEconomy']['baseline']['stock']==[50000,30000,10000])
         reload_at(page,1000); value=export(page,which+'-startup-cap-reload1')
         same_state(value,which+'.capped.reload1'); envelope(value,raw_gap+1000,raw_gap+1000)
         if which=='cap8':
-            check('reload after consumed 8-hour gap preserves exact saturated NPC age once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
+            check('reload after consumed 8-hour gap preserves exact saturated baseline and adds the one new adopted second',value['state']['npcEconomy']==EXPECTED[which+'.capped.reload1']['npcEconomy'] and value['state']['npcEconomy']['baseline']['stock']==[50000,30000,10000])
         audit(page); context.close()
 
     for seconds in (4.999,5,29.999,30):
@@ -666,14 +672,14 @@ def run_cases():
 
     if args.session_fixture:
         legacy=json.loads(Path(args.session_fixture).read_text())
-        for revision in range(2,12):
+        for revision in range(2,13):
             case=f'actual-source r{revision} startup migration accounts through sampled wall'
             source=next(row for row in legacy['legacySources'] if row['revision']==revision)
             check('legacy fixture uses actual released serializer',source['generatedBy']=='actual source-revision createInitialState/exportSave')
             context,page=boot(value=legacy['legacy'][str(revision)],wall=61000)
             value=saved(page); envelope(value,61000,61000)
             check('successful migration includes full 61-second startup catch-up',value['state']['totalTime']=='61')
-            check('NPC migration adopts exactly the same 61 seconds once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':61})
+            check('NPC migration adopts exactly the same 61 seconds once',value['state']['npcEconomy']==expected_npc_economy([61]))
             backup=json.loads(raw(page,BACKUP)); check('migration backs up actual old-revision source',backup['revision']==revision and backup['lastTickAt']==EPOCH)
             audit(page); context.close()
         case='actual-source migration write fault freezes source and raw export'

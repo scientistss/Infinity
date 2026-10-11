@@ -1,4 +1,4 @@
-import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import originalR10 from "./fixtures/demolition-origin-r10-save.json";
 import { readNaturalResearchOrigin } from "../scripts/natural-research-network-journey";
@@ -16,10 +16,10 @@ type Save = ReturnType<typeof importSave>;
 const old = () => structuredClone(originalR10) as unknown as Save;
 
 describe("IRN origin revision adapter", () => {
-  it("adds only revision13, zero NPC age and explicit null slots, preserving complete raw input and earned fields", () => {
+  it("adds only revision13, zero NPC wallet and rights plus explicit null slots, preserving complete raw input and earned fields", () => {
     const source = old(), bytes = JSON.stringify(source);
     const result = readNaturalResearchOrigin(source, PINNED_R10);
-    expect(result.imported).toEqual({ ...source, revision: 13, state: { ...source.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: source.state.planets.map(p => ({ ...p, demolition: null })) } });
+    expect(result.imported).toEqual({ ...source, revision: 13, state: { ...source.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: source.state.planets.map(p => ({ ...p, demolition: null, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
     expect(JSON.stringify(source)).toBe(bytes);
     expect(result.candidate.terraformerGrantJobFloor).toBe(89);
     expect(result.candidate.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 2 });

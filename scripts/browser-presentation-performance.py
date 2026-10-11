@@ -7,7 +7,7 @@ are NOT claimed as CPU time. Slow EventTiming entries measure native interaction
 latency; double-RAF observations are explicitly paint-opportunity bounds only.
 """
 import argparse
-from r12_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r12
+from r13_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r13
 import faulthandler
 import hashlib
 import json
@@ -275,7 +275,7 @@ active_identity = {}
 report = {
     'completed': False, 'invocationId':args.invocation_id, 'phaseHistory':[], 'classification': 'actual native browser timings / HTTP / native localStorage / unmodified clocks, RAF and timers',
     'beforeUrl': args.before_url, 'afterUrl': args.after_url,
-    'design': 'Sequential isolated AB/BA repetitions on economically identical, strict current-version inputs: actual archived r8 fixture before; real current import/export r12 with only independently asserted empty buildingTemplates, fixed migration floor and zero planet grant ledgers and null demolition slots plus exact zero-age fixed-production-v1 NPC metadata after. Native input hashes differ and are recorded beside the common historical-state hash. Only envelope timestamps are rebased. Fresh origins test two-copy replacement capacity; migration and three-copy quota protection are separate.',
+    'design': 'Sequential isolated AB/BA repetitions on economically identical, strict current-version inputs: actual archived r8 fixture before; real current import/export r13 with only independently asserted empty buildingTemplates, fixed migration floor and zero planet grant ledgers and null demolition slots plus exact zero-age wallet/empty-receipt metadata after. Native input hashes differ and are recorded beside the common historical-state hash. Only envelope timestamps are rebased. Fresh origins test two-copy replacement capacity; migration and three-copy quota protection are separate.',
     'limits': ['Headless foreground Chromium; not OS-hidden, mobile or display-hardware performance.',
                'CPU ScriptDuration and TaskDuration are actual CDP metrics; frame intervals are separate presentation observations.',
                'EventTiming duration is browser-measured input-to-next-paint latency, quantized by the browser; events below 16ms may be absent and are never invented.',
@@ -484,7 +484,7 @@ def run(browser, profile, variant, repetition, order):
             return
         seeded=json.loads(initialized['seeded'])
         target_revision = 8 if variant == 'before' else CURRENT_REVISION
-        check('served bundle has the exact expected r8/r12 reader revision',report['servedBundles'][variant]['release']['saveRevision']==target_revision)
+        check('served bundle has the exact expected r8/r13 reader revision',report['servedBundles'][variant]['release']['saveRevision']==target_revision)
         check('native input is the strict current version for this served bundle',seeded['revision']==target_revision)
         check('only envelope timestamps changed from validated current-version fixture',seeded['state']==native_input['ready']['state'])
         if initialized['currentRaw'] != initialized['seeded']:
@@ -867,9 +867,9 @@ def worker_main():
                   pair['sourceSha']=='4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b'
                   and pair['generatedBy']=='actual archived r8 strict reader/exportSave, then actual current importSave/exportSave')
             check('both complete native input checksums match verified preparation',digest(raw)==pair['beforeSha256'] and digest(current_raw)==pair['afterSha256'])
-            expected={**ready,'revision':CURRENT_REVISION,'state':lift_legacy_state_to_r12(ready['state'],source_revision=8,grant_job_floor=ready['state']['orders']['nextJobId'])}
-            check('current paired metadata independently retains the fixed old boundary and zero per-planet grants',assert_zero_grant_metadata(current_ready['state'],ready['state'],grant_job_floor=ready['state']['orders']['nextJobId'], npc_elapsed=0))
-            check('r12 paired input adds only prescribed metadata; all old values, scalar types and array order remain',
+            expected={**ready,'revision':CURRENT_REVISION,'state':lift_legacy_state_to_r13(ready['state'],source_revision=8,grant_job_floor=ready['state']['orders']['nextJobId'])}
+            check('current paired metadata independently retains the fixed old boundary and zero per-planet grants',assert_zero_grant_metadata(current_ready['state'],ready['state'],grant_job_floor=ready['state']['orders']['nextJobId'], npc_wallet=expected_npc_economy()))
+            check('r13 paired input adds only prescribed metadata; all old values, scalar types and array order remain',
                   json.dumps(current_ready,sort_keys=True,separators=(',',':'))==json.dumps(expected,sort_keys=True,separators=(',',':')))
             profile={'profile':source.get('profile',label),'key':source['key'],
                      'commonR8StateSha256':pair['commonR8StateSha256'],

@@ -1,4 +1,4 @@
-/** Bounded natural NPC acceptance: immutable r10 → actual ca5 r11 export → r12 age0.
+/** Bounded natural NPC acceptance: immutable r10 → actual ca5 r11 export → r13 age0.
  * Every real action/tick has a byte-pinned ca5 control and independent money/stock goldens.
  * Preparation can be dirty; formal fixture rejects it. No native browser claim here.
  * node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root CA5 --output NEW.json
@@ -16,7 +16,11 @@ import { emptyTickLog, tick, evaluatePrestige, prestige } from "../src/game/logi
 import { emptyCargo, quoteFlight, resolveFleetArrivals, sendFleet } from "../src/game/fleet.ts";
 import { npcAt } from "../src/game/galaxy.ts";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save.ts";
-import { npcEconomySnapshot } from "../src/game/npc-economy.ts";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
+import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
+import { projectNpc } from "../src/game/npc-wallet.ts";
+import { npcWalletContext } from "../src/game/npc-attack.ts";
+const npcEconomySnapshot = walletState => projectNpc(walletState.npcEconomy, { galaxy: 1, system: 56, position: 6 }, npcWalletContext(walletState));
 import { SaveSession } from "../src/game/save-session.ts";
 import { STORAGE_KEY } from "../src/game/content.ts";
 import { createInitialState } from "../src/game/state.ts";
@@ -60,6 +64,7 @@ const actions = [], ticks = [], checkpoints = [], milestones = [];
 let legacy, control, r11Raw, legacyIdentityRaw, branches = {};
 let stage = "source validation", elapsed = 0, actionCount = 0;
 let state;
+let expectedWallet = expectedNpcEconomy();
 let origin;
 let originalAt = 0;
 let firstReport = null;
@@ -103,13 +108,20 @@ function withReferenceKeyOrder(reference, value) {
 }
 function invariant() {
     const now = serializeState(state);
-    equal(`${stage}: bounded NPC age counts only adopted current-version seconds`, now.npcEconomy, { model: "fixed-production-v1", elapsedSeconds: elapsed });
-    const projected=structuredClone(now); delete projected.npcEconomy;
+    equal(`${stage}: bounded NPC age counts only adopted current-version seconds`, now.npcEconomy, expectedWallet);
+    const projected=projectVerifiedNpcEconomy(now, expectedWallet, stage);
     const old=legacy.save.serializeState(control);
-    projected.messages=projected.messages.map(message=>/^scout-[45]$/.test(message.id) ? {...message,text:old.messages.find(x=>x.id===message.id)?.text} : message);
+    projected.messages=projected.messages.map(message => {
+      if (message.id !== 'scout-4' && message.id !== 'scout-5') return message;
+      const arrivalAge = message.id === 'scout-4' ? 3 : 65, sourceMessage = old.messages.find(x => x.id === message.id);
+      equal(`${stage}: exact historical identity-only text for ${message.id}`, sourceMessage?.text, '侦察报告 [1:56:6]：晨星共同体 56-6，派系：晨星共同体。当前阶段不会反击；战斗与精确情报尚未开放。');
+      equal(`${stage}: exact new stock/garrison text for ${message.id}`, message.text, independentReport(arrivalAge));
+      equal(`${stage}: unchanged complete message except explicitly proven text`, {...message,text:sourceMessage.text},sourceMessage);
+      return {...message,text:sourceMessage.text};
+    });
     equal(`${stage}: every legacy field matches exact ca5 action/tick control`,projected,old);
-    const readBefore=serializeState(state), observed=npcEconomySnapshot(state.npcEconomy);
-    equal(`${stage}: independent fixed NPC stock formula`,observed.resources,{metal:Math.min(50000,500+5*elapsed),crystal:Math.min(30000,250+2.5*elapsed),deuterium:Math.min(10000,elapsed)});
+    const readBefore=serializeState(state), observed=npcEconomySnapshot(state);
+    equal(`${stage}: independent fixed NPC stock formula`,observed.stock,[Math.min(50000,500+5*elapsed),Math.min(30000,250+2.5*elapsed),Math.min(10000,elapsed)]);
     equal(`${stage}: NPC observation is pure`,serializeState(state),readBefore);
     equal(`${stage}: existing plans and authorization unchanged`, now.orders.tasks, origin.orders.tasks);
     equal(`${stage}: original reports retained verbatim`, now.messages.slice(0, origin.messages.length), origin.messages);
@@ -140,7 +152,7 @@ function checkpoint(name) {
     equal(`${name}: canonical same-time export bytes stable on second roundtrip`, exportSave(state, at, at), canonical);
     checkpoints.push({ name, elapsedSeconds: elapsed, totalGameSeconds: state.totalTime.toString(), firstExportSha256: sha(raw), canonicalSaveSha256: sha(canonical), firstExportBytes: Buffer.byteLength(raw), canonicalSaveBytes: Buffer.byteLength(canonical), firstRoundtripChangedOnlyObjectKeyOrder: raw !== canonical, objectKeyOrderChanges: keyOrderChanges(JSON.parse(raw), JSON.parse(canonical)), sameEnvelopeValues: true, revision: loaded.revision, fullStateRoundtrip: true, adoptedReload: true, rawPayloadCopied: false });
     const save=JSON.parse(canonical);
-    milestones.push({name,elapsedSeconds:elapsed,strictRoundtrips:2,stateAdoptedFromReload:true,save,raw:canonical,rawSha256:sha(canonical)});
+    milestones.push({name,elapsedSeconds:elapsed,npcWallet:structuredClone(expectedWallet),strictRoundtrips:2,stateAdoptedFromReload:true,save,raw:canonical,rawSha256:sha(canonical)});
     invariant();
 }
 function payment(name, execute, expected, oldExecute) {
@@ -199,7 +211,9 @@ function advance(seconds, name) {
     const previous = serializeState(state), log = emptyTickLog();
     const sourceState = state;
     state = tick(state, seconds, "live", log);
-    control = legacy.logic.tick(control, seconds, "live");
+    const witnessed = captureAdoptedSteps(control, value => ({ state: legacy.logic.tick(value, seconds, "live") }), legacy.save.serializeState);
+    control = witnessed.result.state;
+    expectedWallet = advanceExpectedNpcWallet(expectedWallet, witnessed.adoptedSegmentsSeconds);
     elapsed += seconds;
     equal(`${name}: original tick input immutable`, serializeState(sourceState), previous);
     const after = wallet(state);
@@ -210,7 +224,7 @@ function advance(seconds, name) {
         near(`${name}: ${r} only actual production enters lifetime`, state.lifetime[r].toNumber(), oldLifetime[r] + output[r]);
         produced[r] += output[r];
     }
-    ticks.push({ name, seconds, elapsedSeconds: elapsed, before, after, independentActualProduction: output, completedResearch: log.completedResearch, completedUnits: log.completedUnits });
+    ticks.push({ name, seconds, adoptedSegmentsSeconds: witnessed.adoptedSegmentsSeconds, independentlyExpectedNpcWallet: expectedWallet, elapsedSeconds: elapsed, before, after, independentActualProduction: output, completedResearch: log.completedResearch, completedUnits: log.completedUnits });
     invariant();
     budget();
     return log;
@@ -232,12 +246,13 @@ function dispatch(name, expectedId) {
     equal(`${name}: exactly one probe and twelve legal zero selections`, [Object.keys(fleet.ships).length, Object.values(fleet.ships).reduce((sum, count) => sum + count, 0), Object.values(fleet.ships).filter(count => count === 0).length, fleet.ships.espionage_probe], [13, 1, 12, 1]);
     equal(`${name}: probe removed from home availability`, activePlanet(state).units.espionage_probe, 0);
 }
+function independentReport(observedElapsed) { return `侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 ${(25810 + observedElapsed).toFixed(3)} 秒。金属 ${(500 + 5 * observedElapsed).toFixed(3)}/50000.000，固定产量 5.000/秒，生产中；晶体 ${(250 + 2.5 * observedElapsed).toFixed(3)}/30000.000，固定产量 2.500/秒，生产中；重氢 ${observedElapsed.toFixed(3)}/10000.000，固定产量 1.000/秒，生产中。轨道驻军：轻型战斗机 4，重型战斗机 0；驻军战斗科技 0。历史快照不会随时间更新。`; }
 function arrival(id, observedElapsed) {
     const message = state.messages.find(m => m.id === `scout-${id}`);
     check(`arrival-${id}: exactly one static identity message`, state.messages.filter(m => m.id === `scout-${id}`).length === 1);
-    const expectedText = `侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 ${(25810 + observedElapsed).toFixed(3)} 秒；经济年龄 ${observedElapsed.toFixed(3)} 秒。金属 ${(500 + 5 * observedElapsed).toFixed(3)}/50000.000，固定产量 5.000/秒，生产中；晶体 ${(250 + 2.5 * observedElapsed).toFixed(3)}/30000.000，固定产量 2.500/秒，生产中；重氢 ${observedElapsed.toFixed(3)}/10000.000，固定产量 1.000/秒，生产中。历史快照不会随时间更新。`;
+    const expectedText = independentReport(observedElapsed);
     equal(`arrival-${id}: full frozen independent snapshot text`,message?.text,expectedText);
-    check(`arrival-${id}: stock snapshot is at adopted arrival age`,state.npcEconomy.elapsedSeconds===observedElapsed);
+    check(`arrival-${id}: stock snapshot is at adopted arrival age`,state.npcEconomy.now===observedElapsed);
     equal(`arrival-${id}: actual global timestamp`, message.at, GOLD.sourceGameSeconds + observedElapsed);
     equal(`arrival-${id}: existing return leg retained`, state.fleets.filter(f => f.id === id).map(f => [f.returning, f.remaining, f.elapsed]), [[true, 1, 0]]);
     equal(`arrival-${id}: repeated arrival resolution is idempotent`, serializeState(resolveFleetArrivals(state)), serializeState(state));
@@ -262,6 +277,7 @@ try {
     });
     for(const path of ["package.json","package-lock.json"])check(`historical ${path} exact`,readFileSync(resolve(LEGACY,path)).equals(execFileSync("git",["show",`${PIN}:${path}`],{cwd:LEGACY,timeout:10000})));
     legacy=Object.fromEntries(await Promise.all(["save","logic","empire","research","shipyard","fleet"].map(async name=>[name,await import(pathToFileURL(resolve(LEGACY,`src/game/${name}.ts`)).href)])));
+    legacy.offline=await import(pathToFileURL(resolve(LEGACY,"src/core/offline.ts")).href);
     equal("candidate src has no ignored extra modules",git("ls-files","--others","--ignored","--exclude-standard","--","src"),"");
     const actualFiles=git("ls-files","--cached","--others","--exclude-standard","--","src").split("\n").filter(Boolean).map(path=>({path,sha256:sha(readFileSync(resolve(REPO,path)))}));
     source = { sourceSha:actualGitHead, gitHead:actualGitHead, worktreeStatusPorcelain:git("status","--porcelain=v1","--untracked-files=all"), sourceScopeStatusPorcelain,
@@ -280,10 +296,10 @@ try {
     equal("actual ca5 exporter produces v9/r11",[r11.schema,r11.version,r11.revision],["infinity-original-p4",9,11]);
     equal("actual ca5 export preserves original clocks",[r11.savedAt,r11.lastTickAt],[envelope.savedAt,envelope.lastTickAt]);
     check("actual ca5 r11 has no NPC state",!("npcEconomy" in r11.state));
-    const imported = importSave(r11Raw), projected=structuredClone(imported.state); delete projected.npcEconomy;
-    equal("r11→r12 pure migration preserves every complete old state field",projected,r11.state);
-    equal("r11→r12 initial NPC age is zero regardless of old totalTime",imported.state.npcEconomy,{model:"fixed-production-v1",elapsedSeconds:0});
-    equal("current strict import revision",imported.revision,12);
+    const imported = importSave(r11Raw), projected=projectVerifiedNpcEconomy(imported.state,expectedNpcEconomy(),'pure r11 migration zero rights');
+    equal("r11→r13 pure migration preserves every complete old state field",projected,r11.state);
+    equal("r11→r13 initial NPC age is zero regardless of old totalTime",imported.state.npcEconomy,expectedNpcEconomy());
+    equal("current strict import revision",imported.revision,13);
     control=legacy.save.deserializeState(r11.state);
     state = deserializeState(imported.state);
     origin = serializeState(state);
@@ -351,18 +367,18 @@ try {
     legacyIdentityRaw=legacy.save.exportSave(control,originalAt+elapsed*1000,originalAt+elapsed*1000);
     const oldIdentity=importSave(legacyIdentityRaw);
     equal("separate real ca5 identity-report branch migrates without rewriting either report",oldIdentity.state.messages,legacy.save.serializeState(control).messages);
-    equal("separate old identity branch starts age zero",oldIdentity.state.npcEconomy,{model:"fixed-production-v1",elapsedSeconds:0});
+    equal("separate old identity branch starts age zero",oldIdentity.state.npcEconomy,expectedNpcEconomy());
     const final=milestones.find(m=>m.name==="final-returned-and-reloaded");
     const evaluation=evaluatePrestige(state);check("real naturally earned curvature eligibility",evaluation.next!==state && evaluation.gain.gte(1));
     const curved=prestige(state);
-    equal("real curvature retains NPC universe age and stock",[curved.universe,curved.npcEconomy,npcEconomySnapshot(curved.npcEconomy)],[state.universe,state.npcEconomy,npcEconomySnapshot(state.npcEconomy)]);
+    equal("real curvature retains NPC universe age and stock",[curved.universe,curved.npcEconomy,npcEconomySnapshot(curved)],[state.universe,state.npcEconomy,npcEconomySnapshot(state)]);
     equal("real curvature preserves frozen reports",curved.messages,state.messages);
     const keep=new Map([[STORAGE_KEY,final.raw]]);
     const store={getItem:k=>keep.get(k)??null,setItem:(k,v)=>keep.set(k,v),removeItem:k=>keep.delete(k)};
     const nextAt=final.save.lastTickAt+100000*1000;
     const offline=new SaveSession(store,nextAt);
     check("true SaveSession adopts only base offline limit",offline.mode==="ready" && offline.loaded.appliedSeconds===7200);
-    equal("offline NPC age is actual adopted 66+7200",offline.loaded.state.npcEconomy,{model:"fixed-production-v1",elapsedSeconds:7266});
+    equal("offline NPC age is actual adopted 66+7200",offline.loaded.state.npcEconomy,advanceExpectedNpcWallet(expectedWallet, captureAdoptedSteps(control,value=>legacy.offline.catchUp(value,100000),legacy.save.serializeState).adoptedSegmentsSeconds));
     check("save actual offline adopted watermark",offline.save(offline.loaded.state,nextAt,nextAt).ok);
     const adoptedRaw=keep.get(STORAGE_KEY), resumed=new SaveSession(store,nextAt);
     equal("second true startup applies zero elapsed",resumed.loaded.appliedSeconds,0);
@@ -370,7 +386,7 @@ try {
     check("same-time second startup leaves saved bytes intact",keep.get(STORAGE_KEY)===adoptedRaw);
     equal("offline old snapshots remain frozen",offline.loaded.state.messages,state.messages);
     const fresh=createInitialState(20261010,11334455);
-    equal("complete new game starts new NPC age zero",fresh.npcEconomy,{model:"fixed-production-v1",elapsedSeconds:0});
+    equal("complete new game starts new NPC age zero",fresh.npcEconomy,expectedNpcEconomy());
     equal("complete new game carries no old reports",fresh.messages,[]);
     branches={classification:"Branches from real serialized milestones, not added to the continuous 66-second route. Memory key-value adapter here is domain evidence only; CI uses native Storage.",
       legacyIdentity:{raw:legacyIdentityRaw,rawSha256:sha(legacyIdentityRaw),save:JSON.parse(legacyIdentityRaw),migratedSave:oldIdentity,sourceSha:PIN,classification:"Same original r10 starting state; exact old ca5 paid research/probe/scout control produced these genuine pre-NPC reports."},

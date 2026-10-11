@@ -44,6 +44,12 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel 
   list.id = "prestige-preview-rows";
   details.append(list);
   const omitted = line("omitted", details);
+  // No dormant extra content for zero rights. Nonzero rights receive a separate
+  // exact list so the existing 20-row sample can never hide a lost planet.
+  let remainderDetails: HTMLDetailsElement | null = null;
+  let remainderSummary: HTMLElement | null = null;
+  let remainderList: HTMLUListElement | null = null;
+  const remainderRows = new Map<string, HTMLLIElement>();
   const notice = line("notice");
   notice.className = "muted";
   notice.textContent = "仅在曲率页可见时约每秒更新；查看不推进时间、不结算奖励。点击原发射按钮会重新计算并要求确认。";
@@ -59,7 +65,7 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel 
     put(gain, `获得：规则核心 ${model.gain}；核心余额 ${model.cores.before} → ${model.cores.after}，实际变化 ${model.cores.change}。扩张分 ${model.score}。`);
     for (const node of [losses, kept, details]) if (node.hidden !== !model.eligible) node.hidden = !model.eligible;
     if (!model.eligible) return;
-    put(losses, `失去 / 停止：旧世界 ${model.worlds.count} 颗星球（殖民地 ${model.worlds.colonies}）、${model.worlds.units} 驻留单位、${model.fleets.count} 支舰队；取消 ${model.paid.buildings + model.paid.demolitions + model.paid.research + model.paid.shipyard} 项/批已付工作，不退款；${model.orders.stopped} 个计划停止。`);
+    put(losses, `失去 / 停止：旧世界 ${model.worlds.count} 颗星球（殖民地 ${model.worlds.colonies}）、${model.worlds.units} 驻留单位、${model.fleets.count} 支舰队；取消 ${model.paid.buildings + model.paid.demolitions + model.paid.research + model.paid.shipyard} 项/批已付工作，不退款；${model.orders.stopped} 个计划停止。${model.npcRemainders.planets ? `另丢弃 ${model.npcRemainders.planets} 颗星球、${model.npcRemainders.resources} 项资源的不足 1 待结算权益。` : ""}`);
     put(kept, `保留：研究等级、账上暗物质/物品、${model.retained.templates} 份研究模板与 ${model.retained.formations} 份编成。设计与历史引用保留，须重新应用，不自动补船或派遣。`);
     put(cores, `核心余额：${previewChange(model.cores)}。未花费核心：${previewChange(model.unspent)}。核心被动加成（%）：${previewChange(model.passivePercent)}。仅表示核心被动，不保证重置后总产量提高。`);
     put(home, `新母星实际库存：${previewResources(model.newHome)}。包含本次候选实际生效的初始库存科技。`);
@@ -81,6 +87,29 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel 
     }
     if (list.dataset.totalRows !== String(model.totalRows)) list.dataset.totalRows = String(model.totalRows);
     put(omitted, model.omittedRows ? `已显示前 ${model.rows.length} 条明细，共 ${model.totalRows} 条，另有 ${model.omittedRows} 条未展开；以上汇总包含全部数据。` : `共 ${model.totalRows} 条明细，已全部显示。`);
+    if (!model.npcRemainders.planets) {
+      remainderDetails?.remove(); remainderDetails = null; remainderSummary = null; remainderList = null; remainderRows.clear();
+    } else {
+      if (!remainderDetails) {
+        remainderDetails = document.createElement("details"); remainderDetails.id = "prestige-preview-npc-remainders";
+        remainderSummary = document.createElement("summary");
+        const notice = document.createElement("p"); notice.textContent = "以下逐星球列出全部精确待结算权益；各资源分别不足 1，未计入普通库存。发射后全部丢弃，新母星归零，不转移或退款。";
+        remainderList = document.createElement("ul"); remainderList.id = "prestige-preview-npc-remainder-rows";
+        remainderDetails.append(remainderSummary, notice, remainderList); details.append(remainderDetails);
+      }
+      put(remainderSummary!, `待结算权益损失：${model.npcRemainders.planets} 颗星球 / ${model.npcRemainders.resources} 项资源（逐星球精确数额）`);
+      const current = new Set(model.npcRemainders.rows.map(row => row.id));
+      for (const [id, item] of remainderRows) if (!current.has(id)) { item.remove(); remainderRows.delete(id); }
+      let previous: Element | null = null;
+      for (const row of model.npcRemainders.rows) {
+        let item = remainderRows.get(row.id);
+        if (!item) { item = document.createElement("li"); item.dataset.npcRemainderPlanet = row.id; remainderRows.set(row.id, item); }
+        put(item, `${row.name} [${row.id}]：${previewResources(row.amounts)}`);
+        const next: Element | null = previous ? previous.nextElementSibling : remainderList!.firstElementChild;
+        if (next !== item) remainderList!.insertBefore(item, next);
+        previous = item;
+      }
+    }
   };
   const invalidate = () => {
     hasPreview = false;

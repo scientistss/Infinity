@@ -9,7 +9,7 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
-import { assertR8StatePreserved, liftR8StateToR12, assertHistoricalSource } from "./r12-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR13, assertHistoricalSource, assertZeroNpcResourceRemainders } from "./r13-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -71,13 +71,13 @@ assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "nativ
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
 assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
 const migratedFile = afterSave.importSave(fixture.save);
-assert.equal(migratedFile.revision, 12, "new reader must perform the real r8-to-r12 migration");
+assert.equal(migratedFile.revision, 13, "new reader must perform the real r8-to-r13 migration");
 const migrationFloor = fixture.ready.state.orders.nextJobId;
 const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
 const serialized = JSON.stringify(afterSave.serializeState(sourceState));
 const archivedSerialized = JSON.stringify(beforeSave.serializeState(beforeState));
-assertR8StatePreserved(afterSave.serializeState(sourceState), beforeSave.serializeState(beforeState), "archived/current strict readers", migrationFloor, 0);
+assertR8StatePreserved(afterSave.serializeState(sourceState), beforeSave.serializeState(beforeState), "archived/current strict readers", migrationFloor, expectedNpcEconomy());
 for (let pass = 0; pass < 2; pass++) {
   assert.equal(JSON.stringify(beforeSave.serializeState(beforeLogic.tick(beforeState, 0))), archivedSerialized, "archived zero-time startup parity");
   assert.equal(JSON.stringify(afterSave.serializeState(afterLogic.tick(sourceState, 0))), serialized, "current zero-time startup parity");
@@ -185,8 +185,48 @@ assert.deepEqual({ ...fullCurrent, buildings: historicalBuildingCards(fullCurren
   fullOriginal, "retained full presenter equals archived original after fully asserted terraformer and two research-copy differences");
 const fullSpace = beforeSpace.spaceView(state, cursor, request);
 const currentFullSpace = afterSpace.spaceView(state, cursor, request);
+function historicalSpace(view, kind) {
+  assertZeroNpcResourceRemainders(state, `${kind}: independent zero-rights historical presentation scope`);
+  const result=structuredClone(view);
+  if(kind==='full'||kind==='fleet') {
+    assert.equal(view.planets.length,fullSpace.planets.length,`${kind}: all historical planet cards retained`);
+    result.planets=view.planets.map((row,index)=>{
+      assert.equal(row.id,state.planets[index].id,`${kind}: same independently zero-rights owner`);
+      assert.equal(row.npcRemainder,null,`${kind}: exact null view for verified zero rights`);
+      const {npcRemainder,...prior}=row;
+      assert.deepEqual(prior,fullSpace.planets[index],`${kind}: every original planet card field unchanged`);
+      return prior;
+    });
+  }
+  if(kind==='full'||kind==='fleet'){
+    assert.equal(view.isAttack,false,`${kind}: exact ordinary mission flag`);
+    assert.equal(view.attackQuota,'',`${kind}: ordinary quote has no NPC quota text`);
+    delete result.isAttack;delete result.attackQuota;
+    assert.equal(view.fleets.length,fullSpace.fleets.length,`${kind}: no historical fleet removed`);
+    result.fleets=view.fleets.map((row,index)=>{
+      const old=fullSpace.fleets[index],source=state.fleets[index];
+      assert.equal(row.id,old.id,`${kind}: stable fleet identity`);
+      assert.equal(row.isAttack,false);assert.equal(row.reportId,null);assert.equal(row.canRetryDock,false);
+      assert.equal(row.phase,source.returning?'返航':source.charge?.phase==='holding'?'驻留充能':'出航');
+      const {isAttack,phase,reportId,canRetryDock,...prior}=row;
+      assert.deepEqual(prior,old,`${kind}: every old fleet field remains exact`);return prior;
+    });
+  }
+  if(kind==='full'||kind==='galaxy'){
+    assert.equal(view.rows.length,fullSpace.rows.length,`${kind}: no historical row removed`);
+    result.rows=view.rows.map((row,index)=>{
+      const old=fullSpace.rows[index];assert.equal(row.key,old.key);
+      assert.equal(row.canRouteAttack,old.kind==='NPC 邻居'&&old.planetId===''&&old.position!==16,`${kind}: attack navigation exactly for old NPC identity`);
+      const {canRouteAttack,...prior}=row;assert.deepEqual(prior,old,`${kind}: every old coordinate field remains exact`);return prior;
+    });
+  }
+  if(kind==='full'||kind==='messages'){
+    assert.deepEqual(view.npcReports,[],`${kind}: exactly empty independently no-attack report list`);delete result.npcReports;
+  }
+  return result;
+}
 const normalizedOriginalSpace = { ...fullSpace, phase: normalizedPhase(fullSpace.phase, beforeVersion, "archived full space") };
-assert.deepEqual({ ...currentFullSpace, phase: normalizedPhase(currentFullSpace.phase, afterVersion, "current full space") },
+assert.deepEqual({ ...historicalSpace(currentFullSpace,"full"), phase: normalizedPhase(currentFullSpace.phase, afterVersion, "current full space") },
   normalizedOriginalSpace, "retained full space equals archived original except the declared package-version token");
 assert.deepEqual(afterOrders.ordersView(state), beforeOrders.ordersView(state), "orders model parity");
 
@@ -220,7 +260,8 @@ function parityVisible(tab) {
   return resolved;
 }
 const resolvedTabs = Object.fromEntries(tabs.map(tab => [tab, parityVisible(tab)]));
-for (const projection of [afterSpace.spaceGalaxyView(state, cursor), afterSpace.spaceFleetView(state, request), afterSpace.spaceMessagesView(state)]) {
+for (const [kind,currentProjection] of [["galaxy",afterSpace.spaceGalaxyView(state, cursor)], ["fleet",afterSpace.spaceFleetView(state, request)], ["messages",afterSpace.spaceMessagesView(state)]]) {
+  const projection=historicalSpace(currentProjection,kind);
   for (const [key, value] of Object.entries(projection)) {
     assert.deepEqual(key === "phase" ? normalizedPhase(value, afterVersion, "current split space") : value,
       normalizedOriginalSpace[key], `space split ${key}`);
@@ -287,17 +328,17 @@ const separateResults = [
 ];
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
 assert.equal(beforeSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-const expectedR12 = { ...fixture.ready, revision: 12, state: liftR8StateToR12(fixture.ready.state, migrationFloor, 0) };
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR12, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r12 NPC metadata and r12 envelope");
+const expectedR13 = { ...fixture.ready, revision: 13, state: liftR8StateToR13(fixture.ready.state, migrationFloor, expectedNpcEconomy()) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR13, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r13 NPC metadata and r13 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
   const witnessed = captureAdoptedSteps(beforeState, input => ({ state: beforeLogic.tick(input, delta) }), beforeSave.serializeState);
   assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
-    beforeSave.serializeState(witnessed.result.state), `complete simulation state parity at ${delta}s`, migrationFloor, witnessed.npcElapsedSeconds);
+    beforeSave.serializeState(witnessed.result.state), `complete simulation state parity at ${delta}s`, migrationFloor, expectedNpcEconomy(witnessed.adoptedSegmentsSeconds));
 }
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r12 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age fixed-production-v1 NPC metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r13 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },

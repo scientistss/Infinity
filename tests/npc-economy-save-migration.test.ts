@@ -1,4 +1,4 @@
-import { expectedFreshNpcWallet, expectedFullNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { expectedFreshNpcWallet, expectedFullNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import fixedR10 from "./fixtures/demolition-r10.json";
 import naturalR10Raw from "./fixtures/demolition-origin-r10-save.json?raw";
@@ -11,7 +11,7 @@ import { createInitialState } from "../src/game/state";
 const INITIAL = expectedFreshNpcWallet();
 function liftR10(old: any) {
   return { ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(),
-    planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
+    planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null, npcResourceRemainder: expectedZeroNpcRemainder() })) } };
 }
 function fixture(id: string) {
   const row = fixedR10.rows.find(value => value.id === id);

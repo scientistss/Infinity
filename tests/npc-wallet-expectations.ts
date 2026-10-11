@@ -13,3 +13,6 @@ export function expectedFullNpcWallet(now = 0): NpcWalletState {
 }
 
 export const expectedEmptyNpcBattles = () => ({ model: "npc-battle-receipts-v1" as const, reports: [] });
+
+/** Independent additive per-planet zero entitlement, never inferred from balances. */
+export const expectedZeroNpcRemainder = () => ({ metal: "0", crystal: "0", deuterium: "0" });

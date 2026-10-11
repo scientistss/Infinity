@@ -10,8 +10,20 @@ import { HOMEWORLD_ID } from "../game/planet";
 import { formatAmount, formatDuration } from "../game/format";
 import { big } from "../game/decimal";
 import { SHIP_IDS, unitById } from "../data/units";
-import type { GameState } from "../game/types";
+import { RESOURCE_IDS, type GameState, type ResourceId } from "../game/types";
 import { transportLoadPreview } from "./transport-load-model";
+
+/** Exact pending rights are text, never a Decimal sum or ordinary spendable stock. */
+export function npcRemainderView(amounts: Readonly<Record<ResourceId, string>>) {
+  const resourceCount = RESOURCE_IDS.filter(id => amounts[id] !== "0").length;
+  if (!resourceCount) return null;
+  return {
+    resourceCount,
+    amounts: { metal: amounts.metal, crystal: amounts.crystal, deuterium: amounts.deuterium },
+    exactText: `金属 ${amounts.metal} · 晶体 ${amounts.crystal} · 重氢 ${amounts.deuterium}`,
+    notice: "各资源分别不足 1，不计入普通可花库存。后续该资源的正额 NPC 战利品入港结算会精确结转；重氢燃料结算也可能结转。并不保证下次全部结清。",
+  };
+}
 
 /** Ordinary manual transport only; never project fleets, reports or other missions. */
 export function transportLoadView(state:GameState,request:FleetRequest) {
@@ -75,13 +87,13 @@ export function spaceFleetView(state:GameState,request:FleetRequest) {
       const shipsText=SHIP_IDS.filter(id=>(f.ships[id]??0)>0).map(id=>`${unitById(id).nameZh} ${f.ships[id]}`).join(" · ")||"无";
       const cargoText=`金属 ${f.cargo.metal.toString()} · 晶体 ${f.cargo.crystal.toString()} · 重氢 ${f.cargo.deuterium.toString()}`;
       return {id:f.id,isAttack:attack,phase:phaseLabel,reportId:attack&&phase?.kind==="returning"&&phase.reason==="battle"?f.id:null,
-        detail:attack?`舰船：${shipsText}；当前货物：${cargoText}${blocked?"。入港校验未通过；请调整原出发星球的库存或舰船数量后重试。舰船与货物仍在舰队。":"。返抵原出发星球后一次入库。"}`:flightDetails.get(f.id)??"",
+        detail:attack?`舰船：${shipsText}；当前货物：${cargoText}${blocked?"。入港校验未通过；请调整原出发星球的库存或舰船数量后重试。舰船与货物仍在舰队。":"。返抵原出发星球后一次结算；不足 1 的部分保留为该星球待结算权益。"}`:flightDetails.get(f.id)??"",
         title:`#${f.id} ${MISSION_LABEL[f.mission]} · ${phaseLabel}`,route:`${state.planets.find(p=>p.id===f.originId)?.name??f.originId} → [${coordinateKey(f.target)}]`,
         remaining:blocked?"入港受阻":`${formatDuration(Math.ceil(f.remaining))} 后${f.returning?"入港":f.charge?.phase==="holding"?"生成结果":"抵达"}`,
         progress:Math.max(0,Math.min(100,100*f.elapsed/Math.max(1e-9,f.elapsed+f.remaining))),
         canRecall:attack?phase?.kind==="outbound"&&f.remaining>0:!f.returning,canRetryDock:blocked};
     }),
-    planets:state.planets.map(p=>({id:p.id,name:p.name,coordinate:coordinateKey(p.coordinates),stock:`金属 ${formatAmount(p.resources.metal)} · 晶体 ${formatAmount(p.resources.crystal)} · 重氢 ${formatAmount(p.resources.deuterium)}`,selected:p.id===home.id,canAbandon:p.id!==HOMEWORLD_ID})),
+    planets:state.planets.map(p=>({id:p.id,name:p.name,coordinate:coordinateKey(p.coordinates),stock:`金属 ${formatAmount(p.resources.metal)} · 晶体 ${formatAmount(p.resources.crystal)} · 重氢 ${formatAmount(p.resources.deuterium)}`,npcRemainder:npcRemainderView(p.npcResourceRemainder),selected:p.id===home.id,canAbandon:p.id!==HOMEWORLD_ID})),
   };
 }
 

@@ -4,7 +4,9 @@ import type { Fleet, FleetRequest, FleetResult } from "./fleet";
 import { coordinateKey, npcAt, SPACE, type Coordinates } from "./galaxy";
 import { npcArrivalCombatTech, npcBattleSeed, resolveNpcBattleCandidate } from "./npc-battle";
 import { NPC_SITE_LIMIT, NPC_UNFINISHED_ATTACK_LIMIT, trimNpcBattleReports, type NpcAttackContract, type NpcBattleReceipt } from "./npc-attack-state";
-import { checkedNpcCargoCredit, checkedNpcLootCargo, readNpcLootCargo } from "./npc-transfer";
+import { checkedNpcLootCargo, readNpcLootCargo } from "./npc-transfer";
+import { checkedNpcCargoCreditWithRemainder, readNpcResourceRemainder } from "./npc-remainder";
+import type { PlanetState } from "./planet";
 import { createNpcWalletContext, debitNpcAtArrival, materializeNpcAtPaidLaunch, projectNpc, type NpcWalletContext } from "./npc-wallet";
 import { checkedShipLanding } from "./order-wallet";
 import { missingRequirements } from "./requirements";
@@ -26,8 +28,15 @@ export function npcWalletContext(state: GameState): NpcWalletContext {
   return createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
 }
 
+/** New authority is captured through data descriptors before quote or settlement. */
+export function npcPlanetRemainder(planet: PlanetState) {
+  const field = Object.getOwnPropertyDescriptor(planet, "npcResourceRemainder");
+  return field && "value" in field && field.enumerable ? readNpcResourceRemainder(field.value) : null;
+}
+
 /** Additional attack-only eligibility. The shared flight quote checks stock, drives and cargo. */
 export function npcAttackLaunchReason(state: GameState, request: FleetRequest): string | null {
+  if (state.planets.filter(planet => planet.id === state.activePlanetId).length !== 1) return "攻击出发星球身份不唯一，未扣款";
   if (state.research.levels.weapons_tech < 1) return "攻击需要武器技术等级 1";
   if (!npcAt(state, request.target)) return "攻击目标必须是 NPC 轨道驻军";
   if (state.fleets.filter(fleet => fleet.mission === "attack").length >= NPC_UNFINISHED_ATTACK_LIMIT) return "未结束的攻击舰队已达 64 支，返航和受阻返港也占名额";
@@ -69,7 +78,7 @@ function currentAttack(state: GameState, fleetId: number): Fleet {
   if (matching.length !== 1 || !fleet || fleet.mission !== "attack" || !fleet.npcAttack || fleet.orderTransport !== null || fleet.charge
     || fleet.npcAttack.seed !== npcBattleSeed(state.universe.seed, fleet.id, fleet.target)
     || fleet.returning !== (fleet.npcAttack.phase.kind === "returning")
-    || !state.planets.some(planet => planet.id === fleet.originId)) throw new Error("NPC 攻击舰队合同不一致，已停止结算以保护存档");
+    || state.planets.filter(planet => planet.id === fleet.originId).length !== 1) throw new Error("NPC 攻击舰队合同不一致，已停止结算以保护存档");
   return fleet;
 }
 function returningReport(state: GameState, fleet: Fleet): NpcBattleReceipt | null {
@@ -92,7 +101,9 @@ function settleNpcDock(state: GameState, fleetId: number, retry = false): GameSt
   if (phase.kind !== "returning" || fleet.remaining !== 0 || phase.dockBlocked && !retry) return state;
   const report = returningReport(state, fleet);
   const origin = state.planets.find(planet => planet.id === fleet.originId)!;
-  const resources = checkedNpcCargoCredit(origin.resources, fleet.cargo);
+  const remainder = npcPlanetRemainder(origin);
+  if (!remainder) throw new Error("NPC 母港待结算权益格式无效，未采用返港候选");
+  const resources = checkedNpcCargoCreditWithRemainder(origin.resources, remainder, fleet.cargo);
   const units = checkedShipLanding(state, origin.id, fleet);
   if (!resources.ok || !units) {
     if (retry || phase.dockBlocked) return state;
@@ -102,8 +113,8 @@ function settleNpcDock(state: GameState, fleetId: number, retry = false): GameSt
   }
   const npcBattles = report ? trimNpcBattleReports(state.npcBattles.reports.map(value => value.fleetId === fleet.id ? { ...value, delivery: "delivered" as const } : value)) : state.npcBattles;
   return message({ ...state, npcBattles,
-    planets: state.planets.map(planet => planet.id === origin.id ? { ...planet, resources: resources.value, units } : planet),
-    fleets: state.fleets.filter(value => value.id !== fleet.id) }, `return-${fleet.id}`, `攻击舰队 #${fleet.id} 已返航，全部幸存舰船与战利品已安全入港。`);
+    planets: state.planets.map(planet => planet.id === origin.id ? { ...planet, resources: resources.value.resources, npcResourceRemainder: resources.value.remainder, units } : planet),
+    fleets: state.fleets.filter(value => value.id !== fleet.id) }, `return-${fleet.id}`, `攻击舰队 #${fleet.id} 已返航，全部幸存舰船与战利品权益已安全入港。${RESOURCE_IDS.some(id => resources.value.remainder[id] !== "0") ? "母港有不足 1 的待结算权益，已单独保留。" : ""}`);
 }
 function settleNpcArrival(state: GameState, fleetId: number): GameState {
   const fleet = currentAttack(state, fleetId), contract = fleet.npcAttack!;
@@ -146,7 +157,7 @@ function retryNpcAttackDockImpl(state: GameState, fleetId: number): FleetResult 
   if (!fleet || !isNpcAttackDockBlocked(fleet) || fleet.remaining !== 0) return { state, ok: false, reason: "没有对应的受阻攻击返港舰队" };
   const next = settleNpcDock(state, fleetId, true);
   return next === state ? { state, ok: false, reason: "返港入库仍受阻，请调整母港库存或舰船数量后重试" }
-    : { state: next, ok: true, reason: "全部幸存舰船与战利品已安全入港" };
+    : { state: next, ok: true, reason: "全部幸存舰船与战利品权益已安全入港" };
 }
 function recallNpcAttackImpl(state: GameState, fleetId: number): FleetResult {
   const fleet = currentAttack(state, fleetId), contract = fleet.npcAttack!;

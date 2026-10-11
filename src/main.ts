@@ -38,7 +38,7 @@ import { revealAll, revealRun, setBet, topUp } from "./game/arcade";
 import { researchById } from "./data/research";
 import type { KeyValueStore } from "./game/save";
 import { SaveSession, type ReplacementResult } from "./game/save-session";
-import type { GameState } from "./game/types";
+import { RESOURCE_IDS, type GameState } from "./game/types";
 import { presentVisible, resolveVisibleTab } from "./ui/present";
 import { RenderScheduler } from "./ui/render-scheduler";
 import { maySpeedUp, queueHeads, sameQueueHeads, type QueueHeads } from "./ui/queue-head-authority";
@@ -259,7 +259,18 @@ async function handleAction(action: UiAction): Promise<void> {
       render();
       return;
     }
-    if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
+    if (action.type === "abandon-colony") {
+      const target = state.planets.find(planet => planet.id === action.id);
+      const pending = target ? RESOURCE_IDS.filter(id => target.npcResourceRemainder[id] !== "0")
+        .map(id => `${id === "metal" ? "金属" : id === "crystal" ? "晶体" : "重氢"} ${target.npcResourceRemainder[id]}`).join(" / ") : "";
+      const warning = "放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。"
+        + (pending ? `\n该星球不足 1 的待结算权益也将丢失：${pending}。` : "");
+      if (!window.confirm(warning)) return;
+      if (state !== actionSource || saveSession.mode !== "ready") {
+        status = "进度或存档会话已改变，未放弃殖民地；请重新查看";
+        render(); return;
+      }
+    }
     let result: ReturnType<typeof sendFleet>;
     try {
       result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : action.type === "npc-retry-dock" ? retryNpcAttackDock(state,action.id) : abandonColony(state,action.id);

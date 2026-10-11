@@ -14,7 +14,7 @@ jobs:
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    # Preserve all existing gates/watchdogs; r12 adds a bounded 300s NPC worker / 305s supervisor.
+    # Preserve all existing gates/watchdogs; r13 adds a bounded 900s orbital worker / 910s supervisor.
     # Existing 45-minute total remains unchanged.
     timeout-minutes: 45
     steps:
@@ -45,6 +45,10 @@ jobs:
           python -m unittest discover -s scripts -p 'test_r11_compatibility.py' -v
           node --test scripts/test-r11-compatibility.mjs
           node --test scripts/test-r12-compatibility.mjs
+          node --test scripts/test-r13-compatibility.mjs
+          python -m unittest discover -s scripts -p 'test_r13_compatibility.py' -v
+          python -m unittest discover -s scripts -p 'test_npc_display_contract.py' -v
+          python -m unittest discover -s scripts -p 'test_npc_attack_acceptance.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
@@ -89,7 +93,10 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/pre-npc" ca5ef0c769856f2c4c8925e76a5c7d322822fe1b
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc/node_modules"
           node --import tsx "$RUNNER_TEMP/pre-npc/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-demolition" > demolition-save-revision-report.json
-          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-npc" > save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-npc-attack" eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc-attack/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-npc-attack/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-npc" > npc-economy-save-revision-report.json
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-npc" > save-revision-report.json
           NPC_FIXTURE_DIR="$(mktemp -d /tmp/infinity-npc-fixture-reproduction.XXXXXX)"
           node --import tsx scripts/npc-economy-r11-fixture.mjs --source-root "$RUNNER_TEMP/pre-npc" --out "$NPC_FIXTURE_DIR/npc-economy-r11.json"
           cmp tests/fixtures/npc-economy-r11.json "$NPC_FIXTURE_DIR/npc-economy-r11.json"
@@ -189,6 +196,17 @@ jobs:
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-economy-browser-fixture.ts "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" "$NPC_REPORT_HASH" "$GITHUB_SHA") > npc-economy-review-save.json
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
           sha256sum npc-source-evidence/npc-natural-r11-report.json > npc-source-evidence/npc-natural-r11-report.sha256.txt
+      - name: Natural paid orbital battles, exact rights, second collection and interrupted branches
+        shell: bash
+        run: |
+          mkdir -p npc-attack-source-evidence
+          # Reproduce the unchanged released r12 route before extending it. Its
+          # exact final save is independently pinned by the current route reader.
+          (cd "$RUNNER_TEMP/pre-npc-attack" && node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root "$RUNNER_TEMP/pre-npc" --output "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json")
+          NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --output "$GITHUB_WORKSPACE/npc-attack-natural-report.json")
+          sha256sum npc-attack-natural-report.json > npc-attack-natural-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
       - name: Exact before source and legal combined performance fixture
         run: |
           mkdir -p "$RUNNER_TEMP/pre-performance"
@@ -252,12 +270,15 @@ jobs:
             sleep 1
           done
           # Generate common inputs after every required HTTP service is ready.
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > save-session-review-save.json
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" > save-session-review-save.json
           # Independent quota/context gate runs first; all later browser and performance gates remain unchanged.
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
-          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --expected-sha "$GITHUB_SHA"
+          R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
+          R12_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc-attack" R12_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r13-r12-startup-oracle.mjs
+          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --expected-sha "$GITHUB_SHA"
+          python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-natural-report.json --natural-report npc-attack-natural-report.json --expected-report-sha256 "$(sha256sum npc-attack-natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.
@@ -276,7 +297,7 @@ jobs:
           python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
           python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
-          node --import tsx scripts/accounted-clock-fixture.ts > accounted-clock-review-save.json
+          node --import tsx scripts/accounted-clock-fixture.ts "$RUNNER_TEMP/pre-npc" > accounted-clock-review-save.json
           python scripts/browser-accounted-clock.py --fixture accounted-clock-review-save.json --session-fixture save-session-review-save.json --output accounted-clock-evidence
           node --import tsx scripts/native-background-fixture.ts > native-background-review-save.json
           xvfb-run -a --server-args='-screen 0 1440x1100x24' node scripts/browser-native-background.mjs --fixture native-background-review-save.json
@@ -364,6 +385,10 @@ jobs:
             npc-economy-review-save.json
             npc-economy-evidence
             npc-source-evidence
+            npc-attack-source-evidence
+            npc-attack-natural-report.json
+            npc-attack-natural-report.sha256.txt
+            npc-attack-evidence
             transport-save-revision-report.json
             templates-save-revision-report.json
             building-templates-save-revision-report.json

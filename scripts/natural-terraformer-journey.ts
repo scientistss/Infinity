@@ -18,7 +18,10 @@ declare const process: {
   exitCode?: number;
 };
 
-import { assertNpcEconomy } from "./r12-compatibility.mjs";
+import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
+const npcAdoptedSegmentsSeconds: number[] = [];
+let independentlyExpectedNpcWallet = expectedNpcEconomy();
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
 import { setProductionPct } from "../src/automation/engine";
 import type { BuildingId } from "../src/data/buildings";
 import type { ResearchId } from "../src/data/research";
@@ -86,7 +89,7 @@ interface OriginMilestone {
   save: { schema: string; version: number; revision: number; savedAt: number; lastTickAt: number; state: Record<string, unknown> };
 }
 interface SaveMilestone {
-  name: string; gameSeconds: number; continuationSeconds: number; strictRoundtrips: number;
+  name: string; gameSeconds: number; continuationSeconds: number; npcAdoptedSegmentsSeconds: number[]; strictRoundtrips: number;
   stateAdoptedFromReload: boolean; subsequentLiveTickObserved: boolean; firstSubsequentLiveTickAt?: number;
   snapshot: unknown; save: ReturnType<typeof importSave>;
 }
@@ -224,7 +227,11 @@ function debit(before: GameState, payerId: string, price: ResourceAmounts, label
 }
 function oneSecond(): void {
   check(elapsed < LIMIT_SECONDS, `strict ${LIMIT_SECONDS}-game-second continuation budget exhausted`);
-  const before = state, log = emptyTickLog(); state = tick(state, 1, "live", log); elapsed += 1;
+  const before = state, log = emptyTickLog(); let calls = 0;
+  const witnessed = captureAdoptedSteps(state, value => ({state:tick(value,1,"live",calls++ === 0 ? log : emptyTickLog())}),serializeState);
+  state = witnessed.result.state; npcAdoptedSegmentsSeconds.push(...witnessed.adoptedSegmentsSeconds);
+  independentlyExpectedNpcWallet = advanceExpectedNpcWallet(independentlyExpectedNpcWallet,witnessed.adoptedSegmentsSeconds);
+  assertNpcEconomy(state,independentlyExpectedNpcWallet,"actual adopted trajectory segments"); elapsed += 1;
   near(state.totalTime.toNumber(), originGameSeconds + elapsed, "audited one-second live clock");
   check(state.orders.nextJobId >= before.orders.nextJobId && state.orders.nextTaskId >= before.orders.nextTaskId
     && state.orders.nextWorkId >= before.orders.nextWorkId && state.nextFleetId >= before.nextFleetId, "identity counter moved backwards");
@@ -273,7 +280,7 @@ function checkpoint(name: string): void {
     const before = serializeState(state), restored = deserializeState(importSave(exportSave(state, at, at)).state);
     exact(before, serializeState(restored), `${name} strict whole-state roundtrip ${round}`); state = restored;
   }
-  milestones.push({ name, gameSeconds: originGameSeconds + elapsed, continuationSeconds: elapsed, strictRoundtrips: 2,
+  milestones.push({ name, gameSeconds: originGameSeconds + elapsed, continuationSeconds: elapsed, npcAdoptedSegmentsSeconds: [...npcAdoptedSegmentsSeconds], strictRoundtrips: 2,
     stateAdoptedFromReload: true, subsequentLiveTickObserved: false, snapshot: snapshot(), save: importSave(exportSave(state, at, at)) });
   actions.push({ continuationSeconds: elapsed, stage, api: "exportSave/importSave/deserializeState", request: { name, strictRoundtrips: 2 }, ok: true });
   progress({ milestone: name, grants: grantSnapshot(), wallets: wallets() });
@@ -455,17 +462,15 @@ async function loadOrigin(): Promise<void> {
     milestoneName: ORIGIN_MILESTONE, strictRoundtrips: old.strictRoundtrips, subsequentLiveTickObserved: old.subsequentLiveTickObserved,
     sourceBinding: "Pinned immutable CI report plus verified source artifact binding; the old report does not itself embed sourceSha.", originalSave: old.save };
   const migrated = importSave(JSON.stringify(old.save)); state = deserializeState(migrated.state); stateInitialized = true;
-  check(migrated.revision === 12 && SAVE_REVISION === 12 && SAVE_VERSION === 9, "formal r9-to-r12 migration is not active");
+  check(migrated.revision === 13 && SAVE_REVISION === 13 && SAVE_VERSION === 9, "formal r9-to-r13 migration is not active");
   check(migrated.savedAt === old.save.savedAt && migrated.lastTickAt === old.save.lastTickAt, "migration changed original envelope clocks");
-  const projected = structuredClone(serializeState(state)) as unknown as Record<string, unknown>;
-  assertNpcEconomy(projected, 0, "pure r9 migration must not backfill historical NPC age");
-  delete projected.npcEconomy;
+  const projected = projectVerifiedNpcEconomy(serializeState(state), expectedNpcEconomy(), "pure r9 migration must not backfill historical NPC age or rights");
   delete projected.terraformerGrantJobFloor;
   for (const planet of projected.planets as Array<Record<string, unknown>>) {
     check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "Old r9 migration must add only null demolition");
     delete planet.demolition; delete planet.terraformerFields;
   }
-  exact(old.save.state, projected, "r12 additive migration complete old-state projection");
+  exact(old.save.state, projected, "r13 additive migration complete old-state projection");
   const oldOrders = old.save.state.orders as { nextJobId: number };
   check(state.terraformerGrantJobFloor === oldOrders.nextJobId, "migration floor is not the historical nextJobId");
   for (const planet of state.planets) check(planet.terraformerFields.base === planet.fieldsMax && planet.terraformerFields.grantedLevels === 0,

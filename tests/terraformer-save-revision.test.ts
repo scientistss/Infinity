@@ -1,4 +1,5 @@
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { stripVerifiedNpcRemainders } from "./helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import historical from "./fixtures/demolition-r10.json";
 import { SAVE_REVISION } from "../src/game/content";
@@ -25,7 +26,9 @@ describe("terraformer historical revision boundary", () => {
     expect(original.state.planets[0].terraformerFields).toEqual({ base: 163, grantedLevels: 1 });
     expect(original.state.terraformerGrantJobFloor).toBe(1);
     expect(original.state.orders.nextJobId).toBe(2);
-    expect(importSave(row.raw)).toEqual(lifted(original, 13));
+    const verified = importSave(row.raw);
+    stripVerifiedNpcRemainders(verified.state);
+    expect(verified).toEqual(lifted(original, 13));
     expect(() => importSave(JSON.stringify({ ...original, revision: 14 }))).toThrow(/修订不兼容/);
 
     vi.resetModules();
@@ -37,7 +40,9 @@ describe("terraformer historical revision boundary", () => {
     }));
     const future = await import("../src/game/save");
     const restored = future.importSave(row.raw);
-    expect(restored).toEqual(lifted(original, 14));
+    const verifiedFuture = structuredClone(restored);
+    stripVerifiedNpcRemainders(verifiedFuture.state);
+    expect(verifiedFuture).toEqual(lifted(original, 14));
     expect(future.importSave(JSON.stringify(restored))).toEqual(restored);
 
     const missingFloor = JSON.parse(row.raw);

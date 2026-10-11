@@ -33,6 +33,19 @@ function launch(state = ready(), order = request()): GameState {
 }
 const arrive = (state: GameState) => advanceFleets(state, nextFleetEvent(state));
 const save = (state: GameState) => serializeState(state);
+// Independent bounded integer-grid oracle for this million-unit synthetic world.
+const SCALE = 10n ** 24n;
+function exactUnits(text: string): bigint {
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (!match) throw Error("Invalid test decimal");
+  const fraction = match[2] ?? "", power = 24 + Number(match[3] ?? 0) - fraction.length;
+  if (power < 0 || power > 100) throw Error("Test amount exceeds independent grid");
+  return BigInt(match[1] + fraction) * 10n ** BigInt(power);
+}
+function entitlement(state: GameState, id: typeof RESOURCE_IDS[number]): bigint {
+  const planet = activePlanet(state);
+  return exactUnits(planet.resources[id].toString()) + exactUnits(planet.npcResourceRemainder[id]);
+}
 
 // Test fixtures are explicit; the separate natural route proves paid acquisition of levels/ships.
 describe("actual paid NPC dispatch", () => {
@@ -45,7 +58,8 @@ describe("actual paid NPC dispatch", () => {
     expect(Object.keys(next.npcEconomy.sites)).toEqual([coordinateKey(TARGET)]);
     expect(next.nextFleetId).toBe(state.nextFleetId + 1);
     expect(next.fleets[0].npcAttack?.phase).toEqual({ kind: "outbound" });
-    expect(activePlanet(next).resources.deuterium.eq(activePlanet(state).resources.deuterium.sub(quote.fuel))).toBe(true);
+    expect(quote.fuel.toString()).toBe("70");
+    expect(entitlement(next, "deuterium")).toBe(999930n * SCALE);
     expect(activePlanet(next).units.light_fighter).toBe(980);
     expect(next.arcade).toBe(state.arcade);
     expect(next.deepSpace).toBe(state.deepSpace);
@@ -134,8 +148,9 @@ describe("atomic real encounter, historical reports and one return", () => {
     const docked = arrive(imported);
     expect(docked.fleets).toHaveLength(0);
     expect(docked.npcBattles.reports[0].delivery).toBe("delivered");
-    expect(activePlanet(docked).resources.deuterium.eq(paidFuel.add(30))).toBe(true);
-    expect(activePlanet(docked).resources.metal.eq(activePlanet(sent).resources.metal.add(400))).toBe(true);
+    expect(entitlement(docked, "deuterium")).toBe(999960n * SCALE);
+    expect(entitlement(docked, "metal")).toBe(1000400n * SCALE);
+    expect(entitlement(docked, "crystal")).toBe(1000200n * SCALE);
     expect(retryNpcAttackDock(docked, 1).state).toBe(docked);
     const repeated = arrive(launch(docked));
     expect(repeated.npcBattles.reports[1].battle.rounds).toEqual([]);

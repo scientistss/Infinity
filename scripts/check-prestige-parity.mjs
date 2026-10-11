@@ -1,8 +1,8 @@
 /** Full-state prestige parity against the independently archived, last-green r8 engine.
  * Usage: node --import tsx scripts/check-prestige-parity.mjs /path/to/6016391
- * Synthetic engine-built fixtures only; no production saves; only explicitly asserted empty r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r12 NPC state are added.
+ * Synthetic engine-built fixtures only; no production saves; only explicitly asserted empty r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r13 NPC state are added.
  */
-import { assertR8StatePreserved, assertHistoricalSource } from "./r12-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, assertHistoricalSource } from "./r13-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -56,18 +56,18 @@ for (const [name, before] of Object.entries(fixtures)) {
   const raw = old.save.serializeState(before);
   const migrationFloor = raw.orders.nextJobId;
   const current = currentSave.deserializeState(currentSave.importSave(old.save.exportSave(before, 1234)).state);
-  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: canonical reader must preserve the actual old input`, migrationFloor, 0);
+  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: canonical reader must preserve the actual old input`, migrationFloor, expectedNpcEconomy());
   const expected = old.logic.prestige(before);
   const evaluation = evaluatePrestige(current);
   assert.equal(evaluation.gain.toString(), old.logic.warpGain(before).toString(), `${name}: nominal gain`);
   assertR8StatePreserved(currentSave.serializeState(evaluation.next), old.save.serializeState(expected), `${name}: complete serialized state`,
-    expected === before ? migrationFloor : expected.orders.nextJobId, 0); // Successful prestige starts a fresh zero-grant epoch.
+    expected === before ? migrationFloor : expected.orders.nextJobId, expectedNpcEconomy()); // Successful prestige starts a fresh zero-grant epoch.
   assert.deepEqual(old.save.serializeState(before), raw, `${name}: archived input was mutated`);
-  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: current input was mutated`, migrationFloor, 0);
+  assertR8StatePreserved(currentSave.serializeState(current), raw, `${name}: current input was mutated`, migrationFloor, expectedNpcEconomy());
   assert.equal(evaluation.next === current, expected === before, `${name}: threshold reference identity`);
   const restored = currentSave.deserializeState(currentSave.importSave(currentSave.exportSave(evaluation.next, 1234)).state);
   assert.deepEqual(currentSave.serializeState(restored), currentSave.serializeState(evaluation.next), `${name}: candidate reader roundtrip`);
   results.push({ name, gain: evaluation.gain.toString(), launches: evaluation.next.stats.launches });
 }
-console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "every r8 field exact; r9 empty buildingTemplates and r10 fixed-floor/zero-grant ledgers and r11 null demolition slots and r12 zero-age NPC state independently asserted and retained through prestige; prestige reset floor equals the archived retained job counter",
+console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "every r8 field exact; r9 empty buildingTemplates and r10 fixed-floor/zero-grant ledgers and r11 null demolition slots and r13 zero-age NPC state independently asserted and retained through prestige; prestige reset floor equals the archived retained job counter",
   scope: "Actual old-r8 APIs, stored seeds, settled readers, paid queues, old formation origin, templates, owned transport phases, ring authority, deep rewards and threshold/achievement boundaries", scenarios: results }, null, 2));

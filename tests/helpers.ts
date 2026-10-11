@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { activePlanet, withPlanet } from "../src/game/empire";
 import { big } from "../src/game/decimal";
 import { createInitialState } from "../src/game/state";
@@ -33,7 +33,19 @@ export function withResearch(state: GameState, levels: Partial<Record<ResearchId
   return { ...state, research: { ...state.research, levels: { ...state.research.levels, ...levels } } };
 }
 
-/** Remove only both independently verified exact r13 fields from an explicit old-schema projection. */
+/** Validate every added tail before dropping any field from an old-world comparison. */
+export function stripVerifiedNpcRemainders(state: any): void {
+  expect(Array.isArray(state.planets)).toBe(true);
+  for (const planet of state.planets) {
+    const descriptor = Object.getOwnPropertyDescriptor(planet, "npcResourceRemainder");
+    expect(descriptor && "value" in descriptor && descriptor.enumerable).toBe(true);
+    expect(Reflect.ownKeys(planet.npcResourceRemainder).sort()).toEqual(["crystal", "deuterium", "metal"]);
+    expect(planet.npcResourceRemainder).toEqual(expectedZeroNpcRemainder());
+  }
+  for (const planet of state.planets) delete planet.npcResourceRemainder;
+}
+
+/** Remove only independently verified exact r13 fields from an explicit old-schema projection. */
 export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: number): void {
   expect(Object.hasOwn(state, "npcEconomy")).toBe(true);
   expect(Object.hasOwn(state, "npcBattles")).toBe(true);
@@ -41,7 +53,8 @@ export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: num
   expect(state.npcEconomy).toEqual(expectedFreshNpcWallet(expectedElapsedSeconds));
   expect(Reflect.ownKeys(state.npcBattles).sort()).toEqual(["model", "reports"]);
   expect(state.npcBattles).toEqual(expectedEmptyNpcBattles());
-  // Every assertion precedes either deletion, so a failed projection is atomic.
+  // Every assertion precedes any deletion, so a failed projection is atomic.
+  stripVerifiedNpcRemainders(state);
   delete state.npcEconomy;
   delete state.npcBattles;
 }

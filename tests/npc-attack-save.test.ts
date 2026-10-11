@@ -1,3 +1,4 @@
+import { stripVerifiedNpcRemainders } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import historical from "./fixtures/npc-economy-r11.json";
 import { big } from "../src/game/decimal";
@@ -73,7 +74,8 @@ describe("r13 exact source migration", () => {
     expect(migrated.state.npcBattles).toEqual(createNpcBattleState());
     const { npcEconomy: _old, ...oldWorld } = source.state;
     const { npcEconomy: _new, npcBattles: _reports, ...newWorld } = migrated.state;
-    expect(newWorld).toEqual(oldWorld); expect(JSON.stringify(source)).toBe(before);
+    const oldProjection = structuredClone(newWorld); stripVerifiedNpcRemainders(oldProjection);
+    expect(oldProjection).toEqual(oldWorld); expect(JSON.stringify(source)).toBe(before);
     expect(importSave(JSON.stringify(migrated))).toEqual(migrated);
   });
   it("preserves MIN_VALUE and huge player/time Decimal representation without time backfill", () => {
@@ -105,11 +107,12 @@ describe("r13 exact source migration", () => {
     const damaged: any = r12(60); delete damaged.state.planets[0].demolition;
     expect(() => importSave(JSON.stringify(damaged))).toThrow();
   });
-  it("preserves genuine r11 outputs except the two explicitly added domain fields", () => {
+  it("preserves genuine r11 outputs except the explicitly added NPC domains and zero planet rights", () => {
     for (const row of historical.rows) {
       const adopted = importSave(row.raw);
       const { npcEconomy: _economy, npcBattles: _battle, ...world } = adopted.state;
-      expect(world).toEqual(row.oldReaderOutput.state);
+      const oldProjection = structuredClone(world); stripVerifiedNpcRemainders(oldProjection);
+      expect(oldProjection).toEqual(row.oldReaderOutput.state);
       expect(adopted.state.npcEconomy.baseline.stock).toEqual([500, 250, 0]);
     }
   });

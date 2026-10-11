@@ -18,7 +18,7 @@ import { SPACE, wrap, coordinateKey, type Coordinates } from "../game/galaxy";
 import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
-import { transportLoadView } from "./space-present";
+import { npcRemainderView, transportLoadView } from "./space-present";
 import { fillTransportCargo } from "./transport-load-model";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
 import { RESOURCE_IDS, type GameState } from "../game/types";
@@ -29,6 +29,21 @@ function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {co
 function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.textContent!==value)n.textContent=value;}
 function html(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.dataset.signature!==value){n.innerHTML=value;n.dataset.signature=value;}}
 const entry=(label:string,id:string,min:number,max:number,value:number)=>`<label>${label}<input id="${id}" type="number" min="${min}" max="${max}" value="${value}" step="1" /></label>`;
+
+/** Only the pending-right text is patched; existing controls and open details survive ticks. */
+export function updateNpcRemainderDetail(row: HTMLElement, model: ReturnType<typeof npcRemainderView>): void {
+  let details = row.querySelector<HTMLDetailsElement>(".npc-resource-remainder");
+  if (!model) { details?.remove(); return; }
+  if (!details) {
+    details = document.createElement("details"); details.className = "npc-resource-remainder";
+    const summary = document.createElement("summary"); summary.textContent = "不足 1 的待结算权益";
+    const exact = document.createElement("p"); exact.className = "npc-remainder-exact";
+    const notice = document.createElement("p"); notice.className = "npc-remainder-notice muted";
+    details.append(summary, exact, notice); row.append(details);
+  }
+  put(details, ".npc-remainder-exact", model.exactText);
+  put(details, ".npc-remainder-notice", model.notice);
+}
 
 /** Stable draft inputs, fresh per-click arithmetic, and a small DOM capability boundary. */
 export function installTransportLoadControls(root:HTMLElement,readRequest:()=>FleetRequest) {
@@ -262,7 +277,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       planets.dataset.planets=planetSignature;
       planets.innerHTML=model.planets.map(p=>`<div class="space-planet" data-world-id="${enc(p.id)}"><strong>${enc(p.name)} [${p.coordinate}]</strong><span class="planet-stock"></span><div class="space-actions"><button type="button" data-space="select" data-planet="${enc(p.id)}" ${p.selected?"disabled":""}>${p.selected?"当前星球":"切换"}</button>${p.canAbandon?`<button type="button" class="danger" data-space="abandon" data-planet="${enc(p.id)}">放弃</button>`:""}</div></div>`).join("");
     }
-    for(const p of model.planets)put(planets,`[data-world-id="${p.id}"] .planet-stock`,p.stock);
+    for(const p of model.planets){const row=el(planets,`[data-world-id="${p.id}"]`);put(row,".planet-stock",p.stock);updateNpcRemainderDetail(row,p.npcRemainder);}
   }
   function updateSpaceMessages(model:SpaceMessagesView){
     npcBattle.update(model.npcReports);

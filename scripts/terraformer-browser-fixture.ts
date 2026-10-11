@@ -4,7 +4,7 @@
  * independently asserted as well. Historical faults are separately classified.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
-import { assertNpcEconomy } from "./r12-compatibility.mjs";
+import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
 import historical from "../tests/fixtures/terraformer-r9.json";
 import { setProductionPct } from "../src/automation/engine";
 import { catchUp } from "../src/core/offline";
@@ -43,9 +43,9 @@ const clone = (state: GameState): GameState => deserializeState(importSave(expor
 const saved = (state: GameState) => JSON.parse(exportSave(state, EPOCH));
 const load = (key: keyof typeof names) => {
   const source = milestones[key].save;
-  check(source.version === 9 && source.revision === 12 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
+  check(source.version === 9 && source.revision === 13 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
   const state = deserializeState(importSave(JSON.stringify(source)).state);
-  assertNpcEconomy(state, Math.min(11900, milestones[key].continuationSeconds), `${key}: counted natural continuation NPC age`);
+  assertNpcEconomy(state, expectedNpcEconomy(milestones[key].npcAdoptedSegmentsSeconds), `${key}: counted natural continuation NPC age`);
   exact(serializeState(state), source.state, `${key}: strict import changes natural game state`);
   exact(serializeState(catchUp(clone(state), 0).state), source.state, `${key}: zero-gap startup changes natural state`);
   return state;
@@ -151,9 +151,8 @@ for (const name of ["continuous_manual", "full10000_plan"] as const) {
   check(row && row.synthetic && row.canonical && createHash("sha256").update(row.raw).digest("hex") === row.rawSha256, "Historical native raw hash mismatch");
   exact(JSON.parse(row.raw), row.oldReaderOutput, "Canonical historical serializer/reader mismatch");
   const migrated = importSave(row.raw), initial = deserializeState(migrated.state);
-  const projected = JSON.parse(JSON.stringify(migrated.state));
-  assertNpcEconomy(projected, 0, "pure historical r9 migration has no retrospective NPC production");
-  delete projected.npcEconomy; delete projected.terraformerGrantJobFloor;
+  const projected = projectVerifiedNpcEconomy(migrated.state,expectedNpcEconomy(),"pure historical r9 migration has no retrospective NPC production or rights");
+  delete projected.terraformerGrantJobFloor;
   for (const planet of projected.planets) {
     check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "Historical r9 migration may add only null demolition");
     delete planet.demolition; delete planet.terraformerFields;

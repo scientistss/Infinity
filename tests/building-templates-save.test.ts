@@ -1,3 +1,4 @@
+import { stripVerifiedNpcRemainders } from "./helpers";
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { stripSyntheticTerraformerMetadata, stripVerifiedNpcMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
@@ -391,7 +392,8 @@ describe("strict synthetic legacy NPC projection", () => {
     const before = file(), state = structuredClone(before.state);
     stripVerifiedNpcMetadata(state, 0);
     const { npcEconomy: _npc, npcBattles: _battles, ...prior } = before.state;
-    expect(state).toEqual(prior);
+    const oldProjection = structuredClone(prior); stripVerifiedNpcRemainders(oldProjection);
+    expect(state).toEqual(oldProjection);
     expect(before.state.npcEconomy).toEqual(expectedFreshNpcWallet());
     expect(before.state.npcBattles).toEqual(expectedEmptyNpcBattles());
   });

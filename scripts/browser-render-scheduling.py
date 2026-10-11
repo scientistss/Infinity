@@ -8,8 +8,9 @@ All normal clicks/typing are trusted browser input. Adversarial old-node replay,
 synthetic hidden state and native File.text completion gates are clearly labeled.
 """
 import argparse
+from npc_display_contract import SAMPLE_JS as NPC_DISPLAY_SAMPLE_JS, normalize_npc_display
 from demolition_display_contract import FACILITY_DEMOLITION_SAMPLE_JS, normalize_demolition_display
-from r12_compatibility import CURRENT_REVISION, npc_elapsed_from_segments, assert_zero_grant_metadata, lift_legacy_state_to_r12
+from r13_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r13
 import base64
 import copy
 import hashlib
@@ -163,11 +164,11 @@ def exact_state(actual, expected):
     return json.dumps(actual,sort_keys=True,separators=(',',':')) == json.dumps(expected,sort_keys=True,separators=(',',':'))
 
 
-def lift_r8_state(state, grant_job_floor, *, npc_elapsed):
-    return lift_legacy_state_to_r12(state, source_revision=8, grant_job_floor=grant_job_floor, npc_elapsed=npc_elapsed)
+def lift_r8_state(state, grant_job_floor, *, npc_wallet):
+    return lift_legacy_state_to_r13(state, source_revision=8, grant_job_floor=grant_job_floor, npc_wallet=npc_wallet)
 
 
-def expected_npc_elapsed(name):
+def expected_npc_wallet(name):
     # These are independently witnessed additions from the actual fixed r8
     # engine, after each separate source is migrated at age zero. Historical
     # totalTime and the current candidate's NPC field are never age inputs.
@@ -177,10 +178,10 @@ def expected_npc_elapsed(name):
     assert set(witness['traces']) == set(fixtures['expected'])
     row = witness['traces'][name]
     assert type(row['oldObservedAndUnobservedStateEqual']) is bool and row['oldObservedAndUnobservedStateEqual']
-    age = npc_elapsed_from_segments(row['adoptedSegmentsSeconds'])
-    assert type(row['npcElapsedSeconds']) in (int, float) and row['npcElapsedSeconds'] == age
+    age = expected_npc_economy(row['adoptedSegmentsSeconds'])
+    assert exact_state(row['npcWallet'], age)
     if name.endswith('.initial') or name in ('ring.single', 'ring.all', 'ring.singleAll'):
-        assert row['adoptedSegmentsSeconds'] == [] and age == 0
+        assert row['adoptedSegmentsSeconds'] == [] and age == expected_npc_economy()
     return age
 
 
@@ -199,13 +200,13 @@ def expected_floor(name):
 
 def expected_state(name, page=None):
     state = fixtures['expected'][name]
-    return state if page is not None and page.url.startswith(args.before_url) else lift_r8_state(state, expected_floor(name), npc_elapsed=expected_npc_elapsed(name))
+    return state if page is not None and page.url.startswith(args.before_url) else lift_r8_state(state, expected_floor(name), npc_wallet=expected_npc_wallet(name))
 
 
 def whole(page,expected,label='complete serialized engine state matches independent production-engine oracle'):
     value=save(page)
     if not page.url.startswith(args.before_url):
-        check('every new field independently matches its fixed migration/reset boundary',assert_zero_grant_metadata(value,fixtures['expected'][expected],grant_job_floor=expected_floor(expected),npc_elapsed=expected_npc_elapsed(expected)))
+        check('every new field independently matches its fixed migration/reset boundary',assert_zero_grant_metadata(value,fixtures['expected'][expected],grant_job_floor=expected_floor(expected),npc_wallet=expected_npc_wallet(expected)))
     check(label,exact_state(value,expected_state(expected,page)),{'expected':expected})
     return value
 
@@ -233,13 +234,13 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     check('counter and healthy Storage delegate to captured native implementations',all(page.evaluate('window.__renderProbe.snapshot().backing').values()))
     if not corrupt and url == args.url:
         stored=json.loads(raw(page))
-        check('controlled startup independently validates fixed floor and zero grants',assert_zero_grant_metadata(stored['state'],seed['state'],grant_job_floor=seed['state']['orders']['nextJobId'],npc_elapsed=0))
-        check('controlled current startup observes actual r8 migration and only approved metadata',stored['revision']==CURRENT_REVISION and exact_state(stored['state'],lift_r8_state(seed['state'],seed['state']['orders']['nextJobId'],npc_elapsed=0)))
+        check('controlled startup independently validates fixed floor and zero grants',assert_zero_grant_metadata(stored['state'],seed['state'],grant_job_floor=seed['state']['orders']['nextJobId'],npc_wallet=expected_npc_economy()))
+        check('controlled current startup observes actual r8 migration and only approved metadata',stored['revision']==CURRENT_REVISION and exact_state(stored['state'],lift_r8_state(seed['state'],seed['state']['orders']['nextJobId'],npc_wallet=expected_npc_economy())))
         check('controlled migration preserves exact historical native seed bytes',page.evaluate('key=>localStorage.getItem(key)',BACKUP)==json.dumps(seed,ensure_ascii=False))
     return context,page
 
 
-def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None, research_base=None):
+def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None, research_base=None, npc_base=None):
     result=page.evaluate('''({omitBuilding,ringBase,orderBase,facilityBase,researchBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
@@ -351,6 +352,14 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       }
       return result;
     }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base,'researchBase':research_base})
+    if npc_base:
+        stored=raw(page);at=page.evaluate('window.__renderProbe.at()');evidence=page.evaluate(NPC_DISPLAY_SAMPLE_JS)
+        artifact=f'panel-parity-npc-{npc_base}-{result["tab"]}-{len(audits)}-raw.json'
+        (out/artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+        check('NPC exact display exception starts from the complete independent old state: '+npc_base,exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
+        result=normalize_npc_display(result,evidence,json.loads(stored)['state'],npc_base)
+        check('NPC display adapter never mutates DOM, storage, state or time',raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and page.locator('[data-tab-panel="'+result['tab']+'"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
+        audits.append({'kind':'exact-no-attack-NPC-display-delta','side':npc_base,'rawArtifact':artifact,'constraint':'Exact old coordinate identities, one attack route per NPC, one mission option, hidden attack controls, exact empty closed report region and original message HTML retained. No generic message/text/control deletion.'})
     if facility_base:
         stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
         evidence=page.evaluate(FACILITY_DEMOLITION_SAMPLE_JS)
@@ -841,8 +850,8 @@ def run_cases():
         case='before/after identical controlled trace '+name
         before,count_before=differential_trace(name,args.before_url)
         after,count_after=differential_trace(name,args.url)
-        check('trace metadata retains its original migration boundary even after new payments',assert_zero_grant_metadata(after,before,grant_job_floor=fixtures['base']['state']['orders']['nextJobId'],npc_elapsed=expected_npc_elapsed(name)))
-        check('every archived field matches on identical trace with only exact r9/r10/r11/r12 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'],npc_elapsed=expected_npc_elapsed(name))))
+        check('trace metadata retains its original migration boundary even after new payments',assert_zero_grant_metadata(after,before,grant_job_floor=fixtures['base']['state']['orders']['nextJobId'],npc_wallet=expected_npc_wallet(name)))
+        check('every archived field matches on identical trace with only exact r9/r10/r11/r13 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'],npc_wallet=expected_npc_wallet(name))))
         if name.startswith('steady'):
             check('old bundle updates on every requested frame',count_before==len(fixtures['traces'][name]))
             check('ordinary latest-only rendering is bounded at 10Hz',18<=count_after<=21,{'before':count_before,'after':count_after})
@@ -868,7 +877,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None, label if name=='research' else None)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None, label if name=='research' else None, npc_base=label if name in ('galaxy','fleet','messages') else None)
             if name=='galaxy':
                 # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
@@ -902,7 +911,7 @@ def run_cases():
                 click(page,f'#{details_id} > summary')
                 check('native summary opens library for full visible parity: '+details_id,
                       page.locator('#'+details_id).evaluate('(element)=>element.open'))
-                opened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None)
+                opened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None,npc_base=label if name=='fleet' else None)
                 check('opened library controls enter the complete paired snapshot: '+details_id,
                       any(control['id']==new_id for control in opened['inputs']) and
                       len(opened['inputs'])>=len(snapshots[label][name]['inputs'])+4)
@@ -911,7 +920,7 @@ def run_cases():
                 check('library returns to folded state after parity observation: '+details_id,
                       not page.locator('#'+details_id).evaluate('(element)=>element.open'))
                 click(page,f'#{details_id} > summary')
-                reopened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None)
+                reopened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None,npc_base=label if name=='fleet' else None)
                 check('closed then reopened library retains complete visible snapshot: '+details_id,reopened==opened)
                 snapshots[label][name+'-library-reopened']=reopened
                 click(page,f'#{details_id} > summary')
@@ -1046,7 +1055,7 @@ def run_cases():
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
     context,page=boot();tab(page,'save');baseline=raw(page)
-    # Migration already wrote canonical r12 at time zero. Re-saving identical
+    # Migration already wrote canonical r13 at time zero. Re-saving identical
     # bytes is a legitimate no-op, so make only the save envelope 1 ms newer.
     before_events=page.evaluate('window.__renderProbe.snapshot().events')
     page.evaluate('window.__renderProbe.advance(1)')
@@ -1120,7 +1129,7 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r12/r11) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
+            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r13/r12) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',

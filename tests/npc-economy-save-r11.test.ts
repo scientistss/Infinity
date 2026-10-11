@@ -1,4 +1,4 @@
-import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import historical from "./fixtures/npc-economy-r11.json";
 import fixtureRaw from "./fixtures/npc-economy-r11.json?raw";
@@ -7,7 +7,7 @@ import { BACKUP_KEY, deserializeState, exportSave, importSave, serializeState, t
 import { SaveSession } from "../src/game/save-session";
 
 const INITIAL = expectedFreshNpcWallet();
-const lift = (old: any) => ({ ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles() } });
+const lift = (old: any) => ({ ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(), planets: old.state.planets.map((planet: any) => ({ ...planet, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
 const partial = historical.rows.find(row => row.id === "partial-demolition-earned-grants")!;
 
 describe("exact ca5 r11 source adoption", () => {

@@ -97,6 +97,43 @@ NPC_CHANGED_PATHS = (
     'src/game/types.ts',
 )
 
+ATTACK_ADOPTION = 'eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81'
+ATTACK_MANIFEST = 'tests/fixtures/npc-attack-domain-provenance.json'
+ATTACK_MANIFEST_SHA256 = '66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918'
+ATTACK_PRODUCTION_PATHS = ('src',)
+ATTACK_CHANGED_PATHS = (
+    'src/game/content.ts',
+    'src/game/fleet.ts',
+    'src/game/logic.ts',
+    'src/game/npc-attack-state.ts',
+    'src/game/npc-attack.ts',
+    'src/game/npc-battle.ts',
+    'src/game/npc-fuel.ts',
+    'src/game/npc-garrison.ts',
+    'src/game/npc-loot.ts',
+    'src/game/npc-remainder.ts',
+    'src/game/npc-scout.ts',
+    'src/game/npc-transfer.ts',
+    'src/game/npc-wallet.ts',
+    'src/game/planet.ts',
+    'src/game/save-session.ts',
+    'src/game/save.ts',
+    'src/game/space-save.ts',
+    'src/game/state.ts',
+    'src/game/types.ts',
+    'src/main.ts',
+    'src/space.css',
+    'src/ui/npc-attack-controls.ts',
+    'src/ui/npc-battle-panel.ts',
+    'src/ui/npc-battle-present.ts',
+    'src/ui/prestige-preview-model.ts',
+    'src/ui/prestige-preview.ts',
+    'src/ui/shipyard-panel.ts',
+    'src/ui/space-panel.ts',
+    'src/ui/space-present.ts',
+)
+ATTACK_RING_DELTAS = ()
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -185,15 +222,23 @@ def production_serializers(text):
         rf'unlockedCards:{state}\.unlockedCards\.slice\(\)', call('protocols'),
         rf'unlocked:{state}\.unlocked\.slice\(\)', copy('stats'), direct('offlineBonusHours'),
     ]
-    prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{return\{{'
-              rf'(?:(?:npcEconomy:{identifier}\({state}\.npcEconomy\),)?'
+    prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{'
+              rf'(?:{identifier}\({state},!1\)(?:;|,){identifier}\({state}\);'
+              rf'const (?P<context>{identifier})={identifier}\({state}\.universe\.seed,(?:512|{identifier}),'
+              rf'{state}\.planets\.map\((?P<planet>{identifier})=>(?P=planet)\.coordinates\)\);'
+              rf'return\{{npcEconomy:{identifier}\({state}\.npcEconomy,(?P=context)\),'
+              rf'npcBattles:{identifier}\({state}\.npcBattles,(?P=context)\),'
+              rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,{state}\.orders\.nextJobId\),'
+              rf'|return\{{(?:(?:npcEconomy:{identifier}\({state}\.npcEconomy\),)?'
               rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
-              rf'{state}\.orders\.nextJobId\),)?')
+              rf'{state}\.orders\.nextJobId\),)?)')
     return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
 
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != ATTACK_ADOPTION and git('ls-tree', candidate, '--', ATTACK_MANIFEST):
+        return npc_attack_domain_provenance(repository, candidate, git, check)
     if candidate != NPC_ADOPTION and git('ls-tree', candidate, '--', NPC_MANIFEST):
         return npc_domain_provenance(repository, candidate, git, check)
     if candidate != DEMOLITION_ADOPTION and git('ls-tree', candidate, '--', DEMOLITION_MANIFEST):
@@ -416,6 +461,69 @@ def npc_domain_provenance(repository, candidate, git, check):
             'previousAdoptionSourceSha': NPC_ADOPTION, 'candidateSourceSha': candidate,
             'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
             'previousProvenance': prior, 'manifestPath': NPC_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact NPC source adoption only; not native or CI acceptance. Every original protection, recovery, full-state and new NPC native assertion remains required.'}
+
+
+def npc_attack_domain_provenance(repository, candidate, git, check):
+    """One explicit eef-to-r13 source adoption; no historical contract is widened."""
+    prior = npc_domain_provenance(repository, ATTACK_ADOPTION, git, check)
+    check('NPC attack adoption starts at the exact independently verified eef demolition source',
+          prior['contract'] == 'exact-declared-npc-semantic-delta'
+          and prior['candidateSourceSha'] == ATTACK_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256)]
+    for path, digest in previous:
+        check('NPC candidate preserves complete earlier manifest bytes and mode: ' + path,
+              entry(candidate, path) == entry(ATTACK_ADOPTION, path) == {'mode': '100644', 'sha256': digest})
+    raw = (repository / ATTACK_MANIFEST).read_bytes()
+    check('NPC manifest has immutable approved digest and exact committed ordinary-file bytes',
+          sha(raw) == ATTACK_MANIFEST_SHA256
+          and entry(candidate, ATTACK_MANIFEST) == {'mode': '100644', 'sha256': ATTACK_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + ATTACK_MANIFEST))
+    manifest = json.loads(raw)
+    check('NPC attack adoption pins eef, all prior manifests, complete source and original protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-attack-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == ATTACK_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(ATTACK_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactRingCriticalDeltaPaths') == list(ATTACK_RING_DELTAS))
+    delta = changed(ATTACK_ADOPTION, candidate, ATTACK_PRODUCTION_PATHS)
+    check('complete production tree differs from eef only at exactly approved NPC files',
+          bool(ATTACK_CHANGED_PATHS) and delta == list(ATTACK_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, ATTACK_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(ATTACK_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('every NPC file, mode, complete patch and individual hunk matches immutable approval',
+          manifest.get('changedPaths') == rows)
+    check('NPC attack adoption leaves the entire original ring-critical scope byte-identical to verified eef',
+          changed(ATTACK_ADOPTION, candidate, RING_CRITICAL_PATHS) == list(ATTACK_RING_DELTAS)
+          and all(path in delta for path in ATTACK_RING_DELTAS))
+    return {'contract': 'exact-declared-npc-attack-semantic-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': ATTACK_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': ATTACK_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact NPC source adoption only; not native or CI acceptance. Every original protection, recovery, full-state and new NPC native assertion remains required.'}
 

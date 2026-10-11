@@ -3,7 +3,9 @@
  * Expected snapshots call the unchanged production tick/catchUp directly; neither
  * AccountedClock nor main.ts is imported by this independent engine oracle.
  */
-declare const process: { stdout: { write(text: string): void } };
+declare const process: { argv: string[]; stdout: { write(text: string): void } };
+import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy, type ExpectedNpcWallet } from "./r13-compatibility.mjs";
 import { equipCard } from "../src/automation/engine";
 import { catchUp, offlineCapSeconds } from "../src/core/offline";
 import { STORAGE_KEY } from "../src/game/content";
@@ -15,15 +17,25 @@ import { evaluatePrestige, tick } from "../src/game/logic";
 import { createOrderTask } from "../src/game/orders";
 import { enqueue } from "../src/game/queue";
 import { enqueueResearch } from "../src/game/research";
-import { BACKUP_KEY, deserializeState, exportSave, importSave } from "../src/game/save";
+import { BACKUP_KEY, deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { orderUnits } from "../src/game/shipyard";
 import { createInitialState, createPlanet } from "../src/game/state";
 import type { GameState } from "../src/game/types";
 import { buyCurvature } from "../src/prestige/tree";
 
+const {deepStrictEqual}=await import('node:assert/strict' as string);
+const sourceRoot=process.argv[2];
+if(!sourceRoot?.startsWith('/')) throw Error('Provide absolute pinned ca5/r11 source for independent complete clock fixture oracle');
+const {assertPinnedSource}=await import('./r11-startup-oracle.mjs' as string);assertPinnedSource(sourceRoot);
+const old=Object.fromEntries(await Promise.all(['game/save','game/logic','core/offline'].map(async path=>[path.split('/')[1],await import(`${sourceRoot}/src/${path}.ts`)])));
 const EPOCH = 1_792_000_000_000;
+const walletWitness=new WeakMap<GameState,{wallet:ExpectedNpcWallet;segments:number[]}>();
+const witness=(state:GameState)=>walletWitness.get(state)??{wallet:expectedNpcEconomy(),segments:[]};
 const serialize = (state: GameState) => JSON.parse(exportSave(state, EPOCH));
-const clone = (state: GameState): GameState => deserializeState(importSave(exportSave(state, EPOCH)).state);
+const clone = (state: GameState): GameState => {
+  const prior=witness(state);assertNpcEconomy(state,prior.wallet,'strict fixture clone');
+  const next=deserializeState(importSave(exportSave(state,EPOCH)).state);walletWitness.set(next,prior);return next;
+};
 const ok = (result: { state: GameState; ok: boolean; reason: string }): GameState => {
   if (!result.ok) throw new Error(result.reason);
   return result.state;
@@ -35,8 +47,20 @@ function settled(name: string, state: GameState): GameState {
       JSON.stringify(catchUp(result, 0).state) !== text) throw new Error(`${name}: strict-reader/startup drift`);
   return result;
 }
-const live = (state: GameState, seconds: number) => tick(state, seconds);
-const offline = (state: GameState, seconds: number) => catchUp(state, seconds).state;
+function independentAdvance(state:GameState,seconds:number,mode:'live'|'offline'):GameState {
+  const prior=witness(state),legacy=projectVerifiedNpcEconomy(serializeState(state),prior.wallet,'synthetic clock source');
+  // This is an explicitly synthetic r11 bridge, never relabeled historical evidence.
+  const envelope=serialize(state);const oldInput=old.save.deserializeState(old.save.importSave(JSON.stringify({...envelope,revision:11,state:legacy})).state);
+  const observed=captureAdoptedSteps(oldInput,value=>mode==='live'?{state:old.logic.tick(value,seconds)}:old.offline.catchUp(value,seconds),old.save.serializeState);
+  const next=mode==='live'?tick(state,seconds):catchUp(state,seconds).state;
+  const wallet=advanceExpectedNpcWallet(prior.wallet,observed.adoptedSegmentsSeconds);
+  assertNpcEconomy(next,wallet,'independent old-engine actual segments');
+  const currentOld=projectVerifiedNpcEconomy(serializeState(next),wallet,'full no-attack clock state');
+  deepStrictEqual(currentOld,old.save.serializeState(observed.result.state),'Complete no-attack clock state differs from actual pinned ca5 engine');
+  walletWitness.set(next,{wallet,segments:[...prior.segments,...observed.adoptedSegmentsSeconds]});return next;
+}
+const live = (state: GameState, seconds: number) => independentAdvance(state,seconds,'live');
+const offline = (state: GameState, seconds: number) => independentAdvance(state,seconds,'offline');
 const reload = (state: GameState, seconds: number) => offline(clone(state), seconds);
 
 let base = settled("base", createInitialState(20261010, 20261010));
@@ -87,12 +111,15 @@ automatic = settled("automatic", automatic);
 if (automatic.protocols.slots[1]?.card?.action.kind !== "prestige") throw new Error("Automatic launch must be actually armed");
 const variants = { base, mixed, incoming, cap8, prestige, automatic };
 const expected: Record<string, unknown> = {};
+const npcAdoptedTime:Record<string,unknown>={};
 function expect(name: string, state: GameState): void {
   // Validate every expected complete output with the production reader. Do not
   // settle away an engine difference after producing an expected result.
   const saved = serialize(state);
   importSave(JSON.stringify(saved));
   expected[name] = saved.state;
+  const observed=witness(state);assertNpcEconomy(state,observed.wallet,name);
+  npcAdoptedTime[name]={sourceSha:"ca5ef0c769856f2c4c8925e76a5c7d322822fe1b",adoptedSegmentsSeconds:observed.segments,npcWallet:observed.wallet,completeOldStateEqual:true};
 }
 for (const [name, state] of Object.entries(variants)) {
   expect(`${name}.initial`, state);
@@ -125,5 +152,5 @@ for (const [name, state] of [["mixed", mixed], ["cap8", cap8]] as const) {
 process.stdout.write(JSON.stringify({
   description: "Anonymous strictly settled initial fixtures. Explicit prefunding, completed technologies and initial inventories; real production APIs create every queue, finite plan, formation, protocol and flight. Whole-state expected outputs independently call production tick/catchUp and strict serializers, without importing the accounted clock or main. Browser Date/performance/RAF/interval dispatch are controlled, not genuine OS-background evidence. Reset checks deliberately compare timestamp/elapsed-time invariants because new-world entropy remains native.",
   epoch: EPOCH, key: STORAGE_KEY, backupKey: BACKUP_KEY, homeId: mixed.activePlanetId,
-  expected, ...Object.fromEntries(Object.entries(variants).map(([name, state]) => [name, serialize(state)])),
+  expected, npcAdoptedTime, ...Object.fromEntries(Object.entries(variants).map(([name, state]) => [name, serialize(state)])),
 }, null, 2));

@@ -4,6 +4,7 @@
  * paid research/probe/two-scout continuation. Native evidence is a separate gate.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
+import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { exactEvidence as exact, requireEvidence as check } from "./demolition-fixture";
@@ -36,7 +37,7 @@ async function main(): Promise<void> {
     && report.source.sourceSha === expectedSha && report.source.gitHead === expectedSha && report.source.sourceScopeStatusPorcelain === "", "Passing natural report must bind exact clean candidate source");
   check(report.source.historicalProducer.sourceSha === "ca5ef0c769856f2c4c8925e76a5c7d322822fe1b"
     && report.source.historicalProducer.sourceScopeStatusPorcelain === "" && report.source.historicalProducer.sourceFiles.length > 0, "Historical producer must be clean, complete pinned ca5 source");
-  check(SAVE_SCHEMA === "infinity-original-p4" && SAVE_VERSION === 9 && SAVE_REVISION === 12, "Exact r12 acceptance only");
+  check(SAVE_SCHEMA === "infinity-original-p4" && SAVE_VERSION === 9 && SAVE_REVISION === 13, "Exact r13 acceptance only");
   check(report.provenance.originalBytesUnchanged && report.provenance.injectedGameState === false
     && report.provenance.noWalletTechnologyShipClockInjection && report.provenance.exactHistoricalControl, "Natural provenance incomplete");
   const origin = report.origin;
@@ -45,19 +46,19 @@ async function main(): Promise<void> {
   check(hash(origin.r11Raw) === origin.r11Sha256 && origin.r11Save.revision === 11 && !Object.hasOwn(origin.r11Save.state, "npcEconomy"), "Real r11 handoff is missing or altered");
   exact(JSON.parse(origin.r11Raw), origin.r11Save, "Actual ca5 raw r11 handoff");
   const importedSave = importSave(origin.r11Raw);
-  const projected = structuredClone(importedSave.state) as unknown as Record<string, unknown>;
-  delete projected.npcEconomy;
+  const projected = projectVerifiedNpcEconomy(importedSave.state,expectedNpcEconomy(),"pure r11 migration zero rights");
   exact(projected, origin.r11Save.state, "Every old r11 field preserved");
-  exact(importedSave.state.npcEconomy, { model: "fixed-production-v1", elapsedSeconds: 0 }, "No historical retroactive production");
+  exact(importedSave.state.npcEconomy, expectedNpcEconomy(), "No historical retroactive production");
   const expected: Record<string, ReturnType<typeof serializeState>> = {};
   const milestones: Record<string, unknown> = {};
   for (const key of NPC_NATURAL_MILESTONES) {
     const rows = report.milestones.filter((row: { name: string }) => row.name === key);
     check(rows.length === 1, `Missing/duplicate ${key}`);
     const row = rows[0];
-    check(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.revision === 12
+    check(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.revision === 13
       && row.save.savedAt === row.save.lastTickAt && row.rawSha256 === hash(row.raw), `${key}: complete strict adopted handoff required`);
     exact(JSON.parse(row.raw), row.save, `${key}: full raw envelope`);
+    assertNpcEconomy(row.save.state, row.npcWallet, `${key}: independently witnessed old-engine wallet`);
     const parsed = importSave(row.raw), state = deserializeState(parsed.state);
     exact(parsed, row.save, `${key}: strict complete envelope`);
     exact(serializeState(state), row.save.state, `${key}: full state roundtrip`);
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
   check(branches.offline.rawGapSeconds === 100000 && branches.offline.appliedSeconds === 7200 && branches.offline.sameTimeReloadApplied === 0,
     "Offline branch proves one actual adopted cap and no repeated remainder");
   process.stdout.write(JSON.stringify({ schema: "infinity-npc-economy-browser-fixture-v1", key: STORAGE_KEY, homeId: "homeworld", colonyId: "colony-1",
-    description: "Real r10 bytes → pinned ca5 reader/exporter r11 at unchanged clocks → r12 age0. Actual native research/probe/scouts; current domain milestones are a full-state oracle, with separate independent payment/stock goldens.",
+    description: "Real r10 bytes → pinned ca5 reader/exporter r11 at unchanged clocks → r13 age0. Actual native research/probe/scouts; current domain milestones are a full-state oracle, with separate independent payment/stock goldens.",
     source: { reportSha256: expectedHash, sourceSha: expectedSha, gitHead: report.source.gitHead, sourceScopeStatusPorcelain: report.source.sourceScopeStatusPorcelain, oracleSourceScopeStatusPorcelain: sourceScope },
     origin, originalSave: origin.r11Save, originalSaveRaw: origin.r11Raw, importedSave,
     base: (milestones["origin-migrated-r11-age-zero"] as { save: unknown }).save,

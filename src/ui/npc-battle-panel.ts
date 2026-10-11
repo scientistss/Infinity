@@ -1,7 +1,7 @@
 import { npcBattleDetails, npcBattleRounds, type NpcBattleReportsView } from "./npc-battle-present";
 
 export function npcBattlePanelHtml(): string {
-  return `<h3 class="group-title">NPC 轨道战报</h3><p class="muted">保留 60 份终端历史与全部尚未交付的战报。</p><details class="npc-battle-rules"><summary>战斗规则</summary><p class="muted">按舰种聚合结算，最多六轮。阵亡舰船永久损失，幸存者下一场恢复完整船体与护盾。仅获胜且有幸存舰船才装载战利品；按幸存货舱分配，返抵原出发星球后一次入库。空驻军收集为 0 回合。NPC 不会主动袭击母星。</p></details><div id="npc-battle-reports"></div>`;
+  return `<h3 class="group-title">NPC 轨道战报</h3><p class="muted">保留 60 份终端历史与全部尚未交付的战报。</p><details class="npc-battle-rules"><summary>战斗规则</summary><p class="muted">按舰种聚合结算，最多六轮。阵亡舰船永久损失，幸存者下一场恢复完整船体与护盾。仅获胜且有幸存舰船才装载战利品；按幸存货舱分配，返抵原出发星球后一次结算；不足 1 的部分保留为该星球待结算权益。空驻军收集为 0 回合。NPC 不会主动袭击母星。</p></details><div id="npc-battle-reports"></div>`;
 }
 
 /** Keyed details preserve focus/open state. Reading or expanding never resolves a battle. */

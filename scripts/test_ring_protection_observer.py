@@ -111,6 +111,20 @@ class ProductionSerializerTests(unittest.TestCase):
         return matches[0]
 
 
+    def test_r13_exact_wallet_receipt_validation_prefix_and_all_old_fields(self):
+        prefix = 'validate(e,!1);crosslinks(e);const c=context(e.universe.seed,512,e.planets.map(p=>p.coordinates));return{npcEconomy:wallet(e.npcEconomy,c),npcBattles:battles(e.npcBattles,c),'
+        current = R12.replace('return{' + NPC, prefix)
+        self.assertEqual(self.assert_unique(current).group(),current)
+        self.assertEqual(self.assert_unique(current.replace('validate(e,!1);crosslinks(e);','validate(e,!1),crosslinks(e);')).group('state'),'e')
+        for before,after in (
+            ('validate(e,!1);',''), ('crosslinks(e);',''), ('validate(e,!1)','validate(e,!0)'),
+            ('e.universe.seed','x.universe.seed'), ('512','513'), ('p.coordinates','x.coordinates'),
+            ('wallet(e.npcEconomy,c)','wallet(e.npcEconomy,other)'), ('battles(e.npcBattles,c)','battles(e.npcBattles,other)'),
+            ('npcBattles:battles(e.npcBattles,c),',''), ('c=context','c=(sideEffect(),context'),
+            ('return{npcEconomy:','extra();return{npcEconomy:'), ('...e.stats','...x.stats'),
+        ):
+            with self.subTest(before=before):self.assertEqual(RING.production_serializers(current.replace(before,after)),[])
+
     def test_r12_exact_first_npc_call_and_unchanged_complete_historical_shape(self):
         self.assertEqual(self.assert_unique(R12).group(), R12)
         for old, new in (

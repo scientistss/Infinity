@@ -1,0 +1,152 @@
+{
+  "schema": "independent-python-lf-r13-goldens-v1",
+  "method": "Standalone Python binary64 mulberry32/FNV and LF-only simultaneous shield/hull arithmetic; no production imports or source execution. Fixed universe20261010 target1:56:6.",
+  "draw7": {
+    "mode": "squadron-v1",
+    "winner": "draw",
+    "rounds": [
+      {
+        "round": 1,
+        "attacker": 4,
+        "defender": 4,
+        "attackDamage": 229.03319064807152,
+        "defendDamage": 196.50800578296185
+      },
+      {
+        "round": 2,
+        "attacker": 4,
+        "defender": 4,
+        "attackDamage": 206.70114987995478,
+        "defendDamage": 204.56521516665816
+      },
+      {
+        "round": 3,
+        "attacker": 3,
+        "defender": 3,
+        "attackDamage": 199.45477491244677,
+        "defendDamage": 217.24515450187027
+      },
+      {
+        "round": 4,
+        "attacker": 3,
+        "defender": 3,
+        "attackDamage": 172.3154438249767,
+        "defendDamage": 159.58208944648504
+      },
+      {
+        "round": 5,
+        "attacker": 3,
+        "defender": 3,
+        "attackDamage": 161.32592781912535,
+        "defendDamage": 151.61575885489583
+      },
+      {
+        "round": 6,
+        "attacker": 3,
+        "defender": 2,
+        "attackDamage": 162.8116636569612,
+        "defendDamage": 138.21255423361436
+      }
+    ],
+    "attackerBefore": {
+      "light_fighter": 4
+    },
+    "defenderBefore": {
+      "light_fighter": 4
+    },
+    "attackerAfter": {
+      "light_fighter": 3
+    },
+    "defenderAfter": {
+      "light_fighter": 2
+    }
+  },
+  "win8": {
+    "mode": "squadron-v1",
+    "winner": "attacker",
+    "rounds": [
+      {
+        "round": 1,
+        "attacker": 6,
+        "defender": 2,
+        "attackDamage": 304.7282301764935,
+        "defendDamage": 100.55614576209338
+      },
+      {
+        "round": 2,
+        "attacker": 6,
+        "defender": 1,
+        "attackDamage": 328.7844680836424,
+        "defendDamage": 93.5364564275369
+      },
+      {
+        "round": 3,
+        "attacker": 6,
+        "defender": 0,
+        "attackDamage": 334.9249290106818,
+        "defendDamage": 49.831933309324086
+      }
+    ],
+    "attackerBefore": {
+      "light_fighter": 6
+    },
+    "defenderBefore": {
+      "light_fighter": 2
+    },
+    "attackerAfter": {
+      "light_fighter": 6
+    },
+    "defenderAfter": {}
+  },
+  "remainderGoldens": [
+    {
+      "name": "integer-snap-hydrated",
+      "source": "1",
+      "prior": "0.00000000001",
+      "signedInteger": 1,
+      "wallet": "2",
+      "remainder": "0.00000000001"
+    },
+    {
+      "name": "below-integer-plateau",
+      "source": "0.99999999998",
+      "prior": "0",
+      "signedInteger": 1,
+      "wallet": "1.9999999999",
+      "remainder": "0.00000000008"
+    },
+    {
+      "name": "ordinary-million-fuel64",
+      "source": "1000000",
+      "prior": "0",
+      "signedInteger": -64,
+      "wallet": "999935.9999999999",
+      "remainder": "0.0000000001"
+    },
+    {
+      "name": "future-loot-carry",
+      "source": "100.9999999997",
+      "prior": "0.0000000003",
+      "signedInteger": 1,
+      "wallet": "102",
+      "remainder": "0"
+    },
+    {
+      "name": "affordable-fuel-carry",
+      "source": "100.9999999997",
+      "prior": "0.0000000003",
+      "signedInteger": -1,
+      "wallet": "100",
+      "remainder": "0"
+    },
+    {
+      "name": "tail-is-not-fuel-affordability",
+      "source": "0.75",
+      "prior": "0.25",
+      "signedInteger": -1,
+      "wallet": null,
+      "remainder": null
+    }
+  ],
+  "remainderGoldenProvenance": "Frozen approved v2 integer-snap/plateau/carry goldens and separately executed independent-matrix million-wallet fuel64 golden. Fixed-grid arithmetic below independently verifies totals; these synthetic oracle checks are never supplied as a gameplay save."
+}

@@ -9,6 +9,7 @@ import { expansionScore, type PrestigeEvaluation } from "../game/logic";
 import { HOMEWORLD_ID } from "../game/planet";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts, type ResourceId } from "../game/types";
 import { passiveCoreBonus, unspentCores } from "../prestige/tree";
+import { npcRemainderView } from "./space-present";
 
 export const PRESTIGE_PREVIEW_ROW_LIMIT = 20;
 export type PreviewResources = Record<ResourceId, string>;
@@ -23,6 +24,7 @@ export interface PrestigePreview {
   passivePercent: PreviewChange;
   newHome: PreviewResources;
   worlds: { count: number; colonies: number; resources: PreviewResources; buildingLevels: string; units: string };
+  npcRemainders: { planets: number; resources: number; rows: Array<{ id: string; name: string; amounts: PreviewResources }> };
   paid: { buildings: number; demolitions: number; research: number; shipyard: number; remainingUnits: string; buildingPaid: PreviewResources; demolitionPaid: PreviewResources; researchPaid: PreviewResources; remainingUnitPaid: PreviewResources };
   fleets: { count: number; ships: string; cargo: PreviewResources; unsettledStake: string; darkMatter: string; items: Record<string, string> };
   orders: { stopped: number; releasedWork: number; releasedPending: number; formationOrigins: number; retiredTrips: number; deliveredRetiredTrips: number; undeliveredRetiredTrips: number; unresolvedRetiredTrips: number; returnedTrips: number };
@@ -72,6 +74,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
     if (rows.length < PRESTIGE_PREVIEW_ROW_LIMIT) rows.push({ kind, text: text() });
   };
   const worldResources = zero(), buildingPaid = zero(), demolitionPaid = zero(), researchPaid = zero(), remainingUnitPaid = zero(), fleetCargo = zero();
+  const npcRemainders: PrestigePreview["npcRemainders"] = { planets: 0, resources: 0, rows: [] };
   let buildingLevels = big(0), units = big(0), remainingUnits = big(0), ships = big(0), unsettledStake = big(0), undockedDm = big(0);
   let buildings = 0, demolitions = 0, research = 0, shipyard = 0;
   const fleetItems: Record<string, BigNumber> = {};
@@ -81,6 +84,14 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
   // Below the threshold there is no launch, so do not label existing assets as losses.
   if (eligible) {
     for (const planet of before.planets) {
+      // A bounded exact per-planet list, deliberately outside the ordinary 20-row
+      // sample. Every lost tail remains inspectable without Decimal summation.
+      const remainder = npcRemainderView(planet.npcResourceRemainder);
+      if (remainder) {
+        npcRemainders.planets++;
+        npcRemainders.resources += remainder.resourceCount;
+        npcRemainders.rows.push({ id: planet.id, name: planet.name, amounts: remainder.amounts });
+      }
       add(worldResources, planet.resources);
       buildingLevels = buildingLevels.add(sumCounts(planet.buildings));
       units = units.add(sumCounts(planet.units));
@@ -168,6 +179,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
     passivePercent: change(passiveCoreBonus(before).mul(100), passiveCoreBonus(next).mul(100)),
     newHome: resourceStrings(home?.resources ?? zero()),
     worlds: { count: eligible ? before.planets.length : 0, colonies: eligible ? before.planets.filter(planet => planet.id !== HOMEWORLD_ID).length : 0, resources: resourceStrings(worldResources), buildingLevels: buildingLevels.toString(), units: units.toString() },
+    npcRemainders,
     paid: { buildings, demolitions, research, shipyard, remainingUnits: remainingUnits.toString(), buildingPaid: resourceStrings(buildingPaid), demolitionPaid: resourceStrings(demolitionPaid), researchPaid: resourceStrings(researchPaid), remainingUnitPaid: resourceStrings(remainingUnitPaid) },
     fleets: { count: eligible ? before.fleets.filter(fleet => !nextFleets.has(fleet.id)).length : 0, ships: ships.toString(), cargo: resourceStrings(fleetCargo), unsettledStake: unsettledStake.toString(), darkMatter: undockedDm.toString(), items: Object.fromEntries(Object.entries(fleetItems).map(([id, amount]) => [id, amount.toString()])) },
     orders,
@@ -190,6 +202,7 @@ export function prestigeConfirmation(before: GameState, evaluation: PrestigeEval
   return [
     `确认发射殖民舰？扩张分 ${model.score}；规则获得 ${model.gain} 颗核心；核心余额 ${previewChange(model.cores)}。`,
     `旧世界 ${model.worlds.count} 颗星球（含 ${model.worlds.colonies} 颗殖民地）全部重置；现有库存 ${previewResources(model.worlds.resources)}，驻留舰船/卫星/防御 ${model.worlds.units}。`,
+    ...(model.npcRemainders.planets ? [`另丢弃 ${model.npcRemainders.planets} 颗星球、${model.npcRemainders.resources} 项资源的不足 1 待结算权益；未计入上述普通库存。逐星球精确数额：\n${model.npcRemainders.rows.map(row => `${row.name} [${row.id}]：${previewResources(row.amounts)}`).join("\n")}\n新母星的待结算权益归零，不转移或退款。`] : []),
     `${model.fleets.count} 支舰队、${model.fleets.ships} 艘舰船及其当前货物 ${previewResources(model.fleets.cargo)} 消失，不入库。未入港暗物质 ${model.fleets.darkMatter}；物品 ${previewItems(model.fleets.items)}；未结算押注 ${model.fleets.unsettledStake} 重氢。`,
     `取消已付建造 ${model.paid.buildings} 项、${model.paid.demolitions ? `拆除 ${model.paid.demolitions} 项（本次拆除费 ${previewResources(model.paid.demolitionPaid)}）、` : ""}研究 ${model.paid.research} 项、造船 ${model.paid.shipyard} 批（剩余 ${model.paid.remainingUnits} 单位），不退款。${model.orders.stopped} 个计划停止，${model.orders.retiredTrips} 次在途运输封存；预留解除不增加资源。`,
     `保留研究等级、${model.retained.templates} 份模板、${model.retained.formations} 份编成和历史引用；设计须重新应用，不自动补船。`,

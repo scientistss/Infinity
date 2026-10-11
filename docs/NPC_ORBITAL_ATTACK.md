@@ -26,7 +26,7 @@ collects resources, lands ships, or advances the NPC clock.
 
 ## Reader checks
 
-Current r13 requires both fields explicitly. Data shapes reject accessors, symbols,
+Current r13 requires both world fields and each planet's `npcResourceRemainder` explicitly. The three canonical subunit strings preserve exact NPC fuel/loot value outside the spendable wallet; see [the settlement contract](NPC_REMAINDER_SETTLEMENT.md). Earlier unreleased r13 checkpoints without this field are protected/exportable failures, not silently migrated saves. Data shapes reject accessors, symbols,
 extra keys, sparse arrays, nonfinite stock/damage, noncanonical coordinates,
 unrecognized ships, unsafe counts, invalid tech and cargo factors, excessive report
 counts, duplicate identities, misplaced domain markers, and incomplete crosslinks.
@@ -55,6 +55,9 @@ old snapshot copied into the new baseline, with `now=mark=0`, no sites and no re
 Fractional values and `Number.MIN_VALUE` remain actual Number values. Neither old
 wall time nor total game time backfills production, and initial assets are not
 added again. r2–r11 first obtain their historically specified age-zero source.
+After this validated historical chain, every source planet receives exactly zero
+M/C/D remainders; legacy inputs carrying those new field names are rejected before
+normalization. Current r13 round-trips preserve every exact remainder string.
 
 SaveSession continues to own backup, conflict, write/readback and adoption ordering.
 Migration itself applies no offline progress; the existing capped catch-up is
@@ -68,3 +71,13 @@ snapshot migration, reserved historical markers, and genuine r11 old-reader
 projection preservation. Its r12 inputs are explicitly synthetic derivatives of
 frozen genuine r11 outputs, not claimed natural-play r12 captures. Runtime and
 native browser tests provide the separate playable-loop evidence.
+
+
+## Landed stock and flight bounds
+
+Attack alone separates the existing reader-valid landed-unit limit (`1e15` per
+type/planet) from the existing single-flight limit (`1e12` per type). Per-type
+empire totals, including every in-flight ship, must remain safe integers. A small
+paid attack may therefore free a full port for a preserved blocked return;
+retries still require the original unique fleet, report and owning planet.
+Other missions retain their previous inventory guard.

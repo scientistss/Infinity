@@ -1,6 +1,7 @@
 import { npcEconomySnapshot } from "./npc-economy";
 import { createNpcWalletContext, npcWalletFromSnapshot, readNpcWalletState } from "./npc-wallet";
 import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences } from "./npc-attack-state";
+import { createNpcResourceRemainder, readNpcResourceRemainder } from "./npc-remainder";
 import { readDemolitionJob, serializeDemolitionJob, rejectLegacyDemolitionFields, rejectMisplacedDemolitionFields, migrateLegacyDemolitionSlots, type SerializedDemolitionJob } from "./demolition-save";
 import { demolitionStateProblem } from "./demolition";
 import { readNpcEconomy, rejectLegacyNpcEconomyFields, rejectMisplacedNpcEconomyFields, migrateLegacyNpcEconomy } from "./npc-economy-save";
@@ -89,6 +90,7 @@ export interface SerializedPlanet {
   /** v8 (P3). */
   units: Record<UnitId, number>;
   shipyardQueue: Array<Omit<ShipyardOrder, "paidPerUnit"> & { paidPerUnit: Record<ResourceId, string> }>;
+  npcResourceRemainder: PlanetState["npcResourceRemainder"];
 }
 
 export interface SerializedResearchOrder extends PaidJobIdentity {
@@ -228,7 +230,7 @@ function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = f
   const sourceNpc = legacyNpcAttack ? readNpcEconomy(Object.getOwnPropertyDescriptor(raw, "npcEconomy")?.value) : null;
   if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
   if (!Array.isArray(raw.planets) || raw.planets.length < 1 || raw.planets.length > 100) throw new Error("星球列表必须包含 1–100 颗星球");
-  state.planets = raw.planets.map(planet => readPlanet(planet, legacyTerraformer));
+  state.planets = raw.planets.map(planet => readPlanet(planet, legacyTerraformer, legacyNpcAttack));
   const ids = new Set(state.planets.map(p => p.id));
   if (ids.size !== state.planets.length) throw new Error("星球 ID 重复");
   if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
@@ -470,10 +472,19 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
     demolition: serializeDemolitionJob(planet.demolition),
     units: { ...planet.units },
     shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order, paidPerUnit: mapResources(order.paidPerUnit) })),
+    npcResourceRemainder: readPlanetRemainder(planet),
   };
 }
 
-function readPlanet(raw: unknown, legacyTerraformer: boolean): PlanetState {
+/** Reject before JSON can hide a missing, inherited, hidden or accessor authority field. */
+function readPlanetRemainder(planet: object): PlanetState["npcResourceRemainder"] {
+  const field = Object.getOwnPropertyDescriptor(planet, "npcResourceRemainder");
+  const remainder = field && "value" in field && field.enumerable ? readNpcResourceRemainder(field.value) : null;
+  if (remainder === null) throw Error("NPC 星球待结算权益无效");
+  return remainder;
+}
+
+function readPlanet(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack: boolean): PlanetState {
   if (!isRecord(raw)) throw new Error("星球数据格式不正确");
   if (!validCoordinates(raw.coordinates)) throw Error("星球坐标无效");
   const planet = createPlanet(readPlanetId(raw.id), raw.coordinates);
@@ -519,6 +530,9 @@ function readPlanet(raw: unknown, legacyTerraformer: boolean): PlanetState {
   if (!Array.isArray(raw.shipyardQueue)) throw new Error("造船队列格式不正确");
   if (raw.shipyardQueue.length > SHIPYARD.maxOrders) throw new Error("造船队列过长");
   planet.shipyardQueue = raw.shipyardQueue.map((entry, index) => readShipyardOrder(entry, index));
+  // Finish the complete historical planet reader before adding zero rights. The raw
+  // namespace guard already rejected every legacy occurrence before normalization.
+  planet.npcResourceRemainder = legacyNpcAttack ? createNpcResourceRemainder() : readPlanetRemainder(raw);
   return planet;
 }
 

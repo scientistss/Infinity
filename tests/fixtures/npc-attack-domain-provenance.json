@@ -1,0 +1,792 @@
+{
+  "schema": "infinity-ring-protection-npc-attack-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    }
+  ],
+  "referenceStatus": "Exact r13 source adoption atop verified eef r12. This source seal is not native, CI or release acceptance.",
+  "scope": "Every production source path, file mode, before/after bytes, complete deterministic Git patch and individual hunk is bound. All historical manifests and protection obligations remain intact.",
+  "approvedDelta": "Bounded persistent NPC stock and garrison, isolated deterministic orbital combat, paid attack fleets, exact integer loot and per-planet subunit rights, strict r13 migration and compact player controls. Existing missions retain their prior stock guard; attack separates landed 1e15 from flown 1e12 with safe empire totals.",
+  "productionPaths": [
+    "src"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactRingCriticalDeltaPaths": [],
+  "changedPaths": [
+    {
+      "path": "src/game/content.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "f19ba0412b2ce18560a614fb1ad860108c2cea66e3c57a614b66eb627590f7ea"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "37ef026655c4dfb36070e84280606f582d23f7f1c111d953e2a886ee2d292b00"
+      },
+      "patchSha256": "fea8c9f8ad101e1786ec41ab16d70ebf5cf928ea627a1492405f2d7ccf1da45b",
+      "hunks": [
+        {
+          "header": "@@ -26,13 +26,13 @@ export interface ResourceDef {",
+          "sha256": "a9c3e360364e062cf610dc82c131aca5359c276a84b77cc035413a8ddbd1af33"
+        }
+      ]
+    },
+    {
+      "path": "src/game/fleet.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "bc41ea15316e614883bb17d97ec831e3c5344bfffd5b836e9c159401b656fd91"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "b97c5e2f63fcdcdcca87ffd12ea37563599e30ba51c8612c61dafa3f8dded6c1"
+      },
+      "patchSha256": "54fc1482831044e5e5f74cc96054aad5baa99f2bdfa38881d92090ab32fcfd29",
+      "hunks": [
+        {
+          "header": "@@ -9,13 +9,17 @@ import { coordinateKey, distance, SPACE, npcAt, planetProperties, sameCoordinate",
+          "sha256": "895ba8b7dc888dca1fa5596dae60ce069e2c711014dcbb08071707f9a7315f37"
+        },
+        {
+          "header": "@@ -30,6 +34,7 @@ export interface Fleet {",
+          "sha256": "91f486313855fc15175dc89dd416242f04aecb77b17be11ed8d72dfea589d131"
+        },
+        {
+          "header": "@@ -42,7 +47,7 @@ export interface FleetRequest {",
+          "sha256": "3fa0b1fa1fbc7cd559e6884f82889f801eda061ae51aad58fa1120595ab8aa21"
+        },
+        {
+          "header": "@@ -65,6 +70,10 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot",
+          "sha256": "060779b573e8f523e163581bd36a2c291ebf974fa3c4a56045c0cce60b97cf50"
+        },
+        {
+          "header": "@@ -100,7 +109,25 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot",
+          "sha256": "0a53111cbb916536f6a0c8571562165ea69afb9401ba1167fabe2bc2e4f17596"
+        },
+        {
+          "header": "@@ -120,28 +147,63 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot",
+          "sha256": "8355be01f0004a676d9b4bdf5e1f9d18a186cf7f1f117d0ea20e5f315e5064e5"
+        },
+        {
+          "header": "@@ -150,6 +212,7 @@ function receiptFleetIds(state: GameState): Set<number> {",
+          "sha256": "5164711cfe8251dac9cc926cbeaba9315da8e46b24e64716cb8d6d0909e3dbe4"
+        },
+        {
+          "header": "@@ -159,10 +222,10 @@ export function nextFleetEvent(state: GameState): number {",
+          "sha256": "fe93b12b414fb74941ccb91dd04739777ef885f2830a166585ac4ffc537f11bb"
+        },
+        {
+          "header": "@@ -223,6 +286,7 @@ export function resolveFleetArrivals(state: GameState): GameState {",
+          "sha256": "e16eee09c05ef77ee8cab100bb263fb547a8a096b8858c14871e891f2976d077"
+        },
+        {
+          "header": "@@ -290,6 +354,7 @@ export function resolveFleetArrivals(state: GameState): GameState {",
+          "sha256": "b125e7d0f7351faf11633108fa0e036fad0d96daac2a00b9925e945f2ed7ec01"
+        }
+      ]
+    },
+    {
+      "path": "src/game/logic.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "3c106e02dc71ebc58b2583bedfe747906a5302b38fa04ffd72d81869d800186e"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "69332f1d3cb92dab366e8d625ab60b6a4ac17955d8059ded61cd3e6138e6f4a3"
+      },
+      "patchSha256": "cce1ad66bf56847eb6fb05d6c150dffeafe7a760d3c7261825d965cb52416520",
+      "hunks": [
+        {
+          "header": "@@ -3,7 +3,8 @@ import { validDemolitionSeconds } from \"./demolition-state\";",
+          "sha256": "52a3381a6f4b2e66e150be4d7716b6774bb4e7125be25796d2e3497505ffe7ea"
+        },
+        {
+          "header": "@@ -60,6 +61,7 @@ const EPS = 1e-9;",
+          "sha256": "f32e7b3bf8c47b9640c95f87b2f3998b71d2568c2950051df7a1a746b67221ae"
+        },
+        {
+          "header": "@@ -70,7 +72,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = \"live",
+          "sha256": "6b1ccc24fadb55b2b18373bf5cc5dafdaafac3f5a5433de6d7d4f371d561b5de"
+        },
+        {
+          "header": "@@ -89,6 +93,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = \"live",
+          "sha256": "0aa9b8b20ede456c7221ceb0aca14a7750580e9f793a8a66993dd8065c59cf7e"
+        },
+        {
+          "header": "@@ -102,7 +108,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = \"live",
+          "sha256": "8ab51de1a549d661f9cdd49b7f7334c8d02d0c2f79e87f558d0e8741963c86a5"
+        },
+        {
+          "header": "@@ -171,10 +177,23 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = \"live",
+          "sha256": "8cc396b22ad697674d4862e752c63aee541ce51107f0016ce3e451db7c522b72"
+        },
+        {
+          "header": "@@ -328,6 +347,7 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {",
+          "sha256": "5c2bf448f5ef057282c563158f65e1cbca81e01be0ea06ea5dbcecda178e0420"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-attack-state.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "fcc6baf90c7e8dd7c9f1b81577546a4858bf21f44d889882fd7fd10f9dc4d280"
+      },
+      "patchSha256": "4637c6462d752933d4a090ebb94a322620292c030d210d67e5af352e800e8f04",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,256 @@",
+          "sha256": "446e0906e337c4d8e6a4cd13946ab3c7cf4d4f0def3acb2326be33f3eed6075f"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-attack.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "7a6fb67232967146f76f0a972ed530bfb9854e37551aef2933eb9a40312919d1"
+      },
+      "patchSha256": "0dd972652d8c29a39f622d5340a4df7c83f97f00207541614c7478e1b36ee849",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,183 @@",
+          "sha256": "1dd4aa957cc1ebbb64b6077bf112bf534b96b5523073d51c01bba0c33dc4a8c5"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-battle.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "117c27433b58049b732a17c9a4804d11bfb7251417a96ee1f562368badb0e6cb"
+      },
+      "patchSha256": "d524d56301946f66c5628410a7710ad2dcafc60c8e77021bbfd844bc8c7f45af",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,157 @@",
+          "sha256": "39c90b0c4e98e7550edc17eb0ff3782e2452e8fa5ede28af1e9d22df5d125e51"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-fuel.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "f61c9ab5e16a6d9337584b157e3bd8dfff323e987c3fb31cb1efc58cede8fd34"
+      },
+      "patchSha256": "fb69b76ba24d216d1642f828a098f01f1abaa598d43c6b0969ce2132fa5a81ff",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,57 @@",
+          "sha256": "a7fc5f0ce57822607d6bc3692071eca2fcb8b691e183878591fed0f00b6176b3"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-garrison.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "e7c6a3dd45f805b295ca04c9d6011e034b91c5eabc9fd99b4d59d990981ff294"
+      },
+      "patchSha256": "99f2059b32fd2c4240030dd4075b057bf5e15e002527baec3cddbc3508892249",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,61 @@",
+          "sha256": "0239e5d5b77247506c80e5bb5ca8e21f57a7bf4c15ed478c778f46a9608e25fb"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-loot.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "5a33c9aff0133a5611e8403949c8efc0b55725a9f62ba7b7125f43f4083255bc"
+      },
+      "patchSha256": "06d382afda02c431d2ca20d905c45df06ce0bfe4f417fc6e5f2701fd07c22419",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,84 @@",
+          "sha256": "ef5f8e9fa68cbe766b736803e90a395043054093f204a984b351c7924dc8bafe"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-remainder.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "98428fea172a8e98e7c45a5145174596e4c3b5667f2b7f2f2a5448870b3e8bfe"
+      },
+      "patchSha256": "91c1ce5f869b2e4e46ceb355b48766bc454b123b224ac366f61caaccbb6fd15f",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,247 @@",
+          "sha256": "d18f00c8a3e22e0eb4f528619f2895304f956a7cabc2e02d60d66d28c5b4c33e"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-scout.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "433d5086c6a51a4efa26afacff2f03fc574727ca2899f9ba59bc11a862e15d2d"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "452e10c111c621b67e465274f7b5685c6b20c5c13c87504d2eb119c88d0892b4"
+      },
+      "patchSha256": "ec04740c4f7c52e050cfd38f47c9d01d50f9e13fe8729e4f5a98347f50bb6e7b",
+      "hunks": [
+        {
+          "header": "@@ -1,24 +1,25 @@",
+          "sha256": "4bd1b56c76745c9b1261213979813bdd45d67b721a0d3419173e106eb025e8a0"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-transfer.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "8da3ba9700d09c43cc2d11dcf03f81d5c7f3afe2473ceaf6516809f298677ce2"
+      },
+      "patchSha256": "154a84de98f39d0458b53ecda4086ce1af2b9d4c2ea0b79c7dd384e341193c29",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,261 @@",
+          "sha256": "d9a5e6387c2dd18a741d11707f5018933e61dc59f51070087d01ed8c76849050"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-wallet.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "2a4f8fceae4562b975d7be2bde9ad62432aa5d5e9ce1aa44e38518f95d25408d"
+      },
+      "patchSha256": "058c67bbae14caa63d7e7e10efe576f640feb95e4a233c3848a2fe47ae0df10f",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,212 @@",
+          "sha256": "93a57842f593c7f01ce07f042ac2dcabacc86a678ad0fe7f3c626de6330b2647"
+        }
+      ]
+    },
+    {
+      "path": "src/game/planet.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "a46cfdf68dccf2e42b93b8a06c3be76398b742c02ea0076233e8f896df30be50"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "35989439274225266a8d9a7b9612d2495e70b3e6b50f76e17a7d143663c8c5f9"
+      },
+      "patchSha256": "89ab92a608f7e66a360c324bd9bd0ed31c0085f073ef59233588f5f7d5808c72",
+      "hunks": [
+        {
+          "header": "@@ -7,6 +7,7 @@ import { emptyUnits, type UnitId } from \"../data/units\";",
+          "sha256": "a0f397b216988bc1c87218fad397fb8bafd100d9ec08e27ce8cbd35ce44d646c"
+        },
+        {
+          "header": "@@ -29,6 +30,8 @@ export interface PlanetState {",
+          "sha256": "97572c317ba2fa0c5da85be35dbf665075fcd6d2fb2ac595dd992014c845f43d"
+        },
+        {
+          "header": "@@ -70,6 +73,7 @@ export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {gala",
+          "sha256": "cdacb16f5c37ec52c4db5410fa02add96c3173c66f9cecfc38116e86d2c9d8fa"
+        },
+        {
+          "header": "@@ -95,6 +99,7 @@ export function clonePlanet(planet: PlanetState): PlanetState {",
+          "sha256": "59b28a32d44af69e97db465cafc9406eb0f77e0b43b764d0b60704efed37f871"
+        }
+      ]
+    },
+    {
+      "path": "src/game/save-session.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "7bebc67cc026f6ed9e13557a21aa5e0bbb5d0cbb0db51919ea18e8b017ba48d3"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "8991e4dfea97a3079bd309c71827da7973f9aea8b45f4876f119409018d69124"
+      },
+      "patchSha256": "16a329b22c70cfe331bdf9387e19b6be022f0b08ff5ada17c7f4f7f5bf23a835",
+      "hunks": [
+        {
+          "header": "@@ -72,7 +72,8 @@ export class SaveSession {",
+          "sha256": "552c322f9161294f582d76c6cd7a61d0462320bc7b0e49853095cc460252ff24"
+        },
+        {
+          "header": "@@ -88,6 +89,17 @@ export class SaveSession {",
+          "sha256": "0ac934f2db54fa16141171f2f6f8ad7deebabfd9d9d44ceaf602d90313395b89"
+        }
+      ]
+    },
+    {
+      "path": "src/game/save.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "1beb92a4fda131aebe04973c2c9a4247bdb65052b2376e97c890124efaa4fa21"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "0cc296d824fc11f9e4e536de9d34a73236d6e7b773b7be5ab9471c69f2a429df"
+      },
+      "patchSha256": "f094c6d8de9d0f17e51c0611aa37fb066332e4beea718aa85af577bc9a45f20a",
+      "hunks": [
+        {
+          "header": "@@ -1,6 +1,10 @@",
+          "sha256": "83c8166f5ebdaebd27268346ad4d2edb9fd069db08c700dfc90bd0f81d3027e8"
+        },
+        {
+          "header": "@@ -86,6 +90,7 @@ export interface SerializedPlanet {",
+          "sha256": "c6c072a339dba13f78d4a8d52ed437079cd4bff832c839c07daab6380af175a8"
+        },
+        {
+          "header": "@@ -100,6 +105,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {",
+          "sha256": "dd8714e6e9959c039de1190438f5927ce62e8eb0da0ee89b9af73414596446f8"
+        },
+        {
+          "header": "@@ -150,7 +156,7 @@ export interface SaveFile {",
+          "sha256": "6e8a580dca263b52b917c69410d484bd1f34de4fa818fdc5f51354289aa44807"
+        },
+        {
+          "header": "@@ -172,8 +178,13 @@ export function outdatedSaveNotice(version: number): string {",
+          "sha256": "b06202617faca69eb7b14afe3da07977b185700934a2e976e41c79529d249ccb"
+        },
+        {
+          "header": "@@ -209,15 +220,17 @@ export function deserializeState(raw: unknown): GameState {",
+          "sha256": "f85e74337427c4b8156ba07fb696796dde387ee9a6d946eb395e04c898756762"
+        },
+        {
+          "header": "@@ -249,7 +262,7 @@ function readState(raw: unknown, legacyTerraformer: boolean): GameState {",
+          "sha256": "dbf72e276fa8718fc7f0533e27a05eedf7a37852a4f3fc57ae3b04c00d4e6258"
+        },
+        {
+          "header": "@@ -263,6 +276,13 @@ function readState(raw: unknown, legacyTerraformer: boolean): GameState {",
+          "sha256": "7d3afc6ad8b2013bb4d2f2a14b5ba2658c54f58fe269a193ea3dcebafcda3421"
+        },
+        {
+          "header": "@@ -279,7 +299,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt =",
+          "sha256": "14c4ba351f638aa3b9794961524bbde4f95b00e4365ddf02ef8db4df7af4636c"
+        },
+        {
+          "header": "@@ -296,6 +316,9 @@ export function importSave(json: string): SaveFile {",
+          "sha256": "f70f9f66a7ad2139700c47d3b11d215933725dd30c6bc6af42f64b87ad4ffaac"
+        },
+        {
+          "header": "@@ -343,7 +366,7 @@ export function importSave(json: string): SaveFile {",
+          "sha256": "cd4c0c44b8c8a40a0ff58a30f193638a085a9a4f351fab9c598ecfe2f0daec08"
+        },
+        {
+          "header": "@@ -449,10 +472,19 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {",
+          "sha256": "97a08fb4564506d6b0ae60515a92b90f13ec0085562b2af7f0cbaaadaa0e312a"
+        },
+        {
+          "header": "@@ -498,6 +530,9 @@ function readPlanet(raw: unknown, legacyTerraformer: boolean): PlanetState {",
+          "sha256": "d1ea5ca4402eb1589f19999772caa8f9ba01fc4d022ec3369c4ac83d35f4a187"
+        }
+      ]
+    },
+    {
+      "path": "src/game/space-save.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "9239b0e9ca2d6d4734c1c83f74c4f50cbcb4dc1654802f2d3c3e4f58f007d403"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "94b2f1fe0030ac4c5ed2aa744ea82a830eaca81a18a44ab885937cc7595952c2"
+      },
+      "patchSha256": "8e169ccf7f07264f070710f59a50883e53879cfb259396040220b37b906b4caf",
+      "hunks": [
+        {
+          "header": "@@ -1,3 +1,4 @@",
+          "sha256": "d615cabbb2005347478ba6cbaac54b01cdf24d85fc08983b6b64d3984d721202"
+        },
+        {
+          "header": "@@ -13,7 +14,8 @@ export function serializeFleets(fleets: Fleet[]) {",
+          "sha256": "36c35ad8af3cdc107f04338914773fe598703da898d7e32cbac31f735ec29475"
+        },
+        {
+          "header": "@@ -39,7 +41,8 @@ function cargo(x:unknown, precise=false): ResourceAmounts {",
+          "sha256": "b8cf5e30582168d0c29ec5b8beb98e66406f8bab4fc66364647eddf674303afd"
+        },
+        {
+          "header": "@@ -48,13 +51,22 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi",
+          "sha256": "674eca31115c9b657cbfc350c25261389329a96c4ca793a4a0af1582ac5b5c4c"
+        },
+        {
+          "header": "@@ -63,6 +75,9 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi",
+          "sha256": "928b0c7b2b130a5d93be28d7c363bb0ee7588c2768f6887feddc5384690af5d3"
+        },
+        {
+          "header": "@@ -76,7 +91,7 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi",
+          "sha256": "384b171fbbd57c7a5b7a7578b5f9db6b24e7177f6c837875a226de75e9305da8"
+        }
+      ]
+    },
+    {
+      "path": "src/game/state.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "2c7d36f676ab088d8c1872ad29e29ba5cfda7c3b2c8bb1fcb23b3dab3fcbeb57"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "2f08b5597d2669a3c783cb4b0bf5a645e056e36a147949faf722ca616f79715d"
+      },
+      "patchSha256": "0a47d04fa4181c95562a166f06ab53f1688b6252acc5e8283d72ac4ec106774d",
+      "hunks": [
+        {
+          "header": "@@ -4,7 +4,8 @@ import { createBuildingTemplateState } from \"./building-template-state\";",
+          "sha256": "6e69fd32721d39404d0f48c8eeea568ea58c9ef6326e92f1c2cdc67be8b12fbc"
+        },
+        {
+          "header": "@@ -77,7 +78,8 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat",
+          "sha256": "3a116bdfc07cd7b70d2a38d589c519b40858836200e56456adad3e76fc528dc0"
+        }
+      ]
+    },
+    {
+      "path": "src/game/types.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "2887a2ddb82d701ba114ef3a2ab0ed0c5a90eb6d608a7429002f8bc87f24605b"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "f5ac2b92625eeee0a0a26356674d5467455727918b7cdca73ae100f1a1ce4b3a"
+      },
+      "patchSha256": "f3422660036fba55c856ac3d1bc49ca7b6fc472990f6d3941e074f5c57c9a65b",
+      "hunks": [
+        {
+          "header": "@@ -5,7 +5,8 @@ import type { BuildingTemplateState } from \"./building-template-state\";",
+          "sha256": "048f9687c99bc1ff9ecbc7843e0454ed39062cb12c0fb22a0b3c93b664a0f05e"
+        },
+        {
+          "header": "@@ -104,8 +105,9 @@ export interface GameState {",
+          "sha256": "cfeb7251b65697eefb3a963cae62e4efac7df4bc44fad1cbf4422236233919a2"
+        }
+      ]
+    },
+    {
+      "path": "src/main.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "b061ea6647fc26a5cabcbd221e00c2e4095881ae55406918db2dc96dc5524b6c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "cce7fb8c82d30706bd6707d46f595906a07f47ba9edafe4604f215e8c45cb449"
+      },
+      "patchSha256": "368db980d350d7ed085caef9803a07eea461b336274b05f8c4982dd40320878a",
+      "hunks": [
+        {
+          "header": "@@ -1,3 +1,4 @@",
+          "sha256": "355afe8c1e52c96d4d02c15407a02b19a0962d28f5dcfe41795b0a223cc586ef"
+        },
+        {
+          "header": "@@ -37,7 +38,7 @@ import { revealAll, revealRun, setBet, topUp } from \"./game/arcade\";",
+          "sha256": "609524aa2d1749f9dc03695ef96ddebfbe07b94137fd3c6b9937492308d2dc0d"
+        },
+        {
+          "header": "@@ -91,6 +92,7 @@ window.addEventListener(\"storage\", (event) => {",
+          "sha256": "b1cb6a6dbe590856ef6c0ead7b15e6404c3cb1c720a07b0e0d7e1e367df91488"
+        },
+        {
+          "header": "@@ -104,29 +106,46 @@ function frame(now: number): void {",
+          "sha256": "09156d1475556453db8765b4e75fb5fd3ef33587d80d04db2f739e8e7fee5abb"
+        },
+        {
+          "header": "@@ -230,11 +249,40 @@ async function handleAction(action: UiAction): Promise<void> {",
+          "sha256": "065b3127684fc42109f0c9ef78dd8e9df9e71f7739d19aba612c4adb029f4c13"
+        }
+      ]
+    },
+    {
+      "path": "src/space.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "0cf7f716712cf57788bb9cbf4f93c862d886cfe4d3337db3d9615645db377d08"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "37e8935fd2e2a44d631600037a226e529db26e4ce15397aae6054991bfe1592a"
+      },
+      "patchSha256": "41e085004cee65ad5c22dba99f59d4d3d66a9776d115dcb25e7771a8feb17e72",
+      "hunks": [
+        {
+          "header": "@@ -27,3 +27,19 @@",
+          "sha256": "312a8c538b4cc67aea6f738d401e7fc3deb3a4953c911361c61f0be8172345ad"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-attack-controls.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "210394e47b7311939d94c94ae0451b38150959d25a4cf75891f408decdc722ea"
+      },
+      "patchSha256": "e7db8ea0b3c7aaf0202cb1f1fcf5c1b04b6eeee073832dc050c666d935e5e32c",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,175 @@",
+          "sha256": "d9538c1de48200f5ebb8f8ebc742d70db9beec19274ae1288979ab4e4675e211"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-battle-panel.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "89fd314e7c99b957c61897957ef4b988a1cb53ccc7a900d580042746c18c935d"
+      },
+      "patchSha256": "97c91d11ed729e10f824520d0dd93ccc06f4f82ef050e4fc51cb8ac5a9b8902c",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,70 @@",
+          "sha256": "3fe4f155f0a1681014e1ec9d16ed79aa379bc63989af91a072f5101f5dd13f21"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-battle-present.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "dc5959811b1663d80cd2e555dd491d4e8f790d2e430f7e6e61d2039a910e95b7"
+      },
+      "patchSha256": "56c6d6af3df2e96ee5c1bfef37ea7058cd2f52d5319365ddc2160ce6ff0d48e0",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,45 @@",
+          "sha256": "cc55e25655b8a99257ade0686f0cf4bd2aab2d4ea6adc9dfdda8e2356be5df6c"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/prestige-preview-model.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "0066c16a79e8cbdddc4478d6766b1c45b81d70073f324c9e34d1b898ad7464d6"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "d1adbecb990bf1f9caefeecccfc292e646f1a51c90ecafc34a0e9087f9d999bf"
+      },
+      "patchSha256": "3ed9c51ef6ff1aaa023759b7926d17c17d184db4153416ea568dd44062128149",
+      "hunks": [
+        {
+          "header": "@@ -9,6 +9,7 @@ import { expansionScore, type PrestigeEvaluation } from \"../game/logic\";",
+          "sha256": "d64e437ca296c7cf7372da1a10092b2ba0d1ae3e999eaab9c27edd0d8361bb2a"
+        },
+        {
+          "header": "@@ -23,6 +24,7 @@ export interface PrestigePreview {",
+          "sha256": "deff030e69f619039adca3dd8f8a849e3b36c9d41606d060aba2ecb86d5861be"
+        },
+        {
+          "header": "@@ -72,6 +74,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio",
+          "sha256": "ebc999b6b31b5d1c7e480c1e689ad7479951b18944a4c7629a2cd0747605e832"
+        },
+        {
+          "header": "@@ -81,6 +84,14 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio",
+          "sha256": "1bd670b204fa350d0484e84a88ed557e109250ce8889c61b3cdfed5fef661d05"
+        },
+        {
+          "header": "@@ -119,7 +130,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio",
+          "sha256": "f8dd1742332247c632187cfda14f405124bed0e30f5d4d8f1edca5e55399fd30"
+        },
+        {
+          "header": "@@ -168,10 +179,11 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio",
+          "sha256": "696e48c9bdf8be9d4dbeb365e65959eca8ee7359ac0890bd895b42693c95b661"
+        },
+        {
+          "header": "@@ -190,10 +202,12 @@ export function prestigeConfirmation(before: GameState, evaluation: PrestigeEval",
+          "sha256": "794810bc54b35fef3c6c4fface1aa4779669b6e08e12f8b57910a8c3c36fa824"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/prestige-preview.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "c6e16eb9e94f0497377b6a87d9ae400a8be23d34574e998e7ce2b85ab03866f5"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "acbf2050209de8403bcce8341e95fb7ce353bd87c42f83464071163bd5b04b86"
+      },
+      "patchSha256": "b03dd47976f7646cc17e95d38b89830c75d344e85317a6759b6c984edd53ca79",
+      "hunks": [
+        {
+          "header": "@@ -44,6 +44,12 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel",
+          "sha256": "7f51e0be8448f505a4bd0f364e8ed913dfa592893055691dc4a996c98a2e07ff"
+        },
+        {
+          "header": "@@ -59,7 +65,7 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel",
+          "sha256": "96dd8ec803e5944bb7d638df04123f1ba4ebb3a8582cbc1ef5cb1d1e5cb5ad94"
+        },
+        {
+          "header": "@@ -69,7 +75,7 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel",
+          "sha256": "639a81d58281bdebcda5a60de104c6a3b289d7c6b609bf7c7da5cfca283bd7ed"
+        },
+        {
+          "header": "@@ -81,6 +87,29 @@ export function installPrestigePreview(root: HTMLElement): PrestigePreviewPanel",
+          "sha256": "a3c5131fdd225b13317d4d3553922f3c9bff0f08896ec1426efab4efacff87ea"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/shipyard-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "060005128ab51786fc3c5dc125fe04c36de3e7c4d733438597f283f3297d0ed3"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "683327e41425f0c3f6779b892092980477cd982db138afb3f7254e211a45536c"
+      },
+      "patchSha256": "f57aaa15a70c844a02b21ca8f83133f771c764034453d7b10af9f2b12b792b9b",
+      "hunks": [
+        {
+          "header": "@@ -68,7 +68,7 @@ export function shipyardPanelsHtml(icon: IconFn): string {",
+          "sha256": "92d4e43984a1b80cdf3c67f0f0af97334a1c6ad2ffd205d1875b49bd3fc171d4"
+        },
+        {
+          "header": "@@ -79,7 +79,7 @@ export function shipyardPanelsHtml(icon: IconFn): string {",
+          "sha256": "e7f2b938ab61672a8624eaf48ff38c803a5a334e83f3bb54914a650bc03a95cc"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "68182fe5bc50663de0d49cbb5a9ff1490ff4f3db03882edb081af66c44e299f2"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "6cea4d55c0ca212d353a0833932e2dbfeb364044e22d01ef9103482319bb5338"
+      },
+      "patchSha256": "ce4b5cbaec2d555e36bf8ed86e5c361443bb87bed6f7cd33db8a0d03d37f6a54",
+      "hunks": [
+        {
+          "header": "@@ -1,3 +1,5 @@",
+          "sha256": "5ddcf06dc577cca11ea3bb6af9642850a4904269e49c049db777a30a73608ce9"
+        },
+        {
+          "header": "@@ -16,11 +18,11 @@ import { SPACE, wrap, coordinateKey, type Coordinates } from \"../game/galaxy\";",
+          "sha256": "9b10b83d70a990381c382b9a7debf3b62293d2f02aca5fbe8d2a7a03d624be38"
+        },
+        {
+          "header": "@@ -28,6 +30,21 @@ function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.",
+          "sha256": "6e2a1fb1ad8c78edd3232e5def26e1288f93a2606a8d0a639080ca9502cbaed1"
+        },
+        {
+          "header": "@@ -141,21 +158,23 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "45306aa3080a5a2025b4bcc77f95fe86f92a3a35791fd8365e341bb26b67ce5c"
+        },
+        {
+          "header": "@@ -176,6 +195,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "f8b5842817a83ae02d1983f47f6c3321839b2ff767ae892038df9d97b9153c3f"
+        },
+        {
+          "header": "@@ -186,21 +206,27 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "da37a4db1d5d85042571118386cc8a4748a76204d61167e5a8c76707bd2d1d15"
+        },
+        {
+          "header": "@@ -216,8 +242,11 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "c93554c4a967b09a323a4db7e44ef278171a2d35511dffef5a033e0ce213666e"
+        },
+        {
+          "header": "@@ -227,21 +256,32 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "0d33cc669cfff013facdbd07009678fc450f5b3cae8c4167e0ecd5fc2eddac8a"
+        },
+        {
+          "header": "@@ -253,9 +293,11 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "1b9113174cc68f73d405a4e033aee355acacd56c6a2b55e8b83a2f34681d570d"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-present.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "e7c20761bee5cab91427846961b2fdef77f23f07203034d08d65fdeddb736a1d"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "972fe84cf3951bfb36c6fa2b8401280060878debbb91d56492c779df9240a5cf"
+      },
+      "patchSha256": "acbbc79b3159bfb75f673fd08da799ae3e5c6970f6fea439f002996c62e41292",
+      "hunks": [
+        {
+          "header": "@@ -1,4 +1,6 @@",
+          "sha256": "4d8d37c046b5590bd4330fda2696d8b03ea1f1ae3028862e40b025c770c07bda"
+        },
+        {
+          "header": "@@ -8,9 +10,21 @@ import { HOMEWORLD_ID } from \"../game/planet\";",
+          "sha256": "901ad5337880ad2f5295e577a70453edda38c80415d902fa5d617e3a8edfc897"
+        },
+        {
+          "header": "@@ -41,7 +55,7 @@ export function spaceGalaxyView(state:GameState,cursor:Coordinates) {",
+          "sha256": "fbf3111dbb49baea898ba3a7f81b18c0944f9f637e244b71cf0f7efe3d26e2d2"
+        },
+        {
+          "header": "@@ -53,25 +67,46 @@ export function spaceFleetView(state:GameState,request:FleetRequest) {",
+          "sha256": "c88ddff801ec08dcd7a39fef3d7639b19c8c0934a567183821d98db9a157ce79"
+        },
+        {
+          "header": "@@ -82,6 +117,7 @@ export function spaceView(state:GameState,cursor:Coordinates,request:FleetReques",
+          "sha256": "a96d4133e18bd73edd0690d955472e1f1ce6538d1ab81005635fdd34b9a63dd8"
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 /** Compare real old and new rule engines. Usage: node --import tsx scripts/check-original-parity.mjs /path/to/69eca71 */
-import { projectVerifiedNpcEconomy, advanceExpectedNpcAge , assertHistoricalSource } from "./r12-compatibility.mjs";
+import { expectedNpcEconomy, projectVerifiedNpcEconomy, advanceExpectedNpcWallet , assertHistoricalSource } from "./r13-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -36,7 +36,7 @@ function project(current, expectedNpcAge) {
 }
 let checked=0;
 for(let seed=1;seed<=16;seed++) {
-  let old=oldState.createInitialState(), current=nowState.createInitialState(), expectedGrantFloor=1, expectedNpcAge=0;
+  let old=oldState.createInitialState(), current=nowState.createInitialState(), expectedGrantFloor=1, expectedNpcAge=expectedNpcEconomy();
   for(const [s,p] of [[old,old.planet],[current,activePlanet(current)]]) {
     Object.assign(p.buildings, {metal_mine:seed,crystal_mine:Math.max(0,seed-2),deuterium_synth:Math.max(0,seed-4),solar_plant:seed+3,robotics_factory:2,research_lab:4,shipyard:3});
     const res={metal:big(2e6),crystal:big(1e6),deuterium:big(3e5)};
@@ -47,7 +47,7 @@ for(let seed=1;seed<=16;seed++) {
   const check=()=>{assert.equal(current.terraformerGrantJobFloor,expectedGrantFloor,"fixed starting grant floor, reset only by successful prestige");assert.equal(current.planets.length,1);assert.deepEqual(activePlanet(current).terraformerFields,{base:old.planet.fieldsMax,grantedLevels:0},"all new metadata is independently asserted before prior-field projection");assert.deepEqual(current.buildingTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent building intentions");assert.deepEqual(current.formations, {nextFormationId:1,entries:[]}, "baseline must not invent fleet formations");assert.deepEqual(current.researchTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent research intentions");assert.equal(current.orders.tasks.length, 0, "baseline must not create plans");assert.equal(current.orders.nextWorkId, 1, "baseline must not create logistics work authorizations");assert.equal(current.orders.accumulator, 0, "idle plans must not alter old timing");assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current,expectedNpcAge),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
   const advanceOld = (seconds, mode = "live") => {
     const witnessed = captureAdoptedSteps(old, s => ({ state: oldLogic.tick(s, seconds, mode) }), oldSave.serializeState);
-    expectedNpcAge = advanceExpectedNpcAge(expectedNpcAge, witnessed.adoptedSegmentsSeconds); old = witnessed.result.state;
+    expectedNpcAge = advanceExpectedNpcWallet(expectedNpcAge, witnessed.adoptedSegmentsSeconds); old = witnessed.result.state;
   };
   advanceOld(0.1);current=nowLogic.tick(current,0.1);check();
   old=oldQueue.enqueue(old,"metal_mine","manual").state;current=nowQueue.enqueue(current,"metal_mine","manual").state;check();

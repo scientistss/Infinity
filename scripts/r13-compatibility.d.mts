@@ -1,0 +1,20 @@
+export type ExpectedNpcWallet = { model: 'npc-wallet-garrison-v1'; now: number; baseline: { stock: number[]; mark: number }; sites: Record<string, never> };
+export const CURRENT_REVISION: 13;
+export const NPC_MODEL: 'npc-wallet-garrison-v1';
+export const NPC_HORIZON: 12000;
+export function expectedNpcEconomy(adoptedSegmentsSeconds?: number[]): ExpectedNpcWallet;
+export function advanceExpectedNpcWallet(prior: ExpectedNpcWallet, adoptedSegmentsSeconds: number[]): ExpectedNpcWallet;
+export function expectedNpcFromR12Snapshot(oldNpc: unknown): ExpectedNpcWallet;
+export function expectedNpcBattles(): { model: 'npc-battle-receipts-v1'; reports: never[] };
+export function assertNpcEconomy(actual: any, wallet: ExpectedNpcWallet, label: string): true;
+export function projectVerifiedNpcEconomy(actual: unknown, wallet: ExpectedNpcWallet, label: string): Record<string, any>;
+export function liftR12StateToR13(state: any): any;
+export function liftR11StateToR13(state: unknown, wallet?: ExpectedNpcWallet): any;
+export function liftR10StateToR13(state: unknown, wallet?: ExpectedNpcWallet): any;
+export function liftR8StateToR13(state: unknown, floor: number, wallet?: ExpectedNpcWallet): any;
+export function assertTerraformerMetadata(actual: unknown, historical: unknown, floor: number, label: string, wallet?: ExpectedNpcWallet): any;
+export function assertR8StatePreserved(actual: unknown, historical: unknown, label: string, floor: number, wallet?: ExpectedNpcWallet): void;
+export function assertHistoricalSource(root: string, sourceSha: string): string;
+
+export function expectedNpcResourceRemainder(): { metal: "0"; crystal: "0"; deuterium: "0" };
+export function assertZeroNpcResourceRemainders(state: any, label: string): true;

@@ -1,8 +1,8 @@
 /** Exact archived-engine comparison for the segment-local fleet census.
- * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r12 NPC state are added.
+ * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r13 NPC state are added.
  * Usage: node --import tsx scripts/check-shipyard-census-parity.mjs BEFORE FIXTURE MODERATE
  */
-import { assertR8StatePreserved, advanceExpectedNpcAge , assertHistoricalSource } from './r12-compatibility.mjs';
+import { expectedNpcEconomy, assertR8StatePreserved, advanceExpectedNpcWallet , assertHistoricalSource } from './r13-compatibility.mjs';
 import { captureAdoptedSteps } from './capture-adopted-steps.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -67,18 +67,18 @@ function observedOldTick(state, seconds, mode='live') {
 }
 function run(name,raw,steps,mode='live',recall=false){
  const migrationFloor=raw.orders.nextJobId;
- let expectedGrantFloor=migrationFloor,expectedNpcAge=0;
+ let expectedGrantFloor=migrationFloor,expectedNpcAge=expectedNpcEconomy();
  let old=oldSave.deserializeState(raw),next=nextSave.deserializeState(nextSave.importSave(oldSave.exportSave(oldSave.deserializeState(raw),123456)).state),recalled=null,recallStock=null,returnVerified=false;
- assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state',migrationFloor,0);
+ assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state',migrationFloor,expectedNpcEconomy());
  if(recall){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
   const witnessed=observedOldTick(old,.5,'live'),aLog=witnessed.result.log,bLog=nextLogic.emptyTickLog();
-  expectedNpcAge=advanceExpectedNpcAge(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
+  expectedNpcAge=advanceExpectedNpcWallet(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
   old=witnessed.result.state;next=nextLogic.tick(next,.5,'live',bLog);
   assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': actual outbound elapsed before recall',migrationFloor,expectedNpcAge);
   assert.deepEqual(aLog,bLog,name+': full pre-recall TickLog');
   assert.deepEqual(oldInput,raw,name+': original input canonical');
-  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical',migrationFloor,0);
+  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical',migrationFloor,expectedNpcEconomy());
   rows.push({name:name+'-pre-recall',mode:'live',seconds:.5,sha256:sha(JSON.stringify(nextSave.serializeState(next)))});
   const fleet=old.fleets.find(f=>!f.returning&&!f.orderTransport);
   assert.ok(fleet&&fleet.elapsed>0,name+': real ordinary fleet has actually spent outbound time');
@@ -92,7 +92,7 @@ function run(name,raw,steps,mode='live',recall=false){
  for(const seconds of steps){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
   const witnessed=observedOldTick(old,seconds,mode),aLog=witnessed.result.log,bLog=nextLogic.emptyTickLog();
-  expectedNpcAge=advanceExpectedNpcAge(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
+  expectedNpcAge=advanceExpectedNpcWallet(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
   const a=witnessed.result.state,b=nextLogic.tick(next,seconds,mode,bLog);
   assert.deepEqual(oldSave.serializeState(old),oldInput,name+': archived input purity');
   assert.deepEqual(nextSave.serializeState(next),nextInput,name+': candidate input purity');
@@ -157,7 +157,7 @@ const timings=[];
 for(const [name,raw] of [['moderate',moderate.ready.state],['combined',pressure.ready.state]]){
  const a=oldSave.deserializeState(raw),b=nextSave.deserializeState(nextSave.importSave(oldSave.exportSave(oldSave.deserializeState(raw),123456)).state),samples={before:[],after:[]};
  const input=JSON.stringify(nextSave.serializeState(b));
- const expectedNpcAge=observedOldTick(a,1/60).npcElapsedSeconds;
+ const expectedNpcAge=expectedNpcEconomy(observedOldTick(a,1/60).adoptedSegmentsSeconds);
  for(let n=0;n<26;n++)for(const label of n%2?['after','before']:['before','after']){
   const start=performance.now();const state=label==='before'?oldLogic.tick(a,1/60):nextLogic.tick(b,1/60);const elapsed=performance.now()-start;
   if(n>=6)samples[label].push(elapsed);
@@ -168,4 +168,4 @@ for(const [name,raw] of [['moderate',moderate.ready.state],['combined',pressure.
  assert.deepEqual(oldSave.serializeState(a),raw,'benchmark archived input unchanged');
  timings.push({profile:name,stepSeconds:1/60,mode:'live',warmupPairs:6,order:'AB/BA alternating',samplesMs:samples,summary:{before:stats(samples.before),after:stats(samples.after)}});
 }
-console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions and r11 null demolition slots with independently proven automatic-prestige epoch resets, exact r12 age from observed archived adopted segments, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));
+console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions and r11 null demolition slots with independently proven automatic-prestige epoch resets, exact r13 age from observed archived adopted segments, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));

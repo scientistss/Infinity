@@ -8,6 +8,7 @@
  * Qualification performs only passive CDP reads. Export is an explicitly labelled
  * programmatic existing-UI action AFTER qualification, to observe adopted state.
  */
+import { assertNpcEconomy, expectedNpcEconomy } from './r13-compatibility.mjs';
 import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -182,12 +183,9 @@ function save(raw) {
   if (!Number.isFinite(value.savedAt) || !Number.isFinite(value.lastTickAt) || !Number.isFinite(Number(value.state?.totalTime))) {
     throw new Error('Native storage event did not contain a finite save snapshot');
   }
-  const npc = value.state?.npcEconomy;
-  if (!npc || JSON.stringify(Object.keys(npc).sort()) !== '["elapsedSeconds","model"]' ||
-      npc.model !== 'fixed-production-v1' || !Number.isFinite(npc.elapsedSeconds) ||
-      npc.elapsedSeconds < 0 || npc.elapsedSeconds > 11900) {
-    throw new Error('Native storage snapshot lacks exact bounded r12 NPC state');
-  }
+  // This bounded native run starts empty and cannot reach H12000. Validate
+  // every wallet/receipt field; tolerance below belongs only to real wall time.
+  assertNpcEconomy(value.state, expectedNpcEconomy([value.state?.npcEconomy?.now]), 'native bounded no-attack save');
   return value;
 }
 const stateBytes = value => JSON.stringify(value.state);
@@ -196,9 +194,9 @@ function assertCredit(name, before, after) {
   const expected = (after.lastTickAt - before.lastTickAt) / 1000;
   const actual = total(after) - total(before);
   check(name, expected >= 0 && Math.abs(actual - expected) < 0.01, { expectedSeconds: expected, actualSeconds: actual, toleranceSeconds: 0.01 });
-  const priorAge = before.state.npcEconomy.elapsedSeconds;
-  const afterAge = after.state.npcEconomy.elapsedSeconds;
-  const expectedNpc = Math.min(11900, priorAge + expected);
+  const priorAge = before.state.npcEconomy.now;
+  const afterAge = after.state.npcEconomy.now;
+  const expectedNpc = priorAge + expected;
   check(`${name}: NPC advances once by the independently observed adopted wall interval`,
     expected >= 0 && afterAge >= priorAge && Math.abs(afterAge - expectedNpc) < 0.01,
     { beforeAge: priorAge, afterAge, expectedNpc, observedAdoptedWallSeconds: expected, toleranceSeconds: 0.01,
@@ -233,7 +231,7 @@ async function prepareCase(label, fixture, origin, appUrl) {
   const epoch = await evaluate('Date.now()');
   const seed = { ...fixture.save, savedAt: epoch, lastTickAt: epoch };
   check('fresh synthetic native-background fixture starts NPC age exactly zero',
-    seed.state.npcEconomy?.model === 'fixed-production-v1' && seed.state.npcEconomy.elapsedSeconds === 0);
+    JSON.stringify(seed.state.npcEconomy) === JSON.stringify(expectedNpcEconomy()));
   save(JSON.stringify(seed));
   report.actions.push({ case: label, kind: 'native CDP storage fixture setup before app navigation', epoch });
   await cdp.send('DOMStorage.setDOMStorageItem', { storageId, key: fixture.key, value: JSON.stringify(seed) }, gameSession);
