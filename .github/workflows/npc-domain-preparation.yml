@@ -1,0 +1,52 @@
+name: Verify dormant NPC domain preparation
+on:
+  push:
+    branches: ['codex/infinity-npc-battle-20261011']
+permissions:
+  contents: read
+concurrency:
+  group: npc-domain-preparation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: python -m unittest discover -s scripts -p test_npc_preparation_bundle.py -v
+      - run: npm test -- --reporter=default --reporter=json --outputFile=npc-preparation-tests.json
+      - name: Build exact candidate and fixed production baseline
+        run: |
+          set -euo pipefail
+          npm run build >npc-preparation-build.log 2>&1
+          git worktree add --detach "$RUNNER_TEMP/npc-preparation-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/npc-preparation-base/node_modules"
+          GITHUB_SHA="$BASE_SHA" npm --prefix "$RUNNER_TEMP/npc-preparation-base" run build >npc-preparation-base-build.log 2>&1
+      - name: Require exact dormant application bytes
+        run: |
+          python scripts/verify-npc-preparation-bundle.py --base "$RUNNER_TEMP/npc-preparation-base/dist" --candidate dist --base-sha "$BASE_SHA" --candidate-sha "$GITHUB_SHA" --output npc-preparation-bundle.json
+      - name: Archive exact preparation source
+        if: always()
+        run: git archive --format=zip --output=npc-preparation-source.zip "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npc-domain-preparation-${{ github.sha }}
+          path: |
+            npc-preparation-tests.json
+            npc-preparation-build.log
+            npc-preparation-base-build.log
+            npc-preparation-bundle.json
+            npc-preparation-source.zip
+          retention-days: 7
+          if-no-files-found: error
