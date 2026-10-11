@@ -5,6 +5,13 @@ from npc_display_contract import *
 
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]}}
+    def hint_boundary(self,hint):
+        # Copied native evidence shape, not an offline execution of SAMPLE_JS.
+        return {'counts':{'tables':1,'worlds':1,'hints':1,'navigation':1,'summaries':1},
+            'positions':{'children':7,'table':4,'hint':5,'navigation':6},'exactOrder':True,
+            'hintHTML':f'<p class="muted">{hint}</p>',
+            'navigation':{'tag':'DETAILS','id':'expansion-navigation','className':'expansion-navigation','closed':True,
+                'children':2,'summaryHTML':'<summary id="expansion-navigation-summary">开拓查看（只读）</summary>','exactBody':True}}
     def test_positive_rights_cannot_be_hidden_by_historical_ui_projection(self):
         snapshot,evidence=self.fleet();state=self.state();state['planets'][0]['npcResourceRemainder']['metal']='0.1'
         with self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,state,'after')
@@ -18,11 +25,51 @@ class NpcDisplayTests(unittest.TestCase):
                 row['text']+='\n攻击';row['attacks']=[{'html':f'<button type="button" data-space="route" data-coordinate="{key}" data-mission="attack">攻击</button>','text':'攻击','key':key,'action':'route','type':'button','disabled':False,'visible':True,'last':True,'previous':'scout','index':len(inputs)}]
                 inputs.append({**scout,'text':'攻击'})
             rows.append(row)
-        snapshot={'tab':'galaxy','text':'\n'.join([r['text'] for r in rows]+[NEW_HINT]),'inputs':inputs};evidence={'tab':'galaxy','hintLast':True,'hint':NEW_HINT,'rows':rows}
-        return snapshot,evidence,{'tab':'galaxy','text':'\n'.join(old_text+[OLD_HINT]),'inputs':old_inputs}
+        snapshot={'tab':'galaxy','text':'\n'.join([r['text'] for r in rows]+[NEW_HINT,'开拓查看（只读）']),'inputs':inputs};evidence={'tab':'galaxy','hintBoundary':self.hint_boundary(NEW_HINT),'hint':NEW_HINT,'rows':rows}
+        return snapshot,evidence,{'tab':'galaxy','text':'\n'.join(old_text+[OLD_HINT,'开拓查看（只读）']),'inputs':old_inputs}
     def test_only_exact_npc_route_additions_are_removed(self):
         snapshot,evidence,expected=self.galaxy()
         self.assertEqual(normalize_npc_display(snapshot,evidence,self.state(),'after'),expected)
+    def test_old_hint_before_closed_navigator_is_unchanged(self):
+        _,evidence,snapshot=self.galaxy();evidence['hint']=OLD_HINT;evidence['hintBoundary']=self.hint_boundary(OLD_HINT)
+        for row in evidence['rows']:
+            if row['attacks']:row['text']=row['text'][:-len('\n攻击')];row['attacks']=[]
+        state=self.state();original=copy.deepcopy((snapshot,evidence,state))
+        result=normalize_npc_display(snapshot,evidence,state,'before')
+        self.assertEqual(result,snapshot);self.assertIsNot(result,snapshot)
+        self.assertEqual((snapshot,evidence,state),original)
+    def test_wrong_hint_node_or_literal_is_rejected(self):
+        for html in (f'<div class="muted">{NEW_HINT}</div>',f'<p class="muted" id="space-range">{NEW_HINT}</p>',
+                     f'<p class="muted"><span>{NEW_HINT}</span></p>',f'<p class="muted">{NEW_HINT}changed</p>'):
+            snapshot,evidence,_=self.galaxy();evidence['hintBoundary']['hintHTML']=html
+            with self.subTest(html=html),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+        snapshot,evidence,_=self.galaxy();evidence['hint']='开拓查看（只读）'
+        with self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+    def test_missing_duplicate_nested_or_reordered_boundary_is_rejected(self):
+        for key in ('tables','worlds','hints','navigation','summaries'):
+            for count in (0,2):
+                snapshot,evidence,_=self.galaxy();evidence['hintBoundary']['counts'][key]=count
+                with self.subTest(key=key,count=count),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+        for key,value in (('children',8),('table',3),('hint',6),('navigation',5)):
+            snapshot,evidence,_=self.galaxy();evidence['hintBoundary']['positions'][key]=value
+            with self.subTest(key=key),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+        snapshot,evidence,_=self.galaxy();evidence['hintBoundary']['exactOrder']=False
+        with self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+    def test_open_unknown_or_changed_navigation_is_rejected(self):
+        for key,value in (('tag','DIV'),('id','unknown-navigation'),('className','unknown-navigation'),('closed',False),
+                          ('children',3),('summaryHTML','<summary id="expansion-navigation-summary">changed</summary>'),
+                          ('summaryHTML','<summary>开拓查看（只读）</summary>'),('exactBody',False)):
+            snapshot,evidence,_=self.galaxy();evidence['hintBoundary']['navigation'][key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+    def test_galaxy_copies_and_all_unrelated_ui_remain_exact(self):
+        snapshot,evidence,expected=self.galaxy();state=self.state()
+        snapshot['text']+='\nunrelated change';snapshot['shared']={'status':'unchanged'}
+        evidence['panelHTML']='<section>untouched copied DOM evidence</section>'
+        original=copy.deepcopy((snapshot,evidence,state));result=normalize_npc_display(snapshot,evidence,state,'after')
+        self.assertEqual((snapshot,evidence,state),original)
+        self.assertEqual(result['text'],expected['text']+'\nunrelated change')
+        self.assertEqual(result['inputs'],expected['inputs']);self.assertEqual(result['shared'],snapshot['shared'])
+        self.assertNotEqual(result['text'],expected['text']) # The whole-UI comparator still sees unrelated differences.
     def test_coordinate_identity_button_authority_and_other_text_fail_closed(self):
         for mutation in ('coordinate','kind','html','index','text','hint','extra'):
             snapshot,evidence,_=self.galaxy();row=next(r for r in evidence['rows'] if r['attacks']);b=row['attacks'][0]
