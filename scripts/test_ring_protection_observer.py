@@ -19,6 +19,84 @@ SPEC.loader.exec_module(RING)
 R10 = 'function na(e){return{terraformerGrantJobFloor:Np(e.terraformerGrantJobFloor,e.orders.nextJobId),buildingTemplates:jg(e.buildingTemplates),formations:Gh(e.formations),researchTemplates:Dg(e.researchTemplates),orders:ng(e.orders),planets:e.planets.map(Hb),activePlanetId:e.activePlanetId,deepSpace:structuredClone(e.deepSpace),universe:{...e.universe},fleets:Kg(e.fleets),messages:e.messages.map(t=>({...t})),nextFleetId:e.nextFleetId,research:ty(e.research),darkMatter:js(e.darkMatter),items:{...e.items},boosters:e.boosters.map(t=>({...t})),arcade:of(e.arcade),lifetime:Di(e.lifetime),warpCores:js(e.warpCores),curvature:{...e.curvature},totalTime:js(e.totalTime),manualClicks:e.manualClicks,seenEnergyShortage:e.seenEnergyShortage,hasPrestiged:e.hasPrestiged,unlockedCards:e.unlockedCards.slice(),protocols:py(e.protocols),unlocked:e.unlocked.slice(),stats:{...e.stats},offlineBonusHours:e.offlineBonusHours}}'
 FLOOR = 'terraformerGrantJobFloor:Np(e.terraformerGrantJobFloor,e.orders.nextJobId),'
 R9 = R10.replace(FLOOR, '')
+# Exact handler-entry excerpts, including the entire recovery guard and original
+# state binding. R10 is from the same 4afa asset above. R11 is from failed 52e7ed8
+# asset index-DgNH2cNb.js: 634564 bytes, SHA-256
+# b42de6329ee54704c3b71f56192ec20ff9d6ee52391e285cf1aae3986f27451a.
+HANDLER_R10 = 'async function Qk(e){he.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(he.mode!=="ready"&&!t){ee=he.message,pi();return}const n=B,r=B.unlocked;'
+HANDLER_R11 = 'async function Z1(e){var i;ge.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(ge.mode!=="ready"&&!t){te=ge.message,$i();return}const n=j,r=j.unlocked;'
+
+
+class ProductionActionHandlerTests(unittest.TestCase):
+    def assert_unique(self, text, name='Z1', action='e', session='ge', state='j'):
+        matches = RING.production_action_handlers(text)
+        self.assertEqual(len(matches), 1)
+        match = matches[0]
+        self.assertEqual([match.group(key) for key in ('name', 'action', 'session', 'state')],
+                         [name, action, session, state])
+        # Preserve the existing native observer's numbered captures exactly.
+        self.assertEqual([match.group(i) for i in (1, 2, 3)], [name, action, session])
+        return match
+
+    def test_exact_failed_r11_entry_and_historical_r10_entry(self):
+        self.assert_unique(HANDLER_R11)
+        self.assert_unique(HANDLER_R10, 'Qk', 'e', 'he', 'B')
+
+    def test_only_uninitialized_var_identifier_list_is_optional(self):
+        for declaration in ('', 'var a;', 'var a,b,$temp,_local;'):
+            with self.subTest(declaration=declaration):
+                self.assert_unique(HANDLER_R11.replace('var i;', declaration))
+
+    def test_variable_names_not_pinned(self):
+        text = HANDLER_R11
+        for before, after in [('Z1', '$handler'), ('e', '$action'), ('ge', '$session'), ('j', '$state')]:
+            text = re.sub(r'(?<![\w$])' + re.escape(before) + r'(?![\w$])', lambda _: after, text)
+        self.assert_unique(text, '$handler', '$action', '$session', '$state')
+
+    def test_ambiguous_original_or_new_candidates_fail_native_uniqueness(self):
+        for text in (HANDLER_R10 + HANDLER_R11, HANDLER_R11 * 2,
+                     HANDLER_R11 + HANDLER_R11.replace('function Z1(', 'function other(')):
+            with self.subTest(text=text):
+                self.assertEqual(len(RING.production_action_handlers(text)), 2)
+
+    def test_initializers_and_extra_executable_statements_rejected(self):
+        for declaration in ('var i=1;', 'var i=sideEffect();', 'var i,a=0;',
+                            'var {i}=source;', 'var [i]=source;', 'var i;var a;',
+                            'let i;', 'const i=0;', 'i=0;', 'sideEffect();',
+                            'var i;sideEffect();', 'var 1bad;', 'var i,;'):
+            with self.subTest(declaration=declaration):
+                self.assertEqual(RING.production_action_handlers(HANDLER_R11.replace('var i;', declaration)), [])
+
+    def test_complete_original_recovery_guard_required(self):
+        for before, after in (
+            ('cancelPendingImport();', 'cancelPendingImport();sideEffect();'),
+            ('"export-legacy",', ''), ('"dismiss-offline"', '"dismiss-offline","demolition-confirm"'),
+            ('"save","export"', '"export","save"'), ('.includes(e.type)', '.includes(other.type)'),
+            ('ge.mode', 'other.mode'), ('!=="ready"', '==="ready"'), ('&&!t', '||!t'),
+            ('&&!t', '&&!other'), ('ge.message', 'other.message'),
+            ('$i();return}', '$i();sideEffect();return}'), ('$i();return}', '$i();}'),
+            ('const n=j,r=j.unlocked;', 'const n=j,r=other.unlocked;'),
+            ('const n=j,r=j.unlocked;', 'const n=j,r=j.other;'),
+            ('const n=j,r=j.unlocked;', 'sideEffect();const n=j,r=j.unlocked;'),
+        ):
+            with self.subTest(before=before, after=after):
+                self.assertEqual(RING.production_action_handlers(HANDLER_R11.replace(before, after)), [])
+
+    def test_non_declarations_and_incomplete_prefixes_rejected(self):
+        for text in ('', 'not' + HANDLER_R11, HANDLER_R11.replace('async function', 'function'),
+                     HANDLER_R11.replace('async function', 'async function*'),
+                     HANDLER_R11[:HANDLER_R11.index('if(')], HANDLER_R11[:-1]):
+            with self.subTest(text=text):
+                self.assertEqual(RING.production_action_handlers(text), [])
+
+    def test_breakpoint_position_remains_real_handler_entry(self):
+        for text in (HANDLER_R10, HANDLER_R11):
+            match = RING.production_action_handlers(text)[0]
+            position = text.index('{', match.start()) + 1
+            self.assertTrue(text[position:].startswith(('var i;', 'he.cancelPendingImport();')))
+            # Native CDP still must resolve exactly one real location. Offline
+            # parsing neither installs a breakpoint nor claims that it ran.
+            self.assertEqual(text[:position].count('{'), 1)
 
 
 class ProductionSerializerTests(unittest.TestCase):

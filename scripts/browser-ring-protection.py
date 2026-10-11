@@ -105,6 +105,30 @@ def sha(value):
     return hashlib.sha256(value.encode('utf-8') if isinstance(value, str) else value).hexdigest()
 
 
+def production_action_handlers(text):
+    """Locate the complete original recovery guard, never a generic function prefix.
+
+    The verified r11 Vite bundle adds uninitialized optional-chain temporaries
+    before cancelPendingImport. Only a bare var identifier list is admitted;
+    initializers, calls and other extra statements remain outside this grammar.
+    The complete action list, same-input test, same-session refusal and original
+    state/unlocked binding must all match. Runtime still requires one candidate
+    and one real CDP location; this parser never executes or rewrites JavaScript.
+    """
+    identifier = r'[A-Za-z_$][A-Za-z0-9_$]*'
+    recovery = r'\["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"\]'
+    pattern = (
+        rf'(?<![\w$])async function (?P<name>{identifier})\((?P<action>{identifier})\)\{{'
+        rf'(?:var {identifier}(?:,{identifier})*;)?'
+        rf'(?P<session>{identifier})\.cancelPendingImport\(\);'
+        rf'const (?P<recovery>{identifier})={recovery}\.includes\((?P=action)\.type\);'
+        rf'if\((?P=session)\.mode!=="ready"&&!(?P=recovery)\)\{{'
+        rf'{identifier}=(?P=session)\.message,{identifier}\(\);return\}}'
+        rf'(?=const {identifier}=(?P<state>{identifier}),{identifier}=(?P=state)\.unlocked;)'
+    )
+    return list(re.finditer(pattern, text))
+
+
 def production_serializers(text):
     """Recognize only the complete pinned r9/r10 serializeState return shape.
 
@@ -625,7 +649,8 @@ def worker(args):
                        'releaseSha256': release['files'][relative], 'bytes': len(body)}
                 report['scriptAssets'].append(row)
                 check('complete HTTP bytes and actual executed JS match pinned release hash', sha(body) == sha(text) == release['files'][relative], row)
-                anchors = list(re.finditer(r'async function ([\w$]+)\(([\w$]+)\)\{([\w$]+)\.cancelPendingImport\(\);const [\w$]+=\["save","export"', text))
+                anchors = production_action_handlers(text)
+                row['observerHandlerCandidates'] = len(anchors)
                 if not anchors:
                     continue
                 check('exactly one original guarded action handler exists', len(anchors) == 1)

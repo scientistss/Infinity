@@ -221,7 +221,32 @@ class DemolitionSourceContractTests(unittest.TestCase):
         nodes = lambda tree: {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
         before, after = nodes(old), nodes(new)
         dump = lambda node: ast.dump(node, include_attributes=False)
-        self.assertEqual([name for name in before if dump(before[name]) != dump(after[name])], ['synchronized_domain_provenance'])
+        self.assertEqual([name for name in before if dump(before[name]) != dump(after[name])], ['synchronized_domain_provenance', 'worker'])
+        # The independently tested r11 observer repair changes only the handler
+        # locator expression and adds its candidate-count diagnostic. Restore
+        # exactly those two AST nodes, then require the whole original worker
+        # (including every native assertion and CDP expression) to remain exact.
+        old_locator = next(node for node in ast.walk(before['worker'])
+                           if isinstance(node, ast.Assign) and len(node.targets) == 1
+                           and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'anchors')
+        new_locator = dump(ast.parse('anchors = production_action_handlers(text)').body[0])
+        diagnostic = dump(ast.parse("row['observerHandlerCandidates'] = len(anchors)").body[0])
+        replaced = []
+
+        class RestoreOnlyObserverLocator(ast.NodeTransformer):
+            def visit_Assign(self, node):
+                shape = dump(node)
+                if shape == new_locator:
+                    replaced.append('locator')
+                    return copy.deepcopy(old_locator)
+                if shape == diagnostic:
+                    replaced.append('diagnostic')
+                    return None
+                return self.generic_visit(node)
+
+        restored = RestoreOnlyObserverLocator().visit(copy.deepcopy(after['worker']))
+        self.assertEqual(replaced, ['locator', 'diagnostic'])
+        self.assertEqual(dump(restored), dump(before['worker']))
         original = [dump(node) for node in before['synchronized_domain_provenance'].body]
         current = [dump(node) for node in after['synchronized_domain_provenance'].body]
         cursor = 0
