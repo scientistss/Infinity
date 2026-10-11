@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -58,6 +59,154 @@ def exact(a, b):
 def save_raw(name, raw):
     (out / name).write_text(raw, encoding='utf-8')
     return {'file': name, 'sha256': sha(raw), 'utf8Bytes': len(raw.encode('utf-8'))}
+
+PAID_PROGRESS_TIMEOUT_MS = 6000
+PAID_QUEUE_OBSERVATION = r'''probe => {
+ const visibility=element=>{
+   if(!element)return {visible:false};
+   const rect=element.getBoundingClientRect();
+   return {connected:element.isConnected,x:rect.x,y:rect.y,width:rect.width,height:rect.height,
+     visible:element.isConnected&&element.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})&&
+       rect.width>0&&rect.height>0&&rect.bottom>0&&rect.right>0&&rect.top<innerHeight&&rect.left<innerWidth};
+ };
+ const queues=eval('('+probe+')')();
+ for(const kind of ['queue','rqueue','squeue']){
+   const rows=[...document.querySelectorAll(`[data-bind="${kind}-list-ov"] .queue-item`)];
+   queues[kind]=queues[kind].map((raw,index)=>{
+     const row=rows[index],button=row.querySelector('.queue-cancel'),fill=row.querySelector('[data-q="fill"]');
+     const style=fill?getComputedStyle(fill):null;
+     return {...raw,paidKind:button?.dataset.paidKind,paidPlanet:button?.dataset.paidPlanet,
+       paidJob:button?.dataset.paidJob,active:row.classList.contains('active'),
+       rowVisibility:visibility(row),detailVisibility:visibility(row.querySelector('[data-q="detail"]')),
+       barVisibility:visibility(fill?.parentElement),
+       fillVisible:!!style&&style.display!=='none'&&style.visibility==='visible'&&Number(style.opacity)>0};
+   });
+ }
+ return {queues,wallMs:Date.now(),monotonicMs:performance.now(),visibilityState:document.visibilityState,
+   overviewVisibility:visibility(document.querySelector('[data-tab-panel="overview"]'))};
+}'''
+
+def paid_identity(row, kind):
+    """Logical paid identity, independent of DOM remounts and row indices."""
+    job = row.get('paidJob', '')
+    planet = row.get('paidPlanet')
+    expected_kind = {'queue': 'building', 'rqueue': 'research'}[kind]
+    if (not isinstance(job, str) or not job.isascii() or not job.isdigit()
+            or not 0 < int(job) <= 9007199254740991 or str(int(job)) != job
+            or not isinstance(planet, str) or not planet
+            or row.get('paidKind') != expected_kind or row.get('key') != f'{planet}:{job}'):
+        return None
+    return (expected_kind, planet, job)
+
+def paid_queue_targets(observation):
+    """Anchor only the original active heads, never waiting-job quote estimates."""
+    if (observation.get('visibilityState') != 'visible'
+            or not observation.get('overviewVisibility', {}).get('visible')):
+        return {}
+    targets = {}
+    for kind in ('queue', 'rqueue'):
+        rows = observation['queues'][kind]
+        if not rows:
+            continue
+        head = rows[0]
+        identity = paid_identity(head, kind)
+        if (identity and head.get('active') is True and head['rowVisibility']['visible']
+                and sum(row.get('key') == head['key'] for row in rows) == 1
+                and sum(paid_identity(row, kind) == identity for row in rows) == 1):
+            targets[kind] = identity
+    return targets
+
+def paid_countdown_seconds(detail):
+    # Match the actual formatDuration projection, excluding quotes and suffixes.
+    match = re.match(r'剩余 (?:(\d+) 天 (\d+) 小时|(\d+) 小时 (\d+) 分|(\d+) 分 (\d+) 秒|(\d+) 秒) / 共 ', detail or '')
+    return None if match is None else sum(int(value or 0) * scale for value, scale in
+                                         zip(match.groups(), (86400, 3600, 3600, 60, 60, 1, 1)))
+
+def paid_progress_percent(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d+(?:\.\d+)?%', value):
+        return None
+    percent = float(value[:-1])
+    return percent if 0 <= percent <= 100 else None
+
+def paid_queue_progress(before, after):
+    """The single acceptance predicate used by both the wait and final assertion."""
+    if (not 0 < after['monotonicMs'] - before['monotonicMs'] <= PAID_PROGRESS_TIMEOUT_MS
+            or not 0 <= after['hostMonotonicEnd'] - before['hostMonotonicStart'] <= PAID_PROGRESS_TIMEOUT_MS / 1000
+            or after.get('visibilityState') != 'visible'
+            or not after.get('overviewVisibility', {}).get('visible')):
+        return []
+    witnesses = []
+    for kind, identity in paid_queue_targets(before).items():
+        original = before['queues'][kind][0]
+        rows = after['queues'][kind]
+        matches = [row for row in rows if paid_identity(row, kind) == identity]
+        if len(matches) != 1 or sum(row.get('key') == original['key'] for row in rows) != 1:
+            continue
+        current = matches[0]
+        if current.get('active') is not True or not current['rowVisibility']['visible']:
+            continue
+        countdown_before = paid_countdown_seconds(original.get('detail'))
+        countdown_after = paid_countdown_seconds(current.get('detail'))
+        progress_before = paid_progress_percent(original.get('progress'))
+        progress_after = paid_progress_percent(current.get('progress'))
+        countdown = (original['detailVisibility']['visible'] and current['detailVisibility']['visible']
+                     and countdown_before is not None and countdown_after is not None
+                     and countdown_after < countdown_before)
+        progress = (original['barVisibility']['visible'] and current['barVisibility']['visible']
+                    and original['fillVisible'] and current['fillVisible']
+                    and progress_before is not None and progress_after is not None
+                    and progress_after > progress_before)
+        if countdown or progress:
+            witnesses.append({'kind': kind, 'identity': identity, 'countdownAdvanced': countdown,
+                              'progressAdvanced': progress})
+    return witnesses
+
+def observe_paid_queue_progress(page, queue_probe, record):
+    """Read native DOM/time only. Persist each raw observation before deciding."""
+    evidence = {'timeoutMs': PAID_PROGRESS_TIMEOUT_MS, 'status': 'observing',
+                'identitySemantics': 'Original active paid kind/planet/job; same-job DOM remounts allowed; no index pairing.',
+                'before': None, 'after': None, 'observations': [], 'witnesses': []}
+    def capture():
+        started = time.monotonic()
+        observed = page.evaluate(PAID_QUEUE_OBSERVATION, queue_probe)
+        observed.update(hostMonotonicStart=started, hostMonotonicEnd=time.monotonic(), hostWall=time.time())
+        evidence['observations'].append(observed)
+        if evidence['before'] is None:
+            evidence['before'] = observed
+        evidence['after'] = observed
+        record(evidence)
+        return observed
+    try:
+        before = capture()
+        evidence['targets'] = paid_queue_targets(before)
+        if set(evidence['targets']) != {'queue', 'rqueue'}:
+            evidence['status'] = 'unready'
+            record(evidence)
+            return evidence
+        deadline = before['hostMonotonicStart'] + PAID_PROGRESS_TIMEOUT_MS / 1000
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.05, remaining))
+            after = capture()
+            evidence['witnesses'] = paid_queue_progress(before, after)
+            if evidence['witnesses']:
+                evidence['status'] = 'advanced'
+            elif time.monotonic() >= deadline:
+                evidence['status'] = 'timeout'
+            else:
+                continue
+            record(evidence)
+            return evidence
+    except BaseException as error:
+        evidence['status'] = 'observation-error'
+        evidence['error'] = repr(error)
+        # Diagnostic persistence must never replace the original observation error.
+        try:
+            record(evidence)
+        except Exception:
+            pass
+        raise
 
 PROBE = r'''({key,raw,origin}) => {
  if(location.origin!==origin)return;
@@ -157,15 +306,14 @@ def worker():
                 detail:row.querySelector('[data-q="detail"]')?.textContent,
                 progress:row.querySelector('[data-q="fill"]')?.style.width,
                 cancelDisabled:row.querySelector('.queue-cancel')?.disabled}))]))"""
-            ready_queue=page.evaluate(queue_probe)
-            check('existing real paid building and research provide fine-grained canaries',bool(ready_queue['queue']) and bool(ready_queue['rqueue']))
-            page.wait_for_function('({probe,before})=>JSON.stringify(eval("("+probe+")")())!==JSON.stringify(before)',
-                                   arg={'probe':queue_probe,'before':ready_queue},timeout=6000)
-            advanced_queue=page.evaluate(queue_probe)
+            def record_healthy_queue(evidence):
+                report['healthyPaidQueueCanary'] = evidence
+                persist()
+            healthy_queue=observe_paid_queue_progress(page,queue_probe,record_healthy_queue)
+            check('existing real paid building and research provide fine-grained canaries',
+                  set(healthy_queue.get('targets',{}))=={'queue','rqueue'})
             check('healthy real paid countdown or progress visibly advances on native time',
-                  any(a['detail']!=b['detail'] or a['progress']!=b['progress'] for kind in ('queue','rqueue')
-                      for a,b in zip(ready_queue[kind],advanced_queue[kind])))
-            report['healthyPaidQueueCanary']={'before':ready_queue,'after':advanced_queue}
+                  bool(paid_queue_progress(healthy_queue['before'],healthy_queue['after'])))
             page.evaluate("window.__quotaStaleCancel=document.querySelector('[data-bind=\"queue-list-ov\"] .queue-cancel')")
             page.locator('[data-tab="save"]').click()
             page.locator('[data-action="save"]').click()

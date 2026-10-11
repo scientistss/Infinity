@@ -50,6 +50,7 @@ jobs:
           python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_native_frame_trace.py' -v
           python -m unittest discover -s scripts -p 'test_npc_export_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_migration_quota_progress.py' -v
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Natural manual-to-bounded ring progression
@@ -250,8 +251,10 @@ jobs:
             if curl -fsS http://127.0.0.1:4177/provenance.json > /dev/null; then break; fi
             sleep 1
           done
-          # Run the independent SaveSession suite first to diagnose migration failures early.
+          # Generate common inputs after every required HTTP service is ready.
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > save-session-review-save.json
+          # Independent quota/context gate runs first; all later browser and performance gates remain unchanged.
+          python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
           python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --expected-sha "$GITHUB_SHA"
@@ -272,7 +275,6 @@ jobs:
           python scripts/browser-research-network.py --url http://127.0.0.1:4173/Infinity/ --fixture research-network-review-save.json --natural-report natural-research-network-report.json --expected-report-sha256 "$(cut -d' ' -f1 natural-research-network-report.sha256.txt)" --expected-sha "$GITHUB_SHA" --output research-network-evidence > research-network-browser.log 2>&1
           python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
-          python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
           node --import tsx scripts/accounted-clock-fixture.ts > accounted-clock-review-save.json
           python scripts/browser-accounted-clock.py --fixture accounted-clock-review-save.json --session-fixture save-session-review-save.json --output accounted-clock-evidence
