@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import originalR10 from "./fixtures/demolition-origin-r10-save.json";
 import { readNaturalResearchOrigin } from "../scripts/natural-research-network-journey";
@@ -15,17 +16,17 @@ type Save = ReturnType<typeof importSave>;
 const old = () => structuredClone(originalR10) as unknown as Save;
 
 describe("IRN origin revision adapter", () => {
-  it("adds only revision12, zero NPC age and explicit null slots, preserving complete raw input and earned fields", () => {
+  it("adds only revision13, zero NPC age and explicit null slots, preserving complete raw input and earned fields", () => {
     const source = old(), bytes = JSON.stringify(source);
     const result = readNaturalResearchOrigin(source, PINNED_R10);
-    expect(result.imported).toEqual({ ...source, revision: 12, state: { ...source.state, npcEconomy: { model: "fixed-production-v1", elapsedSeconds: 0 }, planets: source.state.planets.map(p => ({ ...p, demolition: null })) } });
+    expect(result.imported).toEqual({ ...source, revision: 13, state: { ...source.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: source.state.planets.map(p => ({ ...p, demolition: null })) } });
     expect(JSON.stringify(source)).toBe(bytes);
     expect(result.candidate.terraformerGrantJobFloor).toBe(89);
     expect(result.candidate.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 2 });
   });
   it("keeps already current input entirely exact", () => {
     const current = readNaturalResearchOrigin(old(), PINNED_R10).imported;
-    current.state.npcEconomy = { model: "fixed-production-v1", elapsedSeconds: 17.25 };
+    current.state.npcEconomy = expectedFreshNpcWallet(17.25);
     expect(readNaturalResearchOrigin(current, CURRENT).imported).toEqual(current);
   });
   it("does not broadly accept another r10 source SHA", () => expect(() => readNaturalResearchOrigin(old(), CURRENT)).toThrow(/exact pinned/));
@@ -40,7 +41,7 @@ describe("IRN origin revision adapter", () => {
     const noncanonical = structuredClone(current); noncanonical.state.planets[0]!.resources.metal = "2920000.00";
     expect(() => readNaturalResearchOrigin(noncanonical, CURRENT)).toThrow();
   });
-  it("rejects a legally readable active demolition as a supposedly settled r12 origin", () => {
+  it("rejects a legally readable active demolition as a supposedly settled r13 origin", () => {
     let state = selectPlanet(readNaturalResearchOrigin(old(), PINNED_R10).candidate, "homeworld");
     const paid = commitDemolition(state, quoteDemolition(state, "metal_storage").quote!);
     expect(paid.ok, paid.reason).toBe(true); state = paid.state;

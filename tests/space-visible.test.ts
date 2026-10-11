@@ -49,9 +49,9 @@ describe("visible extension projections", () => {
     const beforeDraft = JSON.stringify(draft);
     const full = spaceView(state, cursor, draft);
     expect(spaceGalaxyView(state, cursor)).toEqual({rows:full.rows, seed:full.seed, phase:full.phase});
-    expect(spaceFleetView(state, draft)).toEqual({isCharge:full.isCharge, chargePreview:full.chargePreview, slots:full.slots,
+    expect(spaceFleetView(state, draft)).toEqual({isAttack:full.isAttack, attackQuota:full.attackQuota, isCharge:full.isCharge, chargePreview:full.chargePreview, slots:full.slots,
       quote:full.quote, ships:full.ships, fleets:full.fleets, planets:full.planets});
-    expect(spaceMessagesView(state)).toEqual({messages:full.messages});
+    expect(spaceMessagesView(state)).toEqual({messages:full.messages, npcReports:full.npcReports});
     expect(spaceOrigin(state)).toBe(full.origin);
     expect(full.rows).toHaveLength(16);
     expect(full.fleets).toHaveLength(1);
@@ -97,7 +97,7 @@ describe("visible extension projections", () => {
     expect(npc).not.toHaveBeenCalled();
   });
 
-  it("reads only messages for the messages tab and no fleet or message body for shared chrome", () => {
+  it("reads messages and empty receipt summaries for the messages tab and no fleet or message body for shared chrome", () => {
     const state = fixture();
     Object.defineProperty(state, "fleets", {get() { throw Error("hidden fleet body read"); }});
     const origin = spaceOrigin(state);

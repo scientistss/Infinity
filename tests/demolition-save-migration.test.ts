@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import fixedR10 from "./fixtures/demolition-r10.json";
 import { STORAGE_KEY } from "../src/game/content";
@@ -11,10 +12,10 @@ function row(id: string) {
   return found;
 }
 function lifted(old: any) {
-  return { ...old, revision: 12, state: { ...old.state, npcEconomy: { model: "fixed-production-v1", elapsedSeconds: 0 }, planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
+  return { ...old, revision: 13, state: { ...old.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
 }
 function assertOnlyMigrationMetadata(actual: any, old: any) {
-  expect(actual.revision).toBe(12);
+  expect(actual.revision).toBe(13);
   for (const planet of actual.state.planets) {
     expect(Object.hasOwn(planet, "demolition")).toBe(true);
     expect(planet.demolition).toBeNull();
@@ -120,8 +121,8 @@ describe("all-envelope legacy demolition smuggling", () => {
   });
 });
 
-describe("r12 migration and import raw-byte protection", () => {
-  it("backs up exact genuine r10 bytes before the verified r12 write and explains retained grants", () => {
+describe("r13 migration and import raw-byte protection", () => {
+  it("backs up exact genuine r10 bytes before the verified r13 write and explains retained grants", () => {
     const fixture = row("G10a-earned-grant"), store = new Store(fixture.raw);
     const session = new SaveSession(store, fixture.oldReaderOutput.lastTickAt);
     expect(session.mode).toBe("ready");
@@ -144,7 +145,7 @@ describe("r12 migration and import raw-byte protection", () => {
     expect(serializeState(session.loaded.state)).toEqual(lifted(fixture.oldReaderOutput).state);
     expect(session.export(session.loaded.state)).toEqual({ raw: fixture.raw, protected: true });
     expect(session.save(session.loaded.state).ok).toBe(false);
-    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(12);
+    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(13);
     else if (fault === "concurrent") expect(store.values.get(STORAGE_KEY)).toBe("other tab owns this slot");
     else expect(store.values.get(STORAGE_KEY)).toBe(fixture.raw);
     if (fault.startsWith("backup") || fault === "concurrent") expect(store.events).not.toContain(`write:${STORAGE_KEY}`);

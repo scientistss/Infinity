@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { activePlanet, withPlanet } from "../src/game/empire";
 import { big } from "../src/game/decimal";
 import { createInitialState } from "../src/game/state";
@@ -32,12 +33,17 @@ export function withResearch(state: GameState, levels: Partial<Record<ResearchId
   return { ...state, research: { ...state.research, levels: { ...state.research.levels, ...levels } } };
 }
 
-/** Remove only an independently verified exact r12 field from an explicit old-schema projection. */
+/** Remove only both independently verified exact r13 fields from an explicit old-schema projection. */
 export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: number): void {
   expect(Object.hasOwn(state, "npcEconomy")).toBe(true);
-  expect(Reflect.ownKeys(state.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
-  expect(state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: expectedElapsedSeconds });
+  expect(Object.hasOwn(state, "npcBattles")).toBe(true);
+  expect(Reflect.ownKeys(state.npcEconomy).sort()).toEqual(["baseline", "model", "now", "sites"]);
+  expect(state.npcEconomy).toEqual(expectedFreshNpcWallet(expectedElapsedSeconds));
+  expect(Reflect.ownKeys(state.npcBattles).sort()).toEqual(["model", "reports"]);
+  expect(state.npcBattles).toEqual(expectedEmptyNpcBattles());
+  // Every assertion precedes either deletion, so a failed projection is atomic.
   delete state.npcEconomy;
+  delete state.npcBattles;
 }
 
 /** Deliberate synthetic legacy-schema input, never evidence of a historical export. */

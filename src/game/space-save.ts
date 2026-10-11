@@ -1,3 +1,4 @@
+import { readNpcAttackContract } from "./npc-attack-state";
 import { DEEP } from "../data/deep-space";
 import { readCharge } from "./deep-save";
 import { SHIP_IDS, type ShipId } from "../data/units";
@@ -13,7 +14,8 @@ export function serializeFleets(fleets: Fleet[]) {
 }
 function record(x:unknown): x is Record<string,unknown> { return !!x && typeof x === "object" && !Array.isArray(x); }
 function keys(raw: Record<string,unknown>, expected: readonly string[]):void {
-  if(Object.keys(raw).length!==expected.length || expected.some(key=>!(key in raw))) throw Error("舰队字段无效");
+  if (![Object.prototype, null].includes(Object.getPrototypeOf(raw)) || Reflect.ownKeys(raw).length !== expected.length
+    || expected.some(key => { const field = Object.getOwnPropertyDescriptor(raw, key); return !field || !("value" in field) || !field.enumerable; })) throw Error("舰队字段无效");
 }
 function owner(raw:unknown):OrderFleetIdentity|null {
   if(raw===null)return null;
@@ -39,7 +41,8 @@ function cargo(x:unknown, precise=false): ResourceAmounts {
   };
   return {metal:amount("metal"),crystal:amount("crystal"),deuterium:amount("deuterium")};
 }
-export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pick<GameState,"universe"|"fleets"|"messages"|"nextFleetId"> {
+const R12_MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle"] as const;
+export function readSpaceState(raw: Record<string,unknown>,state: GameState, allowNpcAttack = true): Pick<GameState,"universe"|"fleets"|"messages"|"nextFleetId"> {
   if(!record(raw.universe) || raw.universe.layout !== "ring-v1") throw Error("缺少原版 P4 r2 宇宙数据，原存档未导入");
   const universe:Universe={seed:integer(raw.universe.seed,0,0xffffffff),layout:"ring-v1"};
   const coords=new Set(state.planets.map(p=>coordinateKey(p.coordinates)));
@@ -48,13 +51,22 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi
   const fleetIds=new Set<number>();const reservations=new Set<string>();
   const fleets: Fleet[]=raw.fleets.map((f:unknown)=>{
     if(!record(f) || typeof f.originId !== "string" || !state.planets.some(p=>p.id===f.originId)) throw Error("舰队出发星球不存在");
-    keys(f,["id","originId","target","mission","ships","cargo","duration","remaining","elapsed","returning","orderTransport",...(f.charge!==undefined?["charge"]:[])]);
+    keys(f,["id","originId","target","mission","ships","cargo","duration","remaining","elapsed","returning","orderTransport",...(f.charge!==undefined?["charge"]:[]),...(allowNpcAttack&&f.mission==="attack"?["npcAttack"]:[])]);
     const orderTransport=owner(f.orderTransport);
     if(record(f.target))keys(f.target,["galaxy","system","position"]);
     const id=integer(f.id,1,Number.MAX_SAFE_INTEGER-1);
     if(fleetIds.has(id)) throw Error("舰队编号重复");fleetIds.add(id);
-    if(!validCoordinates(f.target,f.mission==="charge"||f.mission==="recycle") || !(MISSIONS as readonly unknown[]).includes(f.mission) || typeof f.returning !== "boolean") throw Error("舰队任务或目标无效");
+    if(!validCoordinates(f.target,f.mission==="charge"||f.mission==="recycle") || !((allowNpcAttack ? MISSIONS : R12_MISSIONS) as readonly unknown[]).includes(f.mission) || typeof f.returning !== "boolean") throw Error("舰队任务或目标无效");
     if(!record(f.ships)) throw Error("舰队舰船缺失");
+    // Attack-only raw-data boundary: Object.entries below must not erase invalid authority.
+    // Keep the historical ordinary-mission normalization unchanged.
+    if(f.mission==="attack") {
+      if(![Object.prototype,null].includes(Object.getPrototypeOf(f.ships))) throw Error("NPC 攻击舰船字段无效");
+      for(const key of Reflect.ownKeys(f.ships)) {
+        const field=Object.getOwnPropertyDescriptor(f.ships,key)!;
+        if(typeof key!=="string" || !("value" in field) || !field.enumerable) throw Error("NPC 攻击舰船字段无效");
+      }
+    }
     const ships:Partial<Record<ShipId,number>>={};
     for(const [key,value] of Object.entries(f.ships)){
       if(!(SHIP_IDS as readonly string[]).includes(key) || key==="solar_satellite") throw Error("不能派遣防御或太阳能卫星");
@@ -63,6 +75,9 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi
     if(!Object.values(ships).some(n=>n>0)) throw Error("舰队不能为空");
     const duration=seconds(f.duration,SPACE.minFlightSeconds),remaining=seconds(f.remaining),elapsed=seconds(f.elapsed);
     const charge=f.mission==="charge"?readCharge(f.charge):undefined;
+    const npcAttack=f.mission==="attack"?readNpcAttackContract(f.npcAttack,universe.seed,id,f.target):undefined;
+    if(npcAttack && (orderTransport !== null || (npcAttack.phase.kind==="returning")!==f.returning
+      || npcAttack.phase.kind==="returning"&&npcAttack.phase.dockBlocked&&remaining!==0))throw Error("NPC 攻击舰队阶段或归属无效");
     if(f.mission!=="charge"&&f.charge!==undefined)throw Error("普通任务不能夹带充能状态");
     if(charge&&(f.target.position!==16 || (charge.phase==="return")!==f.returning))throw Error("充能任务阶段与目标无效");
     if(f.mission==="recycle"&&!ships.recycler)throw Error("回收舰队缺少回收船");
@@ -76,7 +91,7 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState): Pi
       }
       if(f.mission==="scout" && !ships.espionage_probe)throw Error("侦察舰队缺少间谍卫星");
     }
-    return {id,orderTransport,originId:f.originId,target:{...f.target},mission:f.mission as Mission,ships,cargo:cargo(f.cargo,orderTransport!==null),duration,remaining,elapsed,returning:f.returning,...(charge?{charge}:{})};
+    return {id,orderTransport,originId:f.originId,target:{...f.target},mission:f.mission as Mission,ships,cargo:cargo(f.cargo,orderTransport!==null||npcAttack!==undefined),duration,remaining,elapsed,returning:f.returning,...(charge?{charge}:{}),...(npcAttack?{npcAttack}:{})};
   });
   const nextFleetId=integer(raw.nextFleetId,1,Number.MAX_SAFE_INTEGER);
   if(fleets.some(f=>f.id>=nextFleetId)) throw Error("下一舰队编号不能重复");

@@ -6,7 +6,7 @@ import { activePlanet } from "../src/game/empire";
 import { emptyCargo, quoteFlight, recallFleet, resolveFleetArrivals, sendFleet, type FleetRequest } from "../src/game/fleet";
 import { coordinateKey, npcAt, SPACE, type Coordinates } from "../src/game/galaxy";
 import { tick } from "../src/game/logic";
-import { npcEconomySnapshot } from "../src/game/npc-economy";
+import { createNpcWalletContext, projectNpc, type NpcWalletState } from "../src/game/npc-wallet";
 import { npcScoutReportText } from "../src/game/npc-scout";
 import { createPlanet } from "../src/game/planet";
 import { enqueue } from "../src/game/queue";
@@ -18,6 +18,11 @@ import { RESOURCE_IDS, type GameState } from "../src/game/types";
 import { spaceFleetView, spaceGalaxyView, spaceMessagesView } from "../src/ui/space-present";
 
 const TARGET = { galaxy: 1, system: 56, position: 6 };
+const snapshotContext = createNpcWalletContext(20261010, 512, [{ galaxy: 1, system: 56, position: 11 }]);
+function walletSnapshot(wallet: NpcWalletState) {
+  const { stock } = projectNpc(wallet, TARGET, snapshotContext);
+  return { resources: { metal: stock[0], crystal: stock[1], deuterium: stock[2] } };
+}
 // Frozen before running: age/time 1e-8 s, stock 5e-8 units. Text uses 3 decimals.
 const TIME_TOLERANCE = 1e-8;
 const STOCK_TOLERANCE = 5e-8;
@@ -86,17 +91,21 @@ function expectObservation(state: GameState, id: number, gameTime: number, age: 
   expect(message).toBeDefined();
   expect(Math.abs(message.at - gameTime)).toBeLessThan(TIME_TOLERANCE);
   expect(message.text).toContain("抵达时快照（数值保留3位小数）");
-  expect(message.text).toContain(`游戏时间 ${gameTime.toFixed(3)} 秒；经济年龄 ${age.toFixed(3)} 秒`);
+  expect(message.text).toContain(`游戏时间 ${gameTime.toFixed(3)} 秒。`);
   const expected = [
     { name: "金属", id: "metal", stock: Math.min(50000, 500 + 5 * age), cap: 50000, rate: 5 },
     { name: "晶体", id: "crystal", stock: Math.min(30000, 250 + 2.5 * age), cap: 30000, rate: 2.5 },
     { name: "重氢", id: "deuterium", stock: Math.min(10000, age), cap: 10000, rate: 1 },
   ] as const;
-  const snapshot = npcEconomySnapshot(state.npcEconomy);
+  const snapshot = walletSnapshot(state.npcEconomy);
   for (const resource of expected) {
     expect(message.text).toContain(`${resource.name} ${resource.stock.toFixed(3)}/${resource.cap.toFixed(3)}，固定产量 ${resource.rate.toFixed(3)}/秒，${resource.stock === resource.cap ? "满仓停产" : "生产中"}`);
     expect(Math.abs(snapshot.resources[resource.id] - resource.stock)).toBeLessThan(STOCK_TOLERANCE);
   }
+  expect(message.text).not.toContain("经济年龄");
+  expect(message.text).toContain("轨道驻军：");
+  expect(message.text).toContain("驻军战斗科技 0");
+  if (message.text.includes("侦察报告 [1:56:6]")) expect(message.text).toContain("轨道驻军：轻型战斗机 4，重型战斗机 0");
   expect(message.text.length).toBeLessThanOrEqual(1000);
 }
 
@@ -123,7 +132,7 @@ describe("paid NPC scouts observe only actual arrival", () => {
     const message = reports(arrived)[0]!;
     const npc = npcAt(start, TARGET)!;
     expect(message.text).toContain(`侦察报告 [1:56:6]：${npc.name}（NPC ${npc.id}；派系：${npc.faction}）`);
-    expectObservation(arrived, 1, start.totalTime.toNumber() + duration, start.npcEconomy.elapsedSeconds + duration);
+    expectObservation(arrived, 1, start.totalTime.toNumber() + duration, start.npcEconomy.now + duration);
     expect(arrived.fleets[0]!.returning).toBe(true);
     expect(arrived.fleets[0]!.remaining).toBe(duration);
     expect(arrived.fleets[0]!.cargo).toEqual(emptyCargo());
@@ -139,7 +148,7 @@ describe("paid NPC scouts observe only actual arrival", () => {
     state = tick(state, duration + 60);
     expect(state.fleets).toHaveLength(0);
     expect(activePlanet(state).units.espionage_probe).toBe(2);
-    const departureAge = state.npcEconomy.elapsedSeconds;
+    const departureAge = state.npcEconomy.now;
     const departureTime = state.totalTime.toNumber();
     state = tick(launch(state), .25);
     const reloaded = roundTrip(state);
@@ -170,8 +179,8 @@ describe("paid NPC scouts observe only actual arrival", () => {
     expect(reports(a)).toEqual(reports(b));
     expect(reports(a)).toHaveLength(2);
     expect(reports(a)[0]!.text).toBe(reports(a)[1]!.text);
-    expectObservation(a, 1, start.totalTime.toNumber() + duration, start.npcEconomy.elapsedSeconds + duration);
-    expectObservation(a, 2, start.totalTime.toNumber() + duration, start.npcEconomy.elapsedSeconds + duration);
+    expectObservation(a, 1, start.totalTime.toNumber() + duration, start.npcEconomy.now + duration);
+    expectObservation(a, 2, start.totalTime.toNumber() + duration, start.npcEconomy.now + duration);
     const settled = resolveFleetArrivals(a);
     expect(settled).toBe(a);
     expect(serializeState(settled)).toEqual(serializeState(a));
@@ -196,10 +205,10 @@ describe("paid NPC scouts observe only actual arrival", () => {
     expect(reports(partitioned)).toHaveLength(0);
     partitioned = tick(partitioned, duration - 1.5);
     const whole = tick(sent, duration);
-    expectObservation(whole, 1, start.totalTime.toNumber() + duration, start.npcEconomy.elapsedSeconds + duration);
-    expectObservation(partitioned, 1, start.totalTime.toNumber() + duration, start.npcEconomy.elapsedSeconds + duration);
+    expectObservation(whole, 1, start.totalTime.toNumber() + duration, start.npcEconomy.now + duration);
+    expectObservation(partitioned, 1, start.totalTime.toNumber() + duration, start.npcEconomy.now + duration);
     expect(reports(partitioned)[0]!.text).toBe(reports(whole)[0]!.text);
-    expect(Math.abs(partitioned.npcEconomy.elapsedSeconds - whole.npcEconomy.elapsedSeconds)).toBeLessThan(TIME_TOLERANCE);
+    expect(Math.abs(partitioned.npcEconomy.now - whole.npcEconomy.now)).toBeLessThan(TIME_TOLERANCE);
   });
 
   it.each([0, .25, .999])("recall before arrival at %s seconds produces no intel and refunds no fuel", elapsed => {
@@ -281,19 +290,19 @@ describe("synthetic arrival boundaries and static-report compatibility", () => {
   it.each([9900, 10000, 11900])("reports the independent cap status at exact age %s", age => {
     // Explicit age fixture isolates this event boundary; dispatch, fuel and flight stay real.
     let state = ready();
-    state = { ...state, npcEconomy: { ...state.npcEconomy, elapsedSeconds: age - 1 } };
+    state = { ...state, npcEconomy: { ...state.npcEconomy, now: age - 1 } };
     const gameTime = state.totalTime.toNumber();
     state = tick(launch(state), 1);
-    expect(state.npcEconomy.elapsedSeconds).toBe(age);
+    expect(state.npcEconomy.now).toBe(age);
     expectObservation(state, 1, gameTime + 1, age);
   });
 
   it.each([0, -1, NaN, Infinity])("an already-due synthetic boundary at dt=%s uses current age exactly once", dt => {
     let state = launch(ready());
-    state = { ...state, npcEconomy: { ...state.npcEconomy, elapsedSeconds: 60 }, fleets: state.fleets.map(fleet => ({ ...fleet, remaining: 0, elapsed: fleet.duration })) };
+    state = { ...state, npcEconomy: { ...state.npcEconomy, now: 60 }, fleets: state.fleets.map(fleet => ({ ...fleet, remaining: 0, elapsed: fleet.duration })) };
     const at = state.totalTime.toNumber();
     const settled = tick(state, dt);
-    expect(settled.npcEconomy.elapsedSeconds).toBe(60);
+    expect(settled.npcEconomy.now).toBe(60);
     expectObservation(settled, 1, at, 60);
     expect(reports(tick(settled, dt))).toEqual(reports(settled));
     expect(resolveFleetArrivals(settled)).toBe(settled);
@@ -301,11 +310,11 @@ describe("synthetic arrival boundaries and static-report compatibility", () => {
 
   it("display rounding cannot declare a not-quite-full store stopped", () => {
     let state = ready();
-    state = { ...state, npcEconomy: { ...state.npcEconomy, elapsedSeconds: 9898.999999 } };
+    state = { ...state, npcEconomy: { ...state.npcEconomy, now: 9898.999999 } };
     state = tick(launch(state), 1);
     const text = reports(state)[0]!.text;
     expect(text).toContain("金属 50000.000/50000.000，固定产量 5.000/秒，生产中");
-    expect(npcEconomySnapshot(state.npcEconomy).resources.metal).toBeLessThan(50000);
+    expect(walletSnapshot(state.npcEconomy).resources.metal).toBeLessThan(50000);
   });
 
   it("keeps empty and owned-target report text unchanged and refuses non-NPC observations", () => {
@@ -356,7 +365,9 @@ describe("synthetic arrival boundaries and static-report compatibility", () => {
     expect(new Set(state.messages.map(message => message.id)).size).toBe(SPACE.maxMessages);
     expect(state.messages.every(message => message.text.length <= 1000)).toBe(true);
     expect(Object.keys(serializeState(state)).sort()).toEqual(keys);
-    expect(Object.keys(state.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
+    expect(Object.keys(state.npcEconomy).sort()).toEqual(["baseline", "model", "now", "sites"]);
+    expect(state.npcEconomy.sites).toEqual({});
+    expect(state.npcBattles).toEqual({ model: "npc-battle-receipts-v1", reports: [] });
     expect(roundTrip(state).messages).toEqual(state.messages);
     expect(coordinateKey(TARGET)).toBe("1:56:6");
   });

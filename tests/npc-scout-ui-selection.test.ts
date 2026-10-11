@@ -42,7 +42,7 @@ function paidProbe(): GameState {
   expect(activePlanet(probe.state).resources.crystal.eq(activePlanet(state).resources.crystal.sub(1000))).toBe(true);
   state = tick(probe.state, 1, "live");
   expect(activePlanet(state).units.espionage_probe).toBe(1);
-  expect(state.npcEconomy.elapsedSeconds).toBe(2);
+  expect(state.npcEconomy.now).toBe(2);
   return state;
 }
 
@@ -129,7 +129,7 @@ describe("NPC acceptance uses the UI's exact dense ship selection", () => {
     expect(dense.messages.find(message => message.id === "scout-5")?.at).toBe(25875);
     expect(dense.messages.find(message => message.id === "scout-4")).toEqual(frozen);
     advance(1); exact("final-returned-and-reloaded");
-    expect([dense.totalTime.toString(), dense.npcEconomy.elapsedSeconds, dense.nextFleetId, activePlanet(dense).units.espionage_probe])
+    expect([dense.totalTime.toString(), dense.npcEconomy.now, dense.nextFleetId, activePlanet(dense).units.espionage_probe])
       .toEqual(["25876", 66, 6, 1]);
     expect(inFlight).toEqual(["first-scout-outbound", "first-snapshot-returning", "second-scout-outbound", "second-scout-halfway-native-free-strict-reload", "second-snapshot-returning"]);
   });

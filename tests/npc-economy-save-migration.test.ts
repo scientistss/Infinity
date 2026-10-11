@@ -1,15 +1,16 @@
+import { expectedFreshNpcWallet, expectedFullNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import fixedR10 from "./fixtures/demolition-r10.json";
 import naturalR10Raw from "./fixtures/demolition-origin-r10-save.json?raw";
 import { STORAGE_KEY } from "../src/game/content";
-import { npcEconomySnapshot } from "../src/game/npc-economy";
+
 import { BACKUP_KEY, MAX_SAVE_BACKUPS, deserializeState, exportSave, importSave, serializeState, type KeyValueStore } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 import { createInitialState } from "../src/game/state";
 
-const INITIAL = { model: "fixed-production-v1", elapsedSeconds: 0 };
+const INITIAL = expectedFreshNpcWallet();
 function liftR10(old: any) {
-  return { ...old, revision: 12, state: { ...old.state, npcEconomy: INITIAL,
+  return { ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(),
     planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
 }
 function fixture(id: string) {
@@ -64,7 +65,7 @@ describe("NPC age-zero migration preserves genuine historical state", () => {
     const current = importSave(naturalR10Raw);
     expect(current).toEqual(liftR10(old));
     expect(current.state.npcEconomy).toEqual(INITIAL);
-    expect(npcEconomySnapshot(current.state.npcEconomy).resources).toEqual({ metal: 500, crystal: 250, deuterium: 0 });
+    expect(current.state.npcEconomy.baseline).toEqual({ stock: [500, 250, 0], mark: 0 });
     const store = new Store(naturalR10Raw), session = new SaveSession(store, old.lastTickAt);
     expect(session.mode).toBe("ready"); expect(session.loaded.appliedSeconds).toBe(0);
     expect(session.loaded.state.npcEconomy).toEqual(INITIAL);
@@ -92,7 +93,7 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
     expect(session.mode).toBe("ready"); expect(session.loaded.appliedSeconds).toBe(0);
     expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
     expect(session.loaded.state.npcEconomy).toEqual(INITIAL);
-    expect(session.notice).toContain("NPC 固定生产模型从经济年龄0开始");
+    expect(session.notice).toContain("NPC 库存从初始500金属、250晶体、0重氢开始");
     expect(session.notice).toContain("仅采用原水位之后本次封顶离线时间");
     const written = JSON.parse(store.values.get(STORAGE_KEY)!);
     expect({ ...written, savedAt: row.oldReaderOutput.savedAt }).toEqual(liftR10(row.oldReaderOutput));
@@ -113,8 +114,8 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
     expect(session.notice).not.toContain("升级为");
     if (fault === "primary-read") {
       // The write happened; only adoption is refused. Never claim disk is unchanged.
-      expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(12);
-      expect(JSON.parse(store.values.get(STORAGE_KEY)!).state.npcEconomy.elapsedSeconds).toBe(7200);
+      expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(13);
+      expect(JSON.parse(store.values.get(STORAGE_KEY)!).state.npcEconomy.now).toBe(7200);
     } else if (fault === "primary-corrupt") expect(store.values.get(STORAGE_KEY)).toBe("corrupted write");
     else if (fault === "concurrent") expect(store.values.get(STORAGE_KEY)).toBe("other tab changed the slot");
     else expect(store.values.get(STORAGE_KEY)).toBe(row.raw);
@@ -133,17 +134,17 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
 
   it("separates natural migration age zero from one capped offline adoption and repeat reloads", () => {
     const original = JSON.parse(naturalR10Raw), migrated = importSave(naturalR10Raw);
-    expect(migrated.state.npcEconomy.elapsedSeconds).toBe(0);
+    expect(migrated.state.npcEconomy.now).toBe(0);
     const now = original.lastTickAt + 100_000_000, store = new Store(naturalR10Raw);
     const session = new SaveSession(store, now);
     expect(session.mode).toBe("ready"); expect(session.loaded.rawSeconds).toBe(100000);
     expect(session.loaded.appliedSeconds).toBe(7200); expect(session.loaded.capped).toBe(true);
-    expect(session.loaded.state.npcEconomy.elapsedSeconds).toBe(7200);
+    expect(session.loaded.state.npcEconomy.now).toBe(7200);
     expect(session.loaded.state.totalTime.toString()).toBe("33010");
-    expect(npcEconomySnapshot(session.loaded.state.npcEconomy).resources).toEqual({ metal: 36500, crystal: 18250, deuterium: 7200 });
+    expect(session.loaded.state.npcEconomy).toEqual(expectedFreshNpcWallet(7200));
     expect(store.values.get(BACKUP_KEY)).toBe(naturalR10Raw);
     const disk = store.values.get(STORAGE_KEY)!, persisted = importSave(disk);
-    expect(persisted.lastTickAt).toBe(now); expect(persisted.state.npcEconomy.elapsedSeconds).toBe(7200);
+    expect(persisted.lastTickAt).toBe(now); expect(persisted.state.npcEconomy.now).toBe(7200);
     for (let index = 0; index < 3; index++) {
       const reloaded = new SaveSession(store, now);
       expect(reloaded.mode).toBe("ready"); expect(reloaded.loaded.appliedSeconds).toBe(0);
@@ -152,12 +153,12 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
     }
   });
 
-  it.each([0, 6])("current save adopts only the %s-hour-bonus cap, with saturated NPC age persisted once", bonus => {
+  it.each([0, 6])("current save adopts only the %s-hour-bonus cap, with the bounded wallet clock and actual inventory persisted once", bonus => {
     const initial = createInitialState(23, 42); initial.offlineBonusHours = bonus;
     const store = new Store(exportSave(initial, 1000)), now = 100_001_000;
     const session = new SaveSession(store, now), cap = bonus ? 28800 : 7200;
     expect(session.loaded.appliedSeconds).toBe(cap);
-    expect(session.loaded.state.npcEconomy.elapsedSeconds).toBe(Math.min(cap, 11900));
+    expect(session.loaded.state.npcEconomy).toEqual(bonus ? expectedFullNpcWallet(4800) : expectedFreshNpcWallet(7200));
     expect(session.loaded.state.totalTime.toString()).toBe(String(cap));
     // Current-revision load does not write by itself; the normal adopted save owns its watermark.
     expect(session.save(session.loaded.state, now).ok).toBe(true);
@@ -167,9 +168,9 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
   });
 
   it("replaces world, age and messages on valid import, while failed import/reset cannot change them", () => {
-    const old = createInitialState(23, 42); old.npcEconomy = { model: "fixed-production-v1", elapsedSeconds: 9900 };
+    const old = createInitialState(23, 42); old.npcEconomy = expectedFreshNpcWallet(9900);
     const store = new Store(exportSave(old, 1000)), session = new SaveSession(store, 1000);
-    const next = createInitialState(91, 92); next.npcEconomy = { model: "fixed-production-v1", elapsedSeconds: 0.25 };
+    const next = createInitialState(91, 92); next.npcEconomy = expectedFreshNpcWallet(0.25);
     const result = session.importText(exportSave(next, 1000), 2000);
     expect(result.ok).toBe(true); if (!result.ok) throw Error(result.message);
     expect(result.state.npcEconomy).toEqual(next.npcEconomy);

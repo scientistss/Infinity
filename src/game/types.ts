@@ -5,7 +5,8 @@ import type { BuildingTemplateState } from "./building-template-state";
 import type { ResearchTemplateState } from "./research-template-state";
 import type { DeepState } from "./deep-state";
 import type { Universe } from "./galaxy";
-import type { NpcEconomyState } from "./npc-economy";
+import type { NpcWalletState } from "./npc-wallet";
+import type { NpcBattleState } from "./npc-attack-state";
 import type { Fleet, FleetMessage } from "./fleet";
 import type { BigNumber } from "./decimal";
 import type { CardCatalogId, ProtocolCard } from "../data/protocol-cards";
@@ -104,8 +105,9 @@ export interface GameState {
   planets: PlanetState[];
   activePlanetId: string;
   universe: Universe;
-  /** Bounded adopted-game-time age for the independent, read-only NPC production baseline. */
-  npcEconomy: NpcEconomyState;
+  /** Actual Number NPC inventory and permanent target garrisons. */
+  npcEconomy: NpcWalletState;
+  npcBattles: NpcBattleState;
   deepSpace: DeepState;
   fleets: Fleet[];
   messages: FleetMessage[];

@@ -12,10 +12,14 @@ import type { OrderFleetIdentity, OrderNonDelivery } from "./order-state";
 import { checkedCargoCredit, checkedShipLanding } from "./order-wallet";
 import { isOwnedDockBlocked, pauseOwnedFleetOwner, recordOwnedTripPhase, validateOwnedFleetContext, type ValidOwnedFleetContext } from "./order-transport-ledger";
 import { npcScoutReportText } from "./npc-scout";
+import type { NpcAttackContract } from "./npc-attack-state";
+import { checkedNpcFuelIntent, type NpcFuelIntent } from "./npc-fuel";
+import { checkedNpcFuelDebit } from "./npc-transfer";
+import { isNpcAttackDockBlocked, npcAttackContract, npcAttackLaunchReason, npcAttackLaunchWallet, nextNpcAttackEvent, recallNpcAttack, resolveNpcAttackArrivals } from "./npc-attack";
 
-export const MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle"] as const;
+export const MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle", "attack"] as const;
 export type Mission = (typeof MISSIONS)[number];
-export const MISSION_LABEL: Record<Mission, string> = { transport: "运输", deploy: "部署", colonize: "殖民", scout: "侦察", charge: "深空充能", recycle: "残骸回收" };
+export const MISSION_LABEL: Record<Mission, string> = { transport: "运输", deploy: "部署", colonize: "殖民", scout: "侦察", charge: "深空充能", recycle: "残骸回收", attack: "轨道攻击" };
 export interface Fleet {
   id: number;
   orderTransport: OrderFleetIdentity | null;
@@ -30,6 +34,7 @@ export interface Fleet {
   returning: boolean;
   elapsed: number;
   charge?: ChargeOrder;
+  npcAttack?: NpcAttackContract;
 }
 export interface FleetMessage { id: string; at: number; text: string }
 export interface FleetRequest {
@@ -42,7 +47,7 @@ export interface FleetRequest {
   /** Snapshot the existing standing bets only with explicit player opt-in. */
   chargeWithBets?: boolean;
 }
-export interface FlightQuote { ok: boolean; reason: string; duration: number; fuel: ReturnType<typeof big>; capacity: ReturnType<typeof big>; stake?: number; holdSeconds?: number }
+export interface FlightQuote { ok: boolean; reason: string; duration: number; fuel: ReturnType<typeof big>; capacity: ReturnType<typeof big>; stake?: number; holdSeconds?: number; npcFuelIntent?: NpcFuelIntent }
 export interface FleetResult { ok: boolean; reason: string; state: GameState; fleetId?: number }
 export function emptyCargo(): ResourceAmounts { return { metal: big(0), crystal: big(0), deuterium: big(0) }; }
 export function fleetSlots(state: GameState): number { return Math.min(SPACE.maxFleets, 1 + state.research.levels.computer_tech); }
@@ -65,6 +70,10 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
   const fail = (reason: string): FlightQuote => ({ ok: false, reason, duration: 0, fuel: big(0), capacity: big(0) });
   if (!request || !MISSIONS.includes(request.mission)) return fail("任务类型无效");
   if (!validCoordinates(request.target,request.mission === "charge" || request.mission === "recycle")) return fail("目标坐标无效；第 16 位仅接受充能和回收");
+  if (request.mission === "attack") {
+    const reason = npcAttackLaunchReason(state, request);
+    if (reason) return fail(reason);
+  }
   if(request.mission === "charge"){
     if (!canIssueRunId(state, chargeReservations(state))) return fail("开奖次数编号已用尽或已被在途充能预留");
     if(!Number.isFinite(productionMe(state)) || !Number.isFinite(betUnitDeut(state)) || betUnitDeut(state)>1e190)return fail("充能奖励计算超过当前数值上限");
@@ -120,28 +129,46 @@ export function quoteFlight(state: GameState, request: FleetRequest): FlightQuot
     const throttle = request.speedPercent / 100 * Math.sqrt(slowest / ship.speed);
     fuel = fuel.add(big(ship.fuel).mul(ship.count).mul(d / 35000).mul((throttle + 1) ** 2));
   }
+  // Retain the actual pre-ceil canonical Decimal once; never infer intent from a rounded quote.
+  const npcFuelIntent = request.mission === "attack" ? checkedNpcFuelIntent(fuel) : undefined;
+  if (npcFuelIntent && !npcFuelIntent.ok) return fail("燃料计价精度不足，未扣款或预留目标");
   fuel = fuel.ceil().add(1).mul(2);
   let load = big(0);
   for (const id of RESOURCE_IDS) {
     const amount = request.cargo[id];
     if (!amount || typeof amount.add !== "function" || !isValidAmount(amount)) return fail("货物必须为有限的非负大数");
-    if (request.mission === "scout" && amount.gt(0)) return fail("侦察不携带货物");
+    if ((request.mission === "scout" || request.mission === "attack") && amount.gt(0)) return fail(request.mission === "attack" ? "攻击出航不携带货物" : "侦察不携带货物");
     load = load.add(amount);
     if (origin.resources[id].lt(amount.add(id === "deuterium" ? fuel.add(stake) : 0))) return fail(`${id === "metal" ? "金属" : id === "crystal" ? "晶体" : "重氢（含往返燃料）"}不足`);
   }
   if (load.add(fuel).gt(capacity)) return fail("货舱不足（货物与预留往返燃料共用货舱）");
   if (!Number.isSafeInteger(state.nextFleetId) || state.nextFleetId >= Number.MAX_SAFE_INTEGER) return fail("舰队编号已超出安全范围");
-  return { ok: true, reason: "可以出发", duration, fuel, capacity, stake, holdSeconds:request.mission==="charge"?request.holdSlots!*DEEP.segmentSeconds:0 };
+  if (npcFuelIntent?.ok && !checkedNpcFuelDebit(origin.resources.deuterium, fuel, npcFuelIntent.value.expectedFuelInteger).ok) return fail("燃料扣款精度不足，未扣款或预留目标");
+  return { ok: true, reason: "可以出发", duration, fuel, capacity, stake, ...(npcFuelIntent?.ok ? { npcFuelIntent: npcFuelIntent.value } : {}), holdSeconds:request.mission==="charge"?request.holdSlots!*DEEP.segmentSeconds:0 };
 }
 export function sendFleet(state: GameState, request: FleetRequest): FleetResult {
   const quote = quoteFlight(state, request);
   if (!quote.ok) return { ok: false, reason: quote.reason, state };
+  let npcEconomy = state.npcEconomy;
+  let attackFuel: ReturnType<typeof big> | undefined;
+  if (request.mission === "attack") {
+    const debit = quote.npcFuelIntent && checkedNpcFuelDebit(activePlanet(state).resources.deuterium, quote.fuel, quote.npcFuelIntent.expectedFuelInteger);
+    if (!debit || !debit.ok) return { state, ok: false, reason: "燃料扣款精度不足，未扣款或预留目标" };
+    try { npcEconomy = npcAttackLaunchWallet(state, request.target); }
+    catch { return { state, ok: false, reason: "NPC 目标记录无法预留，未扣款或消耗舰队编号" }; }
+    attackFuel = debit.value;
+  }
   const planet = clonePlanet(activePlanet(state));
   for (const id of SHIP_IDS) planet.units[id] -= request.ships[id] ?? 0;
   for (const id of RESOURCE_IDS) planet.resources[id] = planet.resources[id].sub(request.cargo[id]).sub(id === "deuterium" ? quote.fuel.add(quote.stake??0) : 0);
+  if (attackFuel) planet.resources.deuterium = attackFuel;
   const fleet: Fleet = { id: state.nextFleetId, orderTransport: null, originId: planet.id, target: { ...request.target }, mission: request.mission, ships: { ...request.ships }, cargo: { ...request.cargo }, duration: quote.duration, remaining: quote.duration, returning: false, elapsed: 0 };
+  if (request.mission === "attack") {
+    fleet.npcAttack = npcAttackContract(state, fleet.id, fleet.target);
+    fleet.ships = Object.fromEntries(SHIP_IDS.filter(id => (request.ships[id] ?? 0) > 0).map(id => [id, request.ships[id]!]));
+  }
   if(request.mission==="charge") fleet.charge={slots:request.holdSlots!,phase:"outbound",cargoFactor:1+.05*state.research.levels.hyperspace_tech,bets:request.chargeWithBets?{...state.arcade.bets}:{metal:0,crystal:0,deuterium:0,drifter:0},stake:quote.stake??0,betUnit:betUnitDeut(state),dm:0,items:{},offerId:null,reportId:null};
-  const next = { ...withPlanet(state, { planet }), fleets: [...state.fleets, fleet], nextFleetId: state.nextFleetId + 1 };
+  const next = { ...withPlanet(state, { planet }), npcEconomy, fleets: [...state.fleets, fleet], nextFleetId: state.nextFleetId + 1 };
   return { ok: true, state: addMessage(next, `dispatch-${fleet.id}`, `${MISSION_LABEL[fleet.mission]}舰队 #${fleet.id} 已从 ${planet.name} 出发，目标 [${coordinateKey(fleet.target)}]。`), reason: "舰队已出发，往返燃料已扣除", fleetId: fleet.id };
 }
 /** Include history too, so stripping a tag can never turn an owned ship into a manual one. */
@@ -150,6 +177,7 @@ function receiptFleetIds(state: GameState): Set<number> {
 }
 /** Invalid owned identities are quarantined too: never fall through to manual economics. */
 function ownedFleetFrozen(state: GameState, fleet: Fleet, receipts: ReadonlySet<number>): boolean {
+  if (isNpcAttackDockBlocked(fleet)) return true;
   if (!fleet.orderTransport && !receipts.has(fleet.id)) return false;
   const context = validateOwnedFleetContext(state, fleet.id);
   return context.kind === "invalid" || context.kind === "owned" && context.trip.phase.kind === "returning" && context.trip.phase.dockBlocked;
@@ -159,10 +187,10 @@ export function nextFleetEvent(state: GameState): number {
   return state.fleets.reduce((min, f) => ownedFleetFrozen(state, f, receipts) ? min : Math.min(min, Math.max(0, f.remaining)), Infinity);
 }
 export function advanceFleets(state: GameState, seconds: number): GameState {
-  if (!Number.isFinite(seconds) || seconds < 0 || seconds > nextFleetEvent(state) + 1e-8) throw Error("舰队时间必须停在下一个事件边界");
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > nextFleetEvent(state) + 1e-8 || seconds > nextNpcAttackEvent(state)) throw Error("舰队时间必须停在下一个事件边界");
   const receipts = receiptFleetIds(state);
   const advanced = { ...state, fleets: state.fleets.map((f) => ownedFleetFrozen(state, f, receipts) ? f : ({ ...f, remaining: Math.max(0, f.remaining - seconds), elapsed: f.elapsed + seconds })) };
-  return resolveFleetArrivals(advanced);
+  return resolveNpcAttackArrivals(resolveFleetArrivals(advanced));
 }
 function addMessage(state: GameState, id: string, text: string): GameState {
   // `at` is only a list label, constrained by the existing save reader to 1e12.
@@ -223,6 +251,7 @@ export function resolveFleetArrivals(state: GameState): GameState {
   let next = state;
   const receipts = receiptFleetIds(state);
   for (const snapshot of [...state.fleets].sort((a, b) => a.id - b.id)) {
+    if (snapshot.mission === "attack") continue;
     const potentiallyOwned = !!snapshot.orderTransport || receipts.has(snapshot.id);
     if (!potentiallyOwned && snapshot.remaining > 1e-9) continue;
     const fleet = next.fleets.find(value => value.id === snapshot.id);
@@ -290,6 +319,7 @@ export function resolveFleetArrivals(state: GameState): GameState {
 export function recallFleet(state: GameState, id: number, reason: OrderNonDelivery = "manual-recall"): FleetResult {
   const fleet = state.fleets.find((f) => f.id === id);
   if (!fleet || fleet.returning) return { ok: false, state, reason: "舰队不存在或已在返航途中" };
+  if (fleet.mission === "attack") return recallNpcAttack(state, id);
   const context = validateOwnedFleetContext(state, id);
   if (context.kind === "invalid") return { ok: false, state: pauseOwnedFleetOwner(state, id, context.reason), reason: context.reason };
   let next = state;

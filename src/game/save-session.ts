@@ -72,7 +72,8 @@ export class SaveSession {
           (sourceRevision <= 9 ? "旧版已付地形改造器完成升级，不增加格数；本版新付款入队每级增加5总格，建筑本身占1格。"
             : "已有地形授格账、基础格子和新旧付款边界完整保留。") +
           (sourceRevision <= 10 ? "每颗星球新增空拆除槽，没有新增付款或拆除授权。" : "") +
-          (sourceRevision <= 11 ? "NPC 固定生产模型从经济年龄0开始；仅采用原水位之后本次封顶离线时间。" : "") +
+          (sourceRevision <= 11 ? "NPC 库存从初始500金属、250晶体、0重氢开始；仅采用原水位之后本次封顶离线时间。" :
+            sourceRevision === 12 ? "已有 NPC 实际库存已保留，局部生产时钟归零；没有追算历史时间或新增攻击授权。" : "") +
           "按原规则离线推进。" +
           (sourceRevision < 4 ? "旧星环自动卡已停用，请重新确认有限批次。" : "已有星环有限批次授权保持不变。");
         this.message = "已升级并保存本地存档";
@@ -88,6 +89,17 @@ export class SaveSession {
   }
 
   /** Saves are disabled after any unresolved storage failure or conflict. */
+  /** Reject an unadopted simulation candidate without writing or consuming its clock. */
+  freezeSimulation(error: unknown): SaveFailure {
+    if (this.mode !== "ready") return this.blocked();
+    this.protectedRaw ??= this.expectedRaw ?? null;
+    this.mode = "protected";
+    this.notice = PROTECTION_NOTICE;
+    this.message = `结算异常，当前候选未采用：${error instanceof Error ? error.message : "未知错误"}。${PROTECTION_NOTICE}`;
+    this.cancelPendingImport();
+    return { ok: false, code: "protected", message: this.message };
+  }
+
   save(state: GameState, now = Date.now(), lastTickAt = now): SaveResult {
     this.preparation += 1;
     return this.saveCurrent(state, now, lastTickAt);

@@ -68,7 +68,7 @@ export function shipyardPanelsHtml(icon: IconFn): string {
           <h2 id="shipyard-title">${icon("shipyard", "icon-h2", { alt: "" })} 造船厂</h2>
           <p data-bind="shipyard-summary"></p>
         </div>
-        <p class="blurb">每艘耗时 = (金属 + 晶体) / (2500 × (1 + 造船厂) × 2^纳米) 小时 ÷ 宇宙速度。按批次下单、下单时扣全款，逐艘完成；舰船与防御共用一条造船队列。造船厂或纳米机器人工厂升级期间造船暂停。攻击、护盾、结构已计入武器、护盾、装甲技术（战斗第 5 阶段开放），速度已计入引擎（飞行第 4 阶段开放）。</p>
+        <p class="blurb">每艘耗时 = (金属 + 晶体) / (2500 × (1 + 造船厂) × 2^纳米) 小时 ÷ 宇宙速度。按批次下单、下单时扣全款，逐艘完成；舰船与防御共用一条造船队列。造船厂或纳米机器人工厂升级期间造船暂停。攻击、护盾、结构已计入武器、护盾、装甲技术；可飞舰船可参与 NPC 轨道战斗，速度已计入引擎。</p>
         ${queuePanel("")}
         <div class="bld-grid">${SHIPS.map((def) => unitCard(def, icon)).join("")}</div>
         <p class="status" data-bind="status-shipyard" role="status"></p>
@@ -79,7 +79,7 @@ export function shipyardPanelsHtml(icon: IconFn): string {
           <h2 id="defense-title">${icon("defense", "icon-h2", { alt: "" })} 防御</h2>
           <p data-bind="defense-silo"></p>
         </div>
-        <p class="blurb">防御和舰船共用造船队列与造船时间公式。护盾罩每种限 1 个；导弹放在导弹井里（每级 10 格，反弹道导弹 1 格、星际导弹 2 格）。第 1–4 阶段没有敌人，防御在第 5 阶段开始派上用场。</p>
+        <p class="blurb">防御和舰船共用造船队列与造船时间公式。护盾罩每种限 1 个；导弹放在导弹井里（每级 10 格，反弹道导弹 1 格、星际导弹 2 格）。当前 NPC 轨道攻击仅派遣可飞舰船，防御与导弹不参与；NPC 不会主动袭击母星。</p>
         ${queuePanel("-def")}
         <div class="bld-grid">${DEFENSES.map((def) => unitCard(def, icon)).join("")}</div>
         <p class="status" data-bind="status-defense" role="status"></p>

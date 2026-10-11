@@ -119,7 +119,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
         undockedDm = undockedDm.add(charge.dm);
         for (const [id, count] of Object.entries(charge.items)) fleetItems[id] = (fleetItems[id] ?? big(0)).add(count ?? 0);
       }
-      row("fleet", () => `舰队 #${fleet.id}（${charge?.phase === "holding" ? "驻留" : fleet.returning ? "返航/待入港" : "出航"}）：${sumCounts(fleet.ships)} 艘；当前货物 ${previewResources(resourceStrings(fleet.cargo))}${charge ? `；未入港暗物质 ${charge.dm}，物品 ${previewItems(Object.fromEntries(Object.entries(charge.items).map(([id, count]) => [id, String(count ?? 0)])))}；${charge.reportId === null ? `未结算押注 ${charge.stake}` : "押注已结算，不重复计损"}` : ""}。舰队消失，不入库；燃料不退。`);
+      row("fleet", () => `舰队 #${fleet.id}（${charge?.phase === "holding" ? "驻留" : fleet.npcAttack?.phase.kind === "returning" && fleet.npcAttack.phase.dockBlocked ? "NPC 入港受阻" : fleet.returning ? "返航/待入港" : "出航"}）：${sumCounts(fleet.ships)} 艘；当前货物 ${previewResources(resourceStrings(fleet.cargo))}${charge ? `；未入港暗物质 ${charge.dm}，物品 ${previewItems(Object.fromEntries(Object.entries(charge.items).map(([id, count]) => [id, String(count ?? 0)])))}；${charge.reportId === null ? `未结算押注 ${charge.stake}` : "押注已结算，不重复计损"}` : ""}。舰队消失，不入库；燃料不退。`);
     }
     for (const task of before.orders.tasks) {
       const after = nextTasks.get(task.id);
@@ -171,7 +171,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
     paid: { buildings, demolitions, research, shipyard, remainingUnits: remainingUnits.toString(), buildingPaid: resourceStrings(buildingPaid), demolitionPaid: resourceStrings(demolitionPaid), researchPaid: resourceStrings(researchPaid), remainingUnitPaid: resourceStrings(remainingUnitPaid) },
     fleets: { count: eligible ? before.fleets.filter(fleet => !nextFleets.has(fleet.id)).length : 0, ships: ships.toString(), cargo: resourceStrings(fleetCargo), unsettledStake: unsettledStake.toString(), darkMatter: undockedDm.toString(), items: Object.fromEntries(Object.entries(fleetItems).map(([id, amount]) => [id, amount.toString()])) },
     orders,
-    retained: { formations: next.formations.entries.length, templates: next.researchTemplates.templates.length, referencedFormations: next.formations.entries.filter(formation => referenced.has(formation.id)).length, researchLevels: Object.values(next.research.levels).reduce((sum, level) => sum + level, 0), items: Object.values(next.items).reduce((sum, count) => sum + count, 0), boosters: next.boosters.length, tickets: next.arcade.runs.length, reports: next.deepSpace.reports.length, messages: next.messages.length, totalTime: next.totalTime.toString() },
+    retained: { formations: next.formations.entries.length, templates: next.researchTemplates.templates.length, referencedFormations: next.formations.entries.filter(formation => referenced.has(formation.id)).length, researchLevels: Object.values(next.research.levels).reduce((sum, level) => sum + level, 0), items: Object.values(next.items).reduce((sum, count) => sum + count, 0), boosters: next.boosters.length, tickets: next.arcade.runs.length, reports: next.deepSpace.reports.length + next.npcBattles.reports.length, messages: next.messages.length, totalTime: next.totalTime.toString() },
     protocols: {
       slotsBefore: unlockedSlotCount(before), slotsAfter: unlockedSlotCount(next), enabledAfter: next.protocols.slots.filter(slot => slot.card?.enabled).length,
       ringCardsStopped: before.protocols.slots.filter((slot, index) => slot.card?.enabled && slot.card.action.kind === "runLights" && !next.protocols.slots[index]?.card?.enabled).length,
@@ -194,6 +194,7 @@ export function prestigeConfirmation(before: GameState, evaluation: PrestigeEval
     `取消已付建造 ${model.paid.buildings} 项、${model.paid.demolitions ? `拆除 ${model.paid.demolitions} 项（本次拆除费 ${previewResources(model.paid.demolitionPaid)}）、` : ""}研究 ${model.paid.research} 项、造船 ${model.paid.shipyard} 批（剩余 ${model.paid.remainingUnits} 单位），不退款。${model.orders.stopped} 个计划停止，${model.orders.retiredTrips} 次在途运输封存；预留解除不增加资源。`,
     `保留研究等级、${model.retained.templates} 份模板、${model.retained.formations} 份编成和历史引用；设计须重新应用，不自动补船。`,
     `新母星实际库存：${previewResources(model.newHome)}。账上暗物质 ${previewChange(model.rewards.darkMatter)}。`,
+    "NPC 的资源生产与永久驻军损失保留；在途及入港受阻的攻击舰船、货物丢弃，未交付战报封存。",
     "确认后会先尝试保存；仅保存验证成功才采用新世界。",
   ].join("\n\n");
 }

@@ -27,3 +27,12 @@
 .space-panel .space-message small,.space-panel .space-range { color:var(--muted); }
 .space-panel .space-error { color:var(--bad); }
 @media(max-width:800px){ .space-panel .space-columns {grid-template-columns:1fr;} .space-panel .space-flight {grid-template-columns:1fr auto;} }
+
+/* NPC additions retain the existing simple cards and local table scrolling. */
+.space-panel .npc-battle-report { margin:.7rem 0; overflow-wrap:anywhere; min-width:0; }
+.space-panel .npc-battle-report summary { cursor:pointer; line-height:1.6; }
+.space-panel .npc-round-table { min-width:540px; width:100%; }
+.space-panel .npc-battle-report p { font-size:.85rem; line-height:1.7; }
+.space-panel #npc-attack-options { overflow-wrap:anywhere; }
+.space-panel .flight-detail,.space-panel .flight-route,.space-panel .flight-title { min-width:0; overflow-wrap:anywhere; }
+.space-panel .space-flight > .space-actions { min-width:0; }

@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import { catchUp } from "../src/core/offline";
 import { commitDemolition, completeDemolition, quoteDemolition } from "../src/game/demolition";
@@ -23,11 +24,14 @@ function runFrames(state: GameState, seconds: number, hz: number): GameState {
 function withoutNumericalIntegration(state: GameState, expectedNpcAge: number): unknown {
   const saved = serializeState(state);
   // Independently known adopted duration is checked before masking only numeric age.
-  expect(Reflect.ownKeys(saved.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
-  expect(saved.npcEconomy.model).toBe("fixed-production-v1");
-  expect(Math.abs(saved.npcEconomy.elapsedSeconds - expectedNpcAge)).toBeLessThanOrEqual(1e-9);
+  expect(Reflect.ownKeys(saved.npcEconomy).sort()).toEqual(["baseline", "model", "now", "sites"]);
+  expect(saved.npcEconomy.model).toBe("npc-wallet-garrison-v1");
+  expect(saved.npcEconomy.baseline).toEqual({ stock: [500, 250, 0], mark: 0 });
+  expect(saved.npcEconomy.sites).toEqual({});
+  expect(saved.npcBattles).toEqual({ model: "npc-battle-receipts-v1", reports: [] });
+  expect(Math.abs(saved.npcEconomy.now - expectedNpcAge)).toBeLessThanOrEqual(1e-9);
   // These are accumulated numerical integration values, separately bounded below.
-  return { ...saved, npcEconomy: { ...saved.npcEconomy, elapsedSeconds: null }, totalTime: null, protocols: { ...saved.protocols, accumulator: null }, arcade: { ...saved.arcade, beaconAccumulator: null },
+  return { ...saved, npcEconomy: { ...saved.npcEconomy, now: null }, totalTime: null, protocols: { ...saved.protocols, accumulator: null }, arcade: { ...saved.arcade, beaconAccumulator: null },
     planets: saved.planets.map(p => ({ ...p, resources: null })), lifetime: null };
 }
 
@@ -48,7 +52,7 @@ describe("demolition actual event integration and persisted fractional timers", 
       expect(Math.abs(short.protocols.accumulator - long.protocols.accumulator)).toBeLessThan(1e-9);
     }
     const offline = catchUp(initial, 20);
-    expect(offline.state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: 20 });
+    expect(offline.state.npcEconomy).toEqual(expectedFreshNpcWallet(20));
     expect(activePlanet(offline.state).demolition).toBeNull(); expect(activePlanet(offline.state).buildings.metal_storage).toBe(8); expect(offline.completedBuilds).toEqual([]);
   });
   it("fractional partial reload uses saved total and remaining, not current accelerators or ion", () => {

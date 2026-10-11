@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import historical from "./fixtures/npc-economy-r11.json";
 import fixtureRaw from "./fixtures/npc-economy-r11.json?raw";
@@ -5,8 +6,8 @@ import { STORAGE_KEY } from "../src/game/content";
 import { BACKUP_KEY, deserializeState, exportSave, importSave, serializeState, type KeyValueStore } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 
-const INITIAL = { model: "fixed-production-v1", elapsedSeconds: 0 };
-const lift = (old: any) => ({ ...old, revision: 12, state: { ...old.state, npcEconomy: INITIAL } });
+const INITIAL = expectedFreshNpcWallet();
+const lift = (old: any) => ({ ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles() } });
 const partial = historical.rows.find(row => row.id === "partial-demolition-earned-grants")!;
 
 describe("exact ca5 r11 source adoption", () => {
@@ -32,7 +33,7 @@ describe("exact ca5 r11 source adoption", () => {
     }
   });
 
-  it.each(historical.rows)("adds only age zero to the exact complete old reader projection: $id", row => {
+  it.each(historical.rows)("adds only a fresh wallet and empty battle receipts to the exact complete old reader projection: $id", row => {
     const adopted = importSave(row.raw);
     expect(adopted).toEqual(lift(row.oldReaderOutput));
     expect(adopted.savedAt).toBe(row.oldReaderOutput.savedAt);

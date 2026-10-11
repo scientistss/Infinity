@@ -5,7 +5,8 @@ import { big } from "../src/game/decimal";
 import { activePlanet, selectPlanet } from "../src/game/empire";
 import { homeCoordinates, npcAt } from "../src/game/galaxy";
 import { evaluatePrestige, expansionScore, prestige, tick } from "../src/game/logic";
-import { npcEconomySnapshot, type NpcEconomyState } from "../src/game/npc-economy";
+import { createNpcWalletContext, projectNpc, type NpcWalletState } from "../src/game/npc-wallet";
+import { expectedFreshNpcWallet as at, expectedFullNpcWallet } from "./npc-wallet-expectations";
 import { createPlanet } from "../src/game/planet";
 import { deserializeState, serializeState } from "../src/game/save";
 import { createInitialState } from "../src/game/state";
@@ -16,7 +17,13 @@ const resources = ["metal", "crystal", "deuterium"] as const;
 const AGE_TOLERANCE_SECONDS = 1e-9;
 const STOCK_TOLERANCE_UNITS = 1e-8;
 function initial(): GameState { return createInitialState(20_261_010, 123_456); }
-function at(elapsedSeconds: number): NpcEconomyState { return { model: "fixed-production-v1", elapsedSeconds }; }
+// Query the actual production projection at one independently verified NPC coordinate.
+const snapshotContext = createNpcWalletContext(20_261_010, 512, [homeCoordinates(20_261_010)]);
+function walletSnapshot(wallet: NpcWalletState) {
+  const { stock } = projectNpc(wallet, { galaxy: 1, system: 56, position: 6 }, snapshotContext);
+  return { resources: { metal: stock[0], crystal: stock[1], deuterium: stock[2] },
+    full: { metal: stock[0] === 50000, crystal: stock[1] === 30000, deuterium: stock[2] === 10000 } };
+}
 function oldFields(state: GameState): unknown {
   const { npcEconomy: _npcEconomy, ...old } = serializeState(state);
   return old;
@@ -27,12 +34,12 @@ function reload(state: GameState): GameState {
   return loaded!;
 }
 function expectAgeAndStock(state: GameState, age: number, stock: [number, number, number]): void {
-  expect(Math.abs(state.npcEconomy.elapsedSeconds - age)).toBeLessThanOrEqual(AGE_TOLERANCE_SECONDS);
-  const snapshot = npcEconomySnapshot(state.npcEconomy);
+  expect(Math.abs(state.npcEconomy.now - age)).toBeLessThanOrEqual(AGE_TOLERANCE_SECONDS);
+  const snapshot = walletSnapshot(state.npcEconomy);
   resources.forEach((id, index) => expect(Math.abs(snapshot.resources[id] - stock[index]!)).toBeLessThanOrEqual(STOCK_TOLERANCE_UNITS));
 }
 
-describe("NPC age on adopted global simulation segments", () => {
+describe("NPC local wallet time on adopted global simulation segments", () => {
   it("starts a complete new game at zero and never derives age from historical player time", () => {
     const state = initial();
     expect(state.npcEconomy).toEqual(at(0));
@@ -40,7 +47,7 @@ describe("NPC age on adopted global simulation segments", () => {
     const next = tick(state, 0.25);
     expect(next.totalTime.toString()).toBe("1e+190");
     expect(next.npcEconomy).toEqual(at(0.25));
-    expect(npcEconomySnapshot(next.npcEconomy).resources).toEqual({ metal: 501.25, crystal: 250.625, deuterium: 0.25 });
+    expect(walletSnapshot(next.npcEconomy).resources).toEqual({ metal: 501.25, crystal: 250.625, deuterium: 0.25 });
     expect(createInitialState(state.universe.seed, state.arcade.seed).npcEconomy).toEqual(at(0));
     expect(state.npcEconomy).toEqual(at(0));
   });
@@ -52,7 +59,7 @@ describe("NPC age on adopted global simulation segments", () => {
     const single = tick(one, 60), multiple = tick(two, 60);
     expect(single.npcEconomy).toEqual(at(60));
     expect(multiple.npcEconomy).toEqual(at(60));
-    expect(npcEconomySnapshot(multiple.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
+    expect(walletSnapshot(multiple.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
     expect(multiple.activePlanetId).toBe(colony.id);
     expect(tick(selectPlanet(two, one.activePlanetId), 60).npcEconomy).toEqual(at(60));
   });
@@ -67,7 +74,7 @@ describe("NPC age on adopted global simulation segments", () => {
     const whole = tick(state, 60);
     expect(partitioned.npcEconomy).toEqual(at(60));
     expect(partitioned.npcEconomy).toEqual(whole.npcEconomy);
-    expect(npcEconomySnapshot(partitioned.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
+    expect(walletSnapshot(partitioned.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
     expect(reload(partitioned).npcEconomy).toEqual(partitioned.npcEconomy);
   });
 
@@ -82,9 +89,9 @@ describe("NPC age on adopted global simulation segments", () => {
     }
     expectAgeAndStock(state, 20, [600, 300, 20]);
     const whole = tick(initial(), 20);
-    expect(Math.abs(state.npcEconomy.elapsedSeconds - whole.npcEconomy.elapsedSeconds)).toBeLessThanOrEqual(AGE_TOLERANCE_SECONDS);
+    expect(Math.abs(state.npcEconomy.now - whole.npcEconomy.now)).toBeLessThanOrEqual(AGE_TOLERANCE_SECONDS);
     // Persistence preserves the actual accumulated float rather than rounding it to the target.
-    expect(reload(state).npcEconomy.elapsedSeconds).toBe(state.npcEconomy.elapsedSeconds);
+    expect(reload(state).npcEconomy.now).toBe(state.npcEconomy.now);
     expect(clock.lastTickAt).toBe(1_800_000_020_000);
   });
 
@@ -108,24 +115,24 @@ describe("NPC age on adopted global simulation segments", () => {
     }
     // The existing engine does not adopt sub-EPS requests; no separate NPC clock may do so.
     expect(tick(state, 5e-10).npcEconomy).toBe(state.npcEconomy);
-    expect(tick(state, 2 ** -20).npcEconomy.elapsedSeconds).toBe(60.25 + 2 ** -20);
+    expect(tick(state, 2 ** -20).npcEconomy.now).toBe(60.25 + 2 ** -20);
   });
 
   it("keeps cap boundaries exact without inventing an epsilon-aged snapshot", () => {
     const state = initial();
     state.npcEconomy = at(9_899.75);
     const near = tick(state, 0.25 - 5e-10);
-    expect(near.npcEconomy.elapsedSeconds).toBe(9_899.75 + (0.25 - 5e-10));
-    expect(near.npcEconomy.elapsedSeconds).toBeLessThan(9_900);
-    expect(npcEconomySnapshot(near.npcEconomy).full.metal).toBe(false);
+    expect(near.npcEconomy.now).toBe(9_899.75 + (0.25 - 5e-10));
+    expect(near.npcEconomy.now).toBeLessThan(9_900);
+    expect(walletSnapshot(near.npcEconomy).full.metal).toBe(false);
     for (const [start, expected, full] of [
       [9_899.75, 9_900, { metal: true, crystal: false, deuterium: false }],
       [9_999.75, 10_000, { metal: true, crystal: false, deuterium: true }],
       [11_899.75, 11_900, { metal: true, crystal: true, deuterium: true }],
     ] as const) {
       const next = tick({ ...state, npcEconomy: at(start) }, 0.25);
-      expect(next.npcEconomy.elapsedSeconds).toBe(expected);
-      expect(npcEconomySnapshot(next.npcEconomy).full).toEqual(full);
+      expect(next.npcEconomy.now).toBe(expected);
+      expect(walletSnapshot(next.npcEconomy).full).toEqual(full);
     }
   });
 });
@@ -137,19 +144,20 @@ describe("NPC adopted offline time and same-universe reset", () => {
     expect(result.capped).toBe(true);
     expect(result.state.totalTime.toNumber()).toBe(7_200);
     expect(result.state.npcEconomy).toEqual(at(7_200));
-    expect(npcEconomySnapshot(result.state.npcEconomy).resources).toEqual({ metal: 36_500, crystal: 18_250, deuterium: 7_200 });
+    expect(walletSnapshot(result.state.npcEconomy).resources).toEqual({ metal: 36_500, crystal: 18_250, deuterium: 7_200 });
   });
 
-  it("caps only NPC age at 11900 while a legal eight-hour offline game interval continues", () => {
+  it("relocates the bounded NPC clock twice while a legal eight-hour offline interval keeps full inventory", () => {
     const state = initial();
     state.offlineBonusHours = 6;
     const result = catchUp(state, 100_000);
     expect(result.appliedSeconds).toBe(28_800);
     expect(result.state.totalTime.toNumber()).toBe(28_800);
-    expect(result.state.npcEconomy).toEqual(at(11_900));
-    expect(npcEconomySnapshot(result.state.npcEconomy).resources).toEqual({ metal: 50_000, crystal: 30_000, deuterium: 10_000 });
+    expect(result.state.npcEconomy).toEqual(expectedFullNpcWallet(4_800));
+    expect(walletSnapshot(result.state.npcEconomy).resources).toEqual({ metal: 50_000, crystal: 30_000, deuterium: 10_000 });
     const later = tick(result.state, 60);
-    expect(later.npcEconomy).toBe(result.state.npcEconomy);
+    expect(later.npcEconomy).toEqual(expectedFullNpcWallet(4_860));
+    expect(walletSnapshot(later.npcEconomy)).toEqual(walletSnapshot(result.state.npcEconomy));
     expect(later.totalTime.toNumber()).toBe(28_860);
   });
 
@@ -188,7 +196,7 @@ describe("NPC adopted offline time and same-universe reset", () => {
     expect(launched.universe).toEqual(state.universe);
     expect(launched.messages).toEqual(state.messages);
     expect(launched.totalTime.eq(state.totalTime)).toBe(true);
-    expect(npcEconomySnapshot(launched.npcEconomy).resources).toEqual({ metal: 801.25, crystal: 400.625, deuterium: 60.25 });
+    expect(walletSnapshot(launched.npcEconomy).resources).toEqual({ metal: 801.25, crystal: 400.625, deuterium: 60.25 });
     expect(reload(launched).npcEconomy).toEqual(state.npcEconomy);
     expect(tick(launched, 0.25).npcEconomy).toEqual(at(60.5));
     expect(initial().npcEconomy).toEqual(at(0));
@@ -205,7 +213,7 @@ describe("NPC isolation from player economy and random state", () => {
     expect(activePlanet(young).resources.crystal.toNumber()).toBe(650);
     expect(activePlanet(young).resources.deuterium.toNumber()).toBe(0);
     expect(resources.map(id => young.lifetime[id].toNumber())).toEqual([300, 150, 0]);
-    expect(npcEconomySnapshot(young.npcEconomy).produced.deuterium).toBe(60);
+    expect(walletSnapshot(young.npcEconomy).resources.deuterium).toBe(60);
     expect(expansionScore(young).toString()).toBe(expansionScore(full).toString());
     expect(young.arcade).toEqual(full.arcade);
     expect(young.deepSpace).toEqual(full.deepSpace);
@@ -229,8 +237,8 @@ describe("NPC isolation from player economy and random state", () => {
     const colony = createPlanet("colony", { galaxy: 2, system: 20, position: 1 });
     enhanced.planets.push(colony);
     enhanced.activePlanetId = colony.id;
-    expect(npcEconomySnapshot(tick(enhanced, 60).npcEconomy)).toEqual(npcEconomySnapshot(tick(base, 60).npcEconomy));
-    expect(npcEconomySnapshot(enhanced.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
+    expect(walletSnapshot(tick(enhanced, 60).npcEconomy)).toEqual(walletSnapshot(tick(base, 60).npcEconomy));
+    expect(walletSnapshot(enhanced.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
   });
 
   it("repeated observations preserve the full save, use no wall clock/RNG, and keep original occupancy identities", () => {
@@ -244,7 +252,7 @@ describe("NPC isolation from player economy and random state", () => {
       for (let index = 0; index < 1_000; index++) {
         const position = index % 2 === 0 ? 6 : 15;
         expect(npcAt(state, { galaxy: 1, system: 56, position })?.id).toBe(`npc-1:56:${position}`);
-        expect(npcEconomySnapshot(state.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
+        expect(walletSnapshot(state.npcEconomy).resources).toEqual({ metal: 800, crystal: 400, deuterium: 60 });
       }
       let count = 0;
       for (let galaxy = 1; galaxy <= 5; galaxy++) for (let system = 1; system <= 100; system++) for (let position = 1; position <= 15; position++) {

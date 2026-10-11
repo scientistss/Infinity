@@ -3,7 +3,8 @@ import { validDemolitionSeconds } from "./demolition-state";
 import { cloneFormation } from "./formation-state";
 import { accrueOrderPlanTime, runDueOrderPass, nextOrderPassIn, terminateOrdersForPrestige } from "./orders";
 import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
-import { advanceNpcEconomy } from "./npc-economy";
+import { advanceNpcWallet } from "./npc-wallet";
+import { forfeitNpcAttackReports, NpcSettlementError, nextNpcAttackEvent, npcWalletContext, resolveNpcAttackArrivals } from "./npc-attack";
 import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
 import { ACHIEVEMENTS } from "../data/achievements";
@@ -60,6 +61,7 @@ const EPS = 1e-9;
  */
 export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live", log?: TickLog): GameState {
   let current = resolveFleetArrivals(state);
+  if (dtSeconds > 0 && Number.isFinite(dtSeconds)) current = resolveNpcAttackArrivals(current);
   for (const planet of state.planets) current = onPlanet(current, planet.id, startNext);
   current = applyEmpireAchievements(startNextResearch(current));
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
@@ -70,7 +72,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
   const blockedBuilds = new Set<number>();
   const blockedDemolitions = new Set<string>();
   let t = 0, segments = 0;
-  while (dtSeconds - t > EPS) {
+  // Preserve the old discarded EPS tail unless a real precise attack event is
+  // inside it. A blocked dock is never a scheduler event.
+  while (dtSeconds - t > EPS || dtSeconds - t > 0 && nextNpcAttackEvent(current) <= dtSeconds - t) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
     const selectedId = current.activePlanetId;
     // Fleets cannot change before the later advanceFleets boundary; inventories can.
@@ -89,6 +93,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
       if (demolition && validDemolitionSeconds(demolition.totalSeconds, demolition.remainingSeconds) && !blockedDemolitions.has(`${snapshot.id}:${demolition.jobId}`)) step = Math.min(step, demolition.remainingSeconds);
       step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local, fleetCensus));
     }
+    const zeroGuard = step === 0 && nextNpcAttackEvent(current) < Infinity
+      ? zeroTimeEventKey(current, blockedBuilds.size, blockedDemolitions.size) : null;
     const orderAccrual = accrueOrderPlanTime(current, step);
     const launchesBeforeBoundary = current.stats.launches;
     current = orderAccrual.state;
@@ -102,7 +108,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     }
     // One global adopted segment, independent of the number of player planets.
     // Keep the actual floating age and advance before any arrival observes it.
-    current = { ...current, totalTime: current.totalTime.add(step), npcEconomy: advanceNpcEconomy(current.npcEconomy, step) };
+    current = { ...current, totalTime: current.totalTime.add(step), npcEconomy: advanceNpcWallet(current.npcEconomy, step, npcWalletContext(current)) };
     let queueIdle = false, shipyardIdle = false;
     for (const snapshot of snapshots) {
       current = onPlanet(current, snapshot.id, (local) => {
@@ -171,9 +177,22 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     current = accrued >= period - EPS ? evaluateLoadout(setAccumulator(current, 0), period) : setAccumulator(current, accrued);
     if (orderAccrual.passes > 0 && current.stats.launches === launchesBeforeBoundary) current = runDueOrderPass(current);
     current = applyEmpireAchievements(refreshUnlocks(current));
+    if (zeroGuard !== null && zeroGuard === zeroTimeEventKey(current, blockedBuilds.size, blockedDemolitions.size)) {
+      throw new NpcSettlementError(new Error("零时间事件未取得进展，已停止结算以保护存档"));
+    }
     t += step;
   }
   return applyEmpireAchievements(refreshUnlocks(markStorageSeen(current)));
+}
+/** Only used when a precise attack makes a zero boundary relevant. No economic state is changed. */
+function zeroTimeEventKey(state: GameState, blockedBuilds: number, blockedDemolitions: number): string {
+  return JSON.stringify([blockedBuilds, blockedDemolitions, state.protocols.accumulator,
+    nextBeaconIn(state), nextBoosterExpiry(state), nextOrderPassIn(state),
+    state.research.queue.map(job => [job.jobId, job.totalSeconds, job.remainingSeconds]),
+    state.planets.map(planet => [planet.id, planet.buildQueue.map(job => [job.jobId, job.totalSeconds, job.remainingSeconds]),
+      planet.demolition && [planet.demolition.jobId, planet.demolition.remainingSeconds],
+      planet.shipyardQueue.map(job => [job.jobId, job.count, job.progress])]),
+    state.fleets.map(fleet => [fleet.id, fleet.remaining, fleet.returning, fleet.charge?.phase, fleet.npcAttack?.phase])]);
 }
 function applyEmpireAchievements(state: GameState): GameState {
   let result = state;
@@ -328,6 +347,7 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   const next = createInitialState(state.universe.seed, state.arcade.seed);
   // Curvature starts a new player run inside the same universe, not a new NPC age.
   next.npcEconomy = state.npcEconomy;
+  next.npcBattles = forfeitNpcAttackReports(state);
   next.deepSpace = {...structuredClone(state.deepSpace), offers:[], debris:[]};
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;

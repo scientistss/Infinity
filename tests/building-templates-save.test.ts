@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { stripSyntheticTerraformerMetadata, stripVerifiedNpcMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import archivedR8 from "./fixtures/building-templates-r8.json";
@@ -389,18 +390,19 @@ describe("strict synthetic legacy NPC projection", () => {
   it("removes only the exact independently expected metadata and preserves all prior data", () => {
     const before = file(), state = structuredClone(before.state);
     stripVerifiedNpcMetadata(state, 0);
-    const { npcEconomy: _npc, ...prior } = before.state;
+    const { npcEconomy: _npc, npcBattles: _battles, ...prior } = before.state;
     expect(state).toEqual(prior);
-    expect(before.state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: 0 });
+    expect(before.state.npcEconomy).toEqual(expectedFreshNpcWallet());
+    expect(before.state.npcBattles).toEqual(expectedEmptyNpcBattles());
   });
   it.each([
-    ["wrong age", { model: "fixed-production-v1", elapsedSeconds: 1 }],
-    ["wrong model", { model: "future-production", elapsedSeconds: 0 }],
-    ["extra field", { model: "fixed-production-v1", elapsedSeconds: 0, stock: 0 }],
-    ["missing age", { model: "fixed-production-v1" }],
+    ["wrong time", expectedFreshNpcWallet(1)],
+    ["wrong model", { ...expectedFreshNpcWallet(), model: "future-production" }],
+    ["extra field", { ...expectedFreshNpcWallet(), stock: 0 }],
+    ["missing time", { model: "npc-wallet-garrison-v1", baseline: { stock: [500,250,0], mark: 0 }, sites: {} }],
     ["null metadata", null],
   ])("refuses %s before deleting any field", (_label, metadata) => {
-    const state = { npcEconomy: metadata, prior: { resources: "untouched" } }, before = structuredClone(state);
+    const state = { npcEconomy: metadata, npcBattles: expectedEmptyNpcBattles(), prior: { resources: "untouched" } }, before = structuredClone(state);
     expect(() => stripVerifiedNpcMetadata(state, 0)).toThrow();
     expect(state).toEqual(before);
   });

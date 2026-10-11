@@ -1,3 +1,4 @@
+import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import historical from "./fixtures/demolition-r10.json";
 import { SAVE_REVISION, SAVE_SCHEMA, STORAGE_KEY } from "../src/game/content";
@@ -10,18 +11,19 @@ const MODEL = "fixed-production-v1";
 const current = () => JSON.parse(exportSave(createInitialState(20261010, 731), 4000, 3750));
 const json = (raw: unknown) => importSave(JSON.stringify(raw));
 
-describe("r12 exact NPC economy persistence", () => {
+describe("r13 exact NPC wallet persistence and historical r12 reader", () => {
   it("keeps the branch and storage key, and emits exactly one explicit age-zero object", () => {
-    expect(SAVE_REVISION).toBe(12);
+    expect(SAVE_REVISION).toBe(13);
     expect(SAVE_SCHEMA).toBe("infinity-original-p4");
     expect(STORAGE_KEY).toBe("infinity.original-p4.save.v1");
     const raw = current();
-    expect(raw.state.npcEconomy).toEqual({ model: MODEL, elapsedSeconds: 0 });
-    expect(Object.keys(raw.state.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
+    expect(raw.state.npcEconomy).toEqual(expectedFreshNpcWallet());
+    expect(raw.state.npcBattles).toEqual(expectedEmptyNpcBattles());
+    expect(Object.keys(raw.state.npcEconomy).sort()).toEqual(["baseline", "model", "now", "sites"]);
   });
 
   it.each([0, 0.25, 60, 7200, 9900, 10000, 11900])("round-trips age %s without rerolls or envelope clock changes", elapsedSeconds => {
-    const raw = current(); raw.state.npcEconomy.elapsedSeconds = elapsedSeconds;
+    const raw = current(); raw.state.npcEconomy.now = elapsedSeconds;
     const accepted = json(raw), state = deserializeState(accepted.state);
     expect(accepted).toEqual(raw);
     expect(serializeState(state)).toEqual(accepted.state);
@@ -129,7 +131,7 @@ describe("r12 historical boundary and reserved marker", () => {
   it("requires current NPC data and rejects future, incompatible schema, and the other sector route", () => {
     const missing = current(); delete missing.state.npcEconomy;
     expect(() => json(missing)).toThrow(/NPC/);
-    const future = current(); future.revision = 13;
+    const future = current(); future.revision = 14;
     expect(() => json(future)).toThrow(/修订不兼容/);
     const incompatible = current(); incompatible.schema = "different-route";
     expect(() => json(incompatible)).toThrow(/分支/);

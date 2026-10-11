@@ -1,3 +1,4 @@
+import { NpcSettlementError, retryNpcAttackDock } from "./game/npc-attack";
 import { applyFormationAction } from "./game/formations";
 import { commitDemolition, cancelDemolition, demolitionProtocolProblem } from "./game/demolition";
 import { applyResearchTemplateAction } from "./game/research-templates";
@@ -91,6 +92,7 @@ window.addEventListener("storage", (event) => {
   render();
 });
 document.addEventListener("visibilitychange", () => {
+  view.retireNpcPending();
   if (document.visibilityState === "hidden") persist(undefined, true);
   // Account the full resume gap in the existing frame before displaying it.
   else renderScheduler.invalidate();
@@ -104,27 +106,44 @@ function frame(now: number): void {
     window.requestAnimationFrame(frame);
     return;
   }
-  if (gap >= BACKGROUND_NOTICE_SECONDS) {
-    const result = catchUp(state, gap);
-    state = result.state;
-    observePresentationContext();
-    // Consume the whole observed gap, including time discarded by the existing
-    // offline cap. A later save/reload must not reclaim that discarded portion.
-    accountedClock.account(now);
-    if (result.appliedSeconds >= OFFLINE_MODAL_SECONDS) catchup = result;
-    const unlocked = unlockBanner(result.newAchievementIds);
-    if (unlocked) banner = unlocked;
-    persist("已追赶后台进度", true);
-  } else if (gap > 0) {
-    const before = state.unlocked;
-    state = tick(state, gap);
-    observePresentationContext();
-    accountedClock.account(now);
-    const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
-    if (unlocked) banner = unlocked;
+  const source = state;
+  try {
+    if (gap >= BACKGROUND_NOTICE_SECONDS) {
+      const result = catchUp(state, gap);
+      state = result.state;
+      observePresentationContext();
+      // Consume the whole observed gap, including time discarded by the existing
+      // offline cap. A later save/reload must not reclaim that discarded portion.
+      accountedClock.account(now);
+      if (result.appliedSeconds >= OFFLINE_MODAL_SECONDS) catchup = result;
+      const unlocked = unlockBanner(result.newAchievementIds);
+      if (unlocked) banner = unlocked;
+      persist("已追赶后台进度", true);
+    } else if (gap > 0) {
+      const before = state.unlocked;
+      state = tick(state, gap);
+      observePresentationContext();
+      accountedClock.account(now);
+      const unlocked = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
+      if (unlocked) banner = unlocked;
+    }
+  } catch (error) {
+    if (!(error instanceof NpcSettlementError)) throw error;
+    protectNpcSettlement(error, source);
   }
   render(false, now);
   window.requestAnimationFrame(frame);
+}
+
+function protectNpcSettlement(error: NpcSettlementError, source: GameState): void {
+  // No partial candidate or elapsed time is adopted after a failed settlement.
+  state = source;
+  saveSession.freezeSimulation(error);
+  status = saveSession.message;
+  notice = saveSession.notice;
+  view.invalidateOrderAuthority();
+  view.observeContexts(state, false, saveSession.message);
+  renderScheduler.invalidate();
 }
 
 function observePresentationContext(): void {
@@ -230,11 +249,29 @@ async function handleAction(action: UiAction): Promise<void> {
       if (raw !== null && raw !== undefined) { view.setTransferText(raw); status = "旧站原始存档已放入文本框，请复制另存，不会自动导入本版本"; }
       else status = "未找到旧站原始存档";
     } catch { status = "无法读取旧站存档，未改动存档"; }
-  } else if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "abandon-colony") {
+  } else if (action.type === "send-fleet" || action.type === "recall-fleet" || action.type === "npc-retry-dock" || action.type === "abandon-colony") {
+    const npcAction = action.type === "npc-retry-dock" || action.type === "send-fleet" && (action.request.mission === "attack" || !!action.npcAuthority)
+      || action.type === "recall-fleet" && (state.fleets.some(fleet => fleet.id === action.id && fleet.mission === "attack") || !!action.npcAuthority);
+    // The controller authenticates current DOM/source/world and consumes this
+    // exact action object once. Domain quote/send/retry then recheck live rules.
+    if (npcAction && !view.consumeNpcAttackAction(action, state)) {
+      status = "攻击操作已失效，请使用当前页面重新确认。";
+      render();
+      return;
+    }
     if (action.type === "abandon-colony" && !window.confirm("放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。")) return;
-    const result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : abandonColony(state,action.id);
+    let result: ReturnType<typeof sendFleet>;
+    try {
+      result=action.type === "send-fleet" ? sendFleet(state,action.request) : action.type === "recall-fleet" ? recallFleet(state,action.id) : action.type === "npc-retry-dock" ? retryNpcAttackDock(state,action.id) : abandonColony(state,action.id);
+    } catch (error) {
+      if (!(error instanceof NpcSettlementError)) throw error;
+      protectNpcSettlement(error, actionSource);
+      render();
+      return;
+    }
     const changed=result.state!==state;
     state=result.state;status=result.reason;if(changed)persist();
+    if(action.type === "send-fleet" && action.request.mission === "attack")view.completeNpcAttackSend(result.ok);
   } else if (action.type === "select-planet") {
     const next = selectPlanet(state, action.id);
     if (next !== state) { state = next; status = `已切换至${activePlanet(state).name}，协议卡只作用于当前星球`; persist(); }

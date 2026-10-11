@@ -1,6 +1,9 @@
+import { npcEconomySnapshot } from "./npc-economy";
+import { createNpcWalletContext, npcWalletFromSnapshot, readNpcWalletState } from "./npc-wallet";
+import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences } from "./npc-attack-state";
 import { readDemolitionJob, serializeDemolitionJob, rejectLegacyDemolitionFields, rejectMisplacedDemolitionFields, migrateLegacyDemolitionSlots, type SerializedDemolitionJob } from "./demolition-save";
 import { demolitionStateProblem } from "./demolition";
-import { readNpcEconomy, serializeNpcEconomy, rejectLegacyNpcEconomyFields, rejectMisplacedNpcEconomyFields, migrateLegacyNpcEconomy } from "./npc-economy-save";
+import { readNpcEconomy, rejectLegacyNpcEconomyFields, rejectMisplacedNpcEconomyFields, migrateLegacyNpcEconomy } from "./npc-economy-save";
 import { readTerraformerFields, readTerraformerGrantJobFloor, rejectLegacyTerraformerFields } from "./terraformer-save";
 import { terraformerStateProblem } from "./terraformer";
 import { readBuildingTemplates, serializeBuildingTemplates, migrateBuildingTemplates, rejectLegacyBuildingTemplateFields } from "./building-templates-save";
@@ -100,6 +103,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 
 export interface SerializedState {
   npcEconomy: GameState["npcEconomy"];
+  npcBattles: GameState["npcBattles"];
   terraformerGrantJobFloor: number;
   buildingTemplates: ReturnType<typeof serializeBuildingTemplates>;
   formations: ReturnType<typeof serializeFormations>;
@@ -150,7 +154,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r11 → r12 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r12 → r13 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -172,8 +176,13 @@ export function outdatedSaveNotice(version: number): string {
 }
 
 export function serializeState(state: GameState): SerializedState {
+  // Validate before JSON can omit undefined/extras or turn nonfinite numbers into null.
+  rejectNpcAttackFields(state, false);
+  validateNpcAttackReferences(state);
+  const npcContext = createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
   return {
-    npcEconomy: serializeNpcEconomy(state.npcEconomy),
+    npcEconomy: readNpcWalletState(state.npcEconomy, npcContext),
+    npcBattles: readNpcBattleState(state.npcBattles, npcContext),
     terraformerGrantJobFloor: readTerraformerGrantJobFloor(state.terraformerGrantJobFloor, state.orders.nextJobId),
     buildingTemplates: serializeBuildingTemplates(state.buildingTemplates),
     formations: serializeFormations(state.formations),
@@ -209,12 +218,14 @@ export function deserializeState(raw: unknown): GameState {
 }
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
-function readState(raw: unknown, legacyTerraformer: boolean): GameState {
+function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false): GameState {
+  rejectNpcAttackFields(raw, legacyNpcAttack);
   rejectMisplacedNpcEconomyFields(raw);
   rejectMisplacedDemolitionFields(raw);
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
-  state.npcEconomy = readNpcEconomy(Object.getOwnPropertyDescriptor(raw, "npcEconomy")?.value);
+  // Source r12 validation stays exact and independent of the new wallet reader.
+  const sourceNpc = legacyNpcAttack ? readNpcEconomy(Object.getOwnPropertyDescriptor(raw, "npcEconomy")?.value) : null;
   if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
   if (!Array.isArray(raw.planets) || raw.planets.length < 1 || raw.planets.length > 100) throw new Error("星球列表必须包含 1–100 颗星球");
   state.planets = raw.planets.map(planet => readPlanet(planet, legacyTerraformer));
@@ -249,7 +260,7 @@ function readState(raw: unknown, legacyTerraformer: boolean): GameState {
   state.unlocked = readAchievements(raw.unlocked);
   state.stats = readStats(raw.stats);
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
-  Object.assign(state, readSpaceState(raw, state));
+  Object.assign(state, readSpaceState(raw, state, !legacyNpcAttack));
   state.deepSpace=readDeepState(raw.deepSpace,state);
   validateRingBatchReferences(state);
   validateOrderReferences(state);
@@ -263,6 +274,13 @@ function readState(raw: unknown, legacyTerraformer: boolean): GameState {
   if(chargeReservations(state)>Number.MAX_SAFE_INTEGER-state.arcade.nextRunId)throw Error("充能任务超出剩余安全票号");
   const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
   if(new Set(receipts).size!==receipts.length)throw Error("充能回放凭证重复");
+  // Only after every historical domain validates do we convert the actual source snapshot.
+  const npcContext = createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
+  state.npcEconomy = sourceNpc ? npcWalletFromSnapshot(npcEconomySnapshot(sourceNpc).resources)
+    : readNpcWalletState(Object.getOwnPropertyDescriptor(raw, "npcEconomy")?.value, npcContext);
+  state.npcBattles = legacyNpcAttack ? createNpcBattleState()
+    : readNpcBattleState(Object.getOwnPropertyDescriptor(raw, "npcBattles")?.value, npcContext);
+  validateNpcAttackReferences(state);
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
@@ -279,7 +297,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r12 or explicitly migrate same-schema r2–r11; never touch the current game. */
+/** Validate current v9/r13 or explicitly migrate same-schema r2–r12; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -296,6 +314,9 @@ export function importSave(json: string): SaveFile {
   if (typeof parsed.revision !== "number" || !supportedRevisions.includes(parsed.revision)) {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
+  // Reject r13-exclusive authority in the untouched source before any normalization.
+  const legacyNpcAttack = parsed.revision <= 12;
+  rejectNpcAttackFields(parsed, legacyNpcAttack, true);
   // These are historical facts, independent of the current output revision.
   const legacyNpcEconomy = parsed.revision <= 11;
   if (legacyNpcEconomy) rejectLegacyNpcEconomyFields(parsed);
@@ -343,7 +364,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(readState(parsed.state, legacyTerraformer)),
+    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack)),
   };
 }
 
