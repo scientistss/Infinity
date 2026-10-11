@@ -281,10 +281,12 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== 7 && parsed.revision !== 8 && parsed.revision !== 9 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r7/r8/r9/r${SAVE_REVISION}）；原件保留，未导入`);
+  const supportedRevisions = [...new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, SAVE_REVISION])];
+  if (typeof parsed.revision !== "number" || !supportedRevisions.includes(parsed.revision)) {
+    throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
-  const legacyTerraformer = parsed.revision !== SAVE_REVISION;
+  // The ledger was introduced in r10; later revisions must not rebase its grants.
+  const legacyTerraformer = parsed.revision <= 9;
   if (legacyTerraformer) rejectLegacyTerraformerFields(parsed);
   if (parsed.revision < 9) {
     rejectLegacyBuildingTemplateFields(parsed.state);

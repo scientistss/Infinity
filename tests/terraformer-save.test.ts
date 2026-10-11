@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import historical from "./fixtures/terraformer-r9.json";
 import archivedR8 from "./fixtures/building-templates-r8.json";
 import { SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
+import { big } from "../src/game/decimal";
+import { activePlanet } from "../src/game/empire";
+import { emptyTickLog, tick } from "../src/game/logic";
+import { enqueue } from "../src/game/queue";
 import { BACKUP_KEY, deserializeState, exportSave, importSave, serializeState, type KeyValueStore } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 import { createInitialState } from "../src/game/state";
@@ -73,6 +77,56 @@ describe("strict r10 terraformer field accounting", () => {
     const first = read(file), second = read(first), third = read(second);
     expect(first).toEqual(file); expect(second).toEqual(first); expect(third).toEqual(first);
     expect(third.state.planets[0]!.fieldsMax).toBe(173);
+  });
+  it("preserves a real paid completion through verified r10 writes and strict cold reads", () => {
+    // Synthetic prerequisites only: payment, timing and grants use production paths.
+    const state = createInitialState(123, 456), planet = activePlanet(state);
+    planet.buildings.nanite_factory = 1;
+    state.research.levels.energy_tech = 12;
+    planet.tempMax = 10;
+    planet.units.solar_satellite = 100;
+    planet.resources = { metal: big(1e6), crystal: big(1e6), deuterium: big(1e6) };
+    const paid = enqueue(state, "terraformer", "manual");
+    expect(paid.ok, paid.reason).toBe(true);
+    expect(activePlanet(paid.state).resources.crystal.toNumber()).toBe(950000);
+    expect(activePlanet(paid.state).resources.deuterium.toNumber()).toBe(900000);
+    expect(activePlanet(paid.state).terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
+
+    const originalBackup = historicalRow("continuous_manual").raw;
+    const store = new MemoryStore(exportSave(paid.state, 1000));
+    store.values.set(BACKUP_KEY, originalBackup);
+    const session = new SaveSession(store, 1000), log = emptyTickLog();
+    expect(session.mode).toBe("ready");
+    const seconds = Math.ceil(activePlanet(session.loaded.state).buildQueue[0]!.remainingSeconds);
+    const completed = tick(session.loaded.state, seconds, "live", log);
+    const now = 1000 + seconds * 1000;
+    expect(log.completedBuilds).toEqual([{ building: "terraformer", level: 1 }]);
+    expect(activePlanet(completed).buildQueue).toHaveLength(0);
+    expect(activePlanet(completed).terraformerFields).toEqual({ base: 163, grantedLevels: 1 });
+    expect(activePlanet(completed).fieldsMax).toBe(168);
+    expect(completed.terraformerGrantJobFloor).toBe(1);
+    expect(completed.orders.nextJobId).toBe(2);
+
+    store.events.length = 0;
+    expect(session.save(completed, now)).toEqual({ ok: true });
+    const write = store.events.indexOf(`write:${STORAGE_KEY}`);
+    expect(write).toBeGreaterThanOrEqual(0);
+    expect(store.events.slice(write + 1)).toContain(`read:${STORAGE_KEY}`);
+    const raw = store.values.get(STORAGE_KEY)!;
+    expect(raw).toBe(exportSave(completed, now));
+    const restored = importSave(raw);
+    expect(restored).toEqual(JSON.parse(raw));
+    expect(serializeState(deserializeState(restored.state))).toEqual(serializeState(completed));
+    expect(importSave(JSON.stringify(restored))).toEqual(restored);
+
+    store.events.length = 0;
+    const cold = new SaveSession(store, now);
+    expect(cold.mode).toBe("ready");
+    expect(cold.loaded.completedBuilds).toHaveLength(0);
+    expect(serializeState(cold.loaded.state)).toEqual(restored.state);
+    expect(store.values.get(STORAGE_KEY)).toBe(raw);
+    expect(store.values.get(BACKUP_KEY)).toBe(originalBackup);
+    expect(store.events.some(event => event.startsWith("write:"))).toBe(false);
   });
   it.each([
     ["missing floor", (f: any) => { delete f.state.terraformerGrantJobFloor; }],
