@@ -8,6 +8,7 @@ All normal clicks/typing are trusted browser input. Adversarial old-node replay,
 synthetic hidden state and native File.text completion gates are clearly labeled.
 """
 import argparse
+from r10_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r10
 import base64
 import copy
 import hashlib
@@ -160,18 +161,32 @@ def exact_state(actual, expected):
     return json.dumps(actual,sort_keys=True,separators=(',',':')) == json.dumps(expected,sort_keys=True,separators=(',',':'))
 
 
-def lift_r8_state(state):
-    assert 'buildingTemplates' not in state, 'Actual r8 oracle must not already contain buildingTemplates'
-    return {'buildingTemplates': {'nextTemplateId': 1, 'templates': []}, **state}
+def lift_r8_state(state, grant_job_floor):
+    return lift_legacy_state_to_r10(state, source_revision=8, grant_job_floor=grant_job_floor)
+
+
+def expected_floor(name):
+    # Bind to the actual migrated input, not a later trace's issued job counter.
+    if name == 'automatic.skipped':
+        state = fixtures['expected'][name]
+        assert state['stats']['launches'] == fixtures['automatic']['state']['stats']['launches'] + 1
+        assert not state['research']['queue'] and all(not p['buildQueue'] and not p['shipyardQueue'] for p in state['planets'])
+        # This oracle is immediately after its real prestige boundary; no paid
+        # job survives or is issued afterwards. The reset explicitly rebases floor.
+        return state['orders']['nextJobId']
+    source = name.split('.')[0] if '.' in name else {'fresh60': 'fresh', 'rollover60': 'rollover'}.get(name, 'base')
+    return fixtures[source]['state']['orders']['nextJobId']
 
 
 def expected_state(name, page=None):
     state = fixtures['expected'][name]
-    return state if page is not None and page.url.startswith(args.before_url) else lift_r8_state(state)
+    return state if page is not None and page.url.startswith(args.before_url) else lift_r8_state(state, expected_floor(name))
 
 
 def whole(page,expected,label='complete serialized engine state matches independent production-engine oracle'):
     value=save(page)
+    if not page.url.startswith(args.before_url):
+        check('every new field independently matches its fixed migration/reset boundary',assert_zero_grant_metadata(value,fixtures['expected'][expected],grant_job_floor=expected_floor(expected)))
     check(label,exact_state(value,expected_state(expected,page)),{'expected':expected})
     return value
 
@@ -199,13 +214,14 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     check('counter and healthy Storage delegate to captured native implementations',all(page.evaluate('window.__renderProbe.snapshot().backing').values()))
     if not corrupt and url == args.url:
         stored=json.loads(raw(page))
-        check('controlled current startup observes the actual r8 migration and only its empty new library',stored['revision']==9 and exact_state(stored['state'],lift_r8_state(seed['state'])))
+        check('controlled startup independently validates fixed floor and zero grants',assert_zero_grant_metadata(stored['state'],seed['state'],grant_job_floor=seed['state']['orders']['nextJobId']))
+        check('controlled current startup observes actual r8 migration and only approved metadata',stored['revision']==CURRENT_REVISION and exact_state(stored['state'],lift_r8_state(seed['state'],seed['state']['orders']['nextJobId'])))
         check('controlled migration preserves exact historical native seed bytes',page.evaluate('key=>localStorage.getItem(key)',BACKUP)==json.dumps(seed,ensure_ascii=False))
     return context,page
 
 
-def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None):
-    result=page.evaluate('''({omitBuilding,ringBase,orderBase}) => {
+def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None):
+    result=page.evaluate('''({omitBuilding,ringBase,orderBase,facilityBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
         // Chromium may return geometry for closed-details content. Its first
@@ -234,6 +250,23 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       const result={tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:inputs.map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
+      if(facilityBase){
+        const cards=[...panel.querySelectorAll('article.bld')],terra=panel.querySelector('[data-bind="bld-terraformer"]');
+        const grids=[...panel.querySelectorAll(':scope > .bld-grid')],last=grids.at(-1);
+        result.facilityEvidence={panelHTML:panel.outerHTML,
+          count:document.querySelectorAll('[data-bind="bld-terraformer"]').length,cardHTML:terra?.outerHTML??null,
+          cardText:terra?.innerText??null,leftText:panel.querySelector('[data-bind="bld-missile_silo"]')?.innerText??null,cardBindings:cards.map(e=>e.dataset.bind),
+          exactPlacement:panel.dataset.tabPanel==='facilities'&&grids.length===2&&panel.lastElementChild===last&&
+            last.previousElementSibling?.matches('h3.group-title')&&last.previousElementSibling.textContent==='设施'&&
+            (facilityBase==='before'?last.lastElementChild?.dataset.bind==='bld-missile_silo':
+              terra?.parentElement===last&&last.lastElementChild===terra&&terra.previousElementSibling?.dataset.bind==='bld-missile_silo'),
+          controls:[...(terra?.querySelectorAll('input,select,textarea,button')??[])].map(e=>({tag:e.tagName,id:e.id,action:e.dataset.action,building:e.dataset.id,
+            bind:e.dataset.bind,type:e.type,value:e.value,disabled:e.disabled,hidden:e.hidden,visible:visible(e),index:inputs.indexOf(e)})),
+          invariantDOM:[...panel.children].map(child=>child.matches('.bld-grid')?
+            {tag:child.tagName,attributes:[...child.attributes].map(a=>[a.name,a.value]),children:[...child.children].filter(e=>e!==terra).map(e=>e.outerHTML)}:
+            {html:child.outerHTML}),
+        };
+      }
       if(orderBase){
         const form=panel.querySelector('#order-form'),fieldset=form?.querySelector(':scope > fieldset');
         const budgets=fieldset?.querySelector(':scope > .order-budgets'),quote=panel.querySelector('#order-quote');
@@ -270,9 +303,74 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         };
       }
       return result;
-    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base})
+    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base})
+    if facility_base:result=facility_base_snapshot(page,facility_base,result)
     if order_base:result=order_quote_base_snapshot(page,order_base,result)
     return ring_base_snapshot(page,ring_base,result) if ring_base else result
+
+
+
+def facility_base_snapshot(page,label,projected):
+    evidence=projected.pop('facilityEvidence');stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+    artifact=f'panel-parity-facilities-{label}-{len(audits)}-raw.json'
+    (out/artifact).write_text(json.dumps({'snapshot':projected,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+    state=json.loads(stored)['state'];planet=next(p for p in state['planets'] if p['id']==state['activePlanetId'])
+    check('facility exception begins from complete unchanged independent base state: '+label,exact_state(state,expected_state('base.initial',page)))
+    check('facility exception proves old initial finished prerequisites and supply have not changed: '+label,
+          planet['id']==HOME and planet['buildings']['terraformer']==0 and planet['buildings']['nanite_factory']==0 and
+          planet['buildings']['robotics_factory']==2 and state['research']['levels']['energy_tech']==0 and
+          planet['buildings']['solar_plant']==planet['buildings']['fusion_reactor']==planet['units']['solar_satellite']==0 and
+          all(job['building']!='terraformer' for job in planet['buildQueue']))
+    old_ids=['metal_mine','crystal_mine','deuterium_synth','solar_plant','fusion_reactor','metal_storage','crystal_storage','deuterium_tank',
+             'robotics_factory','nanite_factory','shipyard','research_lab','missile_silo']
+    after=label=='after'
+    check('only one specifically identified final facility is added; all old identities and order remain: '+label,
+          label in ('before','after') and projected['tab']=='facilities' and evidence['exactPlacement'] and
+          evidence['count']==int(after) and evidence['cardBindings']==['bld-'+name for name in old_ids+(['terraformer'] if after else [])])
+    if after:
+        old_planet=next(p for p in fixtures['base']['state']['planets'] if p['id']==HOME)
+        check('added card field display derives only from the exact historical base fixture',
+              sum(old_planet['buildings'].values())==18 and old_planet['fieldsMax']==163 and len(old_planet['buildQueue'])==1)
+        missing='纳米机器人工厂 等级 1、能源技术 等级 12'
+        icon_path=urlparse(args.url).path.rstrip('/')+'/icons/'
+        expected=f'''<article class="bld locked" data-bind="bld-terraformer">
+          <div class="bld-head"><img class="icon icon-robotics_factory icon-row" src="{icon_path}robotics_factory.webp" srcset="{icon_path}robotics_factory.webp 128w, {icon_path}robotics_factory-256.webp 256w" sizes="56px" alt="地形改造器" width="128" height="128" loading="lazy" decoding="async" draggable="false">
+          <div class="bld-title"><h3>地形改造器 <small>Terraformer</small></h3><p class="bld-level">等级 <strong data-bind="level-terraformer">0</strong></p></div></div>
+          <p class="bld-blurb">新版付款升级完成后总格 +5；该级占 1 格，可用格净增 4。</p>
+          <p class="bld-effect" data-bind="effect-terraformer">本版新付款入队每级 +5 总格，建筑占 1 格（净 +4）</p>
+          <p class="bld-payback" data-bind="payback-terraformer">格子 18 / 163 · 已付预留 1</p>
+          <p class="bld-requires" data-bind="requires-terraformer">前置未满足：{missing}</p>
+          <dl class="bld-facts"><div><dt>下一级成本</dt><dd data-bind="cost-terraformer">金属 0.00 · 晶体 5.00e4 · 重氢 1.00e5 · 供能 0.00 / 需要 1.00e3（不消耗）</dd></div><div><dt>耗时</dt><dd data-bind="time-terraformer">建造时间 12 秒</dd></div></dl>
+          <button type="button" class="buy-btn" data-action="enqueue" data-id="terraformer" data-bind="enqueue-terraformer" disabled="" title="需要 {missing}"><span class="buy-label" data-bind="upgrade-terraformer">升级到 等级 1</span><span class="btn-cost" data-bind="reason-terraformer">需要 {missing}</span></button></article>'''
+        class Tokens(HTMLParser):
+            def __init__(self):super().__init__(convert_charrefs=True);self.tokens=[]
+            def handle_starttag(self,tag,attrs):self.tokens.append(('start',tag,sorted(attrs)))
+            def handle_endtag(self,tag):self.tokens.append(('end',tag))
+            def handle_data(self,data):
+                if data.strip():self.tokens.append(('text',data.strip()))
+            def handle_comment(self,data):self.tokens.append(('comment',data))
+        def tokens(html):
+            parser=Tokens();parser.feed(html);parser.close();return parser.tokens
+        check('added terra card has exact complete DOM, prices, energy, level, prerequisites and disabled action',tokens(evidence['cardHTML'])==tokens(expected))
+        controls=evidence['controls'];last_index=len(projected['inputs'])-1
+        check('only the uniquely identified disabled final terra button is excluded',controls==[{'tag':'BUTTON','id':'','action':'enqueue','building':'terraformer','bind':'enqueue-terraformer',
+            'type':'button','value':'','disabled':True,'hidden':False,'visible':True,'index':last_index}])
+        check('excluded snapshot input is precisely the independently verified terra action',projected['inputs'][last_index]=={'id':'','action':'enqueue','type':'button','value':'','disabled':True,'checked':None,
+            'text':page.locator('[data-bind="enqueue-terraformer"]').text_content()})
+        text=projected['text'];block=evidence['cardText'];left=evidence['leftText']
+        check('one complete verified terra card and old final sibling occur exactly once',bool(block) and bool(left) and text.count(block)==1 and text.count(left)==1 and text.endswith(block))
+        left_end=text.index(left)+len(left);start=text.index(block)
+        check('verified final terra card has only the exact old-card sibling linebreak boundary',left_end<start and text[left_end:start] in ('\n','\n\n'))
+        projected['text']=text[:left_end]
+        projected['inputs']=projected['inputs'][:-1]
+    else:
+        check('archived facilities has no terra node, text or action to suppress',evidence['cardHTML'] is None and evidence['cardText'] is None and evidence['controls']==[])
+    projected['facilityInvariantDOM']=evidence['invariantDOM']
+    check('facility exception never rewrites DOM, stored bytes or the controlled clock: '+label,raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at)
+    audits.append({'kind':'explicit-terraformer-card-parity-exception','side':label,'rawArtifact':artifact,
+        'removedNode':'[data-bind="bld-terraformer"]' if after else None,
+        'constraint':'Exact complete legal old state, ordered old cards, unique final added card, full added DOM/text and disabled action independently asserted; every remaining facility node, text and control compares exactly.'})
+    return projected
 
 
 def order_quote_base_snapshot(page,label,projected):
@@ -576,7 +674,8 @@ def run_cases():
         case='before/after identical controlled trace '+name
         before,count_before=differential_trace(name,args.before_url)
         after,count_after=differential_trace(name,args.url)
-        check('every archived field matches on identical trace with only the exact empty r9 library',exact_state(after,lift_r8_state(before)))
+        check('trace metadata retains its original migration boundary even after new payments',assert_zero_grant_metadata(after,before,grant_job_floor=fixtures['base']['state']['orders']['nextJobId']))
+        check('every archived field matches on identical trace with only exact r9/r10 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'])))
         if name.startswith('steady'):
             check('old bundle updates on every requested frame',count_before==len(fixtures['traces'][name]))
             check('ordinary latest-only rendering is bounded at 10Hz',18<=count_after<=21,{'before':count_before,'after':count_after})
@@ -589,9 +688,9 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.15-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.16-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
-        check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else 9))
+        check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else CURRENT_REVISION))
         check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
         if label=='after':
             check('new building region is last and folded with original explanatory text',page.locator('#building-templates').evaluate('(node)=>node.parentElement.id==="space-orders"&&node.parentElement.lastElementChild===node&&!node.open') and page.locator('#building-templates > summary').text_content()=='建筑意图模板 · 保存目标，按需创建有限计划')
@@ -602,7 +701,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None)
             if name=='galaxy':
                 # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
@@ -613,7 +712,7 @@ def run_cases():
                 normalized=range_text.replace(token,'v<verified-release-version>',1)
                 snapshots[label][name]['text']=snapshots[label][name]['text'].replace(range_text,normalized,1)
             if name=='save':
-                revision=8 if label=='before' else 9
+                revision=8 if label=='before' else CURRENT_REVISION
                 paragraph=page.locator('[data-tab-panel="save"] p').first.inner_text()
                 cap=page.locator('[data-tab-panel="save"] p [data-bind="offline-cap"]').inner_text()
                 expected_paragraph=(f'原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r{revision} 存档；'
@@ -780,7 +879,7 @@ def run_cases():
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
     context,page=boot();tab(page,'save');baseline=raw(page)
-    # Migration already wrote canonical r9 at time zero. Re-saving identical
+    # Migration already wrote canonical r10 at time zero. Re-saving identical
     # bytes is a legitimate no-op, so make only the save envelope 1 ms newer.
     before_events=page.evaluate('window.__renderProbe.snapshot().events')
     page.evaluate('window.__renderProbe.advance(1)')
@@ -853,8 +952,9 @@ with sync_playwright() as playwright:
         raise
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
-            'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact and only empty buildingTemplates is added. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.15-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring and exact initial order-quote exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
+            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.16-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring and exact initial order-quote exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
             'parityOrderQuoteException':'Only the uniquely placed initial #order-quote region is excluded after exact DOM, literal text, two-button permission, zero-cap and full-base-state assertions. Before/after raw snapshots are retained. Budgets, existing create/transport controls and all remaining visible content remain exact. No DOM or state is rewritten.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',

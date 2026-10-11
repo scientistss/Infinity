@@ -61,6 +61,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
   if (!(dtSeconds > 0) || !Number.isFinite(dtSeconds)) return current;
   const period = mode === "offline" ? OFFLINE_PROTOCOL_SECONDS : PROTOCOL_LIVE_EVAL_SECONDS;
   const limit = Math.ceil(dtSeconds / period) + Math.ceil(dtSeconds / 10) + 8 * state.planets.length * Math.ceil(dtSeconds / MIN_BUILD_SECONDS) + 4 * state.fleets.length + 256;
+  // Defensive refusal of a corrupt due terraformer cannot create an endless zero-time
+  // event or prevent another planet, research, fleets, or production from advancing.
+  const blockedBuilds = new Set<number>();
   let t = 0, segments = 0;
   while (dtSeconds - t > EPS) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
@@ -76,7 +79,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
     for (const snapshot of snapshots) {
       const local = selectPlanet(current, snapshot.id);
       const head = activePlanet(local).buildQueue[0];
-      if (head && head.totalSeconds > 0) step = Math.min(step, Math.max(0, head.remainingSeconds));
+      if (head && head.totalSeconds > 0 && !blockedBuilds.has(head.jobId)) step = Math.min(step, Math.max(0, head.remainingSeconds));
       step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local, fleetCensus));
     }
     const orderAccrual = accrueOrderPlanTime(current, step);
@@ -100,11 +103,14 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         if (log) for (const done of yard.completed) addUnits(log.completedUnits, current.planets.length > 1 ? { ...done, planetId: snapshot.id } : done);
         if (snapshot.id === selectedId) shipyardIdle = wasBusy && activePlanet(result).shipyardQueue.length === 0;
         const head = activePlanet(result).buildQueue[0];
-        if (head && head.totalSeconds > 0) {
+        if (head && head.totalSeconds > 0 && !blockedBuilds.has(head.jobId)) {
           const remaining = head.remainingSeconds - step;
           if (remaining <= EPS) {
-            const done = completeActive(result);
+            // Only terraformer completion needs the explicit consumed timer boundary.
+            // Other buildings retain their historical completion path and timing behavior.
+            const done = completeActive(head.building === "terraformer" ? withHeadRemaining(result, 0) : result);
             result = done.state;
+            if (!done.completed && head.building === "terraformer") blockedBuilds.add(head.jobId);
             if (done.completed) log?.completedBuilds.push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
             if (snapshot.id === selectedId) queueIdle = activePlanet(result).buildQueue.length < queueCapacity(result);
           } else result = withHeadRemaining(result, remaining);
@@ -294,6 +300,7 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;
   next.orders = terminateOrdersForPrestige(state);
+  next.terraformerGrantJobFloor = next.orders.nextJobId;
   next.formations = { nextFormationId: state.formations.nextFormationId, entries: state.formations.entries.map(cloneFormation) };
   next.buildingTemplates = { nextTemplateId: state.buildingTemplates.nextTemplateId, templates: state.buildingTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.researchTemplates = { nextTemplateId: state.researchTemplates.nextTemplateId, templates: state.researchTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };

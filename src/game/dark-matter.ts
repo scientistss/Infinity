@@ -21,6 +21,7 @@ import { economy } from "./economy";
 import { formatAmount, formatDm, formatDuration } from "./format";
 import { completeActive } from "./queue";
 import { completeActiveResearch } from "./research";
+import { terraformerCompletionProblem } from "./terraformer";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "./types";
 import { activeBooster } from "./boosters";
 import { advanceShipyard, shipyardRemaining } from "./shipyard";
@@ -120,9 +121,11 @@ export function speedUp(state: GameState, target: SpeedupTarget, mode: SpeedupMo
   if (lack) return fail(state, lack);
   const paid = spend(state, quote.dm);
   const taken = mode === "finish" ? remaining : remaining / 2;
+  const build = target === "build" ? advanceBuildChecked(paid, taken, false) : null;
+  if (build && !build.ok) return fail(state, build.reason);
   const next =
     target === "build"
-      ? advanceBuild(paid, taken, false)
+      ? build!.state
       : target === "research"
         ? advanceResearch(paid, taken, false)
         : advanceShipyard(paid, taken, false).state;
@@ -135,21 +138,41 @@ export function speedUp(state: GameState, target: SpeedupTarget, mode: SpeedupMo
  * without it only the head order is shortened.
  */
 export function advanceBuild(state: GameState, seconds: number, carry: boolean): GameState {
+  return advanceBuildChecked(state, seconds, carry).state;
+}
+
+/** A rejected terraformer completion rolls back the entire acceleration, including carry. */
+function advanceBuildChecked(state: GameState, seconds: number, carry: boolean): DmResult {
+  if (activePlanet(state).buildQueue.some(job => job.building === "terraformer") && (!Number.isFinite(seconds) || seconds <= 0)) {
+    return fail(state, "地形改造器没有可安全缩短的剩余时间");
+  }
   let current = state;
   let left = seconds;
   for (let guard = 0; guard < 10 && left > 0; guard += 1) {
     const head = activePlanet(current).buildQueue[0];
     if (!head || head.totalSeconds <= 0) break;
+    let boundary = current;
+    if (head.building === "terraformer") {
+      if (!Number.isFinite(head.remainingSeconds) || head.remainingSeconds < 0) return fail(state, "地形改造器计时无效");
+      const planet = activePlanet(current);
+      boundary = withPlanet(current, { planet: { ...planet, buildQueue: [{ ...head, remainingSeconds: 0 }, ...planet.buildQueue.slice(1)] } });
+      // Check paid identity and ledger even for a partial acceleration. This is read-only;
+      // the zero-timer candidate is committed only after enough time was actually removed.
+      const problem = terraformerCompletionProblem(boundary, activePlanet(boundary).buildQueue[0]!);
+      if (problem) return fail(state, problem);
+    }
     if (left + 1e-9 < head.remainingSeconds) {
       const [, ...rest] = activePlanet(current).buildQueue;
       current = { ...withPlanet(current, { planet: { ...activePlanet(current), buildQueue: [{ ...head, remainingSeconds: head.remainingSeconds - left }, ...rest] } }) };
       break;
     }
     left -= head.remainingSeconds;
-    current = completeActive(current).state;
+    const completed = completeActive(boundary);
+    if (head.building === "terraformer" && !completed.completed) return fail(state, completed.reason ?? "地形改造器完成失败，未使用加速");
+    current = completed.state;
     if (!carry) break;
   }
-  return current;
+  return { state: current, ok: true, reason: "" };
 }
 
 export function advanceResearch(state: GameState, seconds: number, carry: boolean): GameState {
@@ -215,9 +238,11 @@ export function buyShopItem(state: GameState, id: ShopItemId, res: ResourceId = 
   const paid = spend(state, def.dm);
   if (def.kind === "kraken" || def.kind === "newtron" || def.kind === "detroit") {
     const seconds = dmClockSeconds(def.ogameHours ?? 0);
+    const build = def.kind === "kraken" ? advanceBuildChecked(paid, seconds, true) : null;
+    if (build && !build.ok) return fail(state, build.reason);
     const next =
       def.kind === "kraken"
-        ? advanceBuild(paid, seconds, true)
+        ? build!.state
         : def.kind === "newtron"
           ? advanceResearch(paid, seconds, true)
           : advanceShipyard(paid, seconds, true).state;
@@ -305,7 +330,9 @@ export function useInventory(state: GameState, id: InventoryItemId): DmResult {
   if (id === "kraken_box") {
     const remaining = activeRemaining(state, "build");
     if (remaining === null) return fail(state, "没有正在建造的项目");
-    return { state: advanceBuild(take(state), remaining * 0.3, false), ok: true, reason: "克拉肯：建造剩余时间 −30%" };
+    const advanced = advanceBuildChecked(take(state), remaining * 0.3, false);
+    if (!advanced.ok) return fail(state, advanced.reason);
+    return { state: advanced.state, ok: true, reason: "克拉肯：建造剩余时间 −30%" };
   }
   if (id === "newtron_box") {
     const remaining = activeRemaining(state, "research");

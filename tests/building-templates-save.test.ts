@@ -1,3 +1,4 @@
+import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import archivedR8 from "./fixtures/building-templates-r8.json";
 import { BUILDING_IDS } from "../src/data/buildings";
@@ -30,7 +31,7 @@ function read(value: any) { return importSave(JSON.stringify(value)); }
 describe("r9 pure building-intent persistence", () => {
   it("round-trips the complete library and every unchanged world field", () => {
     const original = file(), imported = read(original);
-    expect(imported.revision).toBe(9); expect(imported.revision).toBe(SAVE_REVISION);
+    expect(imported.revision).toBe(SAVE_REVISION);
     expect(imported.state).toEqual(original.state);
     expect(serializeState(deserializeState(imported.state))).toEqual(original.state);
     expect(read(imported)).toEqual(imported);
@@ -156,7 +157,7 @@ const money = (metal = "0", crystal = "0", deuterium = "0") => ({ metal, crystal
 /** Synthetic boundary fixture; actual source-generated r8 evidence lives in check-order-migration.mjs. */
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7 | 8): any {
   const value = file();
-  value.revision = revision;
+  value.revision = revision; stripSyntheticTerraformerMetadata(value.state);
   delete value.state.buildingTemplates;
   if (revision < 8) delete value.state.formations;
   if (revision < 7) delete value.state.researchTemplates;
@@ -211,7 +212,7 @@ describe("r9 additive migration boundaries", () => {
     expect(imported.state.orders.tasks).toEqual([]);
     if (revision >= 7) expect(imported.state.researchTemplates).toEqual(source.state.researchTemplates);
     if (revision === 8) {
-      const { buildingTemplates: _templates, ...projection } = imported.state;
+      const { buildingTemplates: _templates, ...projection } = expectTerraformerMigration(imported.state, source.state);
       expect(projection).toEqual(source.state);
     }
     expect(read(imported)).toEqual(imported);
@@ -236,7 +237,7 @@ describe("r9 additive migration boundaries", () => {
   });
   it("preserves every r8 formation origin, research intent, paid identity, counter and timer", () => {
     const source = paidR8(), before = structuredClone(source), migrated = read(source);
-    const { buildingTemplates, ...projection } = migrated.state;
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(source).toEqual(before);
@@ -257,14 +258,14 @@ describe("r9 additive migration boundaries", () => {
     expect(session.mode).toBe("ready");
     expect(store.getItem(BACKUP_KEY)).toBe(raw);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
-    const { buildingTemplates, ...projection } = serializeState(session.loaded.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
     expect(projection).toEqual(source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.notice).toContain("已有命名编成与计划来源完整保留");
     expect(session.notice).toContain("已有研究模板完整保留");
     expect(session.notice).toContain("建筑模板为空");
     expect(session.notice).not.toContain("命名编成为空");
-    expect(importSave(store.getItem(STORAGE_KEY)!).revision).toBe(9);
+    expect(importSave(store.getItem(STORAGE_KEY)!).revision).toBe(SAVE_REVISION);
   });
   it.each(["backup-write", "backup-read", "current-write", "current-read"])("freezes rich r8 progress and exports original bytes after %s failure", fault => {
     const source = paidR8(), raw = JSON.stringify(source), store = new MemoryStore(raw);
@@ -278,7 +279,7 @@ describe("r9 additive migration boundaries", () => {
     const session = new SaveSession(store, NOW + 5000);
     expect(session.mode).toBe("protected");
     expect(session.loaded.appliedSeconds).toBe(0);
-    const { buildingTemplates, ...projection } = serializeState(session.loaded.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
     expect(projection).toEqual(source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.export(session.loaded.state, NOW)).toEqual({ raw, protected: true });
@@ -335,7 +336,7 @@ describe("r9 session validation and replacement", () => {
 
 
 describe("pinned source-generated r8 migration", () => {
-  it.each(["outbound", "returning"] as const)("preserves the actual archived %s envelope with only an empty r9 library", phase => {
+  it.each(["outbound", "returning"] as const)("preserves the actual archived %s envelope with the exact additive r9 library and r10 ledger", phase => {
     expect(archivedR8.sourceSha).toBe("4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b");
     const source: any = structuredClone(archivedR8.fixtures[phase]), before = structuredClone(source);
     expect(source.revision).toBe(8);
@@ -349,7 +350,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(source.state.research.queue[0].source).toBe("plan");
     expect(source.state.orders.tasks[0].transport.trips[0].phase.kind).toBe(phase);
     expect(source.state.fleets).toHaveLength(1);
-    const migrated = read(source), { buildingTemplates, ...projection } = migrated.state;
+    const migrated = read(source), { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(source).toEqual(before);
@@ -364,7 +365,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(session.mode).toBe("ready");
     expect(store.getItem(BACKUP_KEY)).toBe(raw);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
-    const { buildingTemplates, ...projection } = serializeState(session.loaded.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
   });
@@ -374,7 +375,7 @@ describe("pinned source-generated r8 migration", () => {
     const session = new SaveSession(store, source.lastTickAt + 5000);
     expect(session.mode).toBe("protected");
     expect(session.loaded.appliedSeconds).toBe(0);
-    const { buildingTemplates, ...projection } = serializeState(session.loaded.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(session.export(session.loaded.state)).toEqual({ raw, protected: true });

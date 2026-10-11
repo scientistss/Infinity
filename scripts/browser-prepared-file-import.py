@@ -12,6 +12,7 @@ reloads revalidate complete executed script bytes; no cache-performance claim is
 made. Total native wall-clock budget is 90 seconds.
 """
 import argparse
+from r10_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r10
 import asyncio
 import copy
 import hashlib
@@ -35,7 +36,7 @@ parser.add_argument('--expected-before-sha', default='8c19d044fb3c38c601223cd552
 parser.add_argument('--expected-after-sha', default=os.environ.get('GITHUB_SHA'),
                     help='Exact after source SHA; defaults to GITHUB_SHA or local git HEAD')
 parser.add_argument('--fixture', default='save-session-review-save.json')
-parser.add_argument('--expected-revision', type=int, default=9)
+parser.add_argument('--expected-revision', type=int, default=CURRENT_REVISION)
 parser.add_argument('--output', default='prepared-file-import-evidence')
 parser.add_argument('--chromium', default=None)
 args = parser.parse_args()
@@ -644,12 +645,13 @@ class Case:
             replaced_raw = import_updates[0]['oldValue']
             self.data['importCurrentUpdate'] = import_updates[0]
             check(self.name, 'actual old input has no building template field', 'buildingTemplates' not in incoming['state'])
-            expected_state = {'buildingTemplates': {'nextTemplateId': 1, 'templates': []}, **incoming['state']}
-            check(self.name, 'acceptance adds only the exact empty building library and preserves every old engine field', accepted['state'] == expected_state)
+            expected_state = lift_legacy_state_to_r10(incoming['state'], source_revision=8, grant_job_floor=incoming['state']['orders']['nextJobId'])
+            check(self.name, 'new fixed floor and every planet ledger independently match the selected old source', assert_zero_grant_metadata(accepted['state'], incoming['state'], grant_job_floor=incoming['state']['orders']['nextJobId']))
+            check(self.name, 'acceptance adds only exact r9/r10 metadata and preserves every old value, scalar type and array position', exact_json(accepted['state'], expected_state))
             expected_source = {**incoming, 'revision': args.expected_revision, 'state': expected_state}
             expected_raw = await self.page.evaluate('({source,savedAt,lastTickAt}) => JSON.stringify({...source,savedAt,lastTickAt},null,2)',
                 {'source': expected_source, 'savedAt': accepted['savedAt'], 'lastTickAt': accepted['lastTickAt']})
-            check(self.name, 'entire persisted envelope matches native JS serialization of the sole r9 empty-library lift and fresh timestamps',
+            check(self.name, 'entire persisted envelope matches native JS serialization of the explicit r10 metadata lift in native property order and fresh timestamps',
                   accepted_raw == expected_raw, {'expectedRawSha256': sha(expected_raw), 'actualRawSha256': sha(accepted_raw)})
             check(self.name, 'backup is byte-for-byte the actual overwritten current from native update event oldValue',
                   len(terminal['backups']) == 1 and next(iter(terminal['backups'].values())) == replaced_raw
@@ -745,7 +747,7 @@ async def work():
     KEY, BACKUP = fixtures['key'], fixtures['backupKey']
     incoming = fixtures['historicalR8']['imported']
     report['fixture'] = {'path': str(fixture_path), 'sha256': hashlib.sha256(fixture_path.read_bytes()).hexdigest(),
-        'description': fixtures.get('description'), 'engineStateChanges': 'Actual archived r8 import bytes on both builds; current build starts from native r9 current state. Only startup envelope timestamps refreshed; successful import must add only the empty r9 library.'}
+        'description': fixtures.get('description'), 'engineStateChanges': 'Actual archived r8 import bytes on both builds; current build starts from native r10 current state. Only startup envelope timestamps refreshed; successful import must add only the empty r9 library and specified r10 fixed floor/zero ledgers.'}
     check('fixture', 'existing fixture explicitly identifies synthetic data', 'synthetic' in str(fixtures.get('description', '')).lower())
     check('fixture', 'new-build current fixture uses expected current revision; no startup migration',
           fixtures['current']['revision'] == args.expected_revision,

@@ -1,3 +1,4 @@
+import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import { SHIP_IDS, unitById } from "../src/data/units";
 import { SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
@@ -60,7 +61,7 @@ function appendHistory(value: any): any {
 }
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7): any {
   const value = revision >= 5 ? unpaidFile() : file();
-  value.revision = revision;
+  value.revision = revision; stripSyntheticTerraformerMetadata(value.state);
   delete value.state.buildingTemplates;
   delete value.state.formations;
   for (const task of value.state.orders.tasks) delete task.formationOrigin;
@@ -355,7 +356,7 @@ describe("r8 additive migration and SaveSession protection", () => {
     expect(read(imported)).toEqual(imported);
     if (revision === 7) {
       expect(imported.state.researchTemplates).toEqual(source.state.researchTemplates);
-      const projection: any = structuredClone(imported.state); delete projection.formations;
+      const projection: any = expectTerraformerMigration(imported.state, source.state); delete projection.formations;
       expect(projection.buildingTemplates).toEqual({ nextTemplateId: 1, templates: [] }); delete projection.buildingTemplates;
       for (const task of projection.orders.tasks) delete task.formationOrigin;
       expect(projection).toEqual(source.state);

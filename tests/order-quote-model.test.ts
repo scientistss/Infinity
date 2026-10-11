@@ -130,7 +130,8 @@ describe("finite local order cost preview", () => {
 
   it("makes cost available independently of prerequisites, phases, queues, fields and conflicts", () => {
     let state = stateWith();
-    activePlanet(state).fieldsMax = 1;
+    // Synthetic full-capacity boundary, with no earned terraformer grants.
+    activePlanet(state).fieldsMax = 1; activePlanet(state).terraformerFields = { base: 1, grantedLevels: 0 };
     const quote = quoteLocalOrder(state, building(state));
     expect(quote.available).toBe(true);
     expect(quote.warnings.join(" ")).toContain("格子不足");
@@ -298,7 +299,7 @@ describe("cheap quote context invalidation", () => {
     expect(localOrderQuoteContextKey(state, building(state, 4))).not.toBe(key);
     const discounted = { ...state, curvature: { ...state.curvature, growth_cut: 1 } };
     expect(localOrderQuoteContextKey(discounted, target)).not.toBe(key);
-    const fewerFields = { ...state, planets: state.planets.map(planet => ({ ...planet, fieldsMax: 1 })) };
+    const fewerFields = { ...state, planets: state.planets.map(planet => ({ ...planet, fieldsMax: 1, terraformerFields: { base: 1, grantedLevels: 0 } })) };
     expect(localOrderQuoteContextKey(fewerFields, target)).not.toBe(key);
     state = queue.enqueue(state, "metal_mine", "manual").state;
     const paidKey = localOrderQuoteContextKey(state, target);

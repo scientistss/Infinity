@@ -2,7 +2,7 @@ import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
 import { isUnitId, unitById } from "../data/units";
 import { selectPlanet } from "./empire";
-import { cancel, enqueue, nextTargetLevel } from "./queue";
+import { cancel, enqueue, isAtomicQueueCancellationReason, nextTargetLevel } from "./queue";
 import { cancelResearch, enqueueResearch, nextResearchLevel } from "./research";
 import { canBuildUnits, cancelUnits, enqueueUnits, SHIPYARD, unitCost } from "./shipyard";
 import {
@@ -115,6 +115,7 @@ export function cancelPaidJob(state: GameState, request: CancelPaidJobRequest): 
     if (index < 0) return failed(state, "付费任务已不存在，未执行取消");
     result = cancelUnits(local, index);
   } else return failed(state, "付费任务种类无效");
+  if (!result.ok && isAtomicQueueCancellationReason(result.reason)) return { ...result, state };
   let next = selectPlanet(result.state, state.activePlanetId);
   if (!result.ok) {
     const owner = state.orders.tasks.find(task => live(task) && task.kind === request.kind && task.planetId === request.planetId && task.activeJob?.jobId === request.jobId);
@@ -125,10 +126,14 @@ export function cancelPaidJob(state: GameState, request: CancelPaidJobRequest): 
 export function cancelOrderTask(state: GameState, taskId: number): OrderResult {
   const task = state.orders.tasks.find(value => value.id === taskId);
   if (!validId(taskId) || !task || !live(task)) return failed(state, "该计划已经结束或不存在");
-  if (task.transport) return cancelTransportOrder(state, taskId);
+  if (task.transport) {
+    const cancellation = cancelTransportOrder(state, taskId);
+    return !cancellation.ok && isAtomicQueueCancellationReason(cancellation.reason) ? { ...cancellation, state } : cancellation;
+  }
   let next = state;
   if (task.activeJob) {
     const cancellation = cancelPaidJob(state, { kind: task.kind, planetId: task.planetId, jobId: task.activeJob.jobId });
+    if (!cancellation.ok && isAtomicQueueCancellationReason(cancellation.reason)) return { ...cancellation, state };
     if (!cancellation.ok) return { ...cancellation, state: setTask(cancellation.state, taskId, { status: "paused", reason: cancellation.reason }) };
     next = cancellation.state;
   }

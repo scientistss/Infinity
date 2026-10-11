@@ -90,6 +90,8 @@ export interface PlayerStats {
 export interface GameState {
   /** Finite local plans and globally stable paid queue identities. */
   orders: OrderState;
+  /** Jobs below this payment boundary keep historical completion without field grants. */
+  terraformerGrantJobFloor: number;
   /** Named ship-count intentions; replenishment is separately authorized and finite. */
   formations: FleetFormationState;
   /** Reusable research goals; authorization is created separately through finite plans. */

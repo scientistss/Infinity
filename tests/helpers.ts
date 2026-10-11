@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { activePlanet, withPlanet } from "../src/game/empire";
 import { big } from "../src/game/decimal";
 import { createInitialState } from "../src/game/state";
@@ -29,4 +30,34 @@ export function relErr(a: number, b: number): number {
 
 export function withResearch(state: GameState, levels: Partial<Record<ResearchId, number>>): GameState {
   return { ...state, research: { ...state.research, levels: { ...state.research.levels, ...levels } } };
+}
+
+/** Deliberate synthetic legacy-schema input, never evidence of a historical export. */
+export function stripSyntheticTerraformerMetadata(state: any): void {
+  // These older feature tests have no earned r10 rewards to erase.
+  expect(Number.isSafeInteger(state.terraformerGrantJobFloor)).toBe(true);
+  for (const planet of state.planets) {
+    expect(planet.terraformerFields).toEqual({ base: planet.fieldsMax, grantedLevels: 0 });
+    delete planet.terraformerFields;
+  }
+  delete state.terraformerGrantJobFloor;
+}
+
+/** Validate the entire additive r10 ledger before comparing prior-schema fields. */
+export function expectTerraformerMigration<T extends { terraformerGrantJobFloor: number;
+  planets: Array<{ id: string; fieldsMax: number; terraformerFields: { base: number; grantedLevels: number } }> }>(
+  actual: T, historical: any,
+): T {
+  // Pre-r5 identities are independently assigned in planet/build/ship/research order.
+  const floor = historical.orders?.nextJobId ?? 1 + historical.planets.reduce((sum: number, planet: any) =>
+    sum + planet.buildQueue.length + planet.shipyardQueue.length, 0) + historical.research.queue.length;
+  expect(actual.terraformerGrantJobFloor).toBe(floor);
+  expect(actual.planets.map(planet => planet.id)).toEqual(historical.planets.map((planet: any) => planet.id));
+  for (let index = 0; index < actual.planets.length; index++) {
+    expect(actual.planets[index]!.terraformerFields).toEqual({ base: historical.planets[index].fieldsMax, grantedLevels: 0 });
+    expect(actual.planets[index]!.fieldsMax).toBe(historical.planets[index].fieldsMax);
+  }
+  const prior = structuredClone(actual);
+  stripSyntheticTerraformerMetadata(prior);
+  return prior;
 }

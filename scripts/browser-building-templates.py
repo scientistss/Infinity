@@ -284,7 +284,7 @@ def import_fixture(page, which='seeded'):
     before = raw(page); selections = page.evaluate('window.__buildingFileSelections.length')
     confirmations = []
     def confirm(dialog):
-        valid = 'v9/r9' in dialog.message and '是否替换当前进度' in dialog.message
+        valid = dialog.message.startswith(f'已读取存档 v{fixture["version"]}/r{fixture["revision"]}。') and '是否替换当前进度' in dialog.message
         confirmations.append({'message': dialog.message, 'valid': valid})
         if valid:
             dialog.accept()

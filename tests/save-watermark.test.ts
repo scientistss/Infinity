@@ -1,3 +1,4 @@
+import { stripSyntheticTerraformerMetadata } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import { equipCard } from "../src/automation/engine";
 import { AccountedClock, type ClockSample } from "../src/core/accounted-clock";
@@ -408,7 +409,7 @@ describe("watermarks respect existing failure and replacement boundaries", () =>
 
   it.each([false, true])("migration uses the old watermark and pairs only its successful replacement (failure=%s)", failed => {
     const legacy = JSON.parse(exportSave(game(), START + 45_000, START));
-    legacy.revision = 7;
+    legacy.revision = 7; stripSyntheticTerraformerMetadata(legacy.state);
     delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy);

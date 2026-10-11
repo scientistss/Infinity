@@ -10,8 +10,8 @@ const root = process.argv[2];
 if (!root) throw Error("Provide the verified preceding source directory");
 const previous = await import(pathToFileURL(resolve(root, "src/game/save.ts")).href);
 const previousContent = await import(pathToFileURL(resolve(root, "src/game/content.ts")).href);
-assert.equal(SAVE_REVISION, 9, "This boundary protects r9 building template intentions");
-assert.equal(previousContent.SAVE_REVISION, 8, "Guard must load the actual preceding r8 reader");
+assert.equal(SAVE_REVISION, 10, "This boundary protects r10 terraformer grant accounting");
+assert.equal(previousContent.SAVE_REVISION, 9, "Guard must load the actual preceding r9 reader");
 assert.equal(previousContent.SAVE_VERSION, 9);
 const state = createInitialState(42);
 state.researchTemplates = { nextTemplateId: 2, templates: [
@@ -24,5 +24,8 @@ state.buildingTemplates = { nextTemplateId: 2, templates: [
   { id: 1, revision: 1, name: "Synthetic retained building intent", goals: [{ building: "metal_mine", targetLevel: 3 }] },
 ] };
 const candidate = exportSave(state, 1_000_000);
+const envelope = JSON.parse(candidate);
+assert.equal(envelope.state.terraformerGrantJobFloor, 1);
+assert.deepEqual(envelope.state.planets[0].terraformerFields, {base: envelope.state.planets[0].fieldsMax, grantedLevels: 0});
 assert.throws(() => previous.importSave(candidate), /修订不兼容/, "Old readers must reject rather than discard new authority fields");
 console.log(JSON.stringify({ currentRevision: SAVE_REVISION, previousReader: `v${previousContent.SAVE_VERSION}/r${previousContent.SAVE_REVISION}`, result: "rejected as required" }));

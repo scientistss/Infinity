@@ -32,6 +32,8 @@ export interface PlanetState {
   /** Max temperature in °C. Drives deuterium output. */
   tempMax: number;
   fieldsMax: number;
+  /** Persistent expansion ledger. Historical fields are the base, never inferred from levels. */
+  terraformerFields: { base: number; grantedLevels: number };
   buildings: Record<BuildingId, number>;
   /** 0–100 in steps of 10. */
   productionPct: Record<ProductionBuildingId, number>;
@@ -58,15 +60,17 @@ export function fullProduction(): Record<ProductionBuildingId, number> {
 
 export const HOMEWORLD_ID = "homeworld";
 /** Empty local inventory; the new-game factory alone grants starting stock. */
-export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {galaxy:1,system:50,position:8}): PlanetState {
+export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {galaxy:1,system:50,position:8}, fieldsMax = HOMEWORLD.fields): PlanetState {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new Error("星球 ID 无效");
+  if (!Number.isSafeInteger(fieldsMax) || fieldsMax < 1 || fieldsMax > 10000) throw new Error("星球格子无效");
   return {
     id,
     coordinates: { ...coordinates },
     resources: { metal: big(0), crystal: big(0), deuterium: big(0) },
     name: HOMEWORLD.name,
     tempMax: HOMEWORLD.tempMax,
-    fieldsMax: HOMEWORLD.fields,
+    fieldsMax,
+    terraformerFields: { base: fieldsMax, grantedLevels: 0 },
     buildings: emptyBuildings(),
     productionPct: fullProduction(),
     buildQueue: [],
@@ -87,6 +91,7 @@ export function clonePlanet(planet: PlanetState): PlanetState {
     ...planet,
     coordinates: { ...planet.coordinates },
     resources: { ...planet.resources },
+    terraformerFields: { ...planet.terraformerFields },
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),

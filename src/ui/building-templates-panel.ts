@@ -1,4 +1,4 @@
-import { activeBuildings, CURRENT_PHASE, isBuildingId, buildingById, type BuildingId } from "../data/buildings";
+import { activeBuildings, isBuildingAvailable, isBuildingId, buildingById, type BuildingId } from "../data/buildings";
 import { quoteBuildingTemplate } from "../game/building-templates";
 import { MAX_BUILDING_TEMPLATES, MAX_BUILDING_TEMPLATE_GOALS, MAX_BUILDING_TEMPLATE_LEVEL, normalizeBuildingTemplateDraft,
   type BuildingGoal, type BuildingTemplateAction, type BuildingTemplateApplyRequest,
@@ -118,11 +118,11 @@ export function installBuildingTemplatesPanel(root: HTMLElement, onAction: (acti
     const existing = new Set(currentDraft().goals.map(item => item.building));
     const building = goal?.building ?? BUILDING_CHOICES.find(id => !existing.has(id));
     if (!building) return;
-    const locked = buildingById(building).phase > CURRENT_PHASE;
+    const locked = !isBuildingAvailable(building);
     const choices = locked ? [...BUILDING_CHOICES, building] : BUILDING_CHOICES;
     const row = document.createElement("div"); row.className = "building-template-goal";
     const number = ++goalCounter;
-    row.innerHTML = `<label>建筑<select id="building-template-building-${number}" aria-label="目标建筑">${choices.map(id => `<option value="${id}">${buildingById(id).nameZh}${buildingById(id).phase > CURRENT_PHASE ? `（设计目标 · 第 ${buildingById(id).phase} 阶段未开放）` : ""}</option>`).join("")}</select></label><label>绝对等级<input type="number" min="1" max="${MAX_BUILDING_TEMPLATE_LEVEL}" step="1" value="${goal?.targetLevel ?? 1}" required aria-label="绝对目标等级" /></label>${button("remove-goal", "移除")}`;
+    row.innerHTML = `<label>建筑<select id="building-template-building-${number}" aria-label="目标建筑">${choices.map(id => `<option value="${id}">${buildingById(id).nameZh}${!isBuildingAvailable(id) ? `（设计目标 · 第 ${buildingById(id).phase} 阶段未开放）` : ""}</option>`).join("")}</select></label><label>绝对等级<input type="number" min="1" max="${MAX_BUILDING_TEMPLATE_LEVEL}" step="1" value="${goal?.targetLevel ?? 1}" required aria-label="绝对目标等级" /></label>${button("remove-goal", "移除")}`;
     get<HTMLSelectElement>(row, "select").value = building;
     container.append(row); register(row);
   }
@@ -197,6 +197,19 @@ export function installBuildingTemplatesPanel(root: HTMLElement, onAction: (acti
     const rows = `<p>${escape(buildingTemplateContextText(latest, mapping))}</p>` + mapping.rows.map(row => `<p data-building-template-map-building="${row.building}" data-building-template-map-status="${row.status}">${escape(buildingTemplateRowText(latest!, row))}</p>`).join("");
     const element = get(panel, "#building-template-mapping");
     if (element.dataset.signature !== rows) { element.innerHTML = rows; element.dataset.signature = rows; }
+    // Refresh only the cheap current execution conditions. The explicitly
+    // reviewed level prices, budgets, authorization and confirm node stay intact.
+    if (review && !get(panel, "#building-template-review-panel").hidden) {
+      const reviewRows = get(panel, "#building-template-review-rows");
+      const context = reviewRows.querySelector<HTMLElement>(":scope > p");
+      const contextText = buildingTemplateContextText(latest, mapping);
+      if (context && context.textContent !== contextText) context.textContent = contextText;
+      for (const row of mapping.rows) {
+        const text = reviewRows.querySelector<HTMLElement>(`[data-building-template-review-building="${row.building}"] > p`);
+        const current = buildingTemplateRowText(latest, row);
+        if (text && text.textContent !== current) text.textContent = current;
+      }
+    }
     const newBuildings = new Set(mapping.rows.filter(row => row.status === "new").map(row => row.building));
     for (const field of get(panel, "#building-template-budgets").querySelectorAll<HTMLFieldSetElement>("fieldset")) {
       const building = field.dataset.buildingTemplateBuilding;

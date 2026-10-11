@@ -70,6 +70,7 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat
   const worldSeed = seed === undefined ? arcade.seed : seed >>> 0;
   return {
     orders: createOrderState(),
+    terraformerGrantJobFloor: 1,
     formations: createFormationState(),
     researchTemplates: createResearchTemplateState(),
     buildingTemplates: createBuildingTemplateState(),

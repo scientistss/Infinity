@@ -1,3 +1,4 @@
+import { CURRENT_PHASE, buildingById } from "../src/data/buildings";
 import { describe, expect, it } from "vitest";
 import { present, summarizeBuilds } from "../src/ui/present";
 import { enqueue } from "../src/game/queue";
@@ -27,6 +28,15 @@ describe("view model", () => {
     const mine = model.buildings.find((b) => b.id === "metal_mine");
     expect(mine?.button).toBe("升级到 等级 5");
     expect(mine?.level).toBe("3（队列中 +1）");
-    expect(model.buildings.some((b) => b.id === "terraformer")).toBe(false);
+    expect(CURRENT_PHASE).toBe(3);
+    expect(model.buildings.filter(building => buildingById(building.id).phase > 3).map(building => building.id)).toEqual(["terraformer"]);
+    const terraformer = model.buildings.find(building => building.id === "terraformer");
+    expect(terraformer).toMatchObject({ level: "0", button: "升级到 等级 1", canEnqueue: false });
+    expect(terraformer!.requires).toContain("纳米机器人工厂");
+    expect(terraformer!.requires).toContain("能源技术");
+    expect(terraformer!.reason).not.toContain("阶段");
+    for (const id of ["space_dock", "lunar_base", "sensor_phalanx", "jump_gate", "alliance_depot"]) {
+      expect(model.buildings.some(building => building.id === id), `${id} must remain hidden`).toBe(false);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../src/game/state";
 import { createPlanet } from "../src/game/planet";
@@ -51,7 +52,7 @@ function queueFile() {
 }
 function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
-  file.revision = revision;
+  file.revision = revision; stripSyntheticTerraformerMetadata(file.state);
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;
@@ -204,6 +205,7 @@ describe("deterministic r2/r3/r4 paid queue migration", () => {
     expect(file).toEqual(original);
     expect(read(file)).toEqual(first);
     expect(first.state.orders).toEqual({ ...createOrderState(), nextJobId: 6 });
+    expectTerraformerMigration(first.state, file.state);
     const ids: number[] = [];
     for (let index = 0; index < first.state.planets.length; index++) {
       const planet = first.state.planets[index]!, old = file.state.planets[index];

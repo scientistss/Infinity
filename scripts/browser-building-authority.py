@@ -1,4 +1,4 @@
-"""Bounded Chromium before/after regression of the real building-template panel.
+"""Bounded Chromium before/after/current regression of the real building-template panel.
 
 Isolated synthetic component harness, not production-app or SaveSession acceptance.
 The reconstructed pre-repair candidate MUST exhibit its known unsafe actions.
@@ -105,7 +105,7 @@ def worker():
             report['sourceCommit'] = provenance['sourceCommit']
             # Verify served bytes actually match the audited build, not just a
             # matching source manifest beside a stale or unrelated component.
-            for variant in ('before', 'after'):
+            for variant in ('before', 'after', 'current'):
                 for item in provenance['variants'][variant]['files']:
                     response = context.request.get(urljoin(base, f"{variant}/{item['path']}"), timeout=10000)
                     check('served artifact matches build hash: ' + item['path'], response.status == 200 and digest(response.body()) == item['sha256'])
@@ -177,7 +177,7 @@ def worker():
                         statuses = [item['state']['orders']['tasks'][0]['status'] for item in observed]
                         check('intermediate real running state was observed while folded', statuses == ['paused', 'running', 'paused'] and all(item['folded'] for item in observed))
                         check('semantic A differs from B and returns to A', observed[0]['authorityKey'] != observed[1]['authorityKey'] and observed[0]['authorityKey'] == observed[2]['authorityKey'])
-                        check('intermediate observation actually retires fixed review', observed[1]['reviewHidden'] == (variant == 'after') and observed[1]['confirmDisabled'] == (variant == 'after'))
+                        check('intermediate observation actually retires fixed review', observed[1]['reviewHidden'] == (variant != 'before') and observed[1]['confirmDisabled'] == (variant != 'before'))
                     if scenario == 'template-edit-aba':
                         check('real edits monotonically increase revisions', [item['state']['buildingTemplates']['templates'][0]['revision'] for item in after['observations']] == [1, 2, 3])
                     check('no JavaScript or network errors', not report['errors'])
@@ -185,6 +185,9 @@ def worker():
             context.close()
             report['beforeUnsafeActionCount'] = sum(row['unsafeActionCount'] for row in report['cases'] if row['variant'] == 'before')
             report['afterUnsafeActionCount'] = sum(row['unsafeActionCount'] for row in report['cases'] if row['variant'] == 'after')
+            report['currentUnsafeActionCount'] = sum(row['unsafeActionCount'] for row in report['cases'] if row['variant'] == 'current')
+            check('all eleven original cases run independently on each exact variant', all(sum(row['variant'] == side for row in report['cases']) == len(CASES) == 11 for side in ('before', 'after', 'current')))
+            check('current shipping panel rejects every stale unsafe action', report['currentUnsafeActionCount'] == 0)
             check('known unsafe original behavior is preserved, fixed stale actions are zero', report['beforeUnsafeActionCount'] == sum(item[1] for item in CASES) and report['afterUnsafeActionCount'] == 0)
             report['completed'] = True
         except BaseException as error:
@@ -281,6 +284,6 @@ else:
     report['processCleanup'] = 'Worker session and PID/start-time-verified descendants targeted; unrelated processes untouched.'
     persist()
     print(json.dumps({'completed': report['completed'], 'beforeUnsafeActionCount': report.get('beforeUnsafeActionCount'),
-                      'afterUnsafeActionCount': report.get('afterUnsafeActionCount'), 'workerExitCode': code,
+                      'afterUnsafeActionCount': report.get('afterUnsafeActionCount'), 'currentUnsafeActionCount': report.get('currentUnsafeActionCount'), 'workerExitCode': code,
                       'report': str(report_path)}))
     sys.exit(code if code else (0 if report.get('completed') else 1))

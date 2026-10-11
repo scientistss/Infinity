@@ -1,7 +1,7 @@
 /**
  * OGame building table (design doc §5.1). Every building of every phase is listed so later
- * phases only flip `phase` and add logic. Buildings with `phase > CURRENT_PHASE` are hidden
- * in the UI and cannot be queued.
+ * phases only flip `phase` and add logic. Availability goes through isBuildingAvailable;
+ * the terraformer is the one independently shipped exception to the current phase.
  */
 
 /**
@@ -260,7 +260,7 @@ export const BUILDINGS: readonly BuildingDef[] = [
       { kind: "research", id: "energy_tech", level: 12 },
     ],
     earlyLevelSpeedup: true,
-    blurb: "每级 +5 格。",
+    blurb: "新版付款升级完成后总格 +5；该级占 1 格，可用格净增 4。",
   },
   {
     id: "space_dock",
@@ -331,5 +331,11 @@ export function isProductionId(value: string): value is ProductionBuildingId {
 
 /** Buildings the player can see and queue in the current phase, in table order. */
 export function activeBuildings(): BuildingDef[] {
-  return BUILDINGS.filter((def) => def.phase <= CURRENT_PHASE);
+  return BUILDINGS.filter(isBuildingAvailable);
+}
+
+/** A narrow feature gate: opening the terraformer does not open the rest of P4/P5/P6. */
+export function isBuildingAvailable(building: BuildingId | BuildingDef): boolean {
+  const def = typeof building === "string" ? buildingById(building) : building;
+  return def.id === "terraformer" || def.phase <= CURRENT_PHASE;
 }

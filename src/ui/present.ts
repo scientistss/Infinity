@@ -36,6 +36,7 @@ import {
 } from "../game/formulas";
 import { expansionScore, scrapeAmount, warpGain } from "../game/logic";
 import { usedFields } from "../game/planet";
+import { isLegacyTerraformerJob, terraformerCompletionProblem, terraformerEnergyRequirement } from "../game/terraformer";
 import { SILO_SLOTS_PER_LEVEL, unitById } from "../data/units";
 import { shipyardView, shipyardVisible, type ShipyardView } from "./shipyard-present";
 import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../game/queue";
@@ -463,15 +464,20 @@ function queueView(state: GameState): QueueView {
     const active = index === 0 && order.totalSeconds > 0;
     const progress = active ? (1 - order.remainingSeconds / order.totalSeconds) * 100 : 0;
     const estimate = secondsFor(state, def, order.targetLevel, order.paid);
+    const safety = index === 0 && order.building === "terraformer" && order.totalSeconds > 0 && order.remainingSeconds === 0
+      ? terraformerCompletionProblem(state, order) : null;
     return {
       index,
       key: `${planet.id}:${order.jobId}`,
       planetId: planet.id,
       jobId: order.jobId,
       label: `${def.nameZh} → 等级 ${order.targetLevel}`,
-      detail: active
+      detail: (active
         ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
-        : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
+        : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`) +
+        (order.building === "terraformer"
+          ? isLegacyTerraformerJob(state, order) ? " · 旧版已付：完成升级，不增加格数" : " · 完成总格 +5，建筑占 1 格"
+          : "") + (safety ? ` · 安全停止：${safety}` : ""),
       progressPct: Math.max(0, Math.min(100, progress)),
       active,
       ...speedupButtons(state, active ? order.remainingSeconds : null, "build"),
@@ -721,10 +727,11 @@ function buildingView(state: GameState, eco: EconomySnapshot, def: BuildingDef):
   return {
     id: def.id,
     level: queued > 0 ? `${planet.buildings[def.id]}（队列中 +${queued}）` : String(planet.buildings[def.id]),
-    cost: costLine(check.cost),
+    cost: (def.id === "terraformer" ? RESOURCE_IDS.map(id => `${resourceName(id)} ${formatAmount(check.cost[id])}`).join(" · ") : costLine(check.cost)) + (def.id === "terraformer"
+      ? ` · 供能 ${formatAmount(big(eco.supply))} / 需要 ${formatAmount(big(terraformerEnergyRequirement(target)))}（不消耗）` : ""),
     time: `建造时间 ${formatDuration(Math.ceil(seconds))}`,
     effect,
-    payback,
+    payback: def.id === "terraformer" ? `格子 ${usedFields(planet)} / ${planet.fieldsMax} · 已付预留 ${planet.buildQueue.length}` : payback,
     requires: missing.length > 0 ? `前置未满足：${missing.join("、")}` : "",
     locked: missing.length > 0,
     button: `升级到 等级 ${target}`,
@@ -742,6 +749,9 @@ function effectOf(
 ): { effect: string; gainPerSecond: number } {
   const id = def.id;
   const b = activePlanet(state).buildings;
+  if (id === "terraformer") {
+    return { effect: "本版新付款入队每级 +5 总格，建筑占 1 格（净 +4）", gainPerSecond: 0 };
+  }
   if (id === "metal_storage" || id === "crystal_storage" || id === "deuterium_tank") {
     return { effect: `容量 ${formatAmount(big(storageCapacity(target - 1)))} → ${formatAmount(big(storageCapacity(target)))}`, gainPerSecond: 0 };
   }

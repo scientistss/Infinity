@@ -1,3 +1,5 @@
+import { readTerraformerFields, readTerraformerGrantJobFloor, rejectLegacyTerraformerFields } from "./terraformer-save";
+import { terraformerStateProblem } from "./terraformer";
 import { readBuildingTemplates, serializeBuildingTemplates, migrateBuildingTemplates, rejectLegacyBuildingTemplateFields } from "./building-templates-save";
 import { readResearchTemplates, serializeResearchTemplates, migrateResearchTemplates, rejectLegacyResearchTemplateFields } from "./research-templates-save";
 import { readFormations, serializeFormations, validateFormationReferences, rejectLegacyFormationFields, migrateFormations } from "./formations-save";
@@ -73,6 +75,7 @@ export interface SerializedPlanet {
   name: string;
   tempMax: number;
   fieldsMax: number;
+  terraformerFields: PlanetState["terraformerFields"];
   buildings: Record<BuildingId, number>;
   productionPct: Record<ProductionBuildingId, number>;
   buildQueue: SerializedOrder[];
@@ -92,6 +95,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 }
 
 export interface SerializedState {
+  terraformerGrantJobFloor: number;
   buildingTemplates: ReturnType<typeof serializeBuildingTemplates>;
   formations: ReturnType<typeof serializeFormations>;
   researchTemplates: ReturnType<typeof serializeResearchTemplates>;
@@ -141,7 +145,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r8 → r9 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r9 → r10 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -164,6 +168,7 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
+    terraformerGrantJobFloor: readTerraformerGrantJobFloor(state.terraformerGrantJobFloor, state.orders.nextJobId),
     buildingTemplates: serializeBuildingTemplates(state.buildingTemplates),
     formations: serializeFormations(state.formations),
     researchTemplates: serializeResearchTemplates(state.researchTemplates),
@@ -194,11 +199,16 @@ export function serializeState(state: GameState): SerializedState {
 }
 
 export function deserializeState(raw: unknown): GameState {
+  return readState(raw, false);
+}
+
+/** Legacy mode is reachable only after importSave validates an older envelope. */
+function readState(raw: unknown, legacyTerraformer: boolean): GameState {
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
   if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
   if (!Array.isArray(raw.planets) || raw.planets.length < 1 || raw.planets.length > 100) throw new Error("星球列表必须包含 1–100 颗星球");
-  state.planets = raw.planets.map(readPlanet);
+  state.planets = raw.planets.map(planet => readPlanet(planet, legacyTerraformer));
   const ids = new Set(state.planets.map(p => p.id));
   if (ids.size !== state.planets.length) throw new Error("星球 ID 重复");
   if (!ids.has(HOMEWORLD_ID)) throw new Error("缺少母星");
@@ -208,6 +218,10 @@ export function deserializeState(raw: unknown): GameState {
   state.researchTemplates = readResearchTemplates(raw.researchTemplates);
   state.formations = readFormations(raw.formations);
   state.orders = readOrders(raw.orders, 8);
+  // Set the compatibility boundary after the historical reader has validated IDs.
+  // This does not allocate a job or change any existing payment identity.
+  state.terraformerGrantJobFloor = legacyTerraformer ? state.orders.nextJobId
+    : readTerraformerGrantJobFloor(raw.terraformerGrantJobFloor, state.orders.nextJobId);
   state.research = readResearch(raw.research);
   if (state.research.queue.some(o => !ids.has(o.planetId))) throw new Error("研究出资星球不存在");
   state.darkMatter = raw.darkMatter === undefined ? big(0) : readAmount(raw.darkMatter, "暗物质");
@@ -230,6 +244,8 @@ export function deserializeState(raw: unknown): GameState {
   state.deepSpace=readDeepState(raw.deepSpace,state);
   validateRingBatchReferences(state);
   validateOrderReferences(state);
+  const terraformerProblem = terraformerStateProblem(state);
+  if (terraformerProblem) throw Error(terraformerProblem);
   validateOrderTransportReferences(state);
   validateFormationReferences(state);
   if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
@@ -252,7 +268,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r9 or explicitly migrate same-schema r2–r8; never touch the current game. */
+/** Validate current v9/r10 or explicitly migrate same-schema r2–r9; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -265,10 +281,12 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== 7 && parsed.revision !== 8 && parsed.revision !== SAVE_REVISION) {
-    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r7/r8/r${SAVE_REVISION}）；原件保留，未导入`);
+  if (parsed.revision !== 2 && parsed.revision !== 3 && parsed.revision !== 4 && parsed.revision !== 5 && parsed.revision !== 6 && parsed.revision !== 7 && parsed.revision !== 8 && parsed.revision !== 9 && parsed.revision !== SAVE_REVISION) {
+    throw Error(`原版 P4 存档修订不兼容（需要 r2/r3/r4/r5/r6/r7/r8/r9/r${SAVE_REVISION}）；原件保留，未导入`);
   }
-  if (parsed.revision !== SAVE_REVISION) {
+  const legacyTerraformer = parsed.revision !== SAVE_REVISION;
+  if (legacyTerraformer) rejectLegacyTerraformerFields(parsed);
+  if (parsed.revision < 9) {
     rejectLegacyBuildingTemplateFields(parsed.state);
     if (parsed.revision < 8) {
       rejectLegacyFormationFields(parsed.state);
@@ -303,7 +321,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(deserializeState(parsed.state)),
+    state: serializeState(readState(parsed.state, legacyTerraformer)),
   };
 }
 
@@ -393,6 +411,7 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
     name: planet.name,
     tempMax: planet.tempMax,
     fieldsMax: planet.fieldsMax,
+    terraformerFields: readTerraformerFields(planet.terraformerFields),
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({
@@ -410,7 +429,7 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
   };
 }
 
-function readPlanet(raw: unknown): PlanetState {
+function readPlanet(raw: unknown, legacyTerraformer: boolean): PlanetState {
   if (!isRecord(raw)) throw new Error("星球数据格式不正确");
   if (!validCoordinates(raw.coordinates)) throw Error("星球坐标无效");
   const planet = createPlanet(readPlanetId(raw.id), raw.coordinates);
@@ -419,7 +438,11 @@ function readPlanet(raw: unknown): PlanetState {
   planet.name = raw.name;
   if (typeof raw.tempMax !== "number" || !Number.isFinite(raw.tempMax) || Math.abs(raw.tempMax) > 1000) throw new Error("星球温度无效");
   planet.tempMax = raw.tempMax;
-  if (raw.fieldsMax !== undefined) planet.fieldsMax = readInteger(raw.fieldsMax, "星球格子", 1, 10000);
+  if (!legacyTerraformer || raw.fieldsMax !== undefined) planet.fieldsMax = readInteger(raw.fieldsMax, "星球格子", 1, 10000);
+  // The old reader owns defaults and normalization. Add the ledger from that
+  // resulting field count, never from historic building levels or generators.
+  planet.terraformerFields = legacyTerraformer ? { base: planet.fieldsMax, grantedLevels: 0 }
+    : readTerraformerFields(raw.terraformerFields);
 
   if (!isRecord(raw.buildings)) throw new Error("建筑等级格式不正确");
   for (const id of BUILDING_IDS) {

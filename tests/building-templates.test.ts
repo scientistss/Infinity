@@ -266,7 +266,7 @@ describe("planet-local building mapping and exact quotations", () => {
     let base = enqueueResearch(rich(stateWith({ research_lab: 1 }), 1e6), "energy_tech", "manual").state;
     base = queue.enqueue(base, "metal_mine", "manual").state;
     base = queue.enqueue(base, "metal_mine", "manual").state;
-    base = withPlanet(base, { planet: { ...activePlanet(base), fieldsMax: 3 } });
+    base = withPlanet(base, { planet: { ...activePlanet(base), fieldsMax: 3, terraformerFields: { base: 3, grantedLevels: 0 } } });
     const state = template(base, [{ building: "crystal_mine", targetLevel: 2 }, { building: "research_lab", targetLevel: 2 }]);
     const quote = quoteBuildingTemplate(state, 1, state.activePlanetId);
     expect(quote.ok).toBe(true);
@@ -276,8 +276,9 @@ describe("planet-local building mapping and exact quotations", () => {
     expect(quote.rows[1]!.warnings.join(" ")).toContain("研究进行中");
   });
   it("warns when several individually-fitting goals collectively exceed remaining fields", () => {
+    // Synthetic base capacity, not an earned terraformer expansion.
     const base = stateWith();
-    const state = template(withPlanet(base, { planet: { ...activePlanet(base), fieldsMax: 3 } }), [metal, { building: "crystal_mine", targetLevel: 2 }]);
+    const state = template(withPlanet(base, { planet: { ...activePlanet(base), fieldsMax: 3, terraformerFields: { base: 3, grantedLevels: 0 } } }), [metal, { building: "crystal_mine", targetLevel: 2 }]);
     const quote = quoteBuildingTemplate(state, 1, state.activePlanetId);
     expect(quote.ok).toBe(true);
     expect(quote.rows.every(row => row.warnings.join(" ").includes("整批目标还需 4"))).toBe(true);
@@ -424,7 +425,7 @@ describe("explicit atomic building-template authorization", () => {
     if (change === "coordinates") changed = withPlanet(state, { planet: { ...payer, coordinates: { ...payer.coordinates, system: payer.coordinates.system === 1 ? 2 : 1 } } });
     if (change === "building-level") changed = withPlanet(state, { planet: { ...payer, buildings: { ...payer.buildings, robotics_factory: 1 } } });
     if (change === "research-level") changed = withResearch(state, { computer_tech: 1 });
-    if (change === "fields") changed = withPlanet(state, { planet: { ...payer, fieldsMax: payer.fieldsMax + 1 } });
+    if (change === "fields") changed = withPlanet(state, { planet: { ...payer, fieldsMax: payer.fieldsMax + 1, terraformerFields: { ...payer.terraformerFields, base: payer.terraformerFields.base + 1 } } });
     if (change === "growth-cut") changed = { ...state, curvature: { ...state.curvature, growth_cut: 1 } };
     if (change === "new-task") changed = buildingOrder(state, "solar_plant", 1);
     if (change === "queue-added") changed = queue.enqueue(state, "solar_plant", "manual").state;

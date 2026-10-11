@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activeBuildings } from "../src/data/buildings";
+import { activeBuildings, CURRENT_PHASE } from "../src/data/buildings";
 import type { BuildingGoal } from "../src/game/building-template-state";
 import { createBuildingTemplate, quoteBuildingTemplate } from "../src/game/building-templates";
 import { advanceOrderPlans, createOrderTask, pauseOrderTask, resumeOrderTask } from "../src/game/orders";
@@ -103,16 +103,34 @@ describe("building-template read-only presentation", () => {
     expect(text).toContain("本次预算不认领原付款");
   });
 
-  it("labels imported phase-locked goals and surfaces whole-batch conflicts", () => {
-    let state = template([{building: "metal_mine", targetLevel: 3}, {building: "terraformer", targetLevel: 1}]);
+  it("opens terraformer alone, retains imported later-phase labels and surfaces whole-batch conflicts", () => {
+    let state = template([{building: "metal_mine", targetLevel: 3}, {building: "terraformer", targetLevel: 1},
+      {building: "space_dock", targetLevel: 1}, {building: "lunar_base", targetLevel: 1},
+      {building: "sensor_phalanx", targetLevel: 1}, {building: "jump_gate", targetLevel: 1},
+      {building: "alliance_depot", targetLevel: 1}]);
     const created = createOrderTask(state, {kind: "building", building: "metal_mine", targetLevel: 2,
       planetId: "homeworld", budget: money(), expectedNextTaskId: state.orders.nextTaskId});
     expect(created.ok, created.reason).toBe(true);
     state = created.state;
     const mapping = buildingTemplateMapping(state, 1, "homeworld");
-    expect(buildingTemplateGoals(state.buildingTemplates.templates[0]!)).toContain("设计目标 · 第 4 阶段未开放");
+    expect(CURRENT_PHASE).toBe(3);
+    expect(activeBuildings().filter(building => building.phase > 3).map(building => building.id)).toEqual(["terraformer"]);
+    const goals = buildingTemplateGoals(state.buildingTemplates.templates[0]!);
+    expect(goals).toContain("地形改造器 → 1 级");
+    expect(goals).not.toContain("第 4 阶段未开放");
     expect(buildingTemplateRowText(state, mapping.rows[0]!)).toContain("整次不可创建");
-    expect(buildingTemplateRowText(state, mapping.rows[1]!)).toContain("设计目标 · 第 4 阶段未开放");
+    const terraformer = buildingTemplateRowText(state, mapping.rows.find(row => row.building === "terraformer")!);
+    expect(terraformer).toContain("地形改造器 → 1 级");
+    expect(terraformer).not.toContain("阶段");
+    expect(terraformer).toContain("纳米机器人工厂");
+    expect(terraformer).toContain("能源技术");
+    for (const [building, phase] of [["space_dock", 5], ["lunar_base", 5], ["sensor_phalanx", 6],
+      ["jump_gate", 6], ["alliance_depot", 6]] as const) {
+      const row = mapping.rows.find(row => row.building === building)!;
+      expect(row, `${building} remains a saved design goal`).toBeDefined();
+      expect(buildingTemplateRowText(state, row)).toContain(`设计目标 · 第 ${phase} 阶段未开放`);
+      expect(row.warnings).toContain(`第 ${phase} 阶段开放`);
+    }
     expect(mapping.ok).toBe(false);
   });
 

@@ -1,4 +1,4 @@
-import { CURRENT_PHASE, buildingById } from "../data/buildings";
+import { isBuildingAvailable, buildingById } from "../data/buildings";
 import { mapBuildingTemplate, buildingTemplateAuthorityKey } from "../game/building-templates";
 import type { BuildingTemplate, BuildingTemplateMapping, BuildingTemplateRow } from "../game/building-template-state";
 import { compareOrderAmounts, subtractOrderAmounts } from "../game/order-money";
@@ -12,7 +12,7 @@ export const buildingTemplateMoney = (money: OrderMoney) => BUILDING_TEMPLATE_RE
 export const buildingTemplatePlanet = (state: GameState, id: string) => state.planets.find(planet => planet.id === id)?.name ?? `${id}（已不存在）`;
 function goalName(goal: BuildingTemplate["goals"][number]): string {
   const def = buildingById(goal.building);
-  return `${def.nameZh} → ${goal.targetLevel} 级${def.phase > CURRENT_PHASE ? `（设计目标 · 第 ${def.phase} 阶段未开放）` : ""}`;
+  return `${def.nameZh} → ${goal.targetLevel} 级${!isBuildingAvailable(def) ? `（设计目标 · 第 ${def.phase} 阶段未开放）` : ""}`;
 }
 export const buildingTemplateGoals = (template: BuildingTemplate) => template.goals.map(goalName).join(" · ");
 

@@ -1,4 +1,4 @@
-import { BUILDING_IDS, CURRENT_PHASE, buildingById, type BuildingId } from "../data/buildings";
+import { BUILDING_IDS, isBuildingAvailable, buildingById, type BuildingId } from "../data/buildings";
 import { RESEARCH_IDS } from "../data/research";
 import { growthCut } from "../prestige/tree";
 import { activePlanet, selectPlanet } from "./empire";
@@ -18,6 +18,7 @@ import {
 } from "./building-template-state";
 import { missingRequirements } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
+import { terraformerEnqueueProblem } from "./terraformer";
 
 export type { BuildingTemplateAction, BuildingTemplateResult } from "./building-template-state";
 const validId = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER;
@@ -73,7 +74,11 @@ export function mapBuildingTemplate(state: GameState, templateId: number, planet
     const warnings: string[] = [];
     if (status === "new") {
       const def = buildingById(goal.building);
-      if (def.phase > CURRENT_PHASE) warnings.push(`第 ${def.phase} 阶段开放`);
+      if (!isBuildingAvailable(def)) warnings.push(`第 ${def.phase} 阶段开放`);
+      if (goal.building === "terraformer") {
+        const terraformerProblem = terraformerEnqueueProblem(local, nextUnpaidLevel);
+        if (terraformerProblem) warnings.push(terraformerProblem);
+      }
       const missing = missingRequirements(local, def.requires);
       if (missing.length) warnings.push(`需要 ${missing.join("、")}`);
       if (goal.building === "research_lab" && state.research.queue.length) warnings.push("研究进行中，研究实验室不能升级");
@@ -89,7 +94,8 @@ export function mapBuildingTemplate(state: GameState, templateId: number, planet
   const futureFields = rows.reduce((count, row) => count + (row.status === "new" || row.status === "covered"
     ? Math.max(0, Math.max(row.targetLevel, row.existingTask?.targetLevel ?? 0) - row.nextUnpaidLevel + 1) : 0), 0);
   if (futureFields > 0 && used + reserved + futureFields > planet.fieldsMax) {
-    const warning = `整批目标还需 ${futureFields} 个格子；已用 ${used}、付费队列预留 ${reserved}、上限 ${planet.fieldsMax}，未来格子不足，计划会等待`;
+    const warning = `整批目标还需 ${futureFields} 个格子；已用 ${used}、付费队列预留 ${reserved}、上限 ${planet.fieldsMax}，未来格子不足，计划会等待` +
+      (rows.some(row => row.building === "terraformer") ? "；按当前格子估算，地形改造实际完成后重新检查，不预支未来格数" : "");
     for (const row of rows) if (row.status === "new") row.warnings.push(warning);
   }
   const blockers = rows.filter(row => row.status === "conflict").map(row => `${buildingById(row.building).nameZh} 已有冲突计划，不能批量应用`);

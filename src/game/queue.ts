@@ -4,7 +4,7 @@ import { activePlanet, withPlanet } from "./empire";
  * Cost is charged on enqueue at the order's target level and refunded in full on cancel.
  * Duration is computed when an order starts, from the robotics/nanite levels at that moment.
  */
-import { CURRENT_PHASE, buildingById, type BuildingDef, type BuildingId } from "../data/buildings";
+import { buildingById, isBuildingAvailable, type BuildingDef, type BuildingId } from "../data/buildings";
 import { growthCut } from "../prestige/tree";
 import { QUEUE_BASE_CAPACITY, resourceName } from "./content";
 import { big } from "./decimal";
@@ -14,9 +14,10 @@ import { buildSeconds, buildingCost, type ResourceCost } from "./formulas";
 import { clonePlanet, usedFields, type BuildOrder, type OrderSource, type PlanetState } from "./planet";
 import { missingRequirements as missingFrom } from "./requirements";
 import { RESOURCE_IDS, type GameState } from "./types";
-import { cancelledPaidJob, creditPaidJob, preparePaidJob, refundPaidJob } from "./order-ledger";
+import { cancelledPaidJob, creditPaidJob, ORDER_IDENTITY_REASON, preparePaidJob, refundPaidJob, validOwnedPaidJob } from "./order-ledger";
 import { subtractOrderAmounts } from "./order-money";
-import type { OrderMoney } from "./order-state";
+import { MAX_ORDER_LEVEL, type OrderMoney } from "./order-state";
+import { isLegacyTerraformerJob, TERRAFORMER_FIELDS_PER_LEVEL, terraformerCompletionProblem, terraformerEnqueueProblem, terraformerStateProblem } from "./terraformer";
 
 export interface EnqueueCheck {
   ok: boolean;
@@ -33,6 +34,13 @@ export interface QueueResult {
   state: GameState;
   ok: boolean;
   reason: string;
+}
+
+/** A rejected legacy retarget is strictly a no-op, including higher-level plan wrappers. */
+export const QUEUE_TARGET_CANCEL_REASON = "取消会使后续已付任务的目标等级无效，原队列和资源已保留";
+export const QUEUE_TERRAFORMER_CANCEL_REASON = "取消会破坏地形改造器付费凭证或格子账，原队列和资源已保留";
+export function isAtomicQueueCancellationReason(reason: string): boolean {
+  return reason === QUEUE_TARGET_CANCEL_REASON || reason === QUEUE_TERRAFORMER_CANCEL_REASON;
 }
 
 export interface CompletedBuild {
@@ -92,9 +100,10 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
   const def = buildingById(id);
   const planet = activePlanet(state);
   const targetLevel = nextTargetLevel(planet, id);
-  const cost = costFor(state, id, targetLevel);
+  const cost = id === "terraformer" && (!Number.isSafeInteger(targetLevel) || targetLevel < 1 || targetLevel > MAX_ORDER_LEVEL)
+    ? zeroCost() : costFor(state, id, targetLevel);
   const fail = (reason: string): EnqueueCheck => ({ ok: false, reason, targetLevel, cost });
-  if (def.phase > CURRENT_PHASE) return fail(`第 ${def.phase} 阶段开放`);
+  if (!isBuildingAvailable(def)) return fail(`第 ${def.phase} 阶段开放`);
   const missing = missingRequirements(state, def);
   if (missing.length > 0) return fail(`需要 ${missing.join("、")}`);
   if (id === "research_lab" && state.research.queue.length > 0) return fail("研究进行中，研究实验室不能升级");
@@ -102,6 +111,10 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
   if (planet.buildQueue.length >= capacity) return fail(`建造队列已满（${planet.buildQueue.length}/${capacity}）`);
   if (usedFields(planet) + planet.buildQueue.length >= planet.fieldsMax) {
     return fail(`星球格子已满（${usedFields(planet)}/${planet.fieldsMax}）`);
+  }
+  if (id === "terraformer") {
+    const problem = terraformerEnqueueProblem(state, targetLevel);
+    if (problem) return fail(problem);
   }
   const lack = shortfall(state, cost);
   if (lack) return { ok: false, reason: lack, targetLevel, cost, onlyResources: true };
@@ -149,13 +162,30 @@ export function startNext(state: GameState): GameState {
 }
 
 /** Finish the head order: level up, record stats, start the next one. */
-export function completeActive(state: GameState): { state: GameState; completed: CompletedBuild | null } {
+export function completeActive(state: GameState): { state: GameState; completed: CompletedBuild | null; reason?: string } {
   const head = activePlanet(state).buildQueue[0];
   if (!head) return { state, completed: null };
+  const terraformer = head.building === "terraformer";
+  if (terraformer) {
+    const problem = terraformerCompletionProblem(state, head);
+    if (problem) return { state, completed: null, reason: problem };
+  }
   const credited = creditPaidJob(state, { kind: "building", planetId: state.activePlanetId, jobId: head.jobId, taskId: head.taskId }, 1, true);
+  // creditPaidJob intentionally returns the input on invalid receipts. A terraformer must
+  // never grant fields or consume its paid job unless its plan credit actually succeeded.
+  if (terraformer && head.source === "plan") {
+    const receipt = credited.orders.tasks.find(task => task.id === head.taskId);
+    if (credited === state || !receipt || receipt.activeJob !== null || receipt.currentWork !== null) {
+      return { state, completed: null, reason: "地形改造器计划完成记账失败，原付费任务保留" };
+    }
+  }
   const planet = clonePlanet(activePlanet(credited));
   planet.buildQueue.shift();
   planet.buildings[head.building] = Math.max(planet.buildings[head.building], head.targetLevel);
+  if (terraformer && !isLegacyTerraformerJob(state, head)) {
+    planet.terraformerFields.grantedLevels += 1;
+    planet.fieldsMax += TERRAFORMER_FIELDS_PER_LEVEL;
+  }
   const stats = {
     ...state.stats,
     buildsCompleted: state.stats.buildsCompleted + 1,
@@ -172,6 +202,18 @@ export function completeActive(state: GameState): { state: GameState; completed:
 export function cancel(state: GameState, index: number): QueueResult {
   const target = activePlanet(state).buildQueue[index];
   if (!Number.isInteger(index) || !target) return { state, ok: false, reason: "队列中没有这一项" };
+  // Historical readers accepted duplicate targets, including level 0 with [1, 1].
+  // Keep that source state valid, but do not let cancellation manufacture target level 0.
+  if (activePlanet(state).buildQueue.slice(index + 1).some(order => order.building === target.building
+    && (!Number.isSafeInteger(order.targetLevel) || order.targetLevel <= 1))) {
+    return { state, ok: false, reason: QUEUE_TARGET_CANCEL_REASON };
+  }
+  if (target.building === "terraformer") {
+    if (terraformerStateProblem(state)) return { state, ok: false, reason: QUEUE_TERRAFORMER_CANCEL_REASON };
+    // Already-broken receipts retain the existing owner-pause contract. The atomic
+    // refusal below is specifically for damage this otherwise valid cancellation creates.
+    if (!validTerraformerCancellationState(state)) return { state, ok: false, reason: ORDER_IDENTITY_REASON };
+  }
   // Assemble every refund against a candidate. A later exact-ledger failure must not leak
   // an earlier refund, a level change, or a removed job into the returned state.
   let candidate = state;
@@ -217,11 +259,25 @@ export function cancel(state: GameState, index: number): QueueResult {
   candidate = cancelledPaidJob(candidate, { kind: "building", planetId: planet.id, jobId: target.jobId, taskId: target.taskId });
   planet.resources = activePlanet(candidate).resources;
   const next = startNext(withPlanet(candidate, { planet }));
+  if (target.building === "terraformer" && (!validTerraformerCancellationState(next)
+    || target.source === "plan" && next.orders.tasks.find(task => task.id === target.taskId)?.activeJob !== null)) {
+    return { state, ok: false, reason: QUEUE_TERRAFORMER_CANCEL_REASON };
+  }
   return {
     state: next,
     ok: true,
     reason: `已取消 ${buildingById(target.building).nameZh} → 等级 ${target.targetLevel}，资源已全额退还`,
   };
+}
+
+function validTerraformerCancellationState(state: GameState): boolean {
+  if (terraformerStateProblem(state)) return false;
+  const planet = activePlanet(state);
+  return planet.buildQueue.every(job => {
+    if (job.building !== "terraformer" || job.source !== "plan") return true;
+    const task = state.orders.tasks.find(value => value.id === job.taskId);
+    return !!task && task.planetId === planet.id && task.activeJob?.jobId === job.jobId && validOwnedPaidJob(state, task);
+  });
 }
 
 export function zeroCost(): ResourceCost {

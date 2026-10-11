@@ -1,3 +1,4 @@
+import { stripSyntheticTerraformerMetadata } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import { armAutoRunner, equipCard, refreshUnlocks } from "../src/automation/engine";
 import { grantRun } from "../src/game/arcade";
@@ -162,7 +163,7 @@ describe("read-only file preparation", () => {
 
   it("reports the file's original revision without rewriting a supported migration", async () => {
     const legacy = JSON.parse(raw(91));
-    legacy.revision = 7;
+    legacy.revision = 7; stripSyntheticTerraformerMetadata(legacy.state);
     delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy), store = new MemoryStore(), session = new SaveSession(store, NOW);

@@ -1,4 +1,5 @@
-import { buildingById, CURRENT_PHASE, isBuildingId } from "../data/buildings";
+import { terraformerEnqueueProblem } from "../game/terraformer";
+import { buildingById, isBuildingAvailable, isBuildingId } from "../data/buildings";
 import { isResearchId, researchById } from "../data/research";
 import { isUnitId, unitById, UNIT_IDS } from "../data/units";
 import { selectPlanet } from "../game/empire";
@@ -10,7 +11,7 @@ import {
   type OrderMoney, type OrderTarget, type OrderTask,
 } from "../game/order-state";
 import { usedFields, type BuildOrder } from "../game/planet";
-import { costFor, queueCapacity } from "../game/queue";
+import { costFor, nextTargetLevel, queueCapacity } from "../game/queue";
 import { missingRequirements } from "../game/requirements";
 import { labBusyReason, researchCapacity, researchCostFor, type ResearchOrder } from "../game/research";
 import { exactUnitCost, SHIPYARD, siloCapacity, siloUsed, unitTotal } from "../game/shipyard";
@@ -108,6 +109,8 @@ export function localOrderQuoteContextKey(state: GameState, target: OrderTarget)
     def?.siloSlots ? UNIT_IDS.filter(id => unitById(id).siloSlots).map(id => planet.units[id]) : null,
     state.orders.tasks.length, state.orders.tasks.filter(isLive).length,
     state.orders.tasks.filter(task => isLive(task) && sameTarget(task, target)).map(task => [task.id, task.status]),
+    ...(target.kind === "building" && target.building === "terraformer"
+      ? [terraformerEnqueueProblem(selectPlanet(state, target.planetId), nextTargetLevel(planet, "terraformer"))] : []),
   ]);
 }
 
@@ -148,7 +151,11 @@ function warningsFor(state: GameState, target: OrderTarget, remaining: number): 
     const def = buildingById(target.building);
     const missing = missingRequirements(local, def.requires);
     if (missing.length) warnings.push(`前置条件未满足：${missing.join("、")}`);
-    if (def.phase > CURRENT_PHASE) warnings.push(`该建筑在第 ${def.phase} 阶段开放，当前不能执行`);
+    if (!isBuildingAvailable(def)) warnings.push(`该建筑在第 ${def.phase} 阶段开放，当前不能执行`);
+    if (target.building === "terraformer" && planet.buildings.terraformer < target.targetLevel) {
+      const terraformerProblem = terraformerEnqueueProblem(local, nextTargetLevel(planet, "terraformer"));
+      if (terraformerProblem) warnings.push(terraformerProblem);
+    }
     if (target.building === "research_lab" && state.research.queue.length) warnings.push("研究队列未清空，研究实验室暂不能升级");
     if (planet.buildQueue.length >= queueCapacity(local)) warnings.push("建造队列已满，需等待空位");
     else if (planet.buildQueue.length) warnings.push("已有付费建造排队，新工作仍需等待建造队列");

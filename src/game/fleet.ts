@@ -263,7 +263,8 @@ export function resolveFleetArrivals(state: GameState): GameState {
       cargo = emptyCargo();
     } else if (fleet.mission === "colonize" && !target && !npcAt(next, fleet.target) && next.planets.length < SPACE.maxPlanets && colonyCount(next) < colonyLimit(next) && (ships.colony_ship ?? 0) > 0) {
       const id = `colony-${fleet.id}`;
-      const planet = { ...createPlanet(), ...planetProperties(next.universe.seed, fleet.target), id, name: `殖民地 ${coordinateKey(fleet.target)}`, coordinates: { ...fleet.target }, resources: { ...fleet.cargo } };
+      const properties = planetProperties(next.universe.seed, fleet.target);
+      const planet = { ...createPlanet(id, { ...fleet.target }, properties.fieldsMax), ...properties, name: `殖民地 ${coordinateKey(fleet.target)}`, resources: { ...fleet.cargo } };
       next = { ...next, planets: [...next.planets, planet] };
       ships.colony_ship! -= 1;
       cargo = emptyCargo();

@@ -129,7 +129,8 @@ describe("bounded read-only expansion navigation", () => {
   });
   it("uses saved owned-world properties and the homeworld's actual baseline", () => {
     const state = ready(), home = activePlanet(state);
-    home.tempMax = 17; home.fieldsMax = 199;
+    // Synthetic stored-property boundary, with no earned terraformer grants.
+    home.tempMax = 17; home.fieldsMax = 199; home.terraformerFields = { base: 199, grantedLevels: 0 };
     const model = expansionNavigation(valid(state), home.coordinates, home.coordinates.position);
     expect(model.selected.properties).toMatchObject({ source: "stored", tempMin: -23, tempMax: 17, fieldsMax: 199 });
     expect(model.selected.bonuses).toMatchObject({ homeBaseline: true, metal: 1, crystal: 1, deuterium: 1 });
@@ -138,7 +139,7 @@ describe("bounded read-only expansion navigation", () => {
   });
   it.each([1, 3, 6, 8, 10, 15])("uses actual position bonus for owned colony at position %i", position => {
     const state = ready(), target = { galaxy: 2, system: 1, position };
-    state.planets.push({ ...createPlanet("fixture-colony", target), tempMax: -12, fieldsMax: 177 });
+    state.planets.push({ ...createPlanet("fixture-colony", target, 177), tempMax: -12 });
     const model = expansionNavigation(valid(state), target, position);
     expect(model.selected.properties).toMatchObject({ source: "stored", tempMax: -12, fieldsMax: 177 });
     expect(model.selected.bonuses).toMatchObject({ homeBaseline: false, metal: positionBonus(position, "metal"), crystal: positionBonus(position, "crystal") });

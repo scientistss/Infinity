@@ -1,5 +1,5 @@
 /** Exact archived-engine comparison for the segment-local fleet census.
- * Only anonymous prepared snapshots. All historical fields stay exact; only the asserted empty r9 library is added.
+ * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata are added.
  * Usage: node --import tsx scripts/check-shipyard-census-parity.mjs BEFORE FIXTURE MODERATE
  */
 import { assertR8StatePreserved } from './r8-compatibility.mjs';
@@ -59,18 +59,20 @@ const studying=oldResearch.enqueueResearch(satellites,'energy_tech','manual');as
 cases['synthetic-satellites-research-idle-protocol']=oldSave.serializeState(satellites);
 const upgrading=oldQueue.enqueue(satellites,'shipyard','manual');assert.ok(upgrading.ok,upgrading.reason);
 cases['synthetic-yard-upgrade-pause']=oldSave.serializeState(upgrading.state);
-const rows=[];
+const rows=[],grantEpochs=[];
 function run(name,raw,steps,mode='live',recall=false){
+ const migrationFloor=raw.orders.nextJobId;
+ let expectedGrantFloor=migrationFloor;
  let old=oldSave.deserializeState(raw),next=nextSave.deserializeState(nextSave.importSave(oldSave.exportSave(oldSave.deserializeState(raw),123456)).state),recalled=null,recallStock=null,returnVerified=false;
- assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state');
+ assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state',migrationFloor);
  if(recall){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
   const aLog=oldLogic.emptyTickLog(),bLog=nextLogic.emptyTickLog();
   old=oldLogic.tick(old,.5,'live',aLog);next=nextLogic.tick(next,.5,'live',bLog);
-  assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': actual outbound elapsed before recall');
+  assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': actual outbound elapsed before recall',migrationFloor);
   assert.deepEqual(aLog,bLog,name+': full pre-recall TickLog');
   assert.deepEqual(oldInput,raw,name+': original input canonical');
-  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical');
+  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical',migrationFloor);
   rows.push({name:name+'-pre-recall',mode:'live',seconds:.5,sha256:sha(JSON.stringify(nextSave.serializeState(next)))});
   const fleet=old.fleets.find(f=>!f.returning&&!f.orderTransport);
   assert.ok(fleet&&fleet.elapsed>0,name+': real ordinary fleet has actually spent outbound time');
@@ -79,7 +81,7 @@ function run(name,raw,steps,mode='live',recall=false){
   const a=oldFleet.recallFleet(old,fleet.id),b=nextFleet.recallFleet(next,fleet.id);
   assert.equal(a.ok,b.ok,name+': recall outcome');assert.equal(a.reason,b.reason,name+': recall reason');
   assert.ok(a.ok&&a.state.fleets.some(f=>f.id===fleet.id&&f.returning&&f.remaining>0),name+': recall leaves a genuine in-flight return');
-  old=a.state;next=b.state;assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': full recall state');
+  old=a.state;next=b.state;assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': full recall state',migrationFloor);
  }
  for(const seconds of steps){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
@@ -88,7 +90,27 @@ function run(name,raw,steps,mode='live',recall=false){
   assert.deepEqual(oldSave.serializeState(old),oldInput,name+': archived input purity');
   assert.deepEqual(nextSave.serializeState(next),nextInput,name+': candidate input purity');
   const expected=oldSave.serializeState(a),actual=nextSave.serializeState(b);
-  assertR8StatePreserved(actual,expected,`${name}: every serialized field after ${seconds}s/${mode}`);
+  if(a.stats.launches!==old.stats.launches){
+   // Only the independently archived automatic-prestige fixture starts a new
+   // grant epoch. Ordinary ticks keep the migration floor, even as jobs issue.
+   assert.ok(name==='moderate-automatic-live'||name==='moderate-automatic-offline',name+': explicit automatic-prestige case');
+   assert.equal(a.stats.launches,old.stats.launches+1,name+': exactly one archived launch');
+   assert.equal(a.stats.automatedLaunches,old.stats.automatedLaunches+(old.stats.manualActions===0?1:0),name+': archived manualActions-based launch statistic');
+   assert.equal(a.stats.manualActions,0,name+': prestige clears manual action count');
+   assert.ok(old.protocols.slots.some(slot=>slot.card?.enabled&&slot.card.action.kind==='prestige'),name+': preexisting authorized prestige card');
+   assert.equal(a.protocols.slots.filter(slot=>slot.card?.action.kind==='prestige'&&slot.lamp==='green'&&/^已重置，获得 [0-9]+ 曲率核心$/.test(slot.reason)).length,1,name+': exact archived successful prestige protocol event');
+   assert.equal(a.planets.length,1,name+': fresh single-world epoch');
+   assert.equal(a.planets[0].id,'homeworld',name+': fresh homeworld');
+   assert.ok(Object.values(a.planets[0].buildings).every(level=>level===0),name+': no construction completed after reset');
+   assert.equal(a.planets[0].buildQueue.length+a.planets[0].shipyardQueue.length+a.research.queue.length,0,name+': no paid jobs after reset');
+   assert.ok(a.orders.tasks.every(task=>task.status==='completed'||task.status==='cancelled'),name+': all prior plan authority retired');
+   assert.ok(a.protocols.slots.every(slot=>!slot.card?.enabled||['collect','prestige'].includes(slot.card.action.kind)),name+': remaining protocols cannot issue paid jobs');
+   // No post-reset payment authority or work exists, so this retained historical
+   // counter is the independently established reset boundary, not a later ID.
+   grantEpochs.push({name,seconds,mode,previousFloor:expectedGrantFloor,resetFloor:a.orders.nextJobId,launches:a.stats.launches});
+   expectedGrantFloor=a.orders.nextJobId;
+  }
+  assertR8StatePreserved(actual,expected,`${name}: every serialized field after ${seconds}s/${mode}`,expectedGrantFloor);
   assert.deepEqual(bLog,aLog,`${name}: full ordered TickLog`);
   rows.push({name,mode,seconds,sha256:sha(JSON.stringify(actual)),completedBuilds:bLog.completedBuilds.length,completedResearch:bLog.completedResearch.length,completedUnits:bLog.completedUnits.length});
   if(recalled&&!returnVerified&&!b.fleets.some(f=>f.id===recalled.id)){
@@ -132,10 +154,10 @@ for(const [name,raw] of [['moderate',moderate.ready.state],['combined',pressure.
   const start=performance.now();const state=label==='before'?oldLogic.tick(a,1/60):nextLogic.tick(b,1/60);const elapsed=performance.now()-start;
   if(n>=6)samples[label].push(elapsed);
   // Complete-output equality is checked outside the measured interval.
-  if(n===25)assertR8StatePreserved(nextSave.serializeState(label==='after'?state:nextLogic.tick(b,1/60)),oldSave.serializeState(label==='before'?state:oldLogic.tick(a,1/60)),'timed whole-state output');
+  if(n===25)assertR8StatePreserved(nextSave.serializeState(label==='after'?state:nextLogic.tick(b,1/60)),oldSave.serializeState(label==='before'?state:oldLogic.tick(a,1/60)),'timed whole-state output',raw.orders.nextJobId);
  }
  assert.equal(JSON.stringify(nextSave.serializeState(b)),input,'benchmark candidate input unchanged');
  assert.deepEqual(oldSave.serializeState(a),raw,'benchmark archived input unchanged');
  timings.push({profile:name,stepSeconds:1/60,mode:'live',warmupPairs:6,order:'AB/BA alternating',samplesMs:samples,summary:{before:stats(samples.before),after:stats(samples.after)}});
 }
-console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, sole independently asserted empty r9 buildingTemplates addition, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));
+console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions with independently proven automatic-prestige epoch resets, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));
