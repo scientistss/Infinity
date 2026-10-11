@@ -4,6 +4,14 @@ import copy
 import math
 import json
 import unittest
+import hashlib
+import os
+import sys
+import subprocess
+import tempfile
+import time
+import traceback
+from unittest import mock
 from fractions import Fraction
 from pathlib import Path
 
@@ -443,6 +451,328 @@ class NativeScrollGeometryContract(unittest.TestCase):
         self.assertNotIn("min(region['y'] + 30, 900)", self.source)
         for forbidden in ('scrollIntoView(', 'force=True', 'scrollLeft =', 'scrollLeft='):
             self.assertNotIn(forbidden, self.source)
+
+
+class NativeJournalContract(unittest.TestCase):
+    """Run the actual native recorder offline, never importing Playwright."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+        cls.tree = ast.parse(cls.source)
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.out = Path(self.directory.name)
+        names = {'NativeCheckJournal', 'replay_native_journal', 'recover_native_report',
+                 'atomic_json', 'flush', 'check', 'capture_failure'}
+        selected = ast.Module(body=[node for node in self.tree.body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names], type_ignores=[])
+        self.scope = dict(json=json, os=os, time=time, hashlib=hashlib, traceback=traceback, sys=sys)
+        exec(compile(selected, '<offline-native-recorder>', 'exec'), self.scope)
+        self.journal = self.scope['NativeCheckJournal'](self.out / 'npc-attack-checks.jsonl')
+        self.addCleanup(os.close, self.journal.fd)
+        self.checks, self.evidence = [], []
+        self.scope.update(journal=self.journal, checks=self.checks, evidence=self.evidence,
+            out=self.out, report_path=self.out / 'npc-attack-browser-report.json',
+            progress_path=self.out / 'npc-attack-progress.json', case='offline native recorder',
+            completed=False, failure=None, last_progress_at=0.0, recorder_host_seconds=0.0,
+            HOST_STARTED_MONOTONIC=time.monotonic(), CARD='#card', QUEUE='#queue')
+        self.metadata = {'case': 'offline native recorder', 'timing': {'simulatedSeconds': 0},
+                         'sourceSha': 'a' * 40, 'errors': [], 'failedRequests': []}
+        self.scope['full_report'] = lambda: {**self.metadata,
+            'completed': self.scope['completed'], 'result': 'passed' if self.scope['completed'] else 'incomplete',
+            'checks': self.checks, 'evidence': self.evidence,
+            'passed': sum(row['passed'] for row in self.checks), 'failure': self.scope['failure']}
+
+    def replay(self):
+        return self.scope['replay_native_journal'](self.journal.path)
+
+    def recover(self, worker_ok=True):
+        return self.scope['recover_native_report'](self.journal.path, self.scope['report_path'],
+                                                  self.scope['progress_path'], worker_ok)
+
+    def add_check(self, name='assertion', passed=True, detail=None):
+        row = {'case': self.scope['case'], 'name': name, 'passed': passed}
+        if detail is not None: row['detail'] = detail
+        self.checks.append(row)
+        self.scope['flush']()
+
+    def seal(self):
+        self.scope['completed'] = True
+        self.scope['flush'](full=True, final=True)
+
+    def test_success_requires_sealed_equal_report_and_clean_worker(self):
+        self.add_check(detail={'中文': 'exact\\nbytes', 'number': 1.125})
+        self.assertFalse(self.recover()['completed'])
+        self.seal()
+        report = self.recover()
+        self.assertTrue(report['completed'])
+        self.assertTrue(report['recording']['sealedReportVerified'])
+        self.assertTrue(report['recording']['reconstructionComplete'])
+        self.assertFalse(self.recover(worker_ok=False)['completed'])
+        self.scope['report_path'].write_text('{"completed":true,"checks":[]}', encoding='utf-8')
+        self.assertFalse(self.recover()['completed'])
+
+    def test_every_flush_preserves_current_metadata_without_a_full_report_write(self):
+        self.add_check()
+        self.metadata.update(case='main', timing={'simulatedSeconds': 25, 'advanceInFlight': None},
+                             errors=['observed app failure'], sourceSha='b' * 40)
+        self.scope['flush']()
+        report, state = self.replay()
+        self.assertIsNone(state['error'])
+        for key, value in self.metadata.items(): self.assertEqual(report[key], value)
+        self.assertFalse(self.scope['report_path'].exists())
+        self.assertLess(self.scope['progress_path'].stat().st_size, 2048)
+
+    def test_current_native_audit_aliases_follow_each_existing_flush(self):
+        row = {'attempt': 1, 'before': {'x': 0}}
+        audit = {'kind': 'native-scroll-region-preparation', 'attempts': [row]}
+        self.evidence.append(audit)
+        self.add_check(detail=row)
+        self.add_check(name='whole audit', detail=audit)
+        for key, value in [('plan', {'x': 2}), ('immediateEvents', [{'trusted': True}]),
+                           ('after', {'x': 2, 'glyph': '晶体'})]:
+            row[key] = value
+            self.scope['flush']()
+            report, state = self.replay()
+            self.assertIsNone(state['error'])
+            self.assertEqual(report['checks'], self.checks)
+            self.assertEqual(report['evidence'], self.evidence)
+        row['final'] = {'nested': [1, {'two': 2}]}
+        self.evidence.append({'file': 'next.png', 'sha256': 'f' * 64})
+        self.scope['flush']()
+        self.assertEqual(self.replay()[0]['checks'], self.checks)
+        self.seal()
+        self.assertTrue(self.recover()['completed'])
+
+    def test_full_boundary_reconciles_all_final_values_without_loss(self):
+        detail = {'initial': ['raw', 1.0]}
+        self.add_check(detail=detail)
+        detail['later'] = {'exact': '0.00000000006'}
+        self.seal()
+        self.assertEqual(self.replay()[0]['checks'], self.checks)
+        self.assertTrue(self.recover()['completed'])
+
+    def test_failed_check_is_fsynced_before_it_raises_and_cannot_pass(self):
+        real_fsync = os.fsync
+        with mock.patch.object(os, 'fsync', wraps=real_fsync) as fsync:
+            with self.assertRaisesRegex(AssertionError, 'durable failure'):
+                self.scope['check']('durable failure', False, {'complete': ['error', '原件']})
+            self.assertGreaterEqual(fsync.call_count, 1)
+        report, state = self.replay()
+        self.assertIsNone(state['error'])
+        self.assertEqual(report['checks'][-1]['detail'], {'complete': ['error', '原件']})
+        self.assertFalse(report['checks'][-1]['passed'])
+        self.seal()
+        self.assertFalse(self.recover()['completed'])
+
+    def test_short_writes_are_completed_and_zero_writes_poison_the_writer(self):
+        real_write = os.write
+        with mock.patch.object(os, 'write', side_effect=lambda fd, data: real_write(fd, data[:17])):
+            self.add_check(detail={'bytes': 'x' * 100})
+        self.assertIsNone(self.replay()[1]['error'])
+        before = self.journal.path.read_bytes()
+        with mock.patch.object(os, 'write', return_value=0):
+            with self.assertRaises(OSError): self.add_check(name='zero write')
+        self.assertIsNotNone(self.journal.error)
+        with self.assertRaises(OSError): self.scope['flush']()
+        self.assertEqual(self.journal.path.read_bytes(), before)
+        self.assertFalse(self.recover()['completed'])
+
+    def test_partial_write_timeout_retains_raw_tail_and_only_verified_prefix(self):
+        self.add_check()
+        prefix, state = self.replay()
+        real_write, calls = os.write, []
+        def interrupted(fd, data):
+            calls.append(1)
+            if len(calls) == 1: return real_write(fd, data[:23])
+            raise TimeoutError('900-second worker bound')
+        with mock.patch.object(os, 'write', side_effect=interrupted):
+            with self.assertRaises(TimeoutError): self.add_check(name='interrupted')
+        raw = self.journal.path.read_bytes()
+        recovered, result = self.replay()
+        self.assertEqual(recovered, prefix)
+        self.assertEqual(result['sequence'], state['sequence'])
+        self.assertIn('unterminated', result['error'])
+        self.assertFalse(self.recover()['completed'])
+        self.assertEqual(self.journal.path.read_bytes(), raw)
+
+    def test_fsync_error_poisoning_never_permits_a_success_seal(self):
+        with mock.patch.object(os, 'fsync', side_effect=OSError('disk sync error')):
+            with self.assertRaises(OSError): self.add_check()
+        self.assertIsNotNone(self.journal.error)
+        with self.assertRaises(OSError): self.seal()
+        self.assertFalse(self.recover()['completed'])
+        self.assertIsNone(self.replay()[1]['seal'])
+
+    def test_complete_physical_write_then_error_keeps_newest_prefix_and_emergency_report(self):
+        real_write = os.write
+        def complete_then_error(fd, data):
+            real_write(fd, data)
+            raise OSError('failure after complete physical write')
+        with mock.patch.object(os, 'write', side_effect=complete_then_error):
+            with self.assertRaises(OSError): self.add_check(detail={'complete': 'actual bytes'})
+        self.assertEqual(self.journal.sequence, 0)
+        prefix, state = self.replay()
+        self.assertEqual(state['sequence'], 1)
+        self.assertEqual(prefix['checks'], self.checks)
+        self.scope['capture_failure'](RuntimeError('capture after write error'))
+        report = self.recover(worker_ok=False)
+        self.assertFalse(report['completed'])
+        self.assertEqual(report['checks'], self.checks)
+        emergency = self.out / report['recording']['emergencyFullReport']
+        self.assertIn('capture after write error', json.loads(emergency.read_bytes())['failure']['error'])
+
+    def test_actual_python_sigkill_retains_durable_prefix_and_cannot_pass(self):
+        path, ready = self.out / 'killed-worker.jsonl', self.out / 'worker-ready'
+        program = """
+import ast, hashlib, json, os, sys, time
+from pathlib import Path
+tree = ast.parse(Path(sys.argv[1]).read_text())
+selected = ast.Module(body=[n for n in tree.body if isinstance(n, ast.ClassDef)
+    and n.name == 'NativeCheckJournal'], type_ignores=[])
+exec(compile(selected, '<killed-native-recorder>', 'exec'))
+journal = NativeCheckJournal(Path(sys.argv[2]))
+journal.sync([{'case': 'killed worker', 'name': 'durable native assertion',
+    'passed': True, 'detail': {'all': ['exact', '晶体', 1.25]}}], [])
+journal.append('snapshot', {'completed': False, 'case': 'killed worker',
+    'timing': {'simulatedSeconds': 25}})
+Path(sys.argv[3]).write_text('ready')
+time.sleep(60)
+"""
+        process = subprocess.Popen([sys.executable, '-c', program,
+            str(ROOT / 'scripts/browser-npc-attack.py'), str(path), str(ready)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), 'isolated Python recorder did not reach its durable boundary')
+            process.kill(); process.wait(timeout=5)
+            self.assertLess(process.returncode, 0)
+            raw = path.read_bytes()
+            report = self.scope['recover_native_report'](path, self.scope['report_path'],
+                                                        self.scope['progress_path'], False)
+            self.assertFalse(report['completed'])
+            self.assertEqual(report['checks'][0]['detail'], {'all': ['exact', '晶体', 1.25]})
+            self.assertEqual(report['timing']['simulatedSeconds'], 25)
+            self.assertEqual(report['recording']['verifiedPrefixSequence'], 2)
+            self.assertEqual(path.read_bytes(), raw)
+        finally:
+            if process.poll() is None: process.kill()
+            process.communicate(timeout=5)
+
+    def test_corruption_reorder_missing_record_and_truncated_seal_fail_closed(self):
+        self.add_check(name='one'); self.add_check(name='two'); self.seal()
+        original = self.journal.path.read_bytes(); lines = original.splitlines(keepends=True)
+        variants = [b''.join(lines[:-1]), original[:-7], original + b'partial',
+                    b''.join(lines[1:]), b''.join([lines[1], lines[0], *lines[2:]]),
+                    original.replace(b'"one"', b'"bad"', 1),
+                    original.replace(b'{"entry":', b'{ "entry":', 1)]
+        for data in variants:
+            with self.subTest(bytes=len(data)):
+                self.journal.path.write_bytes(data)
+                self.assertFalse(self.recover()['completed'])
+                self.assertEqual(self.journal.path.read_bytes(), data)
+        self.journal.path.write_bytes(original)
+        self.assertTrue(self.recover()['completed'])
+
+    def test_semantically_invalid_update_does_not_mutate_the_verified_prefix(self):
+        row = {'attempt': 1, 'before': {'x': 0}}
+        self.evidence.append({'kind': 'native-scroll-region-preparation', 'attempts': [row]})
+        self.add_check(detail=row)
+        prefix, state = self.replay()
+        self.journal.append('evidence', {'index': 0,
+            'record': {'kind': 'native-scroll-region-preparation', 'attempts': []}})
+        replay, invalid = self.replay()
+        self.assertIsNotNone(invalid['error'])
+        self.assertEqual(invalid['sequence'], state['sequence'])
+        self.assertEqual(replay, prefix)
+
+    def test_failure_diagnostics_survive_a_poisoned_journal(self):
+        class Locator:
+            def all_text_contents(self): return ['visible and hidden text']
+        class Page:
+            def locator(self, _selector): return Locator()
+            def evaluate(self, *_args): return {'diagnostic': 'retained'}
+            def content(self): return '<html>original DOM</html>'
+            def screenshot(self, **_kwargs): return b'original PNG bytes'
+        self.scope['raw'] = lambda _page: '{"raw":"original save"}'
+        with mock.patch.object(os, 'write', side_effect=OSError('journal disk full')):
+            with self.assertRaises(OSError): self.add_check(name='write failed')
+        self.scope['capture_failure'](RuntimeError('original assertion error'), Page())
+        report = self.recover(worker_ok=False)
+        self.assertFalse(report['completed'])
+        self.assertIn('original assertion error', report['failure']['error'])
+        self.assertEqual((self.out / 'failure-raw-save.json').read_bytes(), b'{"raw":"original save"}')
+        self.assertTrue((self.out / 'failure-dom.html').exists())
+        self.assertTrue((self.out / 'failure.png').exists())
+        self.assertIn('recordingError', report)
+
+    def test_newer_failure_diagnostics_beat_an_older_unsealed_full_report(self):
+        self.add_check()
+        self.scope['failure'] = {'error': 'original failure'}
+        self.scope['flush'](full=True)
+        self.scope['failure']['rawSave'] = 'newest exact raw save'
+        self.scope['flush']()
+        report = self.recover(worker_ok=False)
+        self.assertEqual(report['failure']['rawSave'], 'newest exact raw save')
+
+    def test_nonobject_missing_or_truncated_full_reports_fail_closed_with_reason(self):
+        self.add_check()
+        for contents in (None, '[]', 'null', '{"completed":'):
+            with self.subTest(contents=contents):
+                path = self.scope['report_path']
+                if contents is None:
+                    if path.exists(): path.unlink()
+                else: path.write_text(contents, encoding='utf-8')
+                report = self.recover()
+                self.assertFalse(report['completed'])
+                self.assertIsNotNone(report['recording']['reportReadError'])
+                self.assertEqual(report['checks'], self.checks)
+
+    def test_final_atomic_replace_failure_cannot_create_a_success_seal(self):
+        self.add_check()
+        with mock.patch.object(Path, 'replace', side_effect=OSError('atomic replacement failed')):
+            with self.assertRaises(OSError): self.seal()
+        self.assertIsNone(self.replay()[1]['seal'])
+        self.assertFalse(self.recover()['completed'])
+        self.assertTrue(list(self.out.glob('*.tmp')))
+
+    def test_successful_final_flush_stays_under_unchanged_worker_deadline(self):
+        self.assertIn('signal.alarm(900)', self.source)
+        self.assertIn('deadline = time.monotonic() + 910', self.source)
+        final = self.source.index('completed = True; browser.close(); flush(full=True, final=True)')
+        self.assertLess(final, self.source.index('signal.alarm(0)', final))
+        self.assertNotIn('flush(', self.source[self.source.index('signal.alarm(0)', final):])
+
+    @unittest.skipUnless(os.environ.get('NPC_ACCEPTANCE_ARCHIVED_REPORT'),
+                         'Set NPC_ACCEPTANCE_ARCHIVED_REPORT for the byte-pinned 2,889-check CI archive replay')
+    def test_archived_2889_checks_details_order_and_complete_report_roundtrip(self):
+        source = Path(os.environ['NPC_ACCEPTANCE_ARCHIVED_REPORT']).read_bytes()
+        self.assertEqual(hashlib.sha256(source).hexdigest(),
+                         'b8682659bc0485d08722e84992e2ad5f8a1b8a0044ee852af9c9522a34886044')
+        archive = json.loads(source)
+        self.assertEqual(len(archive['checks']), 2889)
+        for check in archive['checks']:
+            self.checks.append(check)
+            self.journal.sync(self.checks, self.evidence)
+        self.evidence.extend(archive['evidence'])
+        self.journal.sync(self.checks, self.evidence, full=True)
+        self.journal.append('snapshot', {key: value for key, value in archive.items()
+                                         if key not in ('checks', 'evidence')})
+        report, state = self.replay()
+        self.assertIsNone(state['error'])
+        self.assertEqual(report, archive)
+        encoded = self.scope['NativeCheckJournal'].encoded
+        for expected, actual in zip(archive['checks'], report['checks']):
+            self.assertEqual(encoded(actual), encoded(expected))
+            if 'detail' in expected: self.assertEqual(encoded(actual['detail']), encoded(expected['detail']))
+        self.assertEqual(json.dumps(report, sort_keys=True, ensure_ascii=False),
+                         json.dumps(archive, sort_keys=True, ensure_ascii=False))
+        self.assertFalse(self.recover(worker_ok=False)['completed'])
 
 if __name__ == '__main__':
     unittest.main()

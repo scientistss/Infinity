@@ -62,6 +62,194 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+class NativeCheckJournal:
+    """Native-suite-only append log. No browser evidence is sampled or discarded."""
+    def __init__(self, path):
+        self.path = path
+        self.fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
+        self.sequence, self.digest = 0, '0' * 64
+        self.check_bytes, self.evidence_bytes = [], []
+        self.error = None
+        self.host_seconds = 0.0
+
+    @staticmethod
+    def encoded(value):
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+    def append(self, kind, value):
+        if self.error is not None:
+            raise OSError('Native evidence journal is poisoned: ' + self.error)
+        started = time.monotonic()
+        try:
+            entry = {'sequence': self.sequence + 1, 'previousSha256': self.digest, 'kind': kind, 'value': value}
+            encoded = self.encoded(entry)
+            digest = hashlib.sha256(encoded).hexdigest()
+            line = b'{"entry":' + encoded + b',"sha256":"' + digest.encode('ascii') + b'"}\n'
+            offset = 0
+            while offset < len(line):
+                written = os.write(self.fd, line[offset:])
+                if written <= 0 or written > len(line) - offset:
+                    raise OSError('Native evidence journal made no write progress')
+                offset += written
+            # A failed assertion and its complete detail are durable before check
+            # raises. Every successful event has the same durability contract.
+            os.fsync(self.fd)
+            self.sequence, self.digest = entry['sequence'], digest
+        except BaseException as error:
+            self.error = repr(error)
+            raise
+        finally:
+            self.host_seconds += time.monotonic() - started
+
+    def sync(self, checks, evidence, full=False):
+        # Only native_horizontal_to mutates existing evidence: its current audit
+        # and attempt rows. Persist that row at EVERY existing flush point, also
+        # once when a following evidence row retires it. Full snapshots reconcile
+        # every value at branch/failure/final boundaries.
+        start = 0 if full else max(0, len(self.evidence_bytes) - 1)
+        for index in range(start, len(evidence)):
+            encoded = self.encoded(evidence[index])
+            if index == len(self.evidence_bytes) or encoded != self.evidence_bytes[index]:
+                self.append('evidence', {'index': index, 'record': evidence[index]})
+                if index == len(self.evidence_bytes): self.evidence_bytes.append(encoded)
+                else: self.evidence_bytes[index] = encoded
+        start = 0 if full else len(self.check_bytes)
+        for index in range(start, len(checks)):
+            encoded = self.encoded(checks[index])
+            if index < len(self.check_bytes) and encoded == self.check_bytes[index]:
+                continue
+            reference = None
+            # Keep the original alias semantics without a generic object graph:
+            # earlier check.details follow the later snapshots of this audit.
+            if evidence and evidence[-1].get('kind') == 'native-scroll-region-preparation':
+                audit, detail = evidence[-1], checks[index].get('detail')
+                if detail is audit:
+                    reference = {'evidence': len(evidence) - 1, 'attempt': None}
+                else:
+                    for attempt, row in enumerate(audit['attempts']):
+                        if detail is row:
+                            reference = {'evidence': len(evidence) - 1, 'attempt': attempt}
+                            break
+            self.append('check' if index == len(self.check_bytes) else 'check-update',
+                        {'index': index, 'record': checks[index], 'detailRef': reference})
+            if index == len(self.check_bytes): self.check_bytes.append(encoded)
+            else: self.check_bytes[index] = encoded
+
+
+def replay_native_journal(path):
+    """Return the verified prefix, retaining a torn/corrupt journal unchanged."""
+    report, checks, evidence, references = {}, [], [], {}
+    sequence, digest, last, error = 0, '0' * 64, None, None
+    try:
+        with path.open('rb') as stream:
+            for line in stream:
+                if not line.endswith(b'\n'):
+                    raise ValueError('unterminated journal record')
+                envelope = json.loads(line)
+                entry = envelope['entry']
+                if (set(envelope) != {'entry', 'sha256'} or set(entry) != {'sequence', 'previousSha256', 'kind', 'value'}
+                        or type(entry['sequence']) is not int or entry['sequence'] != sequence + 1
+                        or entry['previousSha256'] != digest
+                        or hashlib.sha256(NativeCheckJournal.encoded(entry)).hexdigest() != envelope['sha256']
+                        or line != b'{"entry":' + NativeCheckJournal.encoded(entry)
+                        + b',"sha256":"' + str(envelope['sha256']).encode('ascii') + b'"}\n'):
+                    raise ValueError('journal sequence or checksum mismatch')
+                kind, value = entry['kind'], entry['value']
+                if kind in ('check', 'check-update', 'evidence'):
+                    rows = evidence if kind == 'evidence' else checks
+                    index = value['index']
+                    if (type(index) is not int or index < 0 or index > len(rows)
+                            or kind == 'check' and index != len(checks)
+                            or kind == 'check-update' and index >= len(checks)):
+                        raise ValueError('invalid journal record index')
+                    record = value['record']
+                    if not isinstance(record, dict):
+                        raise ValueError('invalid journal record')
+                    if kind != 'evidence' and type(record.get('passed')) is not bool:
+                        raise ValueError('invalid assertion result')
+                    ref = value.get('detailRef')
+                    if kind != 'evidence' and ref is not None:
+                        if (not isinstance(ref, dict) or set(ref) != {'evidence', 'attempt'}
+                                or type(ref['evidence']) is not int or not 0 <= ref['evidence'] < len(evidence)):
+                            raise ValueError('invalid native audit reference')
+                        audit = evidence[ref['evidence']]
+                        if (audit.get('kind') != 'native-scroll-region-preparation'
+                                or ref['attempt'] is not None and (type(ref['attempt']) is not int
+                                or not 0 <= ref['attempt'] < len(audit['attempts']))):
+                            raise ValueError('invalid native audit attempt reference')
+                        detail = audit if ref['attempt'] is None else audit['attempts'][ref['attempt']]
+                        if record.get('detail') != detail:
+                            raise ValueError('native audit detail reference differs from assertion')
+                    # Validate all alias updates BEFORE touching the valid prefix.
+                    updates = {}
+                    if kind == 'evidence':
+                        for check_index, old_ref in references.items():
+                            if old_ref['evidence'] == index:
+                                updates[check_index] = record if old_ref['attempt'] is None else record['attempts'][old_ref['attempt']]
+                    if index == len(rows): rows.append(record)
+                    else: rows[index] = record
+                    if kind != 'evidence':
+                        references.pop(index, None)
+                        if ref is not None: references[index] = ref
+                    else:
+                        for check_index, detail in updates.items():
+                            checks[check_index]['detail'] = detail
+                elif kind == 'snapshot':
+                    if not isinstance(value, dict) or 'checks' in value or 'evidence' in value:
+                        raise ValueError('snapshot must not duplicate assertion arrays')
+                    report = value
+                elif kind == 'seal':
+                    if (type(value['checkCount']) is not int or type(value['evidenceCount']) is not int
+                            or value['checkCount'] != len(checks) or value['evidenceCount'] != len(evidence)):
+                        raise ValueError('sealed record counts differ')
+                else:
+                    raise ValueError('unknown native journal record kind')
+                sequence, digest, last = entry['sequence'], envelope['sha256'], entry
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as caught:
+        error = repr(caught)
+    report.update(checks=checks, evidence=evidence, passed=sum(row['passed'] for row in checks))
+    return report, {'sequence': sequence, 'sha256': digest, 'error': error,
+                    'seal': last['value'] if last is not None and last['kind'] == 'seal' and error is None else None}
+
+
+def recover_native_report(journal_path, report_path, progress_path, worker_ok):
+    report, journal = replay_native_journal(journal_path)
+    valid = False
+    try:
+        full_bytes = report_path.read_bytes()
+        full = json.loads(full_bytes)
+        if not isinstance(full, dict):
+            raise ValueError('full report must be a JSON object')
+        valid = (journal['error'] is None and journal['seal'] is not None
+                 and hashlib.sha256(full_bytes).hexdigest() == journal['seal']['reportSha256']
+                 and full == report and full.get('completed') is True
+                 and bool(report['checks']) and all(row['passed'] for row in report['checks']))
+        # Only the explicitly marked recorder-failure fallback can supersede a
+        # replay, and only when it names that exact verified prefix. A normal
+        # older failure report must never hide newer journal diagnostics.
+        if (not valid and full.get('recordingError') is not None
+                and full.get('recordingCheckpoint') == {'sequence': journal['sequence'], 'sha256': journal['sha256']}):
+            report = full
+    except (OSError, ValueError, KeyError, TypeError) as caught:
+        journal['reportError'] = repr(caught)
+    if not (worker_ok and valid):
+        report.update(completed=False, result='failed' if not worker_ok or journal['error'] else 'incomplete')
+    report['recording'] = {'journal': journal_path.name, 'verifiedPrefixSequence': journal['sequence'],
+        'verifiedPrefixSha256': journal['sha256'], 'replayError': journal['error'],
+        'sealedReportVerified': valid, 'reconstructionComplete': bool(worker_ok and valid),
+        'reportReadError': journal.get('reportError'),
+        'boundary': 'Only a clean worker exit and a checksum-bound final full report prove completion. Raw journal is retained, including any invalid tail.'}
+    emergency = report_path.with_name('npc-attack-recording-failure.json')
+    if emergency.exists():
+        report['recording']['emergencyFullReport'] = emergency.name
+    if not valid and progress_path.exists():
+        try:
+            report['recording']['lastProgress'] = json.loads(progress_path.read_bytes())
+        except (OSError, ValueError) as caught:
+            report['recording']['progressReadError'] = repr(caught)
+    return report
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--url', default='http://127.0.0.1:4173/Infinity/')
 parser.add_argument('--fixture', default='npc-attack-native-report.json')
@@ -81,6 +269,8 @@ if not re.fullmatch(r'[0-9a-f]{64}', args.expected_report_sha256):
     parser.error('--expected-report-sha256 must independently pin the complete natural report')
 out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 report_path = out / 'npc-attack-browser-report.json'
+journal_path = out / 'npc-attack-checks.jsonl'
+progress_path = out / 'npc-attack-progress.json'
 if not args.worker:
     if any(out.iterdir()):
         raise SystemExit('Use an empty --output directory; failed or prior evidence must remain separate.')
@@ -143,7 +333,7 @@ if not args.worker:
             time.sleep(.1); terminate(signal.SIGKILL); process.wait(timeout=2)
     residual = [info for pid, birth in owned.items() if (info := process_info(pid)) and info['birth'] == birth]
     live_residual = [info for info in residual if info['state'] not in ('Z', 'X')]
-    report = json.loads(report_path.read_text())
+    report = recover_native_report(journal_path, report_path, progress_path, not (expired or code or live_residual))
     if expired or code or live_residual:
         report.update(completed=False, result='external watchdog timeout' if expired else 'failed')
     report['workerExitCode'] = code
@@ -170,6 +360,9 @@ checks, errors, failed_requests, evidence, source_bindings = [], [], [], [], []
 page_sources, release_metadata = {}, None
 completed, active_page, source_sha, failure = False, None, None, None
 case, branch_metrics = 'setup', {}
+journal = NativeCheckJournal(journal_path)
+last_progress_at = 0.0
+recorder_host_seconds = 0.0
 main_reload_checkpoints = []
 CARD, QUEUE = '#space-messages', '#space-fleets'
 WALLET_TOLERANCE = 1e-7
@@ -217,6 +410,7 @@ def begin_case(label):
     now = time.monotonic()
     if case in branch_metrics:
         branch_metrics[case]['_hostEnded'] = now
+        flush(full=True)
     case = label
     branch_metrics[case] = {'_hostStarted': now, '_hostEnded': None,
         'attemptedAdvanceCalls': 0, 'successfulAdvanceCalls': 0, 'zeroAdvanceCalls': 0,
@@ -232,6 +426,9 @@ def timing_report():
     } for label, metrics in branch_metrics.items()]
     return {'hostStartedAt': HOST_STARTED_AT, 'workerHostElapsedSeconds': now - HOST_STARTED_MONOTONIC,
         'hostClock': 'Python monotonic, independent of the controlled browser clock',
+        'reportRecorder': {'hostSecondsBeforeCurrentFlush': recorder_host_seconds,
+            'journalAppendAndSyncSeconds': journal.host_seconds,
+            'scope': 'Host report recording only; browser actions and native frame waiting remain unchanged.'},
         'mode': 'Date/performance/RAF timestamps simulated. Positive advances are 500/1000ms and original live tick runs; native timers remain unchanged. Imported envelopes retain their original clocks; main-loop reload has zero saved gap; separate true cold-start branch uses a declared ten-second controlled wall gap.',
         'successfulAdvanceCalls': sum(row['successfulAdvanceCalls'] for row in branches),
         'zeroAdvanceCalls': sum(row['zeroAdvanceCalls'] for row in branches),
@@ -710,7 +907,7 @@ def capture_failure(error, page=None):
 
     # Persist the original failure before diagnostics. A failed individual
     # capture must neither hide that error nor prevent the other evidence.
-    attempt('original failure report', flush)
+    attempt('original failure report', lambda: flush(full=True))
     if page is not None:
         attempt('raw save', capture_raw)
         for name, selector in [('card', CARD), ('queue', QUEUE), ('status', '[data-bind="status"]')]:
@@ -726,9 +923,9 @@ def capture_failure(error, page=None):
             controls:[...element.querySelectorAll('button,input,select')].map(e=>({tag:e.tagName,id:e.id,disabled:e.disabled}))};
         })""", [CARD, QUEUE, '[data-bind="res-metal"]'])))
         attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')))
-        attempt('report before screenshot', flush)
+        attempt('report before screenshot', lambda: flush(full=True))
         attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)))
-    attempt('final failure report', flush)
+    attempt('final failure report', lambda: flush(full=True))
 
 
 @contextmanager
@@ -819,8 +1016,8 @@ def export_protected(page, original, name):
     evidence.append({'case': case, 'file': name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
 
 
-def flush():
-    atomic_json(report_path, {'completed': completed, 'result': 'passed' if completed else 'incomplete',
+def full_report():
+    return {'completed': completed, 'result': 'passed' if completed else 'incomplete',
         'case': case, 'url': args.url, 'sourceSha': source_sha, 'fixture': fixtures['description'],
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR12SaveSha256': fixtures['origin']['rawSha256'],
@@ -831,7 +1028,47 @@ def flush():
         'nativeBoundary': 'Browser storage/file/dialog/HTTP are native. Date/performance/RAF timestamps are controlled. Fault-only Storage wrappers are explicit. This runner is not a genuine unmodified-clock background-throttling test.',
         'boundsSeconds': {'worker': 900, 'supervisor': 910}, 'checks': checks,
         'passed': sum(value['passed'] for value in checks), 'errors': errors, 'failedRequests': failed_requests,
-        'sourceBindings': source_bindings, 'evidence': evidence, 'failure': failure})
+        'sourceBindings': source_bindings, 'evidence': evidence, 'failure': failure}
+
+
+def flush(full=False, final=False):
+    global last_progress_at, recorder_host_seconds
+    started = time.monotonic()
+    try:
+        try:
+            journal.sync(checks, evidence, full=full)
+            report = full_report()
+            # Current case, native timing, errors and source identity remain
+            # recoverable after every flush, without rewriting old check detail.
+            journal.append('snapshot', {key: value for key, value in report.items() if key not in ('checks', 'evidence')})
+            if full:
+                atomic_json(report_path, report)
+                if final:
+                    journal.append('seal', {'reportSha256': hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                        'checkCount': len(checks), 'evidenceCount': len(evidence)})
+        except BaseException:
+            journal.error = journal.error or repr(sys.exc_info()[1])
+            # Recording faults must not suppress the original failure, live DOM,
+            # raw save, or screenshot capture. Never seal this fallback report.
+            if full:
+                report = full_report()
+                report.update(completed=False, result='failed')
+                report['recordingError'] = journal.error or traceback.format_exc()
+                report['recordingCheckpoint'] = {'sequence': journal.sequence, 'sha256': journal.digest}
+                atomic_json(report_path.with_name('npc-attack-recording-failure.json'), report)
+                atomic_json(report_path, report)
+            raise
+        now = time.monotonic()
+        if full or now - last_progress_at >= 1:
+            atomic_json(progress_path, {'completed': False, 'case': case, 'checkCount': len(checks),
+                'evidenceCount': len(evidence), 'lastCheckName': checks[-1]['name'] if checks else None,
+                'journalSequence': journal.sequence, 'journalSha256': journal.digest,
+                'hostElapsedSeconds': now - HOST_STARTED_MONOTONIC,
+                'recorderHostSeconds': recorder_host_seconds + now - started,
+                'journalWriteHostSeconds': journal.host_seconds})
+            last_progress_at = now
+    finally:
+        recorder_host_seconds += time.monotonic() - started
 
 
 def building_tab(page):
@@ -1399,12 +1636,11 @@ try:
         begin_case('suite integrity')
         check('no actual app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
         check('served release exact v9/r13', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 13)
-        completed = True; flush(); browser.close()
+        completed = True; browser.close(); flush(full=True, final=True)
 except BaseException as error:
     if failure is None:
         capture_failure(error)
     raise
 finally:
     signal.alarm(0)
-    if failure is None:
-        flush()
+    os.close(journal.fd)
