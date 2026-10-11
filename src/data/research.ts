@@ -188,7 +188,6 @@ export const RESEARCH: readonly ResearchDef[] = [
     factor: 2,
     requires: [lab(10), tech("computer_tech", 8), tech("hyperspace_tech", 8)],
     effect: "联通 L 个额外研究实验室（只有一颗星球时没有效果）",
-    later: "多星球后生效（第 4 阶段）",
   },
   {
     id: "graviton_tech",

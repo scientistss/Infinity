@@ -2,7 +2,7 @@
 
 从荒芜行星开始的单机网页科幻放置游戏：建设矿场与研究、组装可视化协议卡、建立殖民地，派舰深入深空。多人相关内容逐步 NPC 化；当前没有后端或真实付费。
 
-**开发候选 `0.6.16-alpha.1`，存档 `v9 / r10`。** 本次深空操作面板另标 `deep-r2`，星环机图像版为 `ring-v1`；实际部署提交见网站 `release.json`。这是可玩的开发版本，不是整套规划或 OGame 全部玩法已经完成。
+**开发候选 `0.6.17-alpha.1`，存档 `v9 / r10`。** 本次深空操作面板另标 `deep-r2`，星环机图像版为 `ring-v1`；实际部署提交见网站 `release.json`。这是可玩的开发版本，不是整套规划或 OGame 全部玩法已经完成。
 
 ## 当前路线与内容
 
@@ -93,3 +93,5 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 - [路线图与分项验收](docs/ROADMAP_ACCEPTANCE.md)：现存计划的已发布、部分、未实现与待定机制；每项闭环、依赖、存档影响及下一阶段顺序。
 
 - [地形改造器候选](docs/TERRAFORMER.md)：真实供能与付款、完成扩格、旧已付兼容；准确CI与发布尚须独立验收。
+
+星际研究网络的多星协作候选规则与验收边界见 [RESEARCH_NETWORK.md](docs/RESEARCH_NETWORK.md)。实际发布版本以试玩站 release.json 为准。

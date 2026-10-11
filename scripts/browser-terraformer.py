@@ -488,6 +488,8 @@ def timeout(_signal, _frame):
 
 signal.signal(signal.SIGALRM, timeout); signal.alarm(420)
 try:
+    package_bytes = subprocess.check_output(['git', 'show', args.expected_sha + ':package.json'], cwd=Path(__file__).resolve().parents[1])
+    expected_package_version = json.loads(package_bytes)['version']
     source_bytes = Path(args.natural_report).read_bytes(); source_report = json.loads(source_bytes)
     check('complete natural report independently matches CLI and fixture hash', hashlib.sha256(source_bytes).hexdigest() == args.expected_report_sha256 == fixtures['source']['reportSha256'])
     check('natural engine report passed and declares the candidate SHA', source_report['outcome']['status'] == 'passed' and source_report['source']['sourceSha'] == args.expected_sha == fixtures['source']['sourceSha'] and source_report['provenance']['injectedGameState'] is False)
@@ -656,7 +658,7 @@ try:
         other.close(); context.close()
         case = 'suite integrity'
         check('no uncaught JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('version and current strict save release were verified', release_metadata['version'] == '0.6.16-alpha.1' and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 10)
+        check('version and current strict save release were verified', release_metadata['version'] == expected_package_version and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 10)
         completed = True; flush(); browser.close()
 except BaseException as error:
     failure = {'case': case, 'error': repr(error), 'traceback': traceback.format_exc()}

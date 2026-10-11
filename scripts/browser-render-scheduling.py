@@ -28,6 +28,7 @@ parser.add_argument('--fixture',default='render-scheduling-review-save.json')
 parser.add_argument('--output',default='render-scheduling-evidence')
 parser.add_argument('--chromium')
 args=parser.parse_args()
+CURRENT_PACKAGE_VERSION=json.loads((Path(__file__).resolve().parents[1]/'package.json').read_text())['version']
 fixtures=json.loads(Path(args.fixture).read_text())
 KEY,BACKUP,EPOCH=fixtures['key'],fixtures['backupKey'],fixtures['epoch']
 HOME,COLONY=fixtures['homeId'],fixtures['colonyId']
@@ -220,8 +221,8 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     return context,page
 
 
-def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None):
-    result=page.evaluate('''({omitBuilding,ringBase,orderBase,facilityBase}) => {
+def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None, research_base=None):
+    result=page.evaluate('''({omitBuilding,ringBase,orderBase,facilityBase,researchBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
         // Chromium may return geometry for closed-details content. Its first
@@ -250,6 +251,19 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       const result={tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:inputs.map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
+      if(researchBase){
+        const later=panel.querySelector('[data-bind="rlater-intergalactic_research_network"]');
+        const card=panel.querySelector('[data-bind="rcard-intergalactic_research_network"]');
+        result.researchEvidence={panelHTML:panel.outerHTML,laterHTML:later?.outerHTML??null,laterText:later?.textContent??null,
+          count:panel.querySelectorAll('[data-bind="rlater-intergalactic_research_network"]').length,
+          cardBindings:[...panel.querySelectorAll('article.rcard')].map(e=>e.dataset.bind),
+          buttonIds:[...panel.querySelectorAll('[data-action="research"]')].map(e=>e.dataset.id),
+          exactPlacement:panel.dataset.tabPanel==='research'&&later?.parentElement===card&&
+            later.previousElementSibling?.dataset.bind==='reffect-intergalactic_research_network'&&
+            later.nextElementSibling?.dataset.bind==='rchain-intergalactic_research_network',
+          activeDetails:[...panel.querySelectorAll('[data-bind="rqueue-list"] [data-q="detail"]')].map(e=>e.textContent),
+        };
+      }
       if(facilityBase){
         const cards=[...panel.querySelectorAll('article.bld')],terra=panel.querySelector('[data-bind="bld-terraformer"]');
         const grids=[...panel.querySelectorAll(':scope > .bld-grid')],last=grids.at(-1);
@@ -303,10 +317,62 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         };
       }
       return result;
-    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base})
+    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base,'researchBase':research_base})
     if facility_base:result=facility_base_snapshot(page,facility_base,result)
     if order_base:result=order_quote_base_snapshot(page,order_base,result)
+    if research_base:result=research_base_snapshot(page,research_base,result)
     return ring_base_snapshot(page,ring_base,result) if ring_base else result
+
+
+def research_base_snapshot(page,label,projected):
+    evidence=projected.pop('researchEvidence');stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+    artifact=f'panel-parity-research-{label}-raw.json'
+    (out/artifact).write_text(json.dumps({'snapshot':projected,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+    state=json.loads(stored)['state'];source=fixtures['base']['state'];after=label=='after'
+    check('research copy exception starts from complete unchanged historical base state: '+label,
+          exact_state(state,expected_state('base.initial',page)))
+    check('research copy exception independently fixes IRN zero, both primary/support labs and all queued research: '+label,
+          source['activePlanetId']==state['activePlanetId']==HOME=='homeworld' and
+          source['research']['levels']['intergalactic_research_network']==state['research']['levels']['intergalactic_research_network']==0 and
+          [(planet['id'],planet['buildings']['research_lab']) for planet in source['planets']]==[(HOME,2),(COLONY,2)] and
+          source['research']['queue']==[{'planetId':HOME,'tech':'energy_tech','targetLevel':1,
+            'paid':{'metal':'0','crystal':'800','deuterium':'400'},'totalSeconds':1.6,'remainingSeconds':1.6,
+            'source':'manual','jobId':2,'taskId':None}] and
+          state['research']==source['research'])
+    ids=['energy_tech','laser_tech','ion_tech','hyperspace_tech','plasma_tech','combustion_drive','impulse_drive','hyperspace_drive',
+         'espionage_tech','computer_tech','astrophysics','intergalactic_research_network','graviton_tech','weapons_tech','shielding_tech','armour_tech']
+    check('research copy exception retains all sixteen cards and action identities in original order: '+label,
+          label in ('before','after') and projected['tab']=='research' and evidence['count']==1 and evidence['exactPlacement'] and
+          evidence['cardBindings']==['rcard-'+tech for tech in ids] and evidence['buttonIds']==ids)
+    old='后续：多星球后生效（第 4 阶段）';expected_text='' if after else old
+    expected_node='<p class="bld-blurb" data-bind="rlater-intergalactic_research_network">'+expected_text+'</p>'
+    check('complete old/new IRN later node is exactly the declared text-only difference: '+label,
+          evidence['laterText']==expected_text and evidence['laterHTML']==expected_node and evidence['panelHTML'].count(expected_node)==1)
+    check('research copy exception keeps the sole active timer entirely unchanged: '+label,
+          evidence['activeDetails']==['剩余 2 秒 / 共 2 秒'])
+    # Compare the complete remaining panel DOM, including every cost, time,
+    # prerequisite, disabled/title attribute, queue node and card order. Only
+    # the already asserted whole paragraph's exact text changes in the copy.
+    projected['researchInvariantDOM']=evidence['panelHTML'].replace(expected_node,
+        '<p class="bld-blurb" data-bind="rlater-intergalactic_research_network"><verified-irn-copy></verified-irn-copy></p>',1)
+    text=projected['text'];left='联通 L 个额外研究实验室（只有一颗星球时没有效果）';right='✗ 研究实验室 2/10'
+    check('research copy has unique exact old effect and prerequisite boundaries: '+label,
+          text.count(left)==1 and text.count(right)==1 and text.count(old)==int(not after))
+    left_end=text.index(left)+len(left);right_start=text.index(right)
+    boundary=text[left_end:right_start]
+    allowed=('\n','\n\n') if after else tuple(a+old+b for a in ('\n','\n\n') for b in ('\n','\n\n'))
+    check('only the verified IRN paragraph and native sibling linebreaks occupy that boundary: '+label,
+          left_end<right_start and boundary in allowed)
+    projected['text']=text[:left_end]+'\n'+text[right_start:]
+    check('research copy comparison never mutates DOM, native storage or the controlled clock: '+label,
+          raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and
+          page.locator('[data-tab-panel="research"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
+    audits.append({'kind':'exact-irn-zero-obsolete-copy-exception','side':label,'rawArtifact':artifact,
+        'oldNode':'<p class="bld-blurb" data-bind="rlater-intergalactic_research_network">'+old+'</p>',
+        'newNode':'<p class="bld-blurb" data-bind="rlater-intergalactic_research_network"></p>',
+        'observedTextBoundary':boundary,
+        'constraint':'Complete unchanged base state, literal IRN-zero/lab/paid-active-job premises, unique exact old/new paragraph and all sixteen card/action identities asserted before replacing only the obsolete text and its native linebreak boundary in copied evidence. Every remaining DOM node, field, cost, time, attribute, control and state stays exact.'})
+    return projected
 
 
 
@@ -688,7 +754,7 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.16-alpha.1'
+        expected_version='0.6.7-alpha.1' if label=='before' else CURRENT_PACKAGE_VERSION
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else CURRENT_REVISION))
         check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
@@ -701,7 +767,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None, label if name=='research' else None)
             if name=='galaxy':
                 # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
@@ -953,7 +1019,8 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.16-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring and exact initial order-quote exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote and IRN-copy exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
             'parityOrderQuoteException':'Only the uniquely placed initial #order-quote region is excluded after exact DOM, literal text, two-button permission, zero-cap and full-base-state assertions. Before/after raw snapshots are retained. Budgets, existing create/transport controls and all remaining visible content remain exact. No DOM or state is rewritten.',

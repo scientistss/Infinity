@@ -16,6 +16,8 @@ Linux bounded process cleanup is reused from browser-natural-ring.py.
 The historical domain-byte guard is retained for unchanged sources. A separately
 pinned, exact r10 terraformer delta can establish source provenance only; it never
 waives native assertions or retroactively changes earlier failed CI evidence.
+A second immutable manifest admits only the exact two-file IRN semantic delta
+atop that r10 source. This explicit adoption is not native or CI acceptance.
 """
 import argparse
 import hashlib
@@ -41,6 +43,9 @@ DOMAIN_ADOPTION = '0c563a6a2bafe70c8a0531dd935d36f9c83917cd'
 DOMAIN_PATHS = ('src/game', 'src/core', 'src/data', 'src/automation')
 DOMAIN_MANIFEST = 'tests/fixtures/ring-protection-domain-provenance.json'
 DOMAIN_MANIFEST_SHA256 = 'f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c'
+IRN_MANIFEST = 'tests/fixtures/research-network-domain-provenance.json'
+IRN_MANIFEST_SHA256 = '2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1'
+IRN_CHANGED_PATHS = ('src/data/research.ts', 'src/game/research.ts')
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -148,6 +153,36 @@ def synchronized_domain_provenance(repository, candidate, git, check):
                     'after': entry(DOMAIN_ADOPTION, path)} for path in declared_delta]
     check('only the exact recorded r10 paths, file modes and before/after bytes differ from 7f17',
           manifest.get('changedPaths') == actual_rows)
+    irn_delta = changed(DOMAIN_ADOPTION, candidate, DOMAIN_PATHS)
+    if irn_delta:
+        # New semantic adoption, not a relaxation of the original r10 identity branch.
+        # Bind the eventual candidate's Git blobs, not mutable worktree source bytes.
+        irn_raw = (repository / IRN_MANIFEST).read_bytes()
+        check('IRN semantic adoption manifest matches its fixed SHA256 and exact committed candidate bytes',
+              sha(irn_raw) == IRN_MANIFEST_SHA256 and irn_raw == git('show', candidate+':'+IRN_MANIFEST))
+        irn_manifest = json.loads(irn_raw)
+        check('IRN semantic adoption pins the historical root, r10 reference, prior manifest and complete domain scope',
+              irn_manifest.get('schema') == 'infinity-ring-protection-research-network-provenance-v1'
+              and irn_manifest.get('historicalBaselineSha') == BASELINE
+              and irn_manifest.get('previousAdoptionSourceSha') == DOMAIN_ADOPTION
+              and irn_manifest.get('previousAdoptionManifestSha256') == DOMAIN_MANIFEST_SHA256
+              and irn_manifest.get('domainPaths') == list(DOMAIN_PATHS)
+              and irn_manifest.get('unchangedRingCriticalPaths') == list(RING_CRITICAL_PATHS))
+        check('candidate complete domain differs from r10 only at the exact two declared IRN paths',
+              irn_delta == list(IRN_CHANGED_PATHS))
+        irn_rows = [{'path': path, 'before': entry(DOMAIN_ADOPTION, path),
+                     'after': entry(candidate, path)} for path in irn_delta]
+        check('both IRN files match immutable before/after bytes and file modes',
+              irn_manifest.get('changedPaths') == irn_rows)
+        check('original ring logic, automation, clocks, cards and unchanged ring models retain 7f17 bytes',
+              changed(BASELINE, candidate, RING_CRITICAL_PATHS) == [])
+        return {'contract': 'exact-declared-irn-semantic-delta', 'historicalBaselineSha': BASELINE,
+                'historicalDomainByteIdentity': False, 'historicalChangedPaths': original_delta,
+                'previousAdoptionSourceSha': DOMAIN_ADOPTION, 'candidateSourceSha': candidate,
+                'previousManifestPath': DOMAIN_MANIFEST, 'previousManifestSha256': sha(raw),
+                'previousManifest': manifest, 'manifestPath': IRN_MANIFEST,
+                'manifestSha256': sha(irn_raw), 'manifest': irn_manifest,
+                'verificationScope': 'Explicit IRN semantic source adoption only; not a passing CI or native acceptance claim. All native protection and recovery assertions remain required.'}
     check('candidate complete domain tree byte-matches the declared r10 source without additional changes',
           changed(DOMAIN_ADOPTION, candidate, DOMAIN_PATHS) == [])
     check('original ring logic, automation, clocks, cards and unchanged ring models retain 7f17 bytes',

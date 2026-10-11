@@ -43,9 +43,9 @@ import { canEnqueue, missingRequirements, queueCapacity, secondsFor } from "../g
 import type { CompletedBuild } from "../game/queue";
 import {
   canEnqueueResearch,
-  effectiveLabLevel,
   labBusyReason,
   researchCapacity,
+  researchNetworkView,
   researchSecondsFor,
   type CompletedResearch,
 } from "../game/research";
@@ -606,7 +606,9 @@ function researchQueueView(state: GameState): QueueView {
     const def = researchById(order.tech);
     const active = index === 0 && order.totalSeconds > 0;
     const progress = active ? (1 - order.remainingSeconds / order.totalSeconds) * 100 : 0;
-    const estimate = researchSecondsFor(selectPlanet(state, order.planetId), def, order.targetLevel, order.paid);
+    // Running work keeps its saved timer. Only unstarted paid work needs a current quote.
+    const estimate = active ? order.totalSeconds
+      : researchSecondsFor(selectPlanet(state, order.planetId), def, order.targetLevel, order.paid);
     return {
       index,
       key: `${order.planetId}:${order.jobId}`,
@@ -615,14 +617,15 @@ function researchQueueView(state: GameState): QueueView {
       label: `${def.nameZh} → 等级 ${order.targetLevel}${state.planets.length > 1 ? ` · ${state.planets.find(p => p.id === order.planetId)?.name ?? order.planetId}` : ""}`,
       detail: active
         ? `剩余 ${formatDuration(Math.ceil(order.remainingSeconds))} / 共 ${formatDuration(Math.ceil(order.totalSeconds))}`
-        : `等待中 · 已付款 · 预计 ${formatDuration(Math.ceil(estimate))}`,
+        : `等待中 · 已付款 · 按当前条件预计 ${formatDuration(Math.ceil(estimate))}（开工时确定）`,
       progressPct: Math.max(0, Math.min(100, progress)),
       active,
       ...speedupButtons(state, active ? order.remainingSeconds : null, "research"),
     };
   });
   const payer = state.research.queue[0]?.planetId;
-  const lab = effectiveLabLevel(payer ? selectPlanet(state, payer) : state);
+  // There is no universal network level: each technology admits different support labs.
+  const lab = activePlanet(payer ? selectPlanet(state, payer) : state).buildings.research_lab;
   const busy = labBusyReason(state);
   let idleHint = "";
   if (items.length === 0) {
@@ -653,6 +656,10 @@ function researchView(state: GameState, def: ResearchDef): ResearchView {
   const queued = target - 1 - level;
   const energy = researchEnergyRequirement(def, target);
   const seconds = researchSecondsFor(state, def, target, check.cost);
+  const network = researchNetworkView(state, def.id);
+  const networkHint = network.supports.length > 0
+    ? `当前实验室：主 ${network.primaryLabLevel} + 协作 ${network.effectiveLabLevel - network.primaryLabLevel} = ${network.effectiveLabLevel} 级`
+    : "";
   const chain: RequirementChip[] = def.requires.map((req) => {
     const have = requirementLevel(state, req);
     return { label: `${requirementName(req)} ${Math.min(have, req.level)}/${req.level}`, met: have >= req.level };
@@ -665,7 +672,9 @@ function researchView(state: GameState, def: ResearchDef): ResearchView {
     cost,
     time: `研究时间 ${formatDuration(Math.ceil(seconds))}`,
     effect: researchEffect(state, def, target),
-    later: def.later ? `后续：${def.later}` : "",
+    // The existing full-width blurb can wrap; keep the narrow time cell unchanged.
+    // This is a current next-level quote, never a running job's participant history.
+    later: [networkHint, def.later ? `后续：${def.later}` : ""].filter(Boolean).join("。"),
     chain,
     chainKey: chain.map((chip) => `${chip.label}:${chip.met ? 1 : 0}`).join("|"),
     locked: chain.some((chip) => !chip.met),

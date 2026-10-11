@@ -14,7 +14,7 @@ jobs:
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    # Preserve existing gates and individual watchdogs; add bounded 420s terraformer acceptance.
+    # Preserve every existing gate/watchdog; add the bounded 240s IRN worker / 245s supervisor.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -83,6 +83,61 @@ jobs:
           (cd "$RUNNER_TEMP/pre-terraformer" && node --import tsx scripts/natural-growth-journey.ts) > terraformer-origin-growth-report.json 2> terraformer-origin-growth-report.log
           echo "f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826  terraformer-origin-growth-report.json" | sha256sum -c -
           node --import tsx scripts/natural-terraformer-journey.ts --report terraformer-origin-growth-report.json --expected-report-sha256 f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826 --source-sha 53325263ddbd654b8e8b9511ec62b944fa955233 > natural-terraformer-report.json 2> natural-terraformer-report.log
+      - name: Clean pinned terraformer origin and current-source natural research network
+        shell: bash
+        env:
+          RESEARCH_NETWORK_ORIGIN_SHA: 4afa5331d6e54509a643572570dc3cd194c78ebf
+          GROWTH_ORIGIN_SHA: 53325263ddbd654b8e8b9511ec62b944fa955233
+          GROWTH_REPORT_SHA256: f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826
+        run: |
+          # This is a fresh reproduction of exact pre-IRN source, not a retrieved
+          # immutable terraformer CI artifact or a claim that its CI was green.
+          # Keep every generated report outside both clean execution worktrees.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "$GROWTH_REPORT_SHA256  terraformer-origin-growth-report.json" | sha256sum -c -
+          git worktree add --detach "$RUNNER_TEMP/research-network-origin" "$RESEARCH_NETWORK_ORIGIN_SHA"
+          git worktree add --detach "$RUNNER_TEMP/research-network-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/research-network-origin/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/research-network-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-origin" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+          (cd "$RUNNER_TEMP/research-network-origin" && GITHUB_SHA="$RESEARCH_NETWORK_ORIGIN_SHA" node --import tsx scripts/natural-terraformer-journey.ts --report "$GITHUB_WORKSPACE/terraformer-origin-growth-report.json" --expected-report-sha256 "$GROWTH_REPORT_SHA256" --source-sha "$GROWTH_ORIGIN_SHA") > research-network-origin-terraformer-report.json 2> research-network-origin-terraformer-report.log
+          sha256sum research-network-origin-terraformer-report.json > research-network-origin-terraformer-report.sha256
+          ORIGIN_REPORT_SHA256="$(cut -d' ' -f1 research-network-origin-terraformer-report.sha256)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/natural-research-network-journey.ts --report "$GITHUB_WORKSPACE/research-network-origin-terraformer-report.json" --expected-report-sha256 "$ORIGIN_REPORT_SHA256" --source-sha "$RESEARCH_NETWORK_ORIGIN_SHA") > natural-research-network-report.json 2> natural-research-network-report.log
+          sha256sum natural-research-network-report.json > natural-research-network-report.sha256
+          # Require the entire natural execution checkout to be clean, beyond the
+          # fixture's mandatory clean runtime-source scope and exact commit check.
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          rows = []
+          for filename, expected_sha, schema in (
+              ('research-network-origin-terraformer-report.json', os.environ['RESEARCH_NETWORK_ORIGIN_SHA'], 'infinity-natural-terraformer-journey-v1'),
+              ('natural-research-network-report.json', os.environ['GITHUB_SHA'], 'infinity-natural-research-network-journey-v1'),
+          ):
+              raw = Path(filename).read_bytes()
+              report = json.loads(raw)
+              source = report['source']
+              assert report['schema'] == schema and report['outcome']['status'] == 'passed', filename
+              assert source['sourceSha'] == source['gitHead'] == expected_sha, filename
+              assert source['worktreeStatusPorcelain'] == source['sourceScopeStatusPorcelain'] == '', filename
+              rows.append({'file': filename, 'sha256': hashlib.sha256(raw).hexdigest(), 'source': source})
+          continuation = json.loads(Path('natural-research-network-report.json').read_bytes())
+          assert continuation['origin']['sourceSha'] == rows[0]['source']['sourceSha']
+          assert continuation['origin']['reportSha256'] == continuation['origin']['expectedReportSha256'] == rows[0]['sha256']
+          Path('research-network-provenance.json').write_text(json.dumps({
+              'classification': 'Fresh reproduction of pinned pre-IRN source, followed by clean current-source IRN continuation; not a prior immutable terraformer CI artifact or a claim of prior CI success.',
+              'growthInput': {'file': 'terraformer-origin-growth-report.json', 'sourceSha': os.environ['GROWTH_ORIGIN_SHA'], 'sha256': os.environ['GROWTH_REPORT_SHA256']},
+              'reports': rows,
+              'nativeAcceptance': 'Separate mandatory browser gate; this manifest does not establish its result.',
+          }, indent=2) + '\n', encoding='utf-8')
+          PY
+          sha256sum -c research-network-origin-terraformer-report.sha256 natural-research-network-report.sha256
+          NATURAL_REPORT_SHA256="$(cut -d' ' -f1 natural-research-network-report.sha256)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/research-network-browser-fixture.ts "$GITHUB_WORKSPACE/natural-research-network-report.json" "$NATURAL_REPORT_SHA256" "$GITHUB_SHA") > research-network-review-save.json 2> research-network-browser-fixture.log
+          test -z "$(git -C "$RUNNER_TEMP/research-network-origin" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
       - name: Exact before source and legal combined performance fixture
         run: |
           mkdir -p "$RUNNER_TEMP/pre-performance"
@@ -154,6 +209,10 @@ jobs:
           python scripts/browser-transport-load.py --url http://127.0.0.1:4173/Infinity/ --fixture transport-load-review-save.json --natural-report natural-growth-report.json --expected-report-sha256 "$(sha256sum natural-growth-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output transport-load-evidence
           node --import tsx scripts/terraformer-browser-fixture.ts natural-terraformer-report.json "$(sha256sum natural-terraformer-report.json | cut -d' ' -f1)" > terraformer-review-save.json
           python scripts/browser-terraformer.py --url http://127.0.0.1:4173/Infinity/ --fixture terraformer-review-save.json --natural-report natural-terraformer-report.json --expected-report-sha256 "$(sha256sum natural-terraformer-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output terraformer-evidence
+          # Four-width reading/layout evidence plus native economic actions at 1440px.
+          # Preserve a failure exit; the report and screenshots remain available via always-upload.
+          sha256sum -c research-network-origin-terraformer-report.sha256 natural-research-network-report.sha256
+          python scripts/browser-research-network.py --url http://127.0.0.1:4173/Infinity/ --fixture research-network-review-save.json --natural-report natural-research-network-report.json --expected-report-sha256 "$(cut -d' ' -f1 natural-research-network-report.sha256)" --expected-sha "$GITHUB_SHA" --output research-network-evidence > research-network-browser.log 2>&1
           python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" > save-session-review-save.json
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
@@ -254,6 +313,17 @@ jobs:
             natural-terraformer-report.log
             terraformer-review-save.json
             terraformer-evidence
+            research-network-origin-terraformer-report.json
+            research-network-origin-terraformer-report.log
+            research-network-origin-terraformer-report.sha256
+            research-network-provenance.json
+            natural-research-network-report.json
+            natural-research-network-report.log
+            natural-research-network-report.sha256
+            research-network-review-save.json
+            research-network-browser-fixture.log
+            research-network-browser.log
+            research-network-evidence
             formations-save-revision-report.json
             order-migration-report.json
             balance-report.txt

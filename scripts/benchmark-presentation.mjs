@@ -128,8 +128,59 @@ function historicalBuildingCards(cards, label) {
   return cards.slice(0, -1);
 }
 const fullCurrent = afterPresent.present(state, input);
-assert.deepEqual({ ...fullCurrent, buildings: historicalBuildingCards(fullCurrent.buildings, "full presenter") },
-  fullOriginal, "retained full presenter equals exact archived original after the one fully asserted terraformer append");
+// This historical workload has no completed IRN. No speed, participant, cost,
+// permission or active-timer exception is allowed, even across its many worlds.
+const researchIds = ["energy_tech", "laser_tech", "ion_tech", "hyperspace_tech", "plasma_tech",
+  "combustion_drive", "impulse_drive", "hyperspace_drive", "espionage_tech", "computer_tech",
+  "astrophysics", "intergalactic_research_network", "graviton_tech", "weapons_tech", "shielding_tech", "armour_tech"];
+const irnIndex = 11;
+const sourceResearch = fixture.ready.state.research;
+const sourceResearchJobs = fixture.manifest.paidJobIds.research;
+assert.equal(sourceResearch.levels.intergalactic_research_network, 0, "archived workload has completed IRN zero");
+assert.equal(state.research.levels.intergalactic_research_network, 0, "migration preserves completed IRN zero");
+assert.equal(fixture.ready.state.activePlanetId, "homeworld", "fixed primary lab identity");
+assert.equal(fixture.ready.state.planets.length, fixture.manifest.counts.worlds, "all historical worlds remain represented");
+assert.ok(fixture.ready.state.planets.every(planet => planet.buildings.research_lab === 8 &&
+  planet.buildQueue.every(job => job.building !== "research_lab")), "every historical lab is exactly level eight and not upgrading");
+assert.deepEqual(sourceResearchJobs, [sourceResearch.queue[0].jobId, sourceResearch.queue[0].jobId + 1], "two exact successive paid research identities");
+assert.deepEqual(sourceResearch.queue, [
+  { planetId: "homeworld", tech: "energy_tech", targetLevel: 9,
+    paid: { metal: "0", crystal: "204800", deuterium: "102400" },
+    totalSeconds: 136.53333333333333, remainingSeconds: 136.53333333333333,
+    source: "manual", jobId: sourceResearchJobs[0], taskId: null },
+  { planetId: "homeworld", tech: "laser_tech", targetLevel: 11,
+    paid: { metal: "204800", crystal: "102400", deuterium: "0" },
+    totalSeconds: 0, remainingSeconds: 0,
+    source: "manual", jobId: sourceResearchJobs[1], taskId: null },
+], "complete archived paid rows independently fix quote and frozen-timer preconditions");
+const oldNetworkLater = "后续：多星球后生效（第 4 阶段）";
+const oldWaitingResearch = Object.freeze({ index: 1, key: `homeworld:${sourceResearchJobs[1]}`,
+  planetId: "homeworld", jobId: sourceResearchJobs[1],
+  label: "激光技术 → 等级 11 · 匿名性能星球 000 <测试&🚀>",
+  detail: "等待中 · 已付款 · 预计 3 分 25 秒", progressPct: 0, active: false, halve: null, finish: null });
+const newWaitingResearch = Object.freeze({ ...oldWaitingResearch,
+  detail: "等待中 · 已付款 · 按当前条件预计 3 分 25 秒（开工时确定）" });
+assert.deepEqual(fullOriginal.research.items.map(card => card.id), researchIds, "all sixteen archived research identities in exact order");
+assert.equal(fullOriginal.research.items[irnIndex].later, oldNetworkLater, "complete obsolete archived IRN field");
+assert.equal(fullOriginal.research.queue.items.length, 2, "exact archived active/waiting queue cardinality");
+assert.deepEqual(fullOriginal.research.queue.items[1], oldWaitingResearch, "complete archived waiting row is independently specified");
+function historicalResearch(panel, label, includeCards = true) {
+  assert.equal(panel.queue.items.length, 2, `${label}: no queued research may be omitted`);
+  assert.deepEqual(panel.queue.items[0], fullOriginal.research.queue.items[0], `${label}: entire active timer, identity and actions stay exact`);
+  assert.deepEqual(panel.queue.items[1], newWaitingResearch, `${label}: complete new waiting row, including unchanged quote and disabled actions`);
+  if (includeCards) {
+    assert.deepEqual(panel.items.map(card => card.id), researchIds, `${label}: every research card and its order remain`);
+    assert.deepEqual(panel.items[irnIndex], { ...fullOriginal.research.items[irnIndex], later: "" },
+      `${label}: only the complete obsolete IRN field changes; all other card fields remain exact`);
+  } else assert.deepEqual(panel.items, [], `${label}: hidden research body remains intentionally unprojected`);
+  return { ...panel,
+    items: panel.items.map((card, index) => index === irnIndex ? { ...card, later: oldNetworkLater } : card),
+    queue: { ...panel.queue, items: panel.queue.items.map((item, index) => index === 1 ? { ...item, detail: oldWaitingResearch.detail } : item) },
+  };
+}
+assert.deepEqual({ ...fullCurrent, buildings: historicalBuildingCards(fullCurrent.buildings, "full presenter"),
+  research: historicalResearch(fullCurrent.research, "full presenter") },
+  fullOriginal, "retained full presenter equals archived original after fully asserted terraformer and two research-copy differences");
 const fullSpace = beforeSpace.spaceView(state, cursor, request);
 const currentFullSpace = afterSpace.spaceView(state, cursor, request);
 const normalizedOriginalSpace = { ...fullSpace, phase: normalizedPhase(fullSpace.phase, beforeVersion, "archived full space") };
@@ -142,6 +193,7 @@ const topPanelFields = new Set(["research", "shipyard", "darkMatter", "arcade", 
 function parityVisible(tab) {
   const visible = afterPresent.presentVisible(state, input, tab);
   const resolved = afterPresent.resolveVisibleTab(state, tab);
+  const historicalResearchPanel = historicalResearch(visible.research, `${tab}: research`, resolved === "research");
   for (const key of Object.keys(fullOriginal)) {
     if (!topPanelFields.has(key)) assert.deepEqual(visible[key], fullOriginal[key], `${tab}: shared ${key}`);
   }
@@ -150,7 +202,7 @@ function parityVisible(tab) {
     ["darkMatter", ["shop", "packages", "inventory", "boosters"]], ["overview", ["production", "energy"]],
   ]) {
     for (const key of Object.keys(fullOriginal[panel])) {
-      if (!excluded.includes(key)) assert.deepEqual(visible[panel][key], fullOriginal[panel][key], `${tab}: shared ${panel}.${key}`);
+      if (!excluded.includes(key)) assert.deepEqual((panel === "research" ? historicalResearchPanel : visible[panel])[key], fullOriginal[panel][key], `${tab}: shared ${panel}.${key}`);
     }
   }
   assert.equal(visible.arcade.visible, fullOriginal.arcade.visible, `${tab}: ring unlock flag`);
@@ -159,7 +211,8 @@ function parityVisible(tab) {
     arcade: ["arcade"], protocol: ["catalog", "slots"], achievements: ["achievements"], curvature: ["techs"],
   }[resolved] ?? [];
   for (const key of visibleKeys) assert.deepEqual(key === "buildings"
-    ? historicalBuildingCards(visible[key], `${tab}: visible buildings`) : visible[key], fullOriginal[key], `${tab}: visible ${key}`);
+    ? historicalBuildingCards(visible[key], `${tab}: visible buildings`)
+    : key === "research" ? historicalResearchPanel : visible[key], fullOriginal[key], `${tab}: visible ${key}`);
   if (resolved === "shipyard") assert.deepEqual(visible.shipyard.ships, fullOriginal.shipyard.ships, "visible ship cards");
   if (resolved === "defense") assert.deepEqual(visible.shipyard.defenses, fullOriginal.shipyard.defenses, "visible defense cards");
   return resolved;
@@ -239,9 +292,9 @@ for (const delta of [0, 1 / 60, 0.125]) {
     beforeSave.serializeState(beforeLogic.tick(state, delta)), `complete simulation state parity at ${delta}s`, migrationFloor);
 }
 assert.ok(sink, "measurement results were consumed");
-const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
+const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r10 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata. Model parity permits exactly one appended terraformer card, with all preconditions and every card field independently asserted; every historical card and other model field remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r10 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },
@@ -250,10 +303,15 @@ process.stdout.write(JSON.stringify({
     normalizedToken: "v<package-version>" },
   featureException: { field: "present.buildings / presentVisible(facilities).buildings", addedCard: expectedTerraformerCard,
     rule: "Assert the exact fixture preconditions, old-catalog absence, one unique appended identity and all 11 card fields before removing only the last card for historical comparison. Every old card, ordering and other field is compared in full. Timing callbacks use unmodified current outputs." },
+  researchCopyExceptions: { completedIRN: 0, labLevels: 8,
+    later: { identity: "intergalactic_research_network", before: oldNetworkLater, after: "" },
+    waitingRow: { before: oldWaitingResearch, after: newWaitingResearch },
+    rule: "Assert exact source receipts and lab/IRN conditions, all sixteen ordered card identities, the complete old/new waiting row and the entire changed IRN card before normalizing only its later field and the waiting detail. Compare all other fields, active timers, actions and full state exactly. Timing callbacks receive no normalization." },
   method: { modelSamples: samples, modelWarmup: warmup, simulationSamples, percentile: "nearest-rank 95th percentile", frozenSameObject: true,
     startupParityPasses: 2, timingIncludes: "only the named synchronous callback", timingExcludes: "fixture generation, module loading, freezing, equality/hash checks, output serialization",
     limits: "CPU/JIT/GC and competing workload affect native timings. Small-sample p95 is descriptive, not a statistical guarantee. Browser measurements and storage quota must be reported separately." },
   modelResults, separateResults,
   correctness: { strictReadersEqualAfterExplicitR10AdditiveLift: true, zeroTimeStartupStable: true, archivedFullPresentParityAfterAssertedTerraformerAppend: true, visibleAndSharedFieldsEqualAfterAssertedTerraformerAppend: true,
+    researchCopyExceptionsFullyAsserted: true, irnZeroResearchTimesAndAllActiveTimersUnchanged: true,
     splitSpaceParity: true, frozenInputUnchanged: true, completeSimulationStateParity: true, exactNativeSerializationParityAfterExplicitR10Lift: true },
 }, null, 2) + "\n");

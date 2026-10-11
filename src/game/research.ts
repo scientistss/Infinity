@@ -2,7 +2,7 @@ import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 /**
  * Research queue (design doc §6.1). Empire-wide, one research at a time, same queue length as the
  * build queue. Cost is charged on enqueue at the target level and refunded in full on cancel.
- * Duration is computed when a research starts, from the research lab level at that moment.
+ * Duration is computed once when a research starts, from its payer's eligible lab network.
  * The research lab cannot be upgraded while research is queued, and research cannot be queued while
  * the lab is in the build queue (OGame rule).
  */
@@ -78,9 +78,44 @@ export function researchCapacity(state: GameState): number {
   return queueCapacity(state);
 }
 
-/** P4-1 uses the paying planet's lab. Network aggregation is a separate increment. */
+/** Generic summaries retain the selected primary lab; network speed depends on the target tech. */
 export function effectiveLabLevel(state: GameState): number {
   return activePlanet(state).buildings.research_lab;
+}
+
+export interface ResearchNetworkView {
+  payerId: string;
+  primaryLabLevel: number;
+  requiredLabLevel: number;
+  /** Completed IRN only. An IRN level under research cannot accelerate itself. */
+  networkLevel: number;
+  supports: Array<{ planetId: string; name: string; labLevel: number }>;
+  effectiveLabLevel: number;
+}
+
+/**
+ * Pure start-time quote shared with presentation. The payer must supply its own eligible
+ * primary lab. Other owned labs contribute only speed, never prerequisites, stock or energy.
+ * Removing a support changes future starts; active jobs retain their saved duration.
+ */
+export function researchNetworkView(state: GameState, tech: ResearchId, payerId = state.activePlanetId): ResearchNetworkView {
+  const primary = state.planets.find(planet => planet.id === payerId);
+  if (!primary) throw new Error("研究付款星球不存在");
+  const primaryLabLevel = primary.buildings.research_lab;
+  const requiredLabLevel = researchById(tech).requires.reduce((level, requirement) =>
+    requirement.kind === "building" && requirement.id === "research_lab" ? Math.max(level, requirement.level) : level, 0);
+  const networkLevel = state.research.levels.intergalactic_research_network;
+  const view: ResearchNetworkView = { payerId, primaryLabLevel, requiredLabLevel, networkLevel, supports: [], effectiveLabLevel: primaryLabLevel };
+  // Most early-game quotes need neither a candidate scan nor a sort.
+  if (networkLevel <= 0 || state.planets.length <= 1 || primaryLabLevel < requiredLabLevel) return view;
+  view.supports = state.planets
+    .filter(planet => planet.id !== payerId && planet.buildings.research_lab >= requiredLabLevel
+      && !planet.buildQueue.some(order => order.building === "research_lab"))
+    .map(planet => ({ planetId: planet.id, name: planet.name, labLevel: planet.buildings.research_lab }))
+    .sort((a, b) => b.labLevel - a.labLevel || (a.planetId < b.planetId ? -1 : a.planetId > b.planetId ? 1 : 0))
+    .slice(0, networkLevel);
+  view.effectiveLabLevel += view.supports.reduce((sum, support) => sum + support.labLevel, 0);
+  return view;
 }
 
 export function nextResearchLevel(research: ResearchState, id: ResearchId): number {
@@ -93,7 +128,7 @@ export function researchCostFor(id: ResearchId, level: number): ResourceCost {
 
 /** Seconds a research of `def` at `level` would take if it started now. */
 export function researchSecondsFor(state: GameState, def: ResearchDef, level: number, cost?: ResourceCost): number {
-  return researchSeconds(cost ?? researchCostFor(def.id, level), effectiveLabLevel(state));
+  return researchSeconds(cost ?? researchCostFor(def.id, level), researchNetworkView(state, def.id).effectiveLabLevel);
 }
 
 export function labBusyReason(state: GameState): string {

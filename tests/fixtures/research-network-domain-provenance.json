@@ -1,0 +1,51 @@
+{
+  "schema": "infinity-ring-protection-research-network-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "0c563a6a2bafe70c8a0531dd935d36f9c83917cd",
+  "previousAdoptionManifestSha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c",
+  "referenceStatus": "Explicit IRN semantic source adoption only; not a passing CI or native acceptance claim.",
+  "scope": "Only the exact recorded two-file IRN delta atop the declared r10 source is admitted. Every other complete-domain path and every historical ring-critical path must remain unchanged. All original native protection and recovery assertions still run.",
+  "historicalInvariant": "The original 7f17 domain-byte-identity guard remains false for this adoption. Historical failed reports and commits are not reclassified.",
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "unchangedRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "changedPaths": [
+    {
+      "path": "src/data/research.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "41a588ccb5a681bb186384a87e6fbccc0b59ec24a41335d2baa72a25e9f57ca9"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "e4ed6dea12da0c90cb2c1834afe9af3482639b89e9db072b67f1a38fd9579c36"
+      }
+    },
+    {
+      "path": "src/game/research.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "3eecfb896f8ff8e77f057535b8aab13d7df82e0fb3f94cea84670cc033388912"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "09f26bd9ca6acb367613d101c430a5a81b4751277e94e8697723f12502653e9a"
+      }
+    }
+  ]
+}
