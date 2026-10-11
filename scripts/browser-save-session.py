@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,6 +24,7 @@ parser.add_argument("--url", default="http://127.0.0.1:4173/Infinity/")
 parser.add_argument("--fixture", default="save-session-review-save.json")
 parser.add_argument("--output", default="save-session-evidence")
 parser.add_argument("--chromium", default=None)
+parser.add_argument("--r10-source", required=True, help="Exact clean ac3 r10 source for independent native startup catch-up expectations")
 args = parser.parse_args()
 fixtures = json.loads(Path(args.fixture).read_text())
 KEY, BACKUP = fixtures["key"], fixtures["backupKey"]
@@ -152,6 +154,48 @@ def capture_startup_migration(page, original, revision):
         if revision == 10:
             diagnostic["fullStateDifferencesFromNullOnlyLift"] = migration_differences(lift_r10_state_to_r11(source["state"]), committed["state"])
     (out / f"{prefix}-diagnostic.json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def expected_r10_startup(original, candidate, observed):
+    """Strict metadata + complete envelope oracle; no current-state field is an oracle input."""
+    source = json.loads(original)
+    now = candidate["savedAt"]
+    cap_seconds = min(28800, max(7200, 7200 + max(0, source["state"]["offlineBonusHours"]) * 3600))
+    raw_seconds = max(0, (now - source["lastTickAt"]) / 1000)
+    expected_metadata = {"schema": "infinity-fixed-r10-startup-oracle-v1",
+                         "sourceSha": "ac3cce98403bea1e7162bcb4092e4cfeeb448a9a",
+                         "dependencyIdentity": {
+                             "breakInfinity": {"version": "2.2.0", "commonSha256": "f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06", "esmSha256": "1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a"},
+                             "padEnd": {"version": "1.0.2", "entrySha256": "063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330"}},
+                         "inputRawSha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+                         "sourceSavedAt": source["savedAt"], "sourceLastTickAt": source["lastTickAt"],
+                         "constructorNow": now, "gapMilliseconds": now - source["lastTickAt"],
+                         "capSeconds": cap_seconds, "appliedSeconds": min(raw_seconds, cap_seconds), "capped": raw_seconds > cap_seconds}
+    check("startup candidate is a strict current envelope with one paired observed constructor clock",
+          candidate["schema"] == source["schema"] and candidate["version"] == source["version"] == 9 and
+          candidate["revision"] == CURRENT_REVISION and candidate["lastTickAt"] == now and
+          type(now) is int and now >= 0)
+    check("independent archived oracle metadata binds the exact source bytes and constructor timestamp",
+          set(observed) == set(expected_metadata) | {"state"} and all(exact_json(observed.get(key), value) for key, value in expected_metadata.items()))
+    return {**source, "revision": CURRENT_REVISION, "savedAt": now, "lastTickAt": now,
+            "state": lift_r10_state_to_r11(observed["state"])}
+
+
+def run_r10_startup_oracle(original, candidate):
+    # The subprocess sees old bytes and one observed wall timestamp ONLY. It
+    # imports actual SHA-pinned archived reader/offline code, not current logic.
+    request = {"originalRaw": original, "constructorNow": candidate["savedAt"]}
+    command = ["node", "--import", "tsx", str(Path(__file__).with_name("r10-startup-oracle.mjs")), args.r10_source]
+    result = subprocess.run(command, input=json.dumps(request), text=True, capture_output=True,
+                            timeout=20, check=False, cwd=Path(__file__).resolve().parent.parent)
+    (out / "r10-startup-oracle.stdout.json").write_text(result.stdout, encoding="utf-8")
+    (out / "r10-startup-oracle.stderr.log").write_text(result.stderr, encoding="utf-8")
+    check("actual fixed r10 reader and catch-up subprocess completes successfully", result.returncode == 0)
+    observed = json.loads(result.stdout)
+    expected = expected_r10_startup(original, candidate, observed)
+    (out / "r10-startup-exact-old-semantics-expected.json").write_text(json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / "r10-startup-exact-old-semantics-diff.json").write_text(json.dumps(migration_differences(expected, candidate, "$save"), ensure_ascii=False, indent=2), encoding="utf-8")
+    return expected
 
 
 def select_save(page):
@@ -500,7 +544,7 @@ try:
                 check("pre-orders factory fixture has no paid queues to assign IDs", not legacy_state["research"]["queue"] and all(not p["buildQueue"] and not p["shipyardQueue"] for p in legacy_state["planets"]))
                 floor = 1
             if revision == 10:
-                check("actual r10 migration preserves every prior field and adds only empty demolition slots", exact_json(migrated_file["state"], lift_r10_state_to_r11(legacy_state)))
+                check("actual r10 startup preserves exact fixed-reader catch-up semantics and adds only empty demolition slots", exact_json(migrated_file, run_r10_startup_oracle(legacy_raw, migrated_file)))
             else:
                 check("migration creates exact zero ledgers with an independently fixed starting payment boundary", assert_zero_grant_metadata(migrated_file["state"], legacy_state, grant_job_floor=floor))
             check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
@@ -511,6 +555,23 @@ try:
             check("migration retains original planet", planet(page) == name_of(legacy_raw))
             check(f"migration backup is byte-for-byte r{revision} original", raw(page, BACKUP) == legacy_raw)
             context.close()
+
+        case = "actual r10 explicit text import is schema migration without offline catch-up"
+        classification = "HTTP / native localStorage / actual archived r10 bytes / explicit import no-catchup contract"
+        import_raw = legacy_fixture(10)
+        (out / "r10-explicit-import-original.json").write_bytes(import_raw.encode("utf-8"))
+        context, page = boot(None)
+        original = raw(page)
+        clear_audit(page)
+        import_text(page, import_raw)
+        committed = verify_commit(page, original, "已导入并存入本地")
+        (out / "r10-explicit-import-current.json").write_bytes(committed.encode("utf-8"))
+        imported = json.loads(committed)
+        check("explicit old-r10 import adds only null slots without granting any elapsed simulation time",
+              exact_json(imported["state"], lift_r10_state_to_r11(json.loads(import_raw)["state"])) and
+              imported["revision"] == CURRENT_REVISION and imported["savedAt"] == imported["lastTickAt"])
+        context.close()
+        classification = "HTTP / native localStorage"
 
         case = "armed r4 startup migration preserves exact ring authorization"
         armed_value = copy.deepcopy(fixtures["armedR4"])

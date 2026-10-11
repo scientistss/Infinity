@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from r11_compatibility import lift_r10_state_to_r11
+from r11_compatibility import exact_json, lift_r10_state_to_r11
 
 SCRIPT = Path(__file__).with_name('browser-save-session.py')
 TREE = ast.parse(SCRIPT.read_text(encoding='utf-8'))
@@ -78,16 +78,60 @@ class MigrationDiagnosticTests(unittest.TestCase):
             self.assertNotIn('clock', report)
             self.assertNotIn('fullStateDifferencesFromNullOnlyLift', report)
 
-    def test_complete_evidence_precedes_unchanged_full_state_assertion(self):
+    def test_complete_evidence_precedes_strict_full_envelope_oracle_assertion(self):
         calls = [node for node in ast.walk(TREE) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
         capture = next(node for node in calls if node.func.id == 'capture_startup_migration')
         exact = next(node for node in calls if node.func.id == 'check' and isinstance(node.args[0], ast.Constant) and
-                     node.args[0].value == 'actual r10 migration preserves every prior field and adds only empty demolition slots')
+                     node.args[0].value == 'actual r10 startup preserves exact fixed-reader catch-up semantics and adds only empty demolition slots')
         self.assertLess(capture.lineno, exact.lineno)
-        self.assertEqual(ast.unparse(exact.args[1]), "exact_json(migrated_file['state'], lift_r10_state_to_r11(legacy_state))")
+        self.assertEqual(ast.unparse(exact.args[1]), "exact_json(migrated_file, run_r10_startup_oracle(legacy_raw, migrated_file))")
         body = ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'capture_startup_migration'))
         for forbidden in ('setItem', 'Date.now', 'performance', 'catchUp', 'tick('):
             self.assertNotIn(forbidden, body)
+
+
+class OracleContracts(unittest.TestCase):
+ def setUp(self):
+  def check(name,ok):
+   if not ok:raise AssertionError(name)
+  self.ns=dict(json=json,hashlib=hashlib,exact_json=exact_json,lift_r10_state_to_r11=lift_r10_state_to_r11,CURRENT_REVISION=11,check=check)
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r10_startup')
+  exec(compile(ast.Module(body=[node],type_ignores=[]),'prepared-helper','exec'),self.ns)
+  self.old={'schema':'infinity-original-p4','version':9,'revision':10,'savedAt':1000,'lastTickAt':1000,'state':{'offlineBonusHours':0,'totalTime':'0','orders':{'nextJobId':1},'planets':[{'id':'homeworld','buildQueue':[],'resources':{'metal':'500'}}]}}
+  self.raw=json.dumps(self.old)
+  self.observed={'schema':'infinity-fixed-r10-startup-oracle-v1','sourceSha':'ac3cce98403bea1e7162bcb4092e4cfeeb448a9a','inputRawSha256':hashlib.sha256(self.raw.encode()).hexdigest(),'sourceSavedAt':1000,'sourceLastTickAt':1000,'constructorNow':1125,'gapMilliseconds':125,'capSeconds':7200,'appliedSeconds':.125,'capped':False,'state':copy.deepcopy(self.old['state'])}
+  self.observed['state']['totalTime']='0.125';self.observed['state']['planets'][0]['resources']['metal']='500.001'
+  self.observed['dependencyIdentity']={'breakInfinity':{'version':'2.2.0','commonSha256':'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06','esmSha256':'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},'padEnd':{'version':'1.0.2','entrySha256':'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'}}
+  self.candidate={**self.old,'revision':11,'savedAt':1125,'lastTickAt':1125,'state':lift_r10_state_to_r11(self.observed['state'])}
+ def test_full_envelope_has_only_true_old_elapsed_semantics_and_null(self):
+  self.assertTrue(exact_json(self.ns['expected_r10_startup'](self.raw,self.candidate,self.observed),self.candidate))
+ def test_every_claimed_metadata_mutation_is_rejected(self):
+  for key in self.observed:
+   if key=='state':continue
+   mutant=copy.deepcopy(self.observed);v=mutant[key];mutant[key]={} if isinstance(v,dict) else not v if isinstance(v,bool) else v+1 if isinstance(v,(int,float)) else v+'x'
+   with self.subTest(key=key),self.assertRaises(AssertionError):self.ns['expected_r10_startup'](self.raw,self.candidate,mutant)
+ def test_wallet_time_identity_and_missing_null_never_gain_tolerance(self):
+  mutants=[]
+  for path,value in [('wallet','500.00100000001'),('time','0.126'),('id',2),('slot','missing')]:
+   mutant=copy.deepcopy(self.candidate)
+   if path=='wallet':mutant['state']['planets'][0]['resources']['metal']=value
+   if path=='time':mutant['state']['totalTime']=value
+   if path=='id':mutant['state']['orders']['nextJobId']=value
+   if path=='slot':del mutant['state']['planets'][0]['demolition']
+   mutants.append(mutant)
+  for mutant in mutants:
+   with self.subTest(mutant=mutant):self.assertFalse(exact_json(self.ns['expected_r10_startup'](self.raw,mutant,self.observed),mutant))
+ def test_candidate_cannot_forge_paired_clock_or_revision(self):
+  for key,value in [('revision',10),('lastTickAt',1124),('savedAt',True)]:
+   mutant=copy.deepcopy(self.candidate);mutant[key]=value
+   with self.subTest(key=key),self.assertRaises(AssertionError):self.ns['expected_r10_startup'](self.raw,mutant,self.observed)
+ def test_subprocess_request_cannot_receive_candidate_state(self):
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='run_r10_startup_oracle')
+  assignment=next(n for n in node.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='request' for t in n.targets))
+  self.assertEqual(ast.unparse(assignment.value),"{'originalRaw': original, 'constructorNow': candidate['savedAt']}")
+  helper=Path(__file__).with_name('r10-startup-oracle.mjs').read_text()
+  self.assertNotIn('/infinity-demolition/src',helper)
+  self.assertIn("assert.deepEqual(Object.keys(input).sort(),['constructorNow','originalRaw'])",helper)
 
 
 if __name__ == '__main__':
