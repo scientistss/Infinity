@@ -17,7 +17,7 @@ import unittest
 
 SCRIPT = Path(__file__).with_name('browser-terraformer.py')
 TREE = ast.parse(SCRIPT.read_text(encoding='utf-8'))
-HELPERS = {'native_scroll_to', 'capture_failure', 'capture_live_failure'}
+HELPERS = {'native_scroll_to', 'responsive', 'capture_failure', 'capture_live_failure'}
 
 
 def helpers():
@@ -175,6 +175,12 @@ class DiagnosticPage:
         self.observe('DOM')
         return self.DOM
 
+    def evaluate(self, source):
+        self.observe('scroll diagnostics')
+        assert 'slice(-200)' in source and 'scrollHeight' in source and 'scrollY' in source
+        return {'width': 1440, 'height': 1100, 'scrollY': 0, 'scrollHeight': 3000,
+                'wheelCount': 1, 'wheels': [{'trusted': True, 'deltaY': -100000}]}
+
     def screenshot(self, *, full_page, timeout):
         self.observe('screenshot')
         assert full_page is False and timeout == 2000
@@ -257,6 +263,12 @@ class FailureCaptureTests(unittest.TestCase):
                          ['original failure report', 'report before screenshot', 'final failure report'])
         self.assertTrue((self.out / 'failure.png').exists())
 
+    def test_scroll_diagnostics_failure_never_prevents_other_live_evidence(self):
+        failure = self.fail_live(DiagnosticPage(failures={'scroll diagnostics'}))
+        self.assertEqual(failure['captureErrors'][0]['step'], 'scroll and wheel diagnostics')
+        self.assertTrue((self.out / 'failure-dom.html').exists())
+        self.assertTrue((self.out / 'failure.png').exists())
+
     def test_actual_script_exits_failure_guard_before_playwright_context(self):
         context = next(node for node in ast.walk(TREE) if isinstance(node, ast.With)
                        and any(isinstance(item.context_expr, ast.Call)
@@ -264,6 +276,121 @@ class FailureCaptureTests(unittest.TestCase):
                                and item.context_expr.func.id == 'sync_playwright' for item in node.items))
         self.assertEqual([item.context_expr.func.id for item in context.items],
                          ['sync_playwright', 'capture_live_failure'])
+
+
+class WheelPage:
+    def __init__(self, *, scroll_height=3000, move_down=True, move_up=True, trusted=True, audit=True):
+        self.mouse = self
+        self.scroll_y, self.scroll_height = 0, scroll_height
+        self.move_down, self.move_up, self.trusted, self.audit = move_down, move_up, trusted, audit
+        self.clicks, self.wheels, self.inputs, self.viewports = [], [], [], []
+
+    def set_viewport_size(self, viewport):
+        self.viewports.append(viewport)
+
+    def locator(self, selector):
+        assert selector == '[data-tab="facilities"]'
+        return self
+
+    def click(self):
+        self.clicks.append({'trusted': True, 'action': 'facilities'})
+
+    def evaluate(self, source, argument=None):
+        if source == 'window.__terraClicks.length':
+            return len(self.clicks)
+        if source == '(n)=>window.__terraClicks.slice(n)':
+            return self.clicks[argument:]
+        if 'wheelCount:window.__terraWheels.length' in source:
+            return {'scrollY': self.scroll_y, 'height': 1100, 'scrollHeight': self.scroll_height,
+                    'wheelCount': len(self.wheels)}
+        if source == '(n)=>({scrollY,wheels:window.__terraWheels.slice(n)})':
+            return {'scrollY': self.scroll_y, 'wheels': self.wheels[argument:]}
+        if source == 'window.__terraWheels':
+            return self.wheels
+        if source == 'document.documentElement.scrollWidth<=innerWidth+1':
+            return True
+        raise AssertionError('Unexpected read: ' + source)
+
+    def move(self, x, y):
+        self.inputs.append(('move', x, y))
+
+    def wheel(self, x, y):
+        self.inputs.append(('wheel', x, y))
+        if self.audit:
+            self.wheels.append({'trusted': self.trusted, 'deltaY': y})
+        if (y > 0 and self.move_down) or (y < 0 and self.move_up):
+            self.scroll_y = max(0, min(self.scroll_height - 1100, self.scroll_y + y))
+
+    def wait_for_timeout(self, value):
+        assert value == 80
+
+    def wait_for_function(self, source, *, timeout, polling, arg=None):
+        assert timeout == 1000 and polling == 20
+        ready = self.scroll_y == 0 if source == 'scrollY === 0' else self.scroll_y > arg
+        if not ready:
+            raise TimeoutError('Real document did not move as requested')
+
+
+class ResponsiveWheelTests(unittest.TestCase):
+    def setUp(self):
+        self.namespace = helpers()
+        self.checks = []
+
+        def check(name, condition, detail=None):
+            self.checks.append((name, condition, detail))
+            if not condition:
+                raise AssertionError(name)
+
+        self.namespace.update(check=check, advance=lambda page: None)
+
+    def run_proof(self, page, widths=(320, 390, 768, 1440)):
+        # Empty targets isolate per-width preparation; actual target assertions
+        # remain in responsive() and run in CI against the real browser DOM.
+        self.namespace['responsive'](page, 'old-paid-10000', [], widths)
+
+    def test_each_width_has_actual_trusted_down_and_return_with_before_after(self):
+        page = WheelPage()
+        self.run_proof(page)
+        down = [row for row in self.checks if 'actually moves document down' in row[0]]
+        returned = [row for row in self.checks if 'actually returns document to top' in row[0]]
+        self.assertEqual(len(down), 4)
+        self.assertEqual(len(returned), 4)
+        for row in down:
+            self.assertEqual(row[2]['before']['scrollY'], 0)
+            self.assertEqual(row[2]['after']['scrollY'], 480)
+        for row in returned:
+            self.assertEqual(row[2]['before']['scrollY'], 480)
+            self.assertEqual(row[2]['after']['scrollY'], 0)
+        self.assertEqual(sum(event['deltaY'] > 0 for event in page.wheels), 4)
+        self.assertEqual(self.checks[-1][:2], ('responsive proof includes trusted native wheel input', True))
+
+    def test_short_scrollable_document_uses_its_actual_available_travel(self):
+        page = WheelPage(scroll_height=1150)
+        self.run_proof(page, widths=(1440,))
+        self.assertEqual([event['deltaY'] for event in page.wheels if event['deltaY'] > 0], [50])
+        self.assertEqual(page.scroll_y, 0)
+
+    def test_non_scrollable_document_is_rejected_without_synthetic_positive_event(self):
+        page = WheelPage(scroll_height=1100)
+        with self.assertRaisesRegex(AssertionError, 'actual vertical wheel travel'):
+            self.run_proof(page)
+        self.assertFalse(any(event['deltaY'] > 0 for event in page.wheels))
+
+    def test_positive_event_without_actual_document_movement_is_rejected(self):
+        page = WheelPage(move_down=False)
+        with self.assertRaisesRegex(TimeoutError, 'did not move'):
+            self.run_proof(page)
+        self.assertTrue(any(event['deltaY'] > 0 for event in page.wheels))
+
+    def test_return_event_without_actual_document_movement_is_rejected(self):
+        with self.assertRaisesRegex(TimeoutError, 'did not move'):
+            self.run_proof(WheelPage(move_up=False))
+
+    def test_actual_movement_without_trusted_recorded_event_is_rejected(self):
+        for fault in ({'trusted': False}, {'audit': False}):
+            with self.subTest(fault=fault):
+                with self.assertRaisesRegex(AssertionError, 'trusted positive wheel'):
+                    self.run_proof(WheelPage(**fault))
 
 
 if __name__ == '__main__':
