@@ -17,6 +17,7 @@
 .space-panel .space-ship span { color:var(--ink); }
 .space-panel .space-ship small { display:block; color:var(--muted); margin-top:.1rem; }
 .space-panel .space-cargo { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; }
+.space-panel #transport-load-helper { margin-top:.5rem; overflow-wrap:anywhere; }
 .space-panel .space-quote { min-height:3rem; padding:.65rem; border-left:2px solid var(--good); background:var(--bg); }
 .space-panel .space-flight { display:grid; grid-template-columns:1fr 2fr 1fr auto; align-items:center; gap:.5rem; margin:.5rem 0; }
 .space-panel .space-flight .queue-bar { grid-column:1/-1; }

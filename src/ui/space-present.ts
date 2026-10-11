@@ -9,6 +9,20 @@ import { formatAmount, formatDuration } from "../game/format";
 import { big } from "../game/decimal";
 import { SHIP_IDS, unitById } from "../data/units";
 import type { GameState } from "../game/types";
+import { transportLoadPreview } from "./transport-load-model";
+
+/** Ordinary manual transport only; never project fleets, reports or other missions. */
+export function transportLoadView(state:GameState,request:FleetRequest) {
+  if(request.mission!=="transport")return null;
+  const preview=transportLoadPreview(state,request);
+  const amount=(value:typeof preview.load)=>value?.toString()??"—";
+  const validTotals=preview.load!==null&&preview.remaining!==null&&preview.excess!==null;
+  return {
+    summary:`货物占用 ${amount(preview.load)} · 可用货舱 ${amount(preview.remaining)} · 往返燃料预留 ${amount(preview.fuel)} · 总货舱 ${amount(preview.capacity)}${preview.excess?.gt(0)?` · 超出 ${amount(preview.excess)}`:""}`,
+    reason:!preview.available||!validTotals?preview.reason:preview.quote.ok?"装至上限只改对应资源，派遣需另点按钮。":preview.quote.reason,
+    maxima:preview.maxima,
+  };
+}
 
 /** Shared extension chrome stays fresh without projecting any hidden panel. */
 export function spaceOrigin(state:GameState):string {

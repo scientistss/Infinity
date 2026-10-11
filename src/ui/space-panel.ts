@@ -14,8 +14,10 @@ import { SPACE, wrap, coordinateKey, type Coordinates } from "../game/galaxy";
 import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
+import { transportLoadView } from "./space-present";
+import { fillTransportCargo } from "./transport-load-model";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
-import type { GameState } from "../game/types";
+import { RESOURCE_IDS, type GameState } from "../game/types";
 export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
@@ -23,6 +25,106 @@ function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {co
 function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.textContent!==value)n.textContent=value;}
 function html(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.dataset.signature!==value){n.innerHTML=value;n.dataset.signature=value;}}
 const entry=(label:string,id:string,min:number,max:number,value:number)=>`<label>${label}<input id="${id}" type="number" min="${min}" max="${max}" value="${value}" step="1" /></label>`;
+
+/** Stable draft inputs, fresh per-click arithmetic, and a small DOM capability boundary. */
+export function installTransportLoadControls(root:HTMLElement,readRequest:()=>FleetRequest) {
+  const panel=el(root,"#space-fleet"),helper=el(root,"#transport-load-helper");
+  const summary=el(root,"#transport-load-summary"),reason=el(root,"#transport-load-reason");
+  const mission=el<HTMLSelectElement>(root,"#flight-mission");
+  const inputs=[...root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-ship],#flight-mission,#flight-speed,#flight-galaxy,#flight-system,#flight-position,#cargo-metal,#cargo-crystal,#cargo-deuterium")];
+  const cargo=RESOURCE_IDS.map(id=>({id,input:el<HTMLInputElement>(root,`#cargo-${id}`),button:el<HTMLButtonElement>(root,`#transport-fill-${id}`)}));
+  const mounted=[panel,helper,summary,reason,...inputs,...cargo.map(item=>item.button)];
+  let state:GameState|null=null,writable=false,observed=false,mountRetired=false;
+  let worldKey:string|null=null,retiredReason="",lastDraft="";
+  let shown:ReturnType<typeof transportLoadView>=null;
+  const text=(node:HTMLElement,value:string)=>{if(node.textContent!==value)node.textContent=value;};
+  const signature=()=>JSON.stringify(inputs.map(input=>input.value));
+  function syncGuard() {
+    const hidden=mission.value!=="transport";
+    if(helper.hidden!==hidden)helper.hidden=hidden;
+    for(const item of cargo){
+      const disabled=mountRetired||!writable||!state||!!retiredReason||hidden||!shown?.maxima[item.id].ok;
+      if(item.button.disabled!==disabled)item.button.disabled=disabled;
+    }
+    if(mountRetired)text(reason,"运输装载控件已更换，请重新载入页面。");
+    else if(retiredReason)text(reason,retiredReason);
+  }
+  function retireRemoved(records:MutationRecord[]) {
+    if(mountRetired)return;
+    for(const record of records)for(const removed of record.removedNodes){
+      if(!(removed instanceof Element)||!mounted.some(node=>removed===node||removed.contains(node)))continue;
+      mountRetired=true;shown=null;observer.disconnect();syncGuard();return;
+    }
+  }
+  const observer=new MutationObserver(retireRemoved);
+  // Only the direct parents of capability nodes and their ancestors. No root
+  // subtree observer, fleet-card scan, or hidden-panel projection on a frame.
+  const watched=new Set<Node>();
+  for(const node of mounted)for(let parent=node.parentNode;parent;parent=parent.parentNode){
+    if(!watched.has(parent)){observer.observe(parent,{childList:true});watched.add(parent);}
+  }
+  function controlsMounted() {
+    retireRemoved(observer.takeRecords());
+    return !mountRetired&&root.isConnected&&mounted.every(node=>node.isConnected&&root.contains(node)
+      &&(node.id?root.querySelector(`#${node.id}`)===node:root.querySelector(`[data-ship="${node.dataset.ship}"]`)===node));
+  }
+  function update() {
+    syncGuard();
+    if(!controlsMounted()||helper.hidden||panel.hidden||document.hidden||!state)return;
+    shown=transportLoadView(state,readRequest());
+    if(shown){
+      text(summary,shown.summary);
+      if(!retiredReason)text(reason,shown.reason);
+      for(const item of cargo)item.button.title=shown.maxima[item.id].reason;
+    }
+    syncGuard();
+  }
+  function edited() {
+    if(!controlsMounted())return;
+    const next=signature();
+    // Delayed blur/change events and untouched values never renew an imported
+    // or protected draft. Editing while protected cannot pre-authorize recovery.
+    if(next!==lastDraft){lastDraft=next;if(state&&writable)retiredReason="";}
+    update();
+  }
+  for(const type of ["input","change"])root.addEventListener(type,event=>{
+    if(!inputs.includes(event.target as HTMLInputElement))return;
+    if(type==="change"&&!(event.target instanceof HTMLSelectElement))return;
+    edited();
+  });
+  for(const item of cargo)item.button.addEventListener("click",()=>{
+    if(!controlsMounted()||item.button.disabled||panel.hidden||helper.hidden||document.hidden||mission.value!=="transport"||!state||!writable||retiredReason)return;
+    // Never fill from the last painted maximum: stock, origin, engines, speed,
+    // target and all three cargo fields are read again for this exact click.
+    const result=fillTransportCargo(state,readRequest(),item.id);
+    if(!result.ok||result.amount===null){update();text(reason,result.reason);return;}
+    item.input.value=result.amount.toString();
+    lastDraft=signature();
+    update();
+  });
+  function invalidate(message="存档或世界已替换；请修改运输草稿后重新计算。") {
+    lastDraft=signature();retiredReason=message;shown=null;state=null;syncGuard();
+  }
+  syncGuard();
+  return {
+    update,edited,invalidate,
+    observe(next:GameState,ready:boolean,protectionMessage:string) {
+      const nextWorld=`${next.universe.seed}:${next.stats.launches}`;
+      if(worldKey!==null&&worldKey!==nextWorld)invalidate();
+      if(!ready){
+        if(!observed||writable)lastDraft=signature();
+        retiredReason=`${protectionMessage||"存档受保护"}；恢复后请修改运输草稿再计算。`;
+      }else if(observed&&!writable&&retiredReason){
+        lastDraft=signature();retiredReason="存档保护状态已改变；请修改运输草稿后重新计算。";
+      }
+      if(!observed)lastDraft=signature();
+      state=next;writable=ready;observed=true;worldKey=nextWorld;
+      // Protection is applied synchronously even when rendering is skipped.
+      // Normal frames only retain current references, never build a preview.
+      if(!ready||retiredReason||mountRetired)syncGuard();
+    },
+  };
+}
 
 /** Add new tabs without altering original template, stylesheet, card positions or assets. */
 export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
@@ -46,6 +148,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <div class="space-controls">${entry("目标银河","flight-galaxy",1,5,1)}${entry("恒星系","flight-system",1,100,50)}${entry("位置","flight-position",1,16,9)}</div>
     <div id="charge-options" class="ov-card"><label>深空驻留（1 段 = 60 游戏秒）<select id="charge-slots"><option value="1">1 段 · 60 秒</option><option value="2">2 段 · 120 秒</option><option value="3">3 段 · 180 秒</option></select></label><label><span><input type="checkbox" id="charge-bets" /> 复制星环机当前常驻押注，出发时扣除</span></label><p class="muted">可能遭遇海盗/异星战损。未受保护的黑洞会摧毁整支舰队。取消未完成充能会返还押注，不返还燃料。</p></div>
     <h3>3 · 装载货物</h3><div class="space-cargo">${[["metal","金属"],["crystal","晶体"],["deuterium","重氢"]].map(([id,label])=>`<label>${label}<input type="text" inputmode="decimal" id="cargo-${id}" value="0" aria-label="装载${label}" /></label>`).join("")}</div>
+    <div id="transport-load-helper" hidden><div class="space-cargo">${[["metal","金属"],["crystal","晶体"],["deuterium","重氢"]].map(([id,label])=>`<button type="button" id="transport-fill-${id}" aria-label="${label}装至上限" disabled>装至上限</button>`).join("")}</div><p id="transport-load-summary" class="muted"></p><p id="transport-load-reason" class="muted" role="status"></p></div>
     <p id="charge-risk-preview" class="muted"></p><p id="charge-capacity-preview" class="muted"></p><p id="space-quote" class="space-quote" aria-live="polite"></p><button type="button" id="space-send" data-space="send">派遣舰队</button><p class="space-status" role="status"></p>
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
@@ -78,7 +181,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     const cargo=emptyCargo();for(const id of ["metal","crystal","deuterium"] as const){const value=el<HTMLInputElement>(root,`#cargo-${id}`).value.trim();cargo[id]=/^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value)&&value.length<100?big(value):big(-1);}
     return {mission:el<HTMLSelectElement>(root,"#flight-mission").value as Mission,target:{galaxy:number("flight-galaxy"),system:number("flight-system"),position:number("flight-position")},ships,cargo,speedPercent:number("flight-speed"),holdSlots:number("charge-slots"),chargeWithBets:el<HTMLInputElement>(root,"#charge-bets").checked};
   }
-  function target(key:string,mission:string){const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");}
+  const transportLoad=installTransportLoadControls(root,request);
+  function target(key:string,mission:string){const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");transportLoad.edited();}
   root.addEventListener("click",event=>{
     const b=event.target instanceof Element?event.target.closest<HTMLButtonElement>("button"):null;if(!b||b.disabled)return;
     if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}
@@ -112,6 +216,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     html(root,"#space-worlds",model.rows.map(row=>`<tr class="space-world ${row.planetId?"space-owned":""}"><td>${row.position}</td><td>${enc(row.name)}<small>[${row.key}]</small></td><td>${row.kind}</td><td>${row.properties}</td><td>${row.bonus}</td><td><div class="space-actions">${row.planetId?`<button type="button" data-space="select" data-planet="${enc(row.planetId)}">切换</button>`:""}${row.canColonize?route(row.key,"colonize","殖民"):""}${row.canScout?route(row.key,"scout","侦察"):""}${row.canTransport?route(row.key,"transport","运输"):""}${row.position===16?route(row.key,"charge","深空充能"):""}</div></td></tr>`).join(""));
   }
   function updateSpaceFleet(model:SpaceFleetView){
+    transportLoad.update();
     el(root,"#charge-options").hidden=!model.isCharge;
     put(root,"#charge-risk-preview",model.chargePreview.risk);
     put(root,"#charge-capacity-preview",model.chargePreview.capacity);
@@ -144,9 +249,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
     }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean,protectionMessage:string){orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
-    fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;},
-    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    observeContexts(state:GameState,writable:boolean,protectionMessage:string){transportLoad.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
+    fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();},
+    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){
