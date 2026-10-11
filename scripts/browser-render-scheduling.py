@@ -285,7 +285,22 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         const form=panel.querySelector('#order-form'),fieldset=form?.querySelector(':scope > fieldset');
         const budgets=fieldset?.querySelector(':scope > .order-budgets'),quote=panel.querySelector('#order-quote');
         const toggle=fieldset?.nextElementSibling;
+        const fields=form?.querySelector(':scope > .order-fields'),kind=panel.querySelector('#order-kind'),target=panel.querySelector('#order-target');
+        const goal=panel.querySelector('#order-goal-label');
+        const describeSelect=e=>e?{tag:e.tagName,id:e.id,html:e.outerHTML,labelText:e.parentElement?.innerText,
+          native:e instanceof HTMLSelectElement,connected:e.isConnected,visible:visible(e),
+          owner:e.form===form&&form?.elements.namedItem(e.id)===e&&document.getElementById(e.id)===e,
+          count:document.querySelectorAll('#'+e.id).length,index:inputs.indexOf(e),
+          type:e.type,value:e.value,disabled:e.disabled,multiple:e.multiple,required:e.required,selectedIndex:e.selectedIndex,
+          options:[...e.options].map(o=>({value:o.value,text:o.text,disabled:o.disabled,selected:o.selected,
+            native:o instanceof HTMLOptionElement,direct:o.parentElement===e,html:o.outerHTML}))}:null;
         result.orderQuoteEvidence={panelHTML:panel.outerHTML,count:panel.querySelectorAll('#order-quote').length,
+          targetSelect:{formCount:document.querySelectorAll('#order-form').length,fieldsHTML:fields?.outerHTML??null,
+            exactPlacement:panel.dataset.tabPanel==='orders'&&form instanceof HTMLFormElement&&form.firstElementChild===fields&&
+              fields?.children.length===4&&kind?.parentElement===fields.children[1]&&target?.parentElement===fields.children[2]&&
+              goal?.parentElement===fields.children[3]&&[...fields.children].every(e=>e.tagName==='LABEL')&&
+              kind.parentElement.lastElementChild===kind&&target.parentElement.lastElementChild===target,
+            goalLabel:goal?.outerHTML??null,kind:describeSelect(kind),target:describeSelect(target)},
           quoteHTML:quote?.outerHTML??null,quoteText:quote?.innerText??null,
           partVisibility:quote?Object.fromEntries(['order-quote','order-quote-status','order-quote-cost','order-quote-note'].map(id=>[id,visible(panel.querySelector('#'+id))])):null,
           exactPlacement:panel.dataset.tabPanel==='orders'&&fieldset?.parentElement===form&&budgets?.parentElement===fieldset&&
@@ -439,9 +454,57 @@ def facility_base_snapshot(page,label,projected):
     return projected
 
 
+def order_target_base_snapshot(label,projected,evidence):
+    # A copied-evidence adapter for precisely one newly legal building choice.
+    # No generic name filtering: the native controls, full ordered options and
+    # unique adjacent label boundary must all match before removing that option.
+    after=label=='after'
+    check('order target exception is the unique native original form row: '+label,
+          label in ('before','after') and projected['tab']=='orders' and evidence['formCount']==1 and
+          evidence['exactPlacement'] and evidence['goalLabel']=='<span id="order-goal-label">目标等级</span>')
+    old=[('metal_mine','金属矿'),('crystal_mine','晶体矿'),('deuterium_synth','重氢合成器'),
+         ('solar_plant','太阳能电站'),('fusion_reactor','核聚变反应堆'),('metal_storage','金属仓库'),
+         ('crystal_storage','晶体仓库'),('deuterium_tank','重氢罐'),('robotics_factory','机器人工厂'),
+         ('nanite_factory','纳米机器人工厂'),('shipyard','造船厂'),('research_lab','研究实验室'),('missile_silo','导弹井')]
+    choices=old+([('terraformer','地形改造器')] if after else [])
+    kind_choices=[('building','建筑'),('research','研究'),('shipyard','造船 / 防御')]
+    for name,title,options,required,index in [('kind','计划类型',kind_choices,False,1),('target','目标',choices,True,2)]:
+        observed=evidence[name];id='order-'+name
+        expected_options=[{'value':value,'text':text,'disabled':False,'selected':i==0,'native':True,'direct':True,
+                           'html':f'<option value="{value}">{text}</option>'} for i,(value,text) in enumerate(options)]
+        expected_html=f'<select id="{id}"'+(' required=""' if required else '')+'>'+''.join(o['html'] for o in expected_options)+'</select>'
+        expected={'tag':'SELECT','id':id,'html':expected_html,'labelText':title+'\n'+'\n'.join(text for _,text in options),
+                  'native':True,'connected':True,'visible':True,'owner':True,'count':1,'index':index,
+                  'type':'select-one','value':options[0][0],'disabled':False,'multiple':False,'required':required,
+                  'selectedIndex':0,'options':expected_options}
+        check('order target exception retains exact '+id+' identity, default, ordered option values/text/permissions: '+label,
+              observed==expected)
+        check('order target exception keeps the exact original visible select control: '+id+' '+label,
+              projected['inputs'][index]=={'id':id,'action':None,'type':'select-one','value':options[0][0],
+                  'disabled':False,'checked':None,'text':None} and sum(item['id']==id for item in projected['inputs'])==1)
+        check('order target exception binds the complete select HTML to its unique original label: '+id+' '+label,
+              evidence['fieldsHTML'].count(expected_html)==1 and
+              evidence['fieldsHTML'].count('<label>'+title+expected_html+'</label>')==1)
+    kind_text=evidence['kind']['labelText'];target_text=evidence['target']['labelText']
+    boundary=kind_text+'\n'+target_text+'\n目标等级'
+    check('order target exception binds the exact native option text to one adjacent kind/target/goal boundary: '+label,
+          projected['text'].count(boundary)==1 and projected['text'].count(target_text)==1)
+    terra='<option value="terraformer">地形改造器</option>'
+    check('order target exception adds exactly one final terra option after the thirteen unchanged old options: '+label,
+          evidence['fieldsHTML'].count(terra)==int(after) and
+          (not after or evidence['target']['html'].endswith('<option value="missile_silo">导弹井</option>'+terra+'</select>')))
+    # Preserve all other fields and text, including any unrelated occurrence of
+    # this name elsewhere. The full remaining snapshot still compares exactly.
+    if after:
+        legacy_target='目标\n'+'\n'.join(text for _,text in old)
+        projected['text']=projected['text'].replace(boundary,kind_text+'\n'+legacy_target+'\n目标等级',1)
+    projected['orderFieldsInvariantDOM']=evidence['fieldsHTML'].replace(terra,'',1) if after else evidence['fieldsHTML']
+    return projected
+
+
 def order_quote_base_snapshot(page,label,projected):
-    # New read-only quote UI is the only orders-body exception. Preserve exact
-    # original snapshots and assert every added node before excluding this region.
+    # Preserve raw snapshots before either narrowly verified orders exception:
+    # the read-only quote region and the one appended native building option.
     evidence=projected.pop('orderQuoteEvidence')
     original=copy.deepcopy(projected);stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
     artifact=f'panel-parity-orders-{label}-{len(audits)}-raw.json'
@@ -495,11 +558,16 @@ def order_quote_base_snapshot(page,label,projected):
         separators=[text[left_end:right_start]]
         check('original budget to transport boundary has only native linebreaks: '+label,left_end<right_start and separators[0] in ('\n','\n\n'))
     projected['text']=text[:left_end]+'\n'+text[right_start:]
-    check('order quote snapshot exception never mutates storage or advances time: '+label,
-          raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at)
+    projected=order_target_base_snapshot(label,projected,evidence['targetSelect'])
+    check('order snapshot exceptions never mutate DOM, storage or advance time: '+label,
+          raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and
+          page.locator('[data-tab-panel="orders"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
     audits.append({'kind':'explicit-order-quote-parity-exception','side':label,'rawArtifact':artifact,
       'removedNode':'#order-quote' if after else None,'removedText':block,'adjacentSiblingSeparators':separators,
       'constraint':'Exact zero-budget no-quote state, full added DOM/controls/text asserted before only its visible region is excluded; all remaining old text, controls and state are compared.'})
+    audits.append({'kind':'exact-terraformer-order-option-parity-exception','side':label,'rawArtifact':artifact,
+      'removedNode':'#order-target > option[value="terraformer"]' if after else None,
+      'constraint':'Complete unchanged base state; unique native form/select identities, original building kind and metal_mine default, all thirteen literal ordered legacy options with native selected/disabled properties, and exactly one final legal terraformer option are asserted. Only its unique kind/target/goal text-bound occurrence is removed from copied evidence. All remaining text, controls, full original form-row DOM and state compare exactly; raw native option witnesses are retained for folded/open/reopened captures.'})
     return projected
 
 
@@ -1019,11 +1087,12 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote and IRN-copy exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option and IRN-copy exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
             'parityOrderQuoteException':'Only the uniquely placed initial #order-quote region is excluded after exact DOM, literal text, two-button permission, zero-cap and full-base-state assertions. Before/after raw snapshots are retained. Budgets, existing create/transport controls and all remaining visible content remain exact. No DOM or state is rewritten.',
+            'parityOrderTargetException':'The same guarded adapter covers folded, open and reopened orders-library snapshots. Both unique native selects retain the original building kind and metal_mine default, exact literal ordered values/text/selected/disabled properties and complete original HTML. Only the current fourteenth final terraformer option, after the thirteen unchanged legacy choices, is omitted from copied evidence inside its uniquely verified kind/target/goal text boundary. Full remaining form-row DOM, all visible snapshot fields and state compare exactly. Each raw capture retains native option/identity witnesses; live DOM, storage and controlled time remain unchanged.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},
