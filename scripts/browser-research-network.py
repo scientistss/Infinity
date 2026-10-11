@@ -578,6 +578,39 @@ def native_scroll_to(page, selector):
         page.mouse.wheel(0, round(box['y'] - target_y)); page.wait_for_timeout(100); advance(page)
     raise AssertionError('Actual wheel input could not expose the complete requested region')
 
+def capture_failure(error, browser_alive):
+    """Record the first exception before Playwright closes, without replacing it."""
+    global failure
+    if failure is not None:
+        return
+    failure = {'case': case, 'error': repr(error),
+        'traceback': ''.join(traceback.format_exception(type(error), error, error.__traceback__)),
+        'capturedWhilePlaywrightAlive': browser_alive}
+    if not browser_alive or active_page is None:
+        return
+    capture_errors = []
+    # A failed raw-save/DOM read must not prevent the other diagnostics.
+    for field, read_value in (
+        ('rawSave', lambda: raw(active_page)),
+        ('card', lambda: active_page.locator(CARD).all_text_contents()),
+        ('queue', lambda: active_page.locator(QUEUE).all_text_contents()),
+        ('status', lambda: active_page.locator('[data-bind="status"]').all_text_contents()),
+    ):
+        try:
+            failure[field] = read_value()
+        except BaseException as capture_error:
+            capture_errors.append({'field': field, 'error': repr(capture_error)})
+    try:
+        path = out / 'failure.png'
+        active_page.screenshot(path=str(path), full_page=False, timeout=7000)
+        evidence.append({'case': case, 'file': path.name,
+                         'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    except BaseException as capture_error:
+        capture_errors.append({'field': 'screenshot', 'error': repr(capture_error)})
+    if capture_errors:
+        failure['captureErrors'] = capture_errors
+
+
 signal.signal(signal.SIGALRM, timeout); signal.alarm(240)
 begin_case('setup')
 try:
@@ -591,103 +624,111 @@ try:
     (out / 'source-natural-research-network-report.json').write_bytes(source_bytes)
     check('independent literal IRN and computer payment/duration constants', fixtures['golden']['irn1'] == GOLD_IRN and fixtures['golden']['computer11'] == GOLD_COMPUTER and abs(fixtures['golden']['irn1Seconds'] - 3840 / 11) < 1e-10 and abs(fixtures['golden']['computer11BeforeNetworkSeconds'] - 12288 / 55) < 1e-10 and abs(fixtures['golden']['computer11AfterNetworkSeconds'] - 6144 / 35) < 1e-10)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox'])
-        begin_case('unchanged natural 03 -> actual production -> trusted manual IRN payment -> live reload -> actual 05')
-        context, page = boot(fixtures['naturalMilestones']['before']['save']['savedAt'])
-        handoff(page, 'before'); baseline = save(page, 'before')
-        check('earned main10/colony3/hyperspace8 is present before completed IRN0', planet(baseline)['buildings']['research_lab'] == 10 and planet(baseline, COLONY)['buildings']['research_lab'] == 3 and baseline['research']['levels']['hyperspace_tech'] == 8 and baseline['research']['levels'][IRN] == 0)
-        check('before-network ordinary computer11 card shows literal 224-second rounded quote and no support', page.locator('[data-bind="rtime-computer_tech"]').inner_text() == '研究时间 3 分 44 秒' and '协作' not in page.locator('[data-bind="rlater-computer_tech"]').inner_text())
-        one_seconds(page, fixtures['execution']['irnWaitSeconds']); ready = save(page, 'irnReady')
-        check('ordinary IRN button becomes affordable through original production', page.locator(PAY).is_enabled() and page.locator('[data-bind="rbutton-intergalactic_research_network"]').inner_text() == '研究 等级 1')
-        trusted_click(page, PAY); irn_paid = save(page, 'irnPaid')
-        job = payment_golden(ready, irn_paid, IRN, 'manual', GOLD_IRN, 3840 / 11)
-        check('IRN cannot accelerate itself before its first completion', irn_paid['research']['levels'][IRN] == 0 and job['totalSeconds'] == job['remainingSeconds'] and page.locator(QUEUE + ' [data-q="detail"]').inner_text() == '剩余 5 分 50 秒 / 共 5 分 50 秒')
-        record(page, 'actual-irn1-payment')
-        advance(page, 1000); save(page, 'irnOneSecond'); record(page, 'irn1-before-native-reload')
-        reload_verified(page, 'irnReloaded')
-        one_seconds(page, fixtures['execution']['irnFinishAfterOneSecond']); network = save(page, 'network')
-        check('IRN completed once with existing natural labs and no replacement payment', network['research']['levels'][IRN] == 1 and network['stats']['researchCompleted'] == irn_paid['stats']['researchCompleted'] + 1 and not network['research']['queue'] and network['orders']['nextJobId'] == irn_paid['orders']['nextJobId'])
-        expected_blurbs(page)
-        check('next computer11 is literal network13 rounded 176 seconds; IRN own next quote excludes lab3', page.locator('[data-bind="rtime-computer_tech"]').inner_text() == '研究时间 2 分 56 秒' and page.locator('[data-bind="rtime-intergalactic_research_network"]').inner_text() == '研究时间 11 分 39 秒')
-        before_views = copy.deepcopy(network); responsive(page); whole_state('view-only-responsive-no-economic-authority', save(page), before_views)
-        record(page, 'actual-irn1-completed-network13')
-
-        begin_case('actual UI finite budget at natural 05 -> unpaid wait -> automatic fixed-mother payment while colony selected')
-        tab(page, 'orders')
-        select(page, '#order-kind', 'research'); select(page, '#order-target', COMPUTER)
-        select(page, '#order-planet', HOME); type_value(page, '#order-goal', '11')
-        check('all new finite budgets are zero and transport unauthorized by default', all(page.locator('#order-budget-' + r).input_value() == '0' for r in RESOURCES) and not page.locator('#order-transport-enabled').is_checked())
-        for resource in RESOURCES:
-            type_value(page, '#order-budget-' + resource, GOLD_COMPUTER[resource])
-        before_draft = save(page, 'network')
-        check('editing finite intent controls alone creates no authority or charge', before_draft['orders'] == network['orders'] and before_draft['research'] == network['research'] and before_draft['planets'] == network['planets'])
-        tab(page, 'orders'); select(page, '#planet-select', COLONY); save(page, 'uiSelectedColony'); tab(page, 'orders')
-        check('real global colony selection preserves explicitly chosen mother payer and exact finite budget', page.locator('#planet-select').input_value() == COLONY and page.locator('#order-planet').input_value() == HOME and {r: page.locator('#order-budget-' + r).input_value() for r in RESOURCES} == GOLD_COMPUTER)
-        trusted_click(page, '#order-create'); intent = save(page, 'uiIntent'); tid = fixtures['execution']['taskId']
-        task = next(t for t in intent['orders']['tasks'] if t['id'] == tid)
-        check('actual finite intent adds one unpaid task with no hidden funding, paid identity or transport authority', intent['activePlanetId'] == COLONY and len(intent['orders']['tasks']) == len(network['orders']['tasks']) + 1 and intent['orders']['nextJobId'] == network['orders']['nextJobId'] and not intent['research']['queue'] and task['planetId'] == HOME and task['targetLevel'] == 11 and task['budget'] == GOLD_COMPUTER and task['charged'] == {'metal': '0', 'crystal': '0', 'deuterium': '0'} and task['transport'] is None and task['activeJob'] is None and intent['planets'] == network['planets'], task)
-        one_seconds(page, 10); waiting = save(page, 'uiWaiting'); tab(page, 'orders')
-        row = page.locator(f'[data-order-id="{tid}"]')
-        check('finite plan visibly waits on real unfunded mother resources', row.locator('[data-order="reason"]').inner_text().startswith('缺 ') and '暂无已付款工作' in row.inner_text() and not waiting['research']['queue'])
-        native_scroll_to(page, f'[data-order-id="{tid}"] [data-order="reason"]'); snap(page, 'native-finite-plan-resource-waiting.png')
-        one_seconds(page, fixtures['execution']['fundingSeconds'] - 11); prepayment = save(page, 'uiBeforePayment')
-        advance(page, 1000); paid_state = save(page, 'uiPaid')
-        paid_job = payment_golden(prepayment, paid_state, COMPUTER, 'plan', GOLD_COMPUTER, 6144 / 35, fixtures['independentPaymentProofs']['uiPayment'])
-        check('automatic first payment uses exact fixed mother task while colony remains selected', paid_state['activePlanetId'] == COLONY and paid_job['taskId'] == tid and paid_job['jobId'] == fixtures['execution']['uiJobId'] and paid_state['research']['levels'][COMPUTER] == 10)
-        expected_blurbs(page, home=False)
-        record(page, 'actual-ui-finite-first-payment')
-        one_seconds(page, 5); inflight = save(page, 'uiFiveSeconds')
-        check('real paid research remains in flight for native reload with frozen duration', inflight['research']['queue'][0]['jobId'] == paid_job['jobId'] and inflight['research']['queue'][0]['totalSeconds'] == paid_job['totalSeconds'] and abs(inflight['research']['queue'][0]['remainingSeconds'] - (6144 / 35 - 5)) < 1e-10)
-        record(page, 'ui-finite-inflight-before-reload'); reload_verified(page, 'uiReloaded')
-        one_seconds(page, fixtures['execution']['uiFinishAfterFiveSeconds']); done = save(page, 'uiComplete'); done_task = completed_golden(paid_state, done, tid)
-        record(page, 'ui-finite-completed-once'); reload_verified(page, 'uiComplete')
-        one_seconds(page, 21); later = save(page, 'uiLater')
-        check('completed finite UI task survives extra ticks without any new payment/charge/completion', later['orders']['nextJobId'] == done['orders']['nextJobId'] and later['stats']['researchCompleted'] == done['stats']['researchCompleted'] and not later['research']['queue'] and next(t for t in later['orders']['tasks'] if t['id'] == tid) == done_task)
-        record(page, 'ui-finite-no-extra-work'); context.close()
-
-        begin_case('separate unchanged canonical natural 06 ->07 ->08 ->09 ->10 handoff replay')
-        context, page = boot(fixtures['naturalMilestones']['unpaid']['save']['savedAt'])
-        handoff(page, 'unpaid'); unpaid = save(page, 'unpaid')
-        one_seconds(page, fixtures['execution']['canonicalPaymentSeconds']); canonical_paid = save(page, 'paid')
-        canonical_job = canonical_paid['research']['queue'][0]
-        check('actual canonical scheduler issued exactly the original fixed-mother paid identity', unpaid['activePlanetId'] == canonical_paid['activePlanetId'] == COLONY and canonical_job['jobId'] == unpaid['orders']['nextJobId'] and canonical_job['source'] == 'plan' and canonical_job['paid'] == GOLD_COMPUTER and abs(canonical_job['totalSeconds'] - 6144 / 35) < 1e-10)
-        select(page, '#planet-select', HOME); advance(page, 1000); select(page, '#planet-select', COLONY); one_seconds(page, 4)
-        canonical_inflight = save(page, 'inflight'); record(page, 'canonical-natural-inflight'); reload_verified(page, 'inflight')
-        check('canonical actual job keeps exact identity and frozen saved clock across real planet selection', canonical_inflight['research']['queue'][0]['jobId'] == canonical_job['jobId'] and canonical_inflight['research']['queue'][0]['totalSeconds'] == canonical_job['totalSeconds'] and canonical_inflight['research']['queue'][0]['remainingSeconds'] == fixtures['naturalMilestones']['inflight']['save']['state']['research']['queue'][0]['remainingSeconds'])
-        one_seconds(page, fixtures['execution']['canonicalFinishAfterFiveSeconds']); canonical_done = save(page, 'complete')
-        canonical_task = completed_golden(canonical_paid, canonical_done, canonical_job['taskId']); reload_verified(page, 'complete')
-        one_seconds(page, 21); canonical_later = save(page, 'later')
-        check('canonical extra live ticks equal unchanged milestone10 and never pay again', canonical_later['orders']['nextJobId'] == canonical_done['orders']['nextJobId'] and canonical_later['stats']['researchCompleted'] == canonical_done['stats']['researchCompleted'] and next(t for t in canonical_later['orders']['tasks'] if t['id'] == canonical_job['taskId']) == canonical_task)
-        record(page, 'canonical-natural-no-extra-work'); context.close()
-
-        begin_case('explicit synthetic saved-duration compatibility and ordinary waiting research controls; not natural evidence')
-        context, page = boot(fixtures['syntheticFrozen']['savedAt'])
-        import_save(page, fixtures['syntheticFrozen'], 'synthetic-only-saved-total600-remaining123')
-        save(page, 'syntheticFrozen')
-        check('old paid active queue displays saved total600/remaining123 instead of recalculated network quote', page.locator(QUEUE + ' [data-q="detail"]').inner_text() == '剩余 2 分 3 秒 / 共 10 分 0 秒')
-        select(page, '#planet-select', HOME); old = save(page, 'syntheticFrozenHome')
-        trusted_click(page, '[data-action="research"][data-id="laser_tech"]'); queued = save(page, 'syntheticWaitingLaser')
-        check('ordinary laser button charges literal M200/C100 and issues next manual job without new task authority', queued['research']['queue'][1]['paid'] == {'metal': '200', 'crystal': '100', 'deuterium': '0'} and queued['research']['queue'][1]['jobId'] == old['orders']['nextJobId'] and queued['research']['queue'][1]['source'] == 'manual' and queued['research']['queue'][1]['taskId'] is None and queued['orders']['tasks'] == old['orders']['tasks'])
-        details = page.locator(QUEUE + ' [data-q="detail"]').all_text_contents()
-        check('waiting paid ETA is explicitly current-condition estimate, while active saved timer stays frozen', details == ['剩余 2 分 3 秒 / 共 10 分 0 秒', '等待中 · 已付款 · 按当前条件预计 1 秒（开工时确定）'], details)
-        select(page, '#planet-select', COLONY); save(page, 'syntheticWaitingColony')
-        check('actual planet navigation cannot reprice active job or start the waiting job', page.locator(QUEUE + ' [data-q="detail"]').all_text_contents() == details)
-        reload_verified(page, 'syntheticWaitingColony')
-        native_scroll_to(page, QUEUE); snap(page, 'synthetic-frozen-active-and-current-waiting-eta.png'); record(page, 'synthetic-frozen-waiting-no-reprice'); context.close()
-        begin_case('suite integrity')
-        check('no uncaught JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        completed = True; flush(); browser.close()
-except BaseException as error:
-    failure = {'case': case, 'error': repr(error), 'traceback': traceback.format_exc()}
-    if active_page is not None:
         try:
-            failure['rawSave'] = raw(active_page)
-            failure['card'] = active_page.locator(CARD).all_text_contents()
-            failure['queue'] = active_page.locator(QUEUE).all_text_contents()
-            failure['status'] = active_page.locator('[data-bind="status"]').all_text_contents()
-            snap(active_page, 'failure.png')
-        except BaseException as capture_error:
-            failure['captureError'] = repr(capture_error)
-    flush(); raise
+            browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox'])
+            begin_case('unchanged natural 03 -> actual production -> trusted manual IRN payment -> live reload -> actual 05')
+            context, page = boot(fixtures['naturalMilestones']['before']['save']['savedAt'])
+            handoff(page, 'before'); baseline = save(page, 'before')
+            check('earned main10/colony3/hyperspace8 is present before completed IRN0', planet(baseline)['buildings']['research_lab'] == 10 and planet(baseline, COLONY)['buildings']['research_lab'] == 3 and baseline['research']['levels']['hyperspace_tech'] == 8 and baseline['research']['levels'][IRN] == 0)
+            check('before-network ordinary computer11 card shows literal 224-second rounded quote and no support', page.locator('[data-bind="rtime-computer_tech"]').inner_text() == '研究时间 3 分 44 秒' and '协作' not in page.locator('[data-bind="rlater-computer_tech"]').inner_text())
+            one_seconds(page, fixtures['execution']['irnWaitSeconds']); ready = save(page, 'irnReady')
+            check('ordinary IRN button becomes affordable through original production', page.locator(PAY).is_enabled() and page.locator('[data-bind="rbutton-intergalactic_research_network"]').inner_text() == '研究 等级 1')
+            trusted_click(page, PAY); irn_paid = save(page, 'irnPaid')
+            job = payment_golden(ready, irn_paid, IRN, 'manual', GOLD_IRN, 3840 / 11)
+            check('IRN cannot accelerate itself before its first completion', irn_paid['research']['levels'][IRN] == 0 and job['totalSeconds'] == job['remainingSeconds'] and page.locator(QUEUE + ' [data-q="detail"]').inner_text() == '剩余 5 分 50 秒 / 共 5 分 50 秒')
+            record(page, 'actual-irn1-payment')
+            advance(page, 1000); save(page, 'irnOneSecond'); record(page, 'irn1-before-native-reload')
+            reload_verified(page, 'irnReloaded')
+            one_seconds(page, fixtures['execution']['irnFinishAfterOneSecond']); network = save(page, 'network')
+            check('IRN completed once with existing natural labs and no replacement payment', network['research']['levels'][IRN] == 1 and network['stats']['researchCompleted'] == irn_paid['stats']['researchCompleted'] + 1 and not network['research']['queue'] and network['orders']['nextJobId'] == irn_paid['orders']['nextJobId'])
+            expected_blurbs(page)
+            check('next computer11 is literal network13 rounded 176 seconds; IRN own next quote excludes lab3', page.locator('[data-bind="rtime-computer_tech"]').inner_text() == '研究时间 2 分 56 秒' and page.locator('[data-bind="rtime-intergalactic_research_network"]').inner_text() == '研究时间 11 分 39 秒')
+            before_views = copy.deepcopy(network); responsive(page); whole_state('view-only-responsive-no-economic-authority', save(page), before_views)
+            record(page, 'actual-irn1-completed-network13')
+
+            begin_case('actual UI finite budget at natural 05 -> unpaid wait -> automatic fixed-mother payment while colony selected')
+            tab(page, 'orders')
+            select(page, '#order-kind', 'research'); select(page, '#order-target', COMPUTER)
+            select(page, '#order-planet', HOME); type_value(page, '#order-goal', '11')
+            check('all new finite budgets are zero and transport unauthorized by default', all(page.locator('#order-budget-' + r).input_value() == '0' for r in RESOURCES) and not page.locator('#order-transport-enabled').is_checked())
+            for resource in RESOURCES:
+                type_value(page, '#order-budget-' + resource, GOLD_COMPUTER[resource])
+            before_draft = save(page, 'network')
+            check('editing finite intent controls alone creates no authority or charge', before_draft['orders'] == network['orders'] and before_draft['research'] == network['research'] and before_draft['planets'] == network['planets'])
+            tab(page, 'orders'); select(page, '#planet-select', COLONY); save(page, 'uiSelectedColony'); tab(page, 'orders')
+            check('real global colony selection preserves explicitly chosen mother payer and exact finite budget', page.locator('#planet-select').input_value() == COLONY and page.locator('#order-planet').input_value() == HOME and {r: page.locator('#order-budget-' + r).input_value() for r in RESOURCES} == GOLD_COMPUTER)
+            trusted_click(page, '#order-create'); intent = save(page, 'uiIntent'); tid = fixtures['execution']['taskId']
+            task = next(t for t in intent['orders']['tasks'] if t['id'] == tid)
+            check('actual finite intent adds one unpaid task with no hidden funding, paid identity or transport authority', intent['activePlanetId'] == COLONY and len(intent['orders']['tasks']) == len(network['orders']['tasks']) + 1 and intent['orders']['nextJobId'] == network['orders']['nextJobId'] and not intent['research']['queue'] and task['planetId'] == HOME and task['targetLevel'] == 11 and task['budget'] == GOLD_COMPUTER and task['charged'] == {'metal': '0', 'crystal': '0', 'deuterium': '0'} and task['transport'] is None and task['activeJob'] is None and intent['planets'] == network['planets'], task)
+            one_seconds(page, 10); waiting = save(page, 'uiWaiting'); tab(page, 'orders')
+            row = page.locator(f'[data-order-id="{tid}"]')
+            check('finite plan visibly waits on real unfunded mother resources', row.locator('[data-order="reason"]').inner_text().startswith('缺 ') and '暂无已付款工作' in row.inner_text() and not waiting['research']['queue'])
+            native_scroll_to(page, f'[data-order-id="{tid}"] [data-order="reason"]'); snap(page, 'native-finite-plan-resource-waiting.png')
+            one_seconds(page, fixtures['execution']['fundingSeconds'] - 11); prepayment = save(page, 'uiBeforePayment')
+            advance(page, 1000); paid_state = save(page, 'uiPaid')
+            paid_job = payment_golden(prepayment, paid_state, COMPUTER, 'plan', GOLD_COMPUTER, 6144 / 35, fixtures['independentPaymentProofs']['uiPayment'])
+            check('automatic first payment uses exact fixed mother task while colony remains selected', paid_state['activePlanetId'] == COLONY and paid_job['taskId'] == tid and paid_job['jobId'] == fixtures['execution']['uiJobId'] and paid_state['research']['levels'][COMPUTER] == 10)
+            expected_blurbs(page, home=False)
+            record(page, 'actual-ui-finite-first-payment')
+            one_seconds(page, 5); inflight = save(page, 'uiFiveSeconds')
+            check('real paid research remains in flight for native reload with frozen duration', inflight['research']['queue'][0]['jobId'] == paid_job['jobId'] and inflight['research']['queue'][0]['totalSeconds'] == paid_job['totalSeconds'] and abs(inflight['research']['queue'][0]['remainingSeconds'] - (6144 / 35 - 5)) < 1e-10)
+            record(page, 'ui-finite-inflight-before-reload'); reload_verified(page, 'uiReloaded')
+            one_seconds(page, fixtures['execution']['uiFinishAfterFiveSeconds']); done = save(page, 'uiComplete'); done_task = completed_golden(paid_state, done, tid)
+            record(page, 'ui-finite-completed-once'); reload_verified(page, 'uiComplete')
+            one_seconds(page, 21); later = save(page, 'uiLater')
+            check('completed finite UI task survives extra ticks without any new payment/charge/completion', later['orders']['nextJobId'] == done['orders']['nextJobId'] and later['stats']['researchCompleted'] == done['stats']['researchCompleted'] and not later['research']['queue'] and next(t for t in later['orders']['tasks'] if t['id'] == tid) == done_task)
+            record(page, 'ui-finite-no-extra-work'); context.close()
+
+            begin_case('separate unchanged canonical natural 06 ->07 ->08 ->09 ->10 handoff replay')
+            context, page = boot(fixtures['naturalMilestones']['unpaid']['save']['savedAt'])
+            handoff(page, 'unpaid'); unpaid = save(page, 'unpaid')
+            one_seconds(page, fixtures['execution']['canonicalPaymentSeconds']); canonical_paid = save(page, 'paid')
+            canonical_job = canonical_paid['research']['queue'][0]
+            check('actual canonical scheduler issued exactly the original fixed-mother paid identity', unpaid['activePlanetId'] == canonical_paid['activePlanetId'] == COLONY and canonical_job['jobId'] == unpaid['orders']['nextJobId'] and canonical_job['source'] == 'plan' and canonical_job['paid'] == GOLD_COMPUTER and abs(canonical_job['totalSeconds'] - 6144 / 35) < 1e-10)
+            select(page, '#planet-select', HOME); advance(page, 1000); select(page, '#planet-select', COLONY); one_seconds(page, 4)
+            canonical_inflight = save(page, 'inflight'); record(page, 'canonical-natural-inflight'); reload_verified(page, 'inflight')
+            check('canonical actual job keeps exact identity and frozen saved clock across real planet selection', canonical_inflight['research']['queue'][0]['jobId'] == canonical_job['jobId'] and canonical_inflight['research']['queue'][0]['totalSeconds'] == canonical_job['totalSeconds'] and canonical_inflight['research']['queue'][0]['remainingSeconds'] == fixtures['naturalMilestones']['inflight']['save']['state']['research']['queue'][0]['remainingSeconds'])
+            one_seconds(page, fixtures['execution']['canonicalFinishAfterFiveSeconds']); canonical_done = save(page, 'complete')
+            canonical_task = completed_golden(canonical_paid, canonical_done, canonical_job['taskId']); reload_verified(page, 'complete')
+            one_seconds(page, 21); canonical_later = save(page, 'later')
+            check('canonical extra live ticks equal unchanged milestone10 and never pay again', canonical_later['orders']['nextJobId'] == canonical_done['orders']['nextJobId'] and canonical_later['stats']['researchCompleted'] == canonical_done['stats']['researchCompleted'] and next(t for t in canonical_later['orders']['tasks'] if t['id'] == canonical_job['taskId']) == canonical_task)
+            record(page, 'canonical-natural-no-extra-work'); context.close()
+
+            begin_case('explicit synthetic saved-duration compatibility and ordinary waiting research controls; not natural evidence')
+            context, page = boot(fixtures['syntheticFrozen']['savedAt'])
+            import_save(page, fixtures['syntheticFrozen'], 'synthetic-only-saved-total600-remaining123')
+            save(page, 'syntheticFrozen')
+            check('old paid active queue displays saved total600/remaining123 instead of recalculated network quote', page.locator(QUEUE + ' [data-q="detail"]').inner_text() == '剩余 2 分 3 秒 / 共 10 分 0 秒')
+            select(page, '#planet-select', HOME); old = save(page, 'syntheticFrozenHome')
+            trusted_click(page, '[data-action="research"][data-id="laser_tech"]'); queued = save(page, 'syntheticWaitingLaser')
+            check('ordinary laser button charges literal M200/C100 and issues next manual job without new task authority', queued['research']['queue'][1]['paid'] == {'metal': '200', 'crystal': '100', 'deuterium': '0'} and queued['research']['queue'][1]['jobId'] == old['orders']['nextJobId'] and queued['research']['queue'][1]['source'] == 'manual' and queued['research']['queue'][1]['taskId'] is None and queued['orders']['tasks'] == old['orders']['tasks'])
+            details = page.locator(QUEUE + ' [data-q="detail"]').all_text_contents()
+            check('waiting paid ETA is explicitly current-condition estimate, while active saved timer stays frozen', details == ['剩余 2 分 3 秒 / 共 10 分 0 秒', '等待中 · 已付款 · 按当前条件预计 1 秒（开工时确定）'], details)
+            select(page, '#planet-select', COLONY); save(page, 'syntheticWaitingColony')
+            check('actual planet navigation cannot reprice active job or start the waiting job', page.locator(QUEUE + ' [data-q="detail"]').all_text_contents() == details)
+            reload_verified(page, 'syntheticWaitingColony')
+            native_scroll_to(page, QUEUE); snap(page, 'synthetic-frozen-active-and-current-waiting-eta.png'); record(page, 'synthetic-frozen-waiting-no-reprice'); context.close()
+            begin_case('suite integrity')
+            check('no uncaught JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
+            completed = True; flush(); browser.close()
+        except BaseException as error:
+            capture_failure(error, browser_alive=True)
+            raise
+except BaseException as error:
+    # Pre-browser failures have no live page. Already captured native failures
+    # retain their original exception and evidence, without retrying after close.
+    capture_failure(error, browser_alive=False)
+    raise
 finally:
-    signal.alarm(0); flush()
+    signal.alarm(0)
+    if failure is None:
+        flush()
+    else:
+        try:
+            flush()
+        except BaseException as report_error:
+            # Preserve the original nonzero failure even if diagnostic writing fails.
+            try:
+                sys.stderr.write(f'Could not write failure report: {report_error!r}\n')
+            except BaseException:
+                pass
