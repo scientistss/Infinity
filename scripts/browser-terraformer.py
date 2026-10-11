@@ -299,6 +299,20 @@ def responsive(page, label, selectors, widths=(320, 390, 768, 1440)):
         page.locator('[data-tab="facilities"]').click(); advance(page)
         clicks = page.evaluate('(n)=>window.__terraClicks.slice(n)', count)
         check(f'{width}px real visible navigation click is trusted', len(clicks) == 1 and clicks[0]['trusted'] and clicks[0]['action'] == 'facilities', clicks)
+        # Some queue-only proofs already fit at the top. Explicitly exercise a
+        # real down-and-back wheel traversal at each width before targeting them.
+        page.mouse.move(width - 12, 1080); page.mouse.wheel(0, -100000)
+        page.wait_for_timeout(80); page.wait_for_function('scrollY === 0', polling=20, timeout=1000); advance(page)
+        start = page.evaluate('({scrollY,height:innerHeight,scrollHeight:document.scrollingElement.scrollHeight,wheelCount:window.__terraWheels.length})')
+        check(f'{label} {width}px document has actual vertical wheel travel', start['scrollY'] == 0 and start['scrollHeight'] > start['height'], start)
+        page.mouse.wheel(0, min(480, start['scrollHeight'] - start['height']))
+        page.wait_for_function('(y)=>scrollY>y', arg=start['scrollY'], polling=20, timeout=1000); advance(page)
+        down = page.evaluate('(n)=>({scrollY,wheels:window.__terraWheels.slice(n)})', start['wheelCount'])
+        check(f'{label} {width}px trusted positive wheel actually moves document down', down['scrollY'] > start['scrollY'] and bool(down['wheels']) and all(event['trusted'] for event in down['wheels']) and any(event['deltaY'] > 0 for event in down['wheels']), {'before': start, 'after': down})
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function('scrollY === 0', polling=20, timeout=1000); advance(page)
+        returned = page.evaluate('(n)=>({scrollY,wheels:window.__terraWheels.slice(n)})', start['wheelCount'])
+        check(f'{label} {width}px trusted negative wheel actually returns document to top', returned['scrollY'] == 0 and returned['scrollY'] < down['scrollY'] and all(event['trusted'] for event in returned['wheels']) and any(event['deltaY'] < 0 for event in returned['wheels']), {'before': down, 'after': returned})
         for index, selector in enumerate(selectors):
             page.mouse.move(width - 12, 1080); page.mouse.wheel(0, -100000); page.wait_for_timeout(80); advance(page)
             native_scroll_to(page, selector); before = visibility(page, [selector])
@@ -523,6 +537,7 @@ def capture_failure(error, page=None):
         attempt('raw save', capture_raw)
         for name, selector in [('card', CARD), ('queue', QUEUE), ('status', '[data-bind="status"]')]:
             attempt(name, lambda name=name, selector=selector: failure.__setitem__(name, page.locator(selector).all_text_contents()))
+        attempt('scroll and wheel diagnostics', lambda: failure.__setitem__('scrollAndWheels', page.evaluate('({width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.scrollingElement?.scrollHeight,wheelCount:window.__terraWheels?.length||0,wheels:window.__terraWheels?.slice(-200)||[]})')))
         attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')))
         attempt('report before screenshot', flush)
         attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)))
