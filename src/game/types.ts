@@ -1,3 +1,4 @@
+export type { DemolitionJob, DemolitionJobRef, DemolishableBuildingId } from "./demolition-state";
 import type { FleetFormationState } from "./formation-state";
 import type { OrderState } from "./order-state";
 import type { BuildingTemplateState } from "./building-template-state";

@@ -1,3 +1,4 @@
+import type { CompletedDemolition } from "../game/demolition";
 import { empireResources } from "../game/empire";
 import { big } from "../game/decimal";
 import {
@@ -26,6 +27,8 @@ export interface OfflineCatchup {
   protocolEvaluations: number;
   /** Build orders finished while away, in completion order. */
   completedBuilds: Array<CompletedBuild & { planetId?: string }>;
+  /** Independent demolition events; never counted as builds or production. */
+  completedDemolitions?: Array<CompletedDemolition & { planetId?: string }>;
   /** Research levels finished while away, in completion order. */
   completedResearch: CompletedResearch[];
   /** Ships and defenses finished while away, per unit type. */
@@ -79,6 +82,7 @@ export function catchUp(state: GameState, elapsedSeconds: number): OfflineCatchu
     gains,
     protocolEvaluations: offlineProtocolEvaluations(appliedSeconds),
     completedBuilds: log.completedBuilds,
+    ...(log.completedDemolitions?.length ? { completedDemolitions: log.completedDemolitions } : {}),
     completedResearch: log.completedResearch,
     completedUnits: log.completedUnits,
     arcadeRuns: next.arcade.history.filter((entry) => entry.auto && entry.at > state.totalTime.toNumber()),

@@ -110,7 +110,7 @@ export function researchNetworkView(state: GameState, tech: ResearchId, payerId 
   if (networkLevel <= 0 || state.planets.length <= 1 || primaryLabLevel < requiredLabLevel) return view;
   view.supports = state.planets
     .filter(planet => planet.id !== payerId && planet.buildings.research_lab >= requiredLabLevel
-      && !planet.buildQueue.some(order => order.building === "research_lab"))
+      && planet.demolition?.building !== "research_lab" && !planet.buildQueue.some(order => order.building === "research_lab"))
     .map(planet => ({ planetId: planet.id, name: planet.name, labLevel: planet.buildings.research_lab }))
     .sort((a, b) => b.labLevel - a.labLevel || (a.planetId < b.planetId ? -1 : a.planetId > b.planetId ? 1 : 0))
     .slice(0, networkLevel);
@@ -132,6 +132,7 @@ export function researchSecondsFor(state: GameState, def: ResearchDef, level: nu
 }
 
 export function labBusyReason(state: GameState): string {
+  if (state.planets.some(p => p.demolition?.building === "research_lab")) return "研究实验室正在拆除，暂不能研究";
   return state.planets.some(p => p.buildQueue.some(order => order.building === "research_lab")) ? "研究实验室正在升级，暂不能研究" : "";
 }
 

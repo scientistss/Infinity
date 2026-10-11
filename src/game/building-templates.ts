@@ -74,6 +74,7 @@ export function mapBuildingTemplate(state: GameState, templateId: number, planet
     const warnings: string[] = [];
     if (status === "new") {
       const def = buildingById(goal.building);
+      if (planet.demolition) warnings.push("本星拆除进行中，新建筑付款须等待拆除结束");
       if (!isBuildingAvailable(def)) warnings.push(`第 ${def.phase} 阶段开放`);
       if (goal.building === "terraformer") {
         const terraformerProblem = terraformerEnqueueProblem(local, nextUnpaidLevel);
@@ -99,6 +100,7 @@ export function mapBuildingTemplate(state: GameState, templateId: number, planet
     for (const row of rows) if (row.status === "new") row.warnings.push(warning);
   }
   const blockers = rows.filter(row => row.status === "conflict").map(row => `${buildingById(row.building).nameZh} 已有冲突计划，不能批量应用`);
+  if (planet.demolition && rows.some(row => row.status === "new" && row.building === planet.demolition!.building)) blockers.push("模板含正在拆除的同目标建筑，暂不能创建计划");
   const newCount = rows.filter(row => row.status === "new").length;
   return { ...base, rows, newCount, blockers, ok: blockers.length === 0, reason: blockers[0] ?? (newCount ? "仅保存目标，不会自动建造；请明确预算后核对应用" : "目标均已达到或有计划覆盖，无需创建") };
 }
@@ -151,6 +153,7 @@ export function buildingTemplateAuthorityKey(state: GameState, templateId: numbe
     nextTaskId: state.orders.nextTaskId, records: state.orders.tasks.length, liveTasks: state.orders.tasks.filter(live).length,
     buildings: BUILDING_IDS.map(building => [building, payer.buildings[building]]),
     research: RESEARCH_IDS.map(tech => [tech, state.research.levels[tech]]), fieldsMax: payer.fieldsMax, growthCut: growthCut(state),
+    demolition: payer.demolition ? [payer.demolition.jobId, payer.demolition.building, payer.demolition.fromLevel, payer.demolition.toLevel, payer.demolition.totalSeconds, ...RESOURCE_IDS.map(id => payer.demolition!.paid[id].toString())] : null,
     jobs: payer.buildQueue.map(job => [job.building, job.jobId, job.taskId, planetId, job.targetLevel, job.source, ...RESOURCE_IDS.map(id => job.paid[id].toString())]),
     researchJobs: state.research.queue.map(job => [job.tech, job.jobId, job.taskId, job.planetId, job.targetLevel, job.source, ...RESOURCE_IDS.map(id => job.paid[id].toString())]),
     tasks: relevantTasks.map(task => ({ id: task.id, kind: task.kind, planetId: task.planetId, building: task.kind === "building" ? task.building : null,

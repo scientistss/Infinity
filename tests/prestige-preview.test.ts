@@ -116,7 +116,7 @@ describe("read-only actual curvature candidate preview", () => {
   it("keeps current inventory, remaining paid work and fleet rights separate with no duplicate costs", () => {
     const state = rich(), model = prestigePreview(state, evaluatePrestige(state));
     expect(model.worlds).toEqual({ count: 2, colonies: 1, resources: money("210", "216", "234"), buildingLevels: "12", units: "26" });
-    expect(model.paid).toEqual({ buildings: 1, research: 1, shipyard: 1, remainingUnits: "2", buildingPaid: money("61", "17"), researchPaid: money("0", "137", "139"), remainingUnitPaid: money("62", "26") });
+    expect(model.paid).toEqual({ buildings: 1, demolitions: 0, research: 1, shipyard: 1, remainingUnits: "2", buildingPaid: money("61", "17"), demolitionPaid: money(), researchPaid: money("0", "137", "139"), remainingUnitPaid: money("62", "26") });
     expect(model.fleets).toEqual({ count: 2, ships: "4", cargo: money("14", "22", "26"), unsettledStake: "17", darkMatter: "19", items: { kraken_box: "2" } });
     expect(model.orders.stopped).toBe(2);
     expect(model.orders.releasedWork).toBe(1);

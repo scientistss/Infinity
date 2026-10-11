@@ -1,3 +1,5 @@
+import { readDemolitionJob, serializeDemolitionJob, rejectLegacyDemolitionFields, rejectMisplacedDemolitionFields, migrateLegacyDemolitionSlots, type SerializedDemolitionJob } from "./demolition-save";
+import { demolitionStateProblem } from "./demolition";
 import { readTerraformerFields, readTerraformerGrantJobFloor, rejectLegacyTerraformerFields } from "./terraformer-save";
 import { terraformerStateProblem } from "./terraformer";
 import { readBuildingTemplates, serializeBuildingTemplates, migrateBuildingTemplates, rejectLegacyBuildingTemplateFields } from "./building-templates-save";
@@ -18,7 +20,7 @@ import { ACHIEVEMENTS, isAchievementId } from "../data/achievements";
 import { BUILDING_IDS, PRODUCTION_IDS, isBuildingId, isProductionId } from "../data/buildings";
 import { isCatalogId, isResId, isStoredResId, refreshUnlocks } from "../automation/engine";
 import { catchUp, emptyCatchup, type OfflineCatchup } from "../core/offline";
-import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, SAVE_REVISION, SAVE_SCHEMA, STORAGE_KEY } from "./content";
+import { OFFLINE_BASE_HOURS, OFFLINE_MAX_HOURS, OFFLINE_PROTOCOL_SECONDS, SAVE_VERSION, SAVE_REVISION, SUPPORTED_SAVE_REVISIONS, SAVE_SCHEMA, STORAGE_KEY } from "./content";
 import { big, bigToString, isValidAmount, type BigNumber } from "./decimal";
 import { markEnergyShortage } from "./logic";
 import { curvatureById } from "../data/curvature-tech";
@@ -79,6 +81,7 @@ export interface SerializedPlanet {
   buildings: Record<BuildingId, number>;
   productionPct: Record<ProductionBuildingId, number>;
   buildQueue: SerializedOrder[];
+  demolition: SerializedDemolitionJob | null;
   /** v8 (P3). */
   units: Record<UnitId, number>;
   shipyardQueue: Array<Omit<ShipyardOrder, "paidPerUnit"> & { paidPerUnit: Record<ResourceId, string> }>;
@@ -145,7 +148,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r9 → r10 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r10 → r11 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -204,6 +207,7 @@ export function deserializeState(raw: unknown): GameState {
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
 function readState(raw: unknown, legacyTerraformer: boolean): GameState {
+  rejectMisplacedDemolitionFields(raw);
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
   if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
@@ -248,6 +252,8 @@ function readState(raw: unknown, legacyTerraformer: boolean): GameState {
   if (terraformerProblem) throw Error(terraformerProblem);
   validateOrderTransportReferences(state);
   validateFormationReferences(state);
+  const demolitionProblem = demolitionStateProblem(state);
+  if (demolitionProblem) throw Error(demolitionProblem);
   if(state.arcade.runs.length+chargeReservations(state)>storedRunLimit(state))throw Error("开奖总量超出预留上限");
   if(chargeReservations(state)>Number.MAX_SAFE_INTEGER-state.arcade.nextRunId)throw Error("充能任务超出剩余安全票号");
   const receipts=state.arcade.runs.flatMap(r=>r.receipt?[r.receipt.reportId]:[]);
@@ -268,7 +274,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r10 or explicitly migrate same-schema r2–r9; never touch the current game. */
+/** Validate current v9/r11 or explicitly migrate same-schema r2–r10; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -281,10 +287,14 @@ export function importSave(json: string): SaveFile {
   if (typeof version !== "number" || !Number.isInteger(version)) throw new Error("存档缺少有效的版本号");
   if (version !== SAVE_VERSION) throw new SaveVersionError(version);
   if (parsed.schema !== SAVE_SCHEMA) throw new Error("存档不属于原版 P4 分支，未导入，当前进度保持不变");
-  const supportedRevisions = [...new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, SAVE_REVISION])];
+  const supportedRevisions = SUPPORTED_SAVE_REVISIONS;
   if (typeof parsed.revision !== "number" || !supportedRevisions.includes(parsed.revision)) {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
+  // These are historical facts, independent of the current output revision.
+  const legacyDemolition = parsed.revision <= 10;
+  if (legacyDemolition) rejectLegacyDemolitionFields(parsed);
+  else rejectMisplacedDemolitionFields(parsed, true);
   // The ledger was introduced in r10; later revisions must not rebase its grants.
   const legacyTerraformer = parsed.revision <= 9;
   if (legacyTerraformer) rejectLegacyTerraformerFields(parsed);
@@ -312,6 +322,7 @@ export function importSave(json: string): SaveFile {
     // r8 needs exactly this additive field; existing authority is never reconstructed.
     parsed.state = migrateBuildingTemplates(parsed.state);
   }
+  if (legacyDemolition) parsed.state = migrateLegacyDemolitionSlots(parsed.state);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }
@@ -426,6 +437,7 @@ function serializePlanet(planet: PlanetState): SerializedPlanet {
       jobId: order.jobId,
       taskId: order.taskId,
     })),
+    demolition: serializeDemolitionJob(planet.demolition),
     units: { ...planet.units },
     shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order, paidPerUnit: mapResources(order.paidPerUnit) })),
   };
@@ -466,6 +478,8 @@ function readPlanet(raw: unknown, legacyTerraformer: boolean): PlanetState {
   if (!Array.isArray(raw.buildQueue)) throw new Error("建造队列格式不正确");
   if (raw.buildQueue.length > MAX_QUEUE) throw new Error("建造队列过长");
   planet.buildQueue = raw.buildQueue.map((entry, index) => readOrder(entry, index));
+  if (!Object.hasOwn(raw, "demolition")) throw Error("拆除槽缺失");
+  planet.demolition = readDemolitionJob(raw.demolition);
 
   if (!isRecord(raw.units)) throw new Error("舰船与防御数量格式不正确");
   for (const id of UNIT_IDS) {

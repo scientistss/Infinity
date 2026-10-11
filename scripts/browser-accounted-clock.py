@@ -656,7 +656,7 @@ def run_cases():
 
     if args.session_fixture:
         legacy=json.loads(Path(args.session_fixture).read_text())
-        for revision in range(2,10):
+        for revision in range(2,11):
             case=f'actual-source r{revision} startup migration accounts through sampled wall'
             source=next(row for row in legacy['legacySources'] if row['revision']==revision)
             check('legacy fixture uses actual released serializer',source['generatedBy']=='actual source-revision createInitialState/exportSave')

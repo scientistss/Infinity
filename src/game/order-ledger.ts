@@ -1,3 +1,4 @@
+import { actualPaidJobs } from "./paid-job-identity";
 import { hasFormationFields, isFlyableShipId, normalizeFormationDraft } from "./formation-state";
 import { unitCost } from "./unit-cost";
 import { isBuildingId } from "../data/buildings";
@@ -121,7 +122,7 @@ function failure(state: GameState, job: NewPaidJob, reason: string, pause = fals
   return { state, ok: false, reason, jobId: null };
 }
 function jobIdInUse(state: GameState, jobId: number): boolean {
-  return state.research.queue.some(job => job.jobId === jobId) || state.planets.some(planet => planet.buildQueue.some(job => job.jobId === jobId) || planet.shipyardQueue.some(job => job.jobId === jobId));
+  return actualPaidJobs(state).some(({ job }) => job.jobId === jobId);
 }
 export type PreparedJob = { state: GameState; ok: true; reason: ""; jobId: number } | { state: GameState; ok: false; reason: string; jobId: null };
 /** One immutable transaction. Every source is debited here; primitives only append the returned identity. */

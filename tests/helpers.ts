@@ -38,6 +38,9 @@ export function stripSyntheticTerraformerMetadata(state: any): void {
   expect(Number.isSafeInteger(state.terraformerGrantJobFloor)).toBe(true);
   for (const planet of state.planets) {
     expect(planet.terraformerFields).toEqual({ base: planet.fieldsMax, grantedLevels: 0 });
+    expect(Object.hasOwn(planet, "demolition")).toBe(true);
+    expect(planet.demolition).toBeNull();
+    delete planet.demolition;
     delete planet.terraformerFields;
   }
   delete state.terraformerGrantJobFloor;

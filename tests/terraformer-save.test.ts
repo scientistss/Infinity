@@ -16,7 +16,9 @@ function read(file: any) { return importSave(JSON.stringify(file)); }
 function projection(state: any): any {
   const { terraformerGrantJobFloor: _floor, ...rest } = state;
   return { ...rest, planets: state.planets.map((planet: any) => {
-    const { terraformerFields: _fields, ...old } = planet;
+    expect(Object.hasOwn(planet, "demolition")).toBe(true);
+    expect(planet.demolition).toBeNull();
+    const { terraformerFields: _fields, demolition: _demolition, ...old } = planet;
     return old;
   }) };
 }
@@ -66,7 +68,7 @@ class MemoryStore implements KeyValueStore {
 describe("strict r10 terraformer field accounting", () => {
   it("starts at 163/0 with floor 1 and round-trips without a grant", () => {
     const file = current(), restored = read(file);
-    expect(restored.revision).toBe(10); expect(SAVE_REVISION).toBe(10);
+    expect(restored.revision).toBe(11); expect(SAVE_REVISION).toBe(11);
     expect(restored.state.terraformerGrantJobFloor).toBe(1);
     expect(restored.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
     expect(restored).toEqual(file);
@@ -257,7 +259,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
   });
   it.each(historical.rows)("preserves the old reader's complete semantic output: $name", row => {
     const migrated = importSave(row.raw);
-    expect(migrated.revision).toBe(10);
+    expect(migrated.revision).toBe(11);
     expect(migrated.savedAt).toBe(row.oldReaderOutput.savedAt);
     expect(migrated.lastTickAt).toBe(row.oldReaderOutput.lastTickAt);
     expect(projection(migrated.state)).toEqual(row.oldReaderOutput.state);
@@ -316,6 +318,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
   });
   it("cannot hide missing r10 accounting by changing only its revision to r9", () => {
     const file = current(); file.revision = 9;
+    for (const planet of file.state.planets) delete planet.demolition;
     expect(() => read(file)).toThrow(/r10/);
     delete file.state.terraformerGrantJobFloor;
     expect(() => read(file)).toThrow(/r10/);
@@ -345,7 +348,7 @@ describe("r10 migration storage protection", () => {
     expect(backup).toBeGreaterThan(-1); expect(write).toBeGreaterThan(backup);
     expect(store.events.slice(backup + 1, write)).toContain(`read:${BACKUP_KEY}`);
     expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
-    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(10);
+    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(11);
     expect(projection(serializeState(session.loaded.state))).toEqual(row.oldReaderOutput.state);
     const cold = new SaveSession(store, 900);
     expect(cold.mode).toBe("ready"); expect(cold.loaded.state.planets[0]!.terraformerFields.grantedLevels).toBe(0);

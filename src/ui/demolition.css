@@ -1,0 +1,17 @@
+.demolition-entry { margin-top: .55rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.demolition-entry button, .demolition-actions button { min-height: 2.75rem; white-space: normal; }
+.demolition-entry .muted { margin: 0; min-width: 0; font-size: .78rem; overflow-wrap: anywhere; }
+.demolition-review, .demolition-job { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line, #43566c); border-radius: .7rem; background: var(--panel, #101b2a); min-width: 0; }
+.demolition-review h3, .demolition-job h3 { margin: 0 0 .7rem; }
+.demolition-review p, .demolition-review li, .demolition-job p { overflow-wrap: anywhere; }
+.demolition-review ul { padding-left: 1.2rem; }
+.demolition-review li + li { margin-top: .5rem; }
+.demolition-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+.demolition-actions button { flex: 1 1 10rem; }
+.demolition-reason { color: #f0c583; }
+.protocol-slot [data-demolition-slot-warning] { color: #f0c583; font-size: .82rem; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .demolition-review, .demolition-job { padding: .75rem; }
+  .demolition-entry button { width: 100%; }
+  .demolition-review { scroll-margin-top: 1rem; }
+}

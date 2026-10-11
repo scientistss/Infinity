@@ -284,7 +284,7 @@ def import_save(page, value, label):
     check('native File selection/read followed by one explicit native confirmation', len(dialogs) == 1 and dialogs[0]['valid'] and len(files) == count + 1 and files[-1] == {'trusted': True, 'name': path.name, 'size': path.stat().st_size, 'priorRaw': before})
     evidence.append({'case': case, 'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'classification': label})
     building_tab(page)
-    if seed['revision'] == 10:
+    if seed['revision'] == fixtures['base']['revision']:
         whole_state('import-' + label, read(page), seed['state'])
 
 
@@ -727,7 +727,7 @@ try:
         other.close(); context.close()
         case = 'suite integrity'
         check('no uncaught JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('version and current strict save release were verified', release_metadata['version'] == expected_package_version and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 10)
+        check('version and current strict save release were verified', release_metadata['version'] == expected_package_version and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == fixtures['base']['revision'] == 11)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

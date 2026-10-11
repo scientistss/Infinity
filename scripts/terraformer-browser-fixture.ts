@@ -42,7 +42,7 @@ const clone = (state: GameState): GameState => deserializeState(importSave(expor
 const saved = (state: GameState) => JSON.parse(exportSave(state, EPOCH));
 const load = (key: keyof typeof names) => {
   const source = milestones[key].save;
-  check(source.version === 9 && source.revision === 10 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
+  check(source.version === 9 && source.revision === 11 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
   const state = deserializeState(importSave(JSON.stringify(source)).state);
   exact(serializeState(state), source.state, `${key}: strict import changes natural game state`);
   exact(serializeState(catchUp(clone(state), 0).state), source.state, `${key}: zero-gap startup changes natural state`);
@@ -150,9 +150,12 @@ for (const name of ["continuous_manual", "full10000_plan"] as const) {
   exact(JSON.parse(row.raw), row.oldReaderOutput, "Canonical historical serializer/reader mismatch");
   const migrated = importSave(row.raw), initial = deserializeState(migrated.state);
   const projected = JSON.parse(JSON.stringify(migrated.state)); delete projected.terraformerGrantJobFloor;
-  for (const planet of projected.planets) delete planet.terraformerFields;
+  for (const planet of projected.planets) {
+    check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "Historical r9 migration may add only null demolition");
+    delete planet.demolition; delete planet.terraformerFields;
+  }
   exact(projected, row.oldReaderOutput.state, "Historical whole-state migration is not additive");
-  check(initial.terraformerGrantJobFloor === initial.orders.nextJobId && initial.planets.every(p => p.terraformerFields.base === p.fieldsMax && p.terraformerFields.grantedLevels === 0), "Historical r10 floor/ledger are not additive zero grants");
+  check(initial.terraformerGrantJobFloor === initial.orders.nextJobId && initial.planets.every(p => p.terraformerFields.base === p.fieldsMax && p.terraformerFields.grantedLevels === 0), "Historical r11 floor/ledger are not additive zero grants");
   let current = catchUp(clone(initial), 0).state;
   put(`legacy-${name}-migrated`, current);
   const levels: number[] = [];

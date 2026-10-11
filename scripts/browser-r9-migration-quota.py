@@ -1,4 +1,4 @@
-"""Separate native r8-to-r10 migration and three-copy preservation-capacity acceptance.
+"""Separate native r8-to-r11 migration and three-copy preservation-capacity acceptance.
 
 Real HTTP, clocks, Storage, File.text and confirm. Only anonymous fixture seeding
 and future envelope timestamps are controlled, to isolate migration from offline
@@ -8,7 +8,7 @@ no partial adoption, and protected frozen UI. A successful replacement must reta
 both originals. The parent process bounds the complete worker and its browser.
 """
 import argparse
-from r10_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r10
+from r11_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r11
 import hashlib
 import json
 import os
@@ -34,7 +34,7 @@ out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
 report_path = out / 'report.json'
 report = {'completed': False, 'result': 'running', 'checks': [], 'storageEvents': [], 'errors': [],
           'saveRevision': CURRENT_REVISION,
-          'scope': 'Separate actual-r8-to-r10 upgrade and real three-large-copy preservation peak. A small real-r8 replacement has a distinct world, proving adoption or non-adoption. Does not measure CPU or alter paired clean-current-version two-copy capacity.',
+          'scope': 'Separate actual-r8-to-r11 upgrade and real three-large-copy preservation peak. A small real-r8 replacement has a distinct world, proving adoption or non-adoption. Does not measure CPU or alter paired clean-current-version two-copy capacity.',
           'clockControl': 'Native clocks; only seeded savedAt/lastTickAt are put 60 seconds in the future to exclude offline catch-up.',
           'sourceSha': args.expected_sha, 'url': args.url}
 
@@ -102,7 +102,7 @@ def worker():
             release_response = context.request.get(urljoin(args.url,'release.json'))
             check('actual HTTP release is available',release_response.status==200)
             release = release_response.json(); report['release'] = release
-            check('served source and r10 reader are the exact expected release',release['sourceSha']==args.expected_sha and release['saveRevision']==CURRENT_REVISION and release['saveVersion']==9)
+            check('served source and r11 reader are the exact expected release',release['sourceSha']==args.expected_sha and release['saveRevision']==CURRENT_REVISION and release['saveVersion']==9)
             report['assets'] = []
             for path, digest in release['files'].items():
                 if not path.endswith('.js'): continue
@@ -144,9 +144,9 @@ def worker():
             check('Storage, File.text, confirm, clocks, RAF and timers remain native',all(initial['native'].values()))
             migrated=initial['migration'];seeded=json.loads(initial['seeded']);current=json.loads(migrated['current'])
             report['originalR8']=save_raw('original-r8.json',initial['seeded'])
-            report['initialR10']=save_raw('initial-r10.json',migrated['current'])
+            report['initialR11']=save_raw('initial-r11.json',migrated['current'])
             check('real r8 startup migration independently validates zero grants and fixed floor',assert_zero_grant_metadata(current['state'],seeded['state'],grant_job_floor=seeded['state']['orders']['nextJobId']))
-            check('real r8 startup migration adds only specified r9/r10 metadata',current['revision']==CURRENT_REVISION and exact(current['state'],lift_legacy_state_to_r10(seeded['state'],source_revision=8,grant_job_floor=seeded['state']['orders']['nextJobId'])))
+            check('real r8 startup migration adds only specified r9/r10/r11 metadata',current['revision']==CURRENT_REVISION and exact(current['state'],lift_legacy_state_to_r11(seeded['state'],source_revision=8,grant_job_floor=seeded['state']['orders']['nextJobId'])))
             check('real migration preserves exactly the original native r8 bytes',migrated['backups']=={key+'.backup':initial['seeded']})
             page.wait_for_timeout(500)
             page.locator('[data-tab="overview"]').click()
@@ -170,8 +170,8 @@ def worker():
             page.locator('[data-tab="save"]').click()
             page.locator('[data-action="save"]').click()
             before=page.evaluate('window.__r9MigrationQuota.snapshot()')
-            check('real manual save establishes current r10 progress without replacing the old backup',before['status']=='已保存到本地' and before['backups']==migrated['backups'] and before['current']!=migrated['current'])
-            report['preImportR10']=save_raw('pre-import-r10.json',before['current'])
+            check('real manual save establishes current r11 progress without replacing the old backup',before['status']=='已保存到本地' and before['backups']==migrated['backups'] and before['current']!=migrated['current'])
+            report['preImportR11']=save_raw('pre-import-r11.json',before['current'])
             incoming_raw=page.evaluate('source=>JSON.stringify(source,null,2)',incoming)
             file_path=out/'actual-r8-replacement.json';file_path.write_text(incoming_raw,encoding='utf-8')
             report['incomingR8']=save_raw(file_path.name,incoming_raw)
@@ -209,14 +209,14 @@ def worker():
             check('file witness binds this exact native selection and prior current bytes',terminal['selected']['trusted'] and terminal['selected']['priorRaw']==before['current'])
             check('every existing original remains byte-identical',all(terminal['backups'].get(k)==v for k,v in before['backups'].items()))
             new_backups={k:v for k,v in terminal['backups'].items() if k not in before['backups']}
-            check('any additional backup is exactly the pre-import r10 original',all(v==before['current'] for v in new_backups.values()) and len(new_backups)<=1)
+            check('any additional backup is exactly the pre-import r11 original',all(v==before['current'] for v in new_backups.values()) and len(new_backups)<=1)
             if terminal['status']=='已导入并存入本地':
                 accepted=json.loads(terminal['current'])
                 check('successful replacement independently validates each new grant field',assert_zero_grant_metadata(accepted['state'],incoming['state'],grant_job_floor=incoming['state']['orders']['nextJobId']))
                 expected={**incoming,'revision':CURRENT_REVISION,'savedAt':accepted['savedAt'],'lastTickAt':accepted['lastTickAt'],
-                          'state':lift_legacy_state_to_r10(incoming['state'],source_revision=8,grant_job_floor=incoming['state']['orders']['nextJobId'])}
+                          'state':lift_legacy_state_to_r11(incoming['state'],source_revision=8,grant_job_floor=incoming['state']['orders']['nextJobId'])}
                 expected_raw=page.evaluate('source=>JSON.stringify(source,null,2)',expected)
-                check('successful replacement commits the entire exact native r10 envelope',terminal['current']==expected_raw)
+                check('successful replacement commits the entire exact native r11 envelope',terminal['current']==expected_raw)
                 check('successful replacement retains the second exact original',len(new_backups)==1)
                 updates=[event for event in current_events[current_start:] if event.get('newValue')==terminal['current']]
                 check('native storage independently records exact old/new replacement bytes',len(updates)==1 and updates[0].get('oldValue')==before['current'])
@@ -227,7 +227,7 @@ def worker():
             else:
                 check('failure is a genuine native quota refusal',any(word in terminal['status'] for word in ('QuotaExceededError','quota','配额','空间','超出')),
                       {'status':terminal['status'],'notice':terminal['notice']})
-                check('quota refusal leaves exact prior r10 current untouched',terminal['current']==before['current'] and not current_events[current_start:])
+                check('quota refusal leaves exact prior r11 current untouched',terminal['current']==before['current'] and not current_events[current_start:])
                 page.locator('[data-tab="overview"]').click()
                 page.evaluate('() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
                 shown=page.locator('[data-bind="ov-planet"]').text_content()
@@ -253,7 +253,7 @@ def worker():
                 page.locator('[data-tab="save"]').click()
                 with page.expect_download() as download: page.locator('[data-action="export"]').click()
                 exported=download.value;path=out/'protected-export.json';exported.save_as(path)
-                check('protected export is exactly the pre-import r10 original',path.read_text()==before['current'])
+                check('protected export is exactly the pre-import r11 original',path.read_text()==before['current'])
                 report['result']='native quota refusal protected both originals'
             for request,row in script_responses:
                 final=request;seen=set()

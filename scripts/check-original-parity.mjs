@@ -22,7 +22,9 @@ const [oldState,oldSave,oldLogic,oldQueue,oldResearch,oldYard,oldEngine,oldArcad
 function project(current) {
   const s = nowSave.serializeState(current);
   const { terraformerGrantJobFloor: _terraformerGrantJobFloor, buildingTemplates: _buildingTemplates, planets, activePlanetId: _active, deepSpace: _deep, universe: _universe, fleets: _fleets, messages: _messages, nextFleetId: _nextFleetId, orders: _orders, researchTemplates: _researchTemplates, formations: _formations, ...empire } = s;
-  const { terraformerFields: _terraformerFields, id: _id, coordinates: _coordinates, resources, ...planet } = planets[0];
+  assert.equal(planets[0].demolition, null, "original single-world trajectory has no new demolition authority");
+  assert.ok(Object.hasOwn(planets[0], "demolition"), "current slot is explicit");
+  const { demolition: _demolition, terraformerFields: _terraformerFields, id: _id, coordinates: _coordinates, resources, ...planet } = planets[0];
   const { nextRunId: _nextRunId, autoBatch: _autoBatch, ...legacyArcade } = s.arcade;
   legacyArcade.runs = s.arcade.runs.map(({ id: _ticketId, ...run }) => run);
   planet.buildQueue = planet.buildQueue.map(({jobId: _job, taskId: _task, ...order}) => order);

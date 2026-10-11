@@ -1,3 +1,4 @@
+import { actualPaidJobs, paidJobIdentityProblem } from "./paid-job-identity";
 import { activePlanet } from "./empire";
 import { isValidAmount } from "./decimal";
 import { economy } from "./economy";
@@ -66,14 +67,9 @@ export function terraformerStateProblem(state: GameState): string | null {
     }
   }
   if (!planetIds.has(state.activePlanetId)) return "地形改造器当前星球不存在";
-  const paidIds = new Set<number>();
-  let newPaid = 0;
-  const jobs = [...state.research.queue, ...state.planets.flatMap(planet => [...planet.buildQueue, ...planet.shipyardQueue])];
-  for (const job of jobs) {
-    if (!Number.isSafeInteger(job.jobId) || job.jobId < 1 || job.jobId >= nextJobId || paidIds.has(job.jobId)) return "地形改造器授格校验发现无效或重复的付费任务编号";
-    paidIds.add(job.jobId);
-    if (job.jobId >= floor) newPaid += 1;
-  }
+  const identityProblem = paidJobIdentityProblem(state);
+  if (identityProblem) return `地形改造器授格校验：${identityProblem}`;
+  const newPaid = actualPaidJobs(state).filter(({ job }) => job.jobId >= floor).length;
   if (granted + newPaid > nextJobId - floor) return "地形改造器授格与当前付费任务超过新版任务发行数量";
   return null;
 }

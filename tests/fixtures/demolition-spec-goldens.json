@@ -1,0 +1,413 @@
+{
+  "oracle": "Python Fraction, independent of production code",
+  "asserted_cases": 14,
+  "level_zero_rejected": true,
+  "cases": [
+    {
+      "name": "metal 16 to 15, ion 1",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 16,
+        "ion_level": 1,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "16815",
+        "4203",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "17515",
+        "4378",
+        "0"
+      ],
+      "seconds_fraction": "65679/1250",
+      "seconds_decimal": "52.5432"
+    },
+    {
+      "name": "metal 10 to 9, ion 0",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 0,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "seconds_fraction": "5763/1250",
+      "seconds_decimal": "4.6104"
+    },
+    {
+      "name": "metal 10 to 9, ion 1",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 1,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "1476",
+        "369",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "seconds_fraction": "5763/1250",
+      "seconds_decimal": "4.6104"
+    },
+    {
+      "name": "metal 10 to 9, ion 24",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 24,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "61",
+        "15",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "seconds_fraction": "5763/1250",
+      "seconds_decimal": "4.6104"
+    },
+    {
+      "name": "metal 10 to 9, ion 25",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 25,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "0",
+        "0",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "seconds_fraction": "5763/1250",
+      "seconds_decimal": "4.6104"
+    },
+    {
+      "name": "metal 10 to 9, ion 26",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 26,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "0",
+        "0",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1537",
+        "384",
+        "0"
+      ],
+      "seconds_fraction": "5763/1250",
+      "seconds_decimal": "4.6104"
+    },
+    {
+      "name": "metal 10 to 9, ion 1, growth cut",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0.01",
+        "from_level": 10,
+        "ion_level": 1,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "1399",
+        "349",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1457",
+        "364",
+        "0"
+      ],
+      "seconds_fraction": "5463/1250",
+      "seconds_decimal": "4.3704"
+    },
+    {
+      "name": "metal 1 to 0, ion 0",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 1,
+        "ion_level": 0,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "seconds_fraction": "1",
+      "seconds_decimal": "1"
+    },
+    {
+      "name": "metal 1 to 0, ion 0, growth cut",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0.01",
+        "from_level": 1,
+        "ion_level": 0,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "seconds_fraction": "1",
+      "seconds_decimal": "1"
+    },
+    {
+      "name": "metal 1 to 0, ion 1",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0",
+        "from_level": 1,
+        "ion_level": 1,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "38",
+        "9",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "seconds_fraction": "1",
+      "seconds_decimal": "1"
+    },
+    {
+      "name": "metal 1 to 0, ion 1, growth cut",
+      "input": {
+        "base": [
+          60,
+          15,
+          0
+        ],
+        "factor": "1.5",
+        "growth_cut": "0.01",
+        "from_level": 1,
+        "ion_level": 1,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "38",
+        "9",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "40",
+        "10",
+        "0"
+      ],
+      "seconds_fraction": "1",
+      "seconds_decimal": "1"
+    },
+    {
+      "name": "nanite 1 to 0, robotics 10, nanite 1",
+      "input": {
+        "base": [
+          1000000,
+          500000,
+          100000
+        ],
+        "factor": "2",
+        "growth_cut": "0",
+        "from_level": 1,
+        "ion_level": 0,
+        "robotics_before": 10,
+        "nanite_before": 1,
+        "early_speedup": false
+      },
+      "paid_m_c_d": [
+        "500000",
+        "250000",
+        "50000"
+      ],
+      "timing_basis_m_c_d": [
+        "500000",
+        "250000",
+        "50000"
+      ],
+      "seconds_fraction": "900/11",
+      "seconds_decimal": "81.81818181818181818181818181818181818182"
+    },
+    {
+      "name": "robotics 10 to 9, ion 1, robotics 10",
+      "input": {
+        "base": [
+          400,
+          120,
+          200
+        ],
+        "factor": "2",
+        "growth_cut": "0",
+        "from_level": 10,
+        "ion_level": 1,
+        "robotics_before": 10,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "98304",
+        "29491",
+        "49152"
+      ],
+      "timing_basis_m_c_d": [
+        "102400",
+        "30720",
+        "51200"
+      ],
+      "seconds_fraction": "39936/1375",
+      "seconds_decimal": "29.04436363636363636363636363636363636364"
+    },
+    {
+      "name": "metal storage 32 to 31, strict integer floor",
+      "input": {
+        "base": [
+          1000,
+          0,
+          0
+        ],
+        "factor": "2",
+        "growth_cut": "0",
+        "from_level": 32,
+        "ion_level": 0,
+        "robotics_before": 0,
+        "nanite_before": 0,
+        "early_speedup": true
+      },
+      "paid_m_c_d": [
+        "1073741824000",
+        "0",
+        "0"
+      ],
+      "timing_basis_m_c_d": [
+        "1073741824000",
+        "0",
+        "0"
+      ],
+      "seconds_fraction": "12884901888/5",
+      "seconds_decimal": "2576980377.6"
+    }
+  ]
+}

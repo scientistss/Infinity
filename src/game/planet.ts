@@ -5,6 +5,7 @@ import { big, type BigNumber } from "./decimal";
 import type { ResourceAmounts } from "./types";
 import { emptyUnits, type UnitId } from "../data/units";
 import type { ShipyardOrder } from "./shipyard";
+import type { DemolitionJob } from "./demolition-state";
 import type { PaidJobIdentity } from "./order-state";
 
 export type OrderSource = "manual" | "protocol" | "plan";
@@ -38,6 +39,8 @@ export interface PlanetState {
   /** 0–100 in steps of 10. */
   productionPct: Record<ProductionBuildingId, number>;
   buildQueue: BuildOrder[];
+  /** One independent, explicitly confirmed manual demolition; never an upgrade queue item. */
+  demolition: DemolitionJob | null;
   /** Ships and defenses standing on the planet (P3). Whole numbers. */
   units: Record<UnitId, number>;
   /** Shipyard batches; index 0 is being built (P3). */
@@ -74,6 +77,7 @@ export function createPlanet(id = HOMEWORLD_ID, coordinates: Coordinates = {gala
     buildings: emptyBuildings(),
     productionPct: fullProduction(),
     buildQueue: [],
+    demolition: null,
     units: emptyUnits(),
     shipyardQueue: [],
   };
@@ -95,6 +99,7 @@ export function clonePlanet(planet: PlanetState): PlanetState {
     buildings: { ...planet.buildings },
     productionPct: { ...planet.productionPct },
     buildQueue: planet.buildQueue.map((order) => ({ ...order, paid: { ...order.paid } })),
+    demolition: planet.demolition === null ? null : { ...planet.demolition, paid: { ...planet.demolition.paid } },
     units: { ...planet.units },
     shipyardQueue: planet.shipyardQueue.map((order) => ({ ...order, paidPerUnit: { ...order.paidPerUnit } })),
   };

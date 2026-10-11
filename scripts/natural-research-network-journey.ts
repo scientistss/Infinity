@@ -420,8 +420,8 @@ async function loadOrigin(): Promise<void> {
   const old = found[0]!;
   check(old.strictRoundtrips === 2 && old.stateAdoptedFromReload && old.subsequentLiveTickObserved
     && typeof old.firstSubsequentLiveTickAt === "number" && old.firstSubsequentLiveTickAt > old.gameSeconds
-    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && old.save.revision === SAVE_REVISION && SAVE_REVISION === 10,
-    "origin milestone lacks strict live reload evidence or is not the unchanged r10 world");
+    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && old.save.revision === SAVE_REVISION && SAVE_REVISION === 11,
+    "origin milestone lacks strict live reload evidence or is not the unchanged current r11 world");
   check(Number.isSafeInteger(old.gameSeconds) && old.gameSeconds > 0 && Number.isSafeInteger(old.save.savedAt) && old.save.lastTickAt === old.save.savedAt,
     "origin game time or save envelope clocks are invalid");
   origin = { sourceSha: expectedSource, gitHead: report.source.gitHead, reportPath: args.get("--report"), reportSha256: hash,

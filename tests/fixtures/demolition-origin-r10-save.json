@@ -1,0 +1,1133 @@
+{
+        "schema": "infinity-original-p4",
+        "revision": 10,
+        "version": 9,
+        "savedAt": 1791616210000,
+        "lastTickAt": 1791616210000,
+        "state": {
+          "terraformerGrantJobFloor": 89,
+          "buildingTemplates": {
+            "nextTemplateId": 2,
+            "templates": [
+              {
+                "id": 1,
+                "revision": 1,
+                "name": "殖民地基础生产工位",
+                "goals": [
+                  {
+                    "building": "metal_mine",
+                    "targetLevel": 3
+                  },
+                  {
+                    "building": "crystal_mine",
+                    "targetLevel": 2
+                  },
+                  {
+                    "building": "solar_plant",
+                    "targetLevel": 3
+                  }
+                ]
+              }
+            ]
+          },
+          "formations": {
+            "nextFormationId": 2,
+            "entries": [
+              {
+                "id": 1,
+                "revision": 1,
+                "name": "首轮母星运输护航编队",
+                "ships": {
+                  "small_cargo": 2,
+                  "light_fighter": 1
+                }
+              }
+            ]
+          },
+          "researchTemplates": {
+            "nextTemplateId": 3,
+            "templates": [
+              {
+                "id": 1,
+                "revision": 1,
+                "name": "首轮真实殖民准备",
+                "goals": [
+                  {
+                    "tech": "energy_tech",
+                    "targetLevel": 1
+                  },
+                  {
+                    "tech": "combustion_drive",
+                    "targetLevel": 2
+                  },
+                  {
+                    "tech": "impulse_drive",
+                    "targetLevel": 3
+                  },
+                  {
+                    "tech": "espionage_tech",
+                    "targetLevel": 4
+                  },
+                  {
+                    "tech": "computer_tech",
+                    "targetLevel": 1
+                  },
+                  {
+                    "tech": "astrophysics",
+                    "targetLevel": 1
+                  }
+                ]
+              },
+              {
+                "id": 2,
+                "revision": 1,
+                "name": "首轮殖民地科研职责",
+                "goals": [
+                  {
+                    "tech": "computer_tech",
+                    "targetLevel": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "orders": {
+            "nextTaskId": 17,
+            "nextJobId": 202,
+            "nextWorkId": 3,
+            "accumulator": 0,
+            "tasks": [
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "energy_tech",
+                "targetLevel": 1,
+                "id": 1,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "0",
+                  "crystal": "800",
+                  "deuterium": "400"
+                },
+                "charged": {
+                  "metal": "0",
+                  "crystal": "800",
+                  "deuterium": "400"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "combustion_drive",
+                "targetLevel": 2,
+                "id": 2,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "1200",
+                  "crystal": "0",
+                  "deuterium": "1800"
+                },
+                "charged": {
+                  "metal": "1200",
+                  "crystal": "0",
+                  "deuterium": "1800"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "impulse_drive",
+                "targetLevel": 3,
+                "id": 3,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "14000",
+                  "crystal": "28000",
+                  "deuterium": "4200"
+                },
+                "charged": {
+                  "metal": "14000",
+                  "crystal": "28000",
+                  "deuterium": "4200"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "espionage_tech",
+                "targetLevel": 4,
+                "id": 4,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "3000",
+                  "crystal": "15000",
+                  "deuterium": "3000"
+                },
+                "charged": {
+                  "metal": "3000",
+                  "crystal": "15000",
+                  "deuterium": "3000"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "computer_tech",
+                "targetLevel": 1,
+                "id": 5,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "0",
+                  "crystal": "400",
+                  "deuterium": "600"
+                },
+                "charged": {
+                  "metal": "0",
+                  "crystal": "400",
+                  "deuterium": "600"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "astrophysics",
+                "targetLevel": 1,
+                "id": 6,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "4000",
+                  "crystal": "8000",
+                  "deuterium": "4000"
+                },
+                "charged": {
+                  "metal": "4000",
+                  "crystal": "8000",
+                  "deuterium": "4000"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "shipyard",
+                "planetId": "homeworld",
+                "unit": "small_cargo",
+                "quantity": 2,
+                "id": 7,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "4000",
+                  "crystal": "4000",
+                  "deuterium": "0"
+                },
+                "charged": {
+                  "metal": "4000",
+                  "crystal": "4000",
+                  "deuterium": "0"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": {
+                  "formation": {
+                    "id": 1,
+                    "revision": 1,
+                    "name": "首轮母星运输护航编队",
+                    "ships": {
+                      "small_cargo": 2,
+                      "light_fighter": 1
+                    }
+                  },
+                  "quotedUnitCost": {
+                    "metal": "2000",
+                    "crystal": "2000",
+                    "deuterium": "0"
+                  }
+                },
+                "activeJob": null,
+                "completedUnits": 2
+              },
+              {
+                "kind": "shipyard",
+                "planetId": "homeworld",
+                "unit": "light_fighter",
+                "quantity": 1,
+                "id": 8,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "3000",
+                  "crystal": "1000",
+                  "deuterium": "0"
+                },
+                "charged": {
+                  "metal": "3000",
+                  "crystal": "1000",
+                  "deuterium": "0"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": {
+                  "formation": {
+                    "id": 1,
+                    "revision": 1,
+                    "name": "首轮母星运输护航编队",
+                    "ships": {
+                      "small_cargo": 2,
+                      "light_fighter": 1
+                    }
+                  },
+                  "quotedUnitCost": {
+                    "metal": "3000",
+                    "crystal": "1000",
+                    "deuterium": "0"
+                  }
+                },
+                "activeJob": null,
+                "completedUnits": 1
+              },
+              {
+                "kind": "building",
+                "planetId": "colony-1",
+                "building": "metal_mine",
+                "targetLevel": 3,
+                "id": 9,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "285",
+                  "crystal": "70",
+                  "deuterium": "0"
+                },
+                "charged": {
+                  "metal": "285",
+                  "crystal": "70",
+                  "deuterium": "0"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "building",
+                "planetId": "colony-1",
+                "building": "crystal_mine",
+                "targetLevel": 2,
+                "id": 10,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "124",
+                  "crystal": "62",
+                  "deuterium": "0"
+                },
+                "charged": {
+                  "metal": "124",
+                  "crystal": "62",
+                  "deuterium": "0"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "building",
+                "planetId": "colony-1",
+                "building": "solar_plant",
+                "targetLevel": 3,
+                "id": 11,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "355",
+                  "crystal": "142",
+                  "deuterium": "0"
+                },
+                "charged": {
+                  "metal": "355",
+                  "crystal": "142",
+                  "deuterium": "0"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "building",
+                "planetId": "colony-1",
+                "building": "research_lab",
+                "targetLevel": 1,
+                "id": 12,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "200",
+                  "crystal": "400",
+                  "deuterium": "200"
+                },
+                "charged": {
+                  "metal": "200",
+                  "crystal": "400",
+                  "deuterium": "200"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "colony-1",
+                "tech": "computer_tech",
+                "targetLevel": 2,
+                "id": 13,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "0",
+                  "crystal": "800",
+                  "deuterium": "1200"
+                },
+                "charged": {
+                  "metal": "0",
+                  "crystal": "800",
+                  "deuterium": "1200"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "building",
+                "planetId": "colony-1",
+                "building": "research_lab",
+                "targetLevel": 3,
+                "id": 14,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "1200",
+                  "crystal": "2400",
+                  "deuterium": "1216"
+                },
+                "charged": {
+                  "metal": "1200",
+                  "crystal": "2400",
+                  "deuterium": "1216"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": {
+                  "authorization": {
+                    "donorPlanetId": "homeworld",
+                    "ship": "small_cargo",
+                    "count": 2,
+                    "speedPercent": 100,
+                    "maxTrips": 2,
+                    "grossCargoCap": {
+                      "metal": "1200",
+                      "crystal": "2400",
+                      "deuterium": "1200"
+                    }
+                  },
+                  "trips": [
+                    {
+                      "fleetId": 2,
+                      "workId": 1,
+                      "targetPlanetId": "colony-1",
+                      "target": {
+                        "galaxy": 1,
+                        "system": 56,
+                        "position": 10
+                      },
+                      "cargo": {
+                        "metal": "0",
+                        "crystal": "262.1003719673989",
+                        "deuterium": "0"
+                      },
+                      "fuel": "8",
+                      "duration": 3.8581355724505624,
+                      "phase": {
+                        "kind": "returned",
+                        "outcome": {
+                          "kind": "delivered"
+                        }
+                      }
+                    },
+                    {
+                      "fleetId": 3,
+                      "workId": 2,
+                      "targetPlanetId": "colony-1",
+                      "target": {
+                        "galaxy": 1,
+                        "system": 56,
+                        "position": 10
+                      },
+                      "cargo": {
+                        "metal": "0",
+                        "crystal": "1363.30666666666",
+                        "deuterium": "100"
+                      },
+                      "fuel": "8",
+                      "duration": 3.8581355724505624,
+                      "phase": {
+                        "kind": "returned",
+                        "outcome": {
+                          "kind": "delivered"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "building",
+                "planetId": "homeworld",
+                "building": "terraformer",
+                "targetLevel": 2,
+                "id": 15,
+                "status": "cancelled",
+                "reason": "计划已取消，未完成的付费部分已退款",
+                "budget": {
+                  "metal": "0",
+                  "crystal": "100000",
+                  "deuterium": "200000"
+                },
+                "charged": {
+                  "metal": "0",
+                  "crystal": "100000",
+                  "deuterium": "200000"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "100000",
+                  "deuterium": "200000"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              },
+              {
+                "kind": "research",
+                "planetId": "homeworld",
+                "tech": "computer_tech",
+                "targetLevel": 11,
+                "id": 16,
+                "status": "completed",
+                "reason": "有限目标已完成",
+                "budget": {
+                  "metal": "0",
+                  "crystal": "409600",
+                  "deuterium": "614400"
+                },
+                "charged": {
+                  "metal": "0",
+                  "crystal": "409600",
+                  "deuterium": "614400"
+                },
+                "refunded": {
+                  "metal": "0",
+                  "crystal": "0",
+                  "deuterium": "0"
+                },
+                "transport": null,
+                "currentWork": null,
+                "formationOrigin": null,
+                "activeJob": null,
+                "completedUnits": 0
+              }
+            ]
+          },
+          "planets": [
+            {
+              "id": "homeworld",
+              "coordinates": {
+                "galaxy": 1,
+                "system": 56,
+                "position": 11
+              },
+              "resources": {
+                "metal": "2920000",
+                "crystal": "422309.63292262197",
+                "deuterium": "50583.4200556236"
+              },
+              "name": "母星",
+              "tempMax": 40,
+              "fieldsMax": 173,
+              "terraformerFields": {
+                "base": 163,
+                "grantedLevels": 2
+              },
+              "buildings": {
+                "metal_mine": 18,
+                "crystal_mine": 18,
+                "deuterium_synth": 18,
+                "solar_plant": 18,
+                "fusion_reactor": 0,
+                "metal_storage": 9,
+                "crystal_storage": 9,
+                "deuterium_tank": 7,
+                "robotics_factory": 10,
+                "nanite_factory": 1,
+                "shipyard": 4,
+                "research_lab": 10,
+                "missile_silo": 0,
+                "alliance_depot": 0,
+                "terraformer": 2,
+                "space_dock": 0,
+                "lunar_base": 0,
+                "sensor_phalanx": 0,
+                "jump_gate": 0
+              },
+              "productionPct": {
+                "metal_mine": 100,
+                "crystal_mine": 100,
+                "deuterium_synth": 100,
+                "solar_plant": 100,
+                "fusion_reactor": 100
+              },
+              "buildQueue": [],
+              "units": {
+                "small_cargo": 2,
+                "large_cargo": 0,
+                "light_fighter": 1,
+                "heavy_fighter": 0,
+                "cruiser": 0,
+                "battleship": 0,
+                "battlecruiser": 0,
+                "bomber": 0,
+                "destroyer": 0,
+                "deathstar": 0,
+                "recycler": 0,
+                "espionage_probe": 0,
+                "solar_satellite": 66,
+                "colony_ship": 0,
+                "rocket_launcher": 0,
+                "light_laser": 0,
+                "heavy_laser": 0,
+                "gauss_cannon": 0,
+                "ion_cannon": 0,
+                "plasma_turret": 0,
+                "small_shield_dome": 0,
+                "large_shield_dome": 0,
+                "anti_ballistic_missile": 0,
+                "interplanetary_missile": 0
+              },
+              "shipyardQueue": []
+            },
+            {
+              "id": "colony-1",
+              "coordinates": {
+                "galaxy": 1,
+                "system": 56,
+                "position": 10
+              },
+              "resources": {
+                "metal": "10000",
+                "crystal": "10000",
+                "deuterium": "0"
+              },
+              "name": "殖民地 1:56:10",
+              "tempMax": 1,
+              "fieldsMax": 144,
+              "terraformerFields": {
+                "base": 144,
+                "grantedLevels": 0
+              },
+              "buildings": {
+                "metal_mine": 3,
+                "crystal_mine": 2,
+                "deuterium_synth": 0,
+                "solar_plant": 3,
+                "fusion_reactor": 0,
+                "metal_storage": 0,
+                "crystal_storage": 0,
+                "deuterium_tank": 0,
+                "robotics_factory": 0,
+                "nanite_factory": 0,
+                "shipyard": 0,
+                "research_lab": 3,
+                "missile_silo": 0,
+                "alliance_depot": 0,
+                "terraformer": 0,
+                "space_dock": 0,
+                "lunar_base": 0,
+                "sensor_phalanx": 0,
+                "jump_gate": 0
+              },
+              "productionPct": {
+                "metal_mine": 100,
+                "crystal_mine": 100,
+                "deuterium_synth": 100,
+                "solar_plant": 100,
+                "fusion_reactor": 100
+              },
+              "buildQueue": [],
+              "units": {
+                "small_cargo": 0,
+                "large_cargo": 0,
+                "light_fighter": 0,
+                "heavy_fighter": 0,
+                "cruiser": 0,
+                "battleship": 0,
+                "battlecruiser": 0,
+                "bomber": 0,
+                "destroyer": 0,
+                "deathstar": 0,
+                "recycler": 0,
+                "espionage_probe": 0,
+                "solar_satellite": 0,
+                "colony_ship": 0,
+                "rocket_launcher": 0,
+                "light_laser": 0,
+                "heavy_laser": 0,
+                "gauss_cannon": 0,
+                "ion_cannon": 0,
+                "plasma_turret": 0,
+                "small_shield_dome": 0,
+                "large_shield_dome": 0,
+                "anti_ballistic_missile": 0,
+                "interplanetary_missile": 0
+              },
+              "shipyardQueue": []
+            }
+          ],
+          "activePlanetId": "colony-1",
+          "deepSpace": {
+            "seed": 2667729195,
+            "completed": 0,
+            "lastBlackhole": 0,
+            "emptyStreak": 0,
+            "jackpotStreak": 0,
+            "nextOfferId": 1,
+            "reports": [],
+            "offers": [],
+            "debris": []
+          },
+          "universe": {
+            "seed": 20261010,
+            "layout": "ring-v1"
+          },
+          "fleets": [],
+          "messages": [
+            {
+              "id": "dispatch-1",
+              "text": "殖民舰队 #1 已从 母星 出发，目标 [1:56:10]。",
+              "at": 1677
+            },
+            {
+              "id": "colony-1",
+              "text": "已建立 殖民地 1:56:10。消耗 1 艘殖民船；其余舰船返航。",
+              "at": 1681.70650301621
+            },
+            {
+              "id": "dispatch-2",
+              "text": "运输舰队 #2 已从 母星 出发，目标 [1:56:10]。",
+              "at": 1756
+            },
+            {
+              "id": "arrival-2",
+              "text": "舰队 #2 已抵达 殖民地 1:56:10，货物已安全卸载，舰队开始返航。",
+              "at": 1759.85813557245
+            },
+            {
+              "id": "return-2",
+              "text": "舰队 #2 已返航，舰船与剩余货物已安全入港。",
+              "at": 1763.7162711449
+            },
+            {
+              "id": "dispatch-3",
+              "text": "运输舰队 #3 已从 母星 出发，目标 [1:56:10]。",
+              "at": 1776
+            },
+            {
+              "id": "arrival-3",
+              "text": "舰队 #3 已抵达 殖民地 1:56:10，货物已安全卸载，舰队开始返航。",
+              "at": 1779.85813557245
+            },
+            {
+              "id": "return-3",
+              "text": "舰队 #3 已返航，舰船与剩余货物已安全入港。",
+              "at": 1783.7162711449
+            }
+          ],
+          "nextFleetId": 4,
+          "research": {
+            "levels": {
+              "energy_tech": 12,
+              "laser_tech": 0,
+              "ion_tech": 0,
+              "hyperspace_tech": 8,
+              "plasma_tech": 0,
+              "combustion_drive": 2,
+              "impulse_drive": 3,
+              "hyperspace_drive": 0,
+              "espionage_tech": 4,
+              "computer_tech": 11,
+              "astrophysics": 1,
+              "intergalactic_research_network": 1,
+              "graviton_tech": 0,
+              "weapons_tech": 0,
+              "shielding_tech": 5,
+              "armour_tech": 0
+            },
+            "queue": []
+          },
+          "darkMatter": "7500",
+          "items": {
+            "kraken_box": 0,
+            "newtron_box": 0,
+            "detroit_box": 0,
+            "booster_box": 0,
+            "supply_pack": 0
+          },
+          "boosters": [],
+          "arcade": {
+            "seed": 524214286,
+            "runs": [
+              {
+                "id": 1,
+                "source": "bonus",
+                "outcome": {
+                  "main": {
+                    "tile": 10,
+                    "big": true,
+                    "u": 0.380555747076869,
+                    "v": 0.08142829360440373
+                  },
+                  "lucky": null,
+                  "forced": null
+                }
+              },
+              {
+                "id": 2,
+                "source": "beacon",
+                "outcome": {
+                  "main": {
+                    "tile": 17,
+                    "big": false,
+                    "u": 0.25190580752678216,
+                    "v": 0.5690924748778343
+                  },
+                  "lucky": null,
+                  "forced": null
+                }
+              },
+              {
+                "id": 3,
+                "source": "beacon",
+                "outcome": {
+                  "main": {
+                    "tile": 4,
+                    "big": true,
+                    "u": 0.5794056069571525,
+                    "v": 0.11395656783133745
+                  },
+                  "lucky": null,
+                  "forced": null
+                }
+              }
+            ],
+            "nextRunId": 4,
+            "autoBatch": null,
+            "beaconProgress": 0,
+            "beaconRequired": 1800,
+            "topUps": [],
+            "bets": {
+              "metal": 0,
+              "crystal": 0,
+              "deuterium": 0,
+              "drifter": 0
+            },
+            "rollPity": {
+              "empty": 0,
+              "jackpot": 3
+            },
+            "pity": {
+              "empty": 0,
+              "jackpot": 0
+            },
+            "position": 0,
+            "history": [],
+            "stats": {
+              "runs": 0,
+              "manualRuns": 0,
+              "autoRuns": 0,
+              "hits": {
+                "metal": 0,
+                "crystal": 0,
+                "deuterium": 0,
+                "drifter": 0,
+                "dark_matter": 0,
+                "supply": 0,
+                "empty": 0,
+                "turbulence": 0,
+                "tailwind": 0,
+                "pirate": 0,
+                "alien": 0,
+                "merchant": 0,
+                "blackhole": 0,
+                "lucky": 0,
+                "jackpot": 0
+              },
+              "darkMatter": 0,
+              "betSpent": 0,
+              "betWon": 0
+            }
+          },
+          "lifetime": {
+            "metal": "7426900.999990789",
+            "crystal": "8287015.632979481",
+            "deuterium": "4455131.42002979"
+          },
+          "warpCores": "0",
+          "curvature": {
+            "seed_stock": 0,
+            "output_double": 0,
+            "growth_cut": 0,
+            "offline_extend": 0,
+            "slot_plus": 0,
+            "manual_ten": 0,
+            "early_protocols": 0,
+            "score_boost": 0
+          },
+          "totalTime": "25810",
+          "manualClicks": 0,
+          "seenEnergyShortage": true,
+          "hasPrestiged": false,
+          "unlockedCards": [
+            "auto_build",
+            "resource_gate",
+            "cost_ratio_guard",
+            "queue_scheduler",
+            "production_tuner",
+            "research_scheduler",
+            "cheapest_first",
+            "satellite_power"
+          ],
+          "protocols": {
+            "accumulator": 0,
+            "slots": [
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              },
+              {
+                "elapsed": 0,
+                "lamp": "gray",
+                "reason": "空槽位",
+                "card": null
+              }
+            ]
+          },
+          "unlocked": [
+            "first_metal_mine",
+            "energy_short",
+            "mines_10",
+            "first_crystal",
+            "first_deuterium",
+            "first_robotics",
+            "first_storage",
+            "nanite_age",
+            "first_lab",
+            "first_research",
+            "computer_4",
+            "astrophysics_1",
+            "first_shipyard",
+            "first_ship",
+            "first_satellite"
+          ],
+          "stats": {
+            "scrapes": 0,
+            "launches": 0,
+            "seenEnergyShort": true,
+            "manualActions": 172,
+            "automatedLaunches": 0,
+            "buildsCompleted": 135,
+            "seenStorageFull": true,
+            "seenQueueIdle": true,
+            "researchCompleted": 47,
+            "darkMatterEarned": 7500,
+            "unitsBuilt": 70
+          },
+          "offlineBonusHours": 0
+        }
+      }

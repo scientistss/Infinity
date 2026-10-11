@@ -306,6 +306,7 @@ export function retryOwnedFleetDock(state: GameState, taskId: number, fleetId: n
 export function abandonColony(state: GameState, id: string): FleetResult {
   const planet = state.planets.find((p) => p.id === id);
   if (!planet || planet.id === HOMEWORLD_ID) return { state, ok: false, reason: "不能放弃母星" };
+  if (planet.demolition) return { state, ok: false, reason: "该殖民地仍在拆除，请先等待完成或明确取消" };
   if (state.fleets.some((f) => f.originId === id || sameCoordinates(f.target, planet.coordinates)) || state.research.queue.some((q) => q.planetId === id)) return { state, ok: false, reason: "仍有相关舰队或研究订单，不能放弃该星球" };
   if (state.orders.tasks.some(task => (task.planetId === id || task.transport?.authorization.donorPlanetId === id) && (task.status === "running" || task.status === "paused"))) return { state, ok: false, reason: "仍有未结束的本地或运输计划，不能放弃该星球" };
   if (state.arcade.autoBatch?.armed && state.arcade.autoBatch.planetId === id) state = stopRingBatch(state, "来源星球已放弃，自动批次已停止");

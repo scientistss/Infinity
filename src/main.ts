@@ -1,4 +1,5 @@
 import { applyFormationAction } from "./game/formations";
+import { commitDemolition, cancelDemolition, demolitionProtocolProblem } from "./game/demolition";
 import { applyResearchTemplateAction } from "./game/research-templates";
 import { applyBuildingTemplateAction } from "./game/building-templates";
 import { applyOrderAction } from "./game/orders";
@@ -152,6 +153,9 @@ function render(urgent = true, now = performance.now()): void {
     app!.querySelector<HTMLButtonElement>('[data-tab="facilities"]')?.click();
   }
   view.update(presentVisible(state, { status, banner, notice, catchup }, tab));
+  view.updateDemolition(state, ready);
+  view.updateDemolitionOffline(catchup);
+  if (tab === "protocol") view.updateProtocolSafety();
   view.setOrigin(activePlanet(state).coordinates);
   view.updateSpaceChrome(spaceOrigin(state), status);
   if (tab === "galaxy") view.updateSpaceGalaxy(spaceGalaxyView(state, view.cursor()));
@@ -179,7 +183,13 @@ async function handleAction(action: UiAction): Promise<void> {
   }
   const actionSource = state;
   const before = state.unlocked;
-  if (action.type === "formation-fill") {
+  if (action.type === "demolition-confirm" || action.type === "demolition-cancel") {
+    const result = action.type === "demolition-confirm" ? commitDemolition(state, action.quote) : cancelDemolition(state, action.request);
+    const changed = result.state !== state;
+    state = result.state; status = result.reason;
+    if (changed) persist();
+    view.completeDemolitionAction(status);
+  } else if (action.type === "formation-fill") {
     const formation = state.formations.entries.find(item => item.id === action.formationId && item.revision === action.expectedRevision);
     if (formation) {
       view.fillFormationShips(formation);
@@ -336,21 +346,24 @@ async function handleAction(action: UiAction): Promise<void> {
     status = result.status;
     if (result.status.startsWith("已装配")) persist();
   } else if (action.type === "protocol-toggle") {
-    state = toggleSlot(state, action.index, action.enabled);
-    status = action.enabled ? "已启用协议卡" : "已关闭协议卡";
-    persist();
+    const next = toggleSlot(state, action.index, action.enabled);
+    const card = state.protocols.slots[action.index]?.card;
+    if (next === state) status = card && action.enabled
+      ? demolitionProtocolProblem(state, { ...card, enabled: true }) || "协议槽不可用，未启用协议卡"
+      : "协议卡已改变，未调整启用状态";
+    else { state = next; status = action.enabled ? "已启用协议卡" : "已关闭协议卡"; persist(); }
   } else if (action.type === "protocol-clear") {
     state = clearSlot(state, action.index);
     status = "已卸下协议卡";
     persist();
   } else if (action.type === "protocol-move") {
-    state = moveSlot(state, action.from, action.to);
-    status = "已调整协议槽顺序";
-    persist();
+    const next = moveSlot(state, action.from, action.to);
+    if (next === state) status = "未移动：目标槽不可用或配置与拆除目标冲突";
+    else { state = next; status = "已调整协议槽顺序"; persist(); }
   } else if (action.type === "protocol-param") {
-    state = patchSlot(state, action.index, action.path, action.value);
-    status = "已调整协议参数";
-    persist();
+    const next = patchSlot(state, action.index, action.path, action.value);
+    if (next === state) status = "协议未修改：槽位锁定、参数无效或与拆除目标冲突";
+    else { state = next; status = "已调整协议参数"; persist(); }
 
   } else if (action.type === "buy-tech") {
     const next = buyCurvature(state, action.id);

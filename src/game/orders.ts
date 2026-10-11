@@ -56,6 +56,7 @@ function normalizeMoney(money: OrderMoney): OrderMoney {
 }
 export function createOrderTask(state: GameState, request: CreateOrderRequest): OrderResult {
   if (!targetValid(request) || "formationOrigin" in request || !isOrderMoney(request.budget)) return failed(state, "计划目标、数量或预算无效");
+  if (request.kind === "building" && state.planets.some(planet => planet.id === request.planetId && planet.demolition?.building === request.building)) return failed(state, "同目标建筑正在拆除，不能创建升级计划");
   if (request.transport !== undefined && request.transport !== null && !validOrderTransportAuthorization(state, request.planetId, request.transport)) return failed(state, "单源运输授权无效");
   if (!validId(request.expectedNextTaskId) || request.expectedNextTaskId !== state.orders.nextTaskId) return failed(state, "计划表单已使用或过期，请编辑表单或新建计划后重试");
   if (!state.planets.some(planet => planet.id === request.planetId)) return failed(state, "支付和执行星球不存在");
@@ -77,6 +78,7 @@ export function pauseOrderTask(state: GameState, taskId: number): OrderResult {
 export function resumeOrderTask(state: GameState, taskId: number): OrderResult {
   const task = state.orders.tasks.find(value => value.id === taskId);
   if (!validId(taskId) || !task || task.status !== "paused") return failed(state, "该计划不能继续");
+  if (task.kind === "building" && state.planets.some(planet => planet.id === task.planetId && planet.demolition?.building === task.building)) return failed(state, "同目标建筑正在拆除，不能恢复升级计划");
   if (!state.planets.some(planet => planet.id === task.planetId) || !targetValid(task) || !committedOrderMoney(task)) return failed(state, ORDER_IDENTITY_REASON);
   if (task.transport) {
     if (task.transport.trips.some(trip => trip.phase.kind === "returning" && trip.phase.dockBlocked)) return failed(state, "返港入库受阻，请先重试入港再继续计划");

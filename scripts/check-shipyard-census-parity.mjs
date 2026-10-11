@@ -1,8 +1,8 @@
 /** Exact archived-engine comparison for the segment-local fleet census.
- * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata are added.
+ * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata plus r11 null demolition slots are added.
  * Usage: node --import tsx scripts/check-shipyard-census-parity.mjs BEFORE FIXTURE MODERATE
  */
-import { assertR8StatePreserved } from './r8-compatibility.mjs';
+import { assertR8StatePreserved } from './r11-compatibility.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -160,4 +160,4 @@ for(const [name,raw] of [['moderate',moderate.ready.state],['combined',pressure.
  assert.deepEqual(oldSave.serializeState(a),raw,'benchmark archived input unchanged');
  timings.push({profile:name,stepSeconds:1/60,mode:'live',warmupPairs:6,order:'AB/BA alternating',samplesMs:samples,summary:{before:stats(samples.before),after:stats(samples.after)}});
 }
-console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions with independently proven automatic-prestige epoch resets, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));
+console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions and r11 null demolition slots with independently proven automatic-prestige epoch resets, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));

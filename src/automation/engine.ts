@@ -1,3 +1,4 @@
+import { demolitionProtocolProblem } from "../game/demolition";
 import { activePlanet, withPlanet, selectPlanet } from "../game/empire";
 import {
   CARD_CATALOG,
@@ -249,6 +250,8 @@ export function equipCard(state: GameState, index: number, cardId: string): Prot
   if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(state, cardId)}` };
   if (!isOpenSlot(state, index)) return { state, status: slotUnlockHint(state, index) || "槽位未开启" };
   const card = instantiate(cardId);
+  const conflict = demolitionProtocolProblem(state, card);
+  if (conflict) return { state, status: conflict };
   if (state.protocols.slots[index]?.card?.action.kind === "runLights") state = stopAutoRunner(state);
   return {
     state: writeSlot(state, index, { card, elapsed: 0, lamp: "gray", reason: "已装配" }),
@@ -266,16 +269,17 @@ export function equipFirstEmpty(state: GameState, cardId: string): ProtocolResul
 }
 
 export function toggleSlot(state: GameState, index: number, enabled: boolean): GameState {
-  if (!isOpenSlot(state, index)) return state;
+  if (!Number.isInteger(index) || index < 0 || index >= state.protocols.slots.length || (enabled && !isOpenSlot(state, index))) return state;
   const slot = state.protocols.slots[index];
   if (!slot?.card) return state;
   if (!enabled && slot.card.action.kind === "runLights") return stopAutoRunner(state);
   const card: ProtocolCard = { ...slot.card, enabled };
+  if (demolitionProtocolProblem(state, card)) return state;
   return writeSlot(state, index, { ...slot, card, lamp: "gray", reason: enabled ? "已启用" : "已关闭" });
 }
 
 export function clearSlot(state: GameState, index: number): GameState {
-  if (!isOpenSlot(state, index)) return state;
+  if (!Number.isInteger(index) || index < 0 || index >= state.protocols.slots.length) return state;
   if (state.protocols.slots[index]?.card?.action.kind === "runLights") state = stopAutoRunner(state);
   return writeSlot(state, index, emptyProtocolSlot());
 }
@@ -306,6 +310,7 @@ export function moveSlot(state: GameState, from: number, to: number): GameState 
   const a = slots[from];
   const b = slots[to];
   if (!a || !b) return state;
+  if ([a.card, b.card].some(card => card && demolitionProtocolProblem(state, { ...card, enabled: true }))) return state;
   slots[from] = b;
   slots[to] = a;
   return { ...state, protocols: { ...state.protocols, slots } };
@@ -317,6 +322,7 @@ export function patchSlot(state: GameState, index: number, path: string, value: 
   if (!slot?.card) return state;
   const card = structuredClone(slot.card) as ProtocolCard;
   if (!applyPatch(state, card, path, value)) return state;
+  if (demolitionProtocolProblem(state, { ...card, enabled: true })) return state;
   if (slot.card.action.kind === "runLights" || card.action.kind === "runLights") {
     state = stopRingBatch(state, "协议参数已修改，请重新授权自动批次");
     card.enabled = false;

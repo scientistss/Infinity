@@ -23,7 +23,7 @@ export interface PrestigePreview {
   passivePercent: PreviewChange;
   newHome: PreviewResources;
   worlds: { count: number; colonies: number; resources: PreviewResources; buildingLevels: string; units: string };
-  paid: { buildings: number; research: number; shipyard: number; remainingUnits: string; buildingPaid: PreviewResources; researchPaid: PreviewResources; remainingUnitPaid: PreviewResources };
+  paid: { buildings: number; demolitions: number; research: number; shipyard: number; remainingUnits: string; buildingPaid: PreviewResources; demolitionPaid: PreviewResources; researchPaid: PreviewResources; remainingUnitPaid: PreviewResources };
   fleets: { count: number; ships: string; cargo: PreviewResources; unsettledStake: string; darkMatter: string; items: Record<string, string> };
   orders: { stopped: number; releasedWork: number; releasedPending: number; formationOrigins: number; retiredTrips: number; deliveredRetiredTrips: number; undeliveredRetiredTrips: number; unresolvedRetiredTrips: number; returnedTrips: number };
   retained: { formations: number; templates: number; referencedFormations: number; researchLevels: number; items: number; boosters: number; tickets: number; reports: number; messages: number; totalTime: string };
@@ -71,9 +71,9 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
     totalRows++;
     if (rows.length < PRESTIGE_PREVIEW_ROW_LIMIT) rows.push({ kind, text: text() });
   };
-  const worldResources = zero(), buildingPaid = zero(), researchPaid = zero(), remainingUnitPaid = zero(), fleetCargo = zero();
+  const worldResources = zero(), buildingPaid = zero(), demolitionPaid = zero(), researchPaid = zero(), remainingUnitPaid = zero(), fleetCargo = zero();
   let buildingLevels = big(0), units = big(0), remainingUnits = big(0), ships = big(0), unsettledStake = big(0), undockedDm = big(0);
-  let buildings = 0, research = 0, shipyard = 0;
+  let buildings = 0, demolitions = 0, research = 0, shipyard = 0;
   const fleetItems: Record<string, BigNumber> = {};
   const nextFleets = new Set(next.fleets.map(fleet => fleet.id));
   const nextTasks = new Map(next.orders.tasks.map(task => [task.id, task]));
@@ -90,6 +90,12 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
       for (const job of planet.buildQueue) {
         add(buildingPaid, job.paid);
         row("paid", () => `${planet.name} · 建造 #${job.jobId} ${buildingById(job.building).nameZh} → ${job.targetLevel}：已付 ${previewResources(resourceStrings(job.paid))}，取消不退款。`);
+      }
+      if (planet.demolition) {
+        const job = planet.demolition;
+        demolitions++;
+        add(demolitionPaid, job.paid);
+        row("paid", () => `${planet.name} · 拆除 #${job.jobId} ${buildingById(job.building).nameZh} ${job.fromLevel} → ${job.toLevel}：本次已付拆除费 ${previewResources(resourceStrings(job.paid))}，发射取消不退款；不返还历史建造投入。`);
       }
       for (const job of planet.shipyardQueue) {
         remainingUnits = remainingUnits.add(job.count);
@@ -162,7 +168,7 @@ export function prestigePreview(before: GameState, evaluation: PrestigeEvaluatio
     passivePercent: change(passiveCoreBonus(before).mul(100), passiveCoreBonus(next).mul(100)),
     newHome: resourceStrings(home?.resources ?? zero()),
     worlds: { count: eligible ? before.planets.length : 0, colonies: eligible ? before.planets.filter(planet => planet.id !== HOMEWORLD_ID).length : 0, resources: resourceStrings(worldResources), buildingLevels: buildingLevels.toString(), units: units.toString() },
-    paid: { buildings, research, shipyard, remainingUnits: remainingUnits.toString(), buildingPaid: resourceStrings(buildingPaid), researchPaid: resourceStrings(researchPaid), remainingUnitPaid: resourceStrings(remainingUnitPaid) },
+    paid: { buildings, demolitions, research, shipyard, remainingUnits: remainingUnits.toString(), buildingPaid: resourceStrings(buildingPaid), demolitionPaid: resourceStrings(demolitionPaid), researchPaid: resourceStrings(researchPaid), remainingUnitPaid: resourceStrings(remainingUnitPaid) },
     fleets: { count: eligible ? before.fleets.filter(fleet => !nextFleets.has(fleet.id)).length : 0, ships: ships.toString(), cargo: resourceStrings(fleetCargo), unsettledStake: unsettledStake.toString(), darkMatter: undockedDm.toString(), items: Object.fromEntries(Object.entries(fleetItems).map(([id, amount]) => [id, amount.toString()])) },
     orders,
     retained: { formations: next.formations.entries.length, templates: next.researchTemplates.templates.length, referencedFormations: next.formations.entries.filter(formation => referenced.has(formation.id)).length, researchLevels: Object.values(next.research.levels).reduce((sum, level) => sum + level, 0), items: Object.values(next.items).reduce((sum, count) => sum + count, 0), boosters: next.boosters.length, tickets: next.arcade.runs.length, reports: next.deepSpace.reports.length, messages: next.messages.length, totalTime: next.totalTime.toString() },
@@ -185,7 +191,7 @@ export function prestigeConfirmation(before: GameState, evaluation: PrestigeEval
     `确认发射殖民舰？扩张分 ${model.score}；规则获得 ${model.gain} 颗核心；核心余额 ${previewChange(model.cores)}。`,
     `旧世界 ${model.worlds.count} 颗星球（含 ${model.worlds.colonies} 颗殖民地）全部重置；现有库存 ${previewResources(model.worlds.resources)}，驻留舰船/卫星/防御 ${model.worlds.units}。`,
     `${model.fleets.count} 支舰队、${model.fleets.ships} 艘舰船及其当前货物 ${previewResources(model.fleets.cargo)} 消失，不入库。未入港暗物质 ${model.fleets.darkMatter}；物品 ${previewItems(model.fleets.items)}；未结算押注 ${model.fleets.unsettledStake} 重氢。`,
-    `取消已付建造 ${model.paid.buildings} 项、研究 ${model.paid.research} 项、造船 ${model.paid.shipyard} 批（剩余 ${model.paid.remainingUnits} 单位），不退款。${model.orders.stopped} 个计划停止，${model.orders.retiredTrips} 次在途运输封存；预留解除不增加资源。`,
+    `取消已付建造 ${model.paid.buildings} 项、${model.paid.demolitions ? `拆除 ${model.paid.demolitions} 项（本次拆除费 ${previewResources(model.paid.demolitionPaid)}）、` : ""}研究 ${model.paid.research} 项、造船 ${model.paid.shipyard} 批（剩余 ${model.paid.remainingUnits} 单位），不退款。${model.orders.stopped} 个计划停止，${model.orders.retiredTrips} 次在途运输封存；预留解除不增加资源。`,
     `保留研究等级、${model.retained.templates} 份模板、${model.retained.formations} 份编成和历史引用；设计须重新应用，不自动补船。`,
     `新母星实际库存：${previewResources(model.newHome)}。账上暗物质 ${previewChange(model.rewards.darkMatter)}。`,
     "确认后会先尝试保存；仅保存验证成功才采用新世界。",

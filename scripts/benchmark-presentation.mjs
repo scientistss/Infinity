@@ -9,7 +9,7 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
-import { assertR8StatePreserved, liftR8StateToR10 } from "./r8-compatibility.mjs";
+import { assertR8StatePreserved, liftR8StateToR11 } from "./r11-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -69,7 +69,7 @@ assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "nativ
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
 assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
 const migratedFile = afterSave.importSave(fixture.save);
-assert.equal(migratedFile.revision, 10, "new reader must perform the real r8-to-r10 migration");
+assert.equal(migratedFile.revision, 11, "new reader must perform the real r8-to-r11 migration");
 const migrationFloor = fixture.ready.state.orders.nextJobId;
 const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
@@ -285,8 +285,8 @@ const separateResults = [
 ];
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
 assert.equal(beforeSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-const expectedR10 = { ...fixture.ready, revision: 10, state: liftR8StateToR10(fixture.ready.state, migrationFloor) };
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR10, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus r10 envelope");
+const expectedR11 = { ...fixture.ready, revision: 11, state: liftR8StateToR11(fixture.ready.state, migrationFloor) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR11, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and r11 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
   assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
     beforeSave.serializeState(beforeLogic.tick(state, delta)), `complete simulation state parity at ${delta}s`, migrationFloor);
@@ -294,7 +294,7 @@ for (const delta of [0, 1 / 60, 0.125]) {
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r10 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r11 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },
@@ -311,7 +311,7 @@ process.stdout.write(JSON.stringify({
     startupParityPasses: 2, timingIncludes: "only the named synchronous callback", timingExcludes: "fixture generation, module loading, freezing, equality/hash checks, output serialization",
     limits: "CPU/JIT/GC and competing workload affect native timings. Small-sample p95 is descriptive, not a statistical guarantee. Browser measurements and storage quota must be reported separately." },
   modelResults, separateResults,
-  correctness: { strictReadersEqualAfterExplicitR10AdditiveLift: true, zeroTimeStartupStable: true, archivedFullPresentParityAfterAssertedTerraformerAppend: true, visibleAndSharedFieldsEqualAfterAssertedTerraformerAppend: true,
+  correctness: { strictReadersEqualAfterExplicitR11AdditiveLift: true, zeroTimeStartupStable: true, archivedFullPresentParityAfterAssertedTerraformerAppend: true, visibleAndSharedFieldsEqualAfterAssertedTerraformerAppend: true,
     researchCopyExceptionsFullyAsserted: true, irnZeroResearchTimesAndAllActiveTimersUnchanged: true,
-    splitSpaceParity: true, frozenInputUnchanged: true, completeSimulationStateParity: true, exactNativeSerializationParityAfterExplicitR10Lift: true },
+    splitSpaceParity: true, frozenInputUnchanged: true, completeSimulationStateParity: true, exactNativeSerializationParityAfterExplicitR11Lift: true },
 }, null, 2) + "\n");

@@ -6,7 +6,7 @@ gate a real File.text() result. These are not claims of naturally occurring quot
 exhaustion or timing races. Run after generating save-session-review-save.json.
 """
 import argparse
-from r10_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r10, project_verified_r10_metadata
+from r11_compatibility import CURRENT_REVISION, lift_r10_state_to_r11, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r11, project_verified_r11_metadata
 import copy
 import hashlib
 import json
@@ -27,7 +27,7 @@ args = parser.parse_args()
 fixtures = json.loads(Path(args.fixture).read_text())
 KEY, BACKUP = fixtures["key"], fixtures["backupKey"]
 SAVE_REVISION = fixtures["saveRevision"]
-assert SAVE_REVISION == CURRENT_REVISION, "Current browser contract requires native r10"
+assert SAVE_REVISION == CURRENT_REVISION, "Current browser contract requires native r11"
 LEGACY = "infinity.save.v1"
 LEGACY_RAW = "SYNTHETIC LEGACY BYTES: must remain untouched"
 out = Path(args.output)
@@ -332,7 +332,7 @@ try:
         invalid["state"]["buildingTemplates"] = {"nextTemplateId": 1, "templates": []}
         for task in invalid["state"]["orders"]["tasks"]:
             task["transport"], task["currentWork"], task["formationOrigin"] = None, None, None
-        invalid["state"] = lift_legacy_state_to_r10(invalid["state"], source_revision=9, grant_job_floor=invalid["state"]["orders"]["nextJobId"])
+        invalid["state"] = lift_legacy_state_to_r11(invalid["state"], source_revision=9, grant_job_floor=invalid["state"]["orders"]["nextJobId"])
         invalids["synthetic r6 missing mandatory fleet owner tag"] = json.dumps(invalid, ensure_ascii=False)
         invalid = json.loads(raw_fixture("imported"))
         del invalid["state"]["researchTemplates"]
@@ -369,6 +369,17 @@ try:
         ):
             invalid = json.loads(raw_fixture("imported")); mutate(invalid["state"])
             invalids[label] = json.dumps(invalid, ensure_ascii=False)
+        for label, value in (("missing", "__missing__"), ("array", []), ("partial active job", {"kind": "demolition"}), ("number", 0)):
+            invalid = json.loads(raw_fixture("imported"))
+            if value == "__missing__":
+                invalid["state"]["planets"][0].pop("demolition")
+            else:
+                invalid["state"]["planets"][0]["demolition"] = value
+            invalids["r11 invalid demolition slot: " + label] = json.dumps(invalid, ensure_ascii=False)
+        for revision in (8, 9, 10):
+            invalid = copy.deepcopy(fixtures["legacy"][str(revision)])
+            invalid["state"]["planets"][0]["demolition"] = None
+            invalids[f"actual r{revision} smuggles even null r11 demolition"] = json.dumps(invalid, ensure_ascii=False)
         for revision, fixture in ((8, fixtures["transportR8"]["outbound"]), (9, fixtures["historicalR9"]["current"])):
             for label, mutate in (
                 ("even null floor", lambda state: state.__setitem__("terraformerGrantJobFloor", None)),
@@ -421,7 +432,7 @@ try:
         check("successful explicit import clears protection notice", page.locator('[data-bind="notice"]').is_hidden())
         context.close()
 
-        for revision in (2, 3, 4, 5, 6, 7, 8, 9):
+        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10):
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
@@ -434,7 +445,10 @@ try:
             else:
                 check("pre-orders factory fixture has no paid queues to assign IDs", not legacy_state["research"]["queue"] and all(not p["buildQueue"] and not p["shipyardQueue"] for p in legacy_state["planets"]))
                 floor = 1
-            check("migration creates exact zero ledgers with an independently fixed starting payment boundary", assert_zero_grant_metadata(migrated_file["state"], legacy_state, grant_job_floor=floor))
+            if revision == 10:
+                check("actual r10 migration preserves every prior field and adds only empty demolition slots", exact_json(migrated_file["state"], lift_r10_state_to_r11(legacy_state)))
+            else:
+                check("migration creates exact zero ledgers with an independently fixed starting payment boundary", assert_zero_grant_metadata(migrated_file["state"], legacy_state, grant_job_floor=floor))
             check("migration never creates ring spending authorization", migrated_file["state"]["arcade"]["autoBatch"] is None)
             check("migration never creates finite order authorization", migrated_file["state"]["orders"]["tasks"] == [])
             check("migration never invents research intent", migrated_file["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
@@ -509,7 +523,7 @@ try:
             context, page = boot(r6_raw)
             migrated = json.loads(verify_commit(page, r6_raw, "已升级并保存本地存档"))
             check("r6 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"]))
-            projection = project_verified_r10_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"])
+            projection = project_verified_r11_metadata(migrated["state"], r6_value["state"], grant_job_floor=r6_value["state"]["orders"]["nextJobId"])
             check("source has no building template field", "buildingTemplates" not in r6_value["state"])
             check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r6 migration creates exactly an empty intent library", projection.pop("researchTemplates") == {"nextTemplateId": 1, "templates": []})
@@ -525,7 +539,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r6 exact source backup survives native reload", raw(page, BACKUP) == r6_raw)
-            check("r10 migration state remains current on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
+            check("migrated state remains current r11 on reload", json.loads(raw(page))["state"]["researchTemplates"] == {"nextTemplateId": 1, "templates": []})
             context.close()
 
         classification = "HTTP / native Storage / actual r6 source / injected migration fault"
@@ -576,7 +590,7 @@ try:
             context, page = boot(r7_raw)
             migrated = json.loads(verify_commit(page, r7_raw, "已升级并保存本地存档"))
             check("r7 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"]))
-            projection = project_verified_r10_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"])
+            projection = project_verified_r11_metadata(migrated["state"], r7_value["state"], grant_job_floor=r7_value["state"]["orders"]["nextJobId"])
             check("source has no building template field", "buildingTemplates" not in r7_value["state"])
             check("migration adds only the exact empty building intention library", projection.pop("buildingTemplates") == {"nextTemplateId": 1, "templates": []})
             check("r7 migration preserves complete nonempty research intent", projection["researchTemplates"] == r7_value["state"]["researchTemplates"])
@@ -594,7 +608,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             check("r7 exact source backup survives native reload", raw(page, BACKUP) == r7_raw)
-            check("r7 templates remain complete on native r10 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
+            check("r7 templates remain complete on native r11 reload", json.loads(raw(page))["state"]["researchTemplates"] == r7_value["state"]["researchTemplates"])
             context.close()
 
         classification = "HTTP / native Storage / actual r7 source / injected migration fault"
@@ -645,11 +659,11 @@ try:
             r8_raw = json.dumps(r8_value, ensure_ascii=False, indent=2)
             context, page = boot(r8_raw)
             migrated = json.loads(verify_commit(page, r8_raw, "已升级并保存本地存档"))
-            check("r8 migration uses the actual r10 envelope", migrated["revision"] == SAVE_REVISION == CURRENT_REVISION)
+            check("r8 migration uses the actual r11 envelope", migrated["revision"] == SAVE_REVISION == CURRENT_REVISION)
             check("r8 migration independently validates every new grant field", assert_zero_grant_metadata(migrated["state"], source, grant_job_floor=source["orders"]["nextJobId"]))
             check("all r8 values, scalar types and ordered arrays survive only prescribed metadata additions",
                   json.dumps(migrated["state"], sort_keys=True, separators=(",", ":")) ==
-                  json.dumps(lift_legacy_state_to_r10(source, source_revision=8, grant_job_floor=source["orders"]["nextJobId"]), sort_keys=True, separators=(",", ":")))
+                  json.dumps(lift_legacy_state_to_r11(source, source_revision=8, grant_job_floor=source["orders"]["nextJobId"]), sort_keys=True, separators=(",", ":")))
             check("r8 owned transport keeps its genuine flight phase", source["orders"]["tasks"][0]["transport"]["trips"][0]["phase"]["kind"] == phase)
             check("r8 paid partial formation work and research survive", source["orders"]["tasks"][-1]["completedUnits"] == 2
                   and source["planets"][1]["shipyardQueue"][0]["count"] == 1 and len(source["research"]["queue"]) == 1)
@@ -657,7 +671,7 @@ try:
             page.reload(wait_until="networkidle")
             select_save(page)
             reloaded = json.loads(raw(page))
-            check("r8 exact backup and all saved intentions survive native r10 reload", raw(page, BACKUP) == r8_raw
+            check("r8 exact backup and all saved intentions survive native r11 reload", raw(page, BACKUP) == r8_raw
                   and reloaded["revision"] == SAVE_REVISION
                   and reloaded["state"]["buildingTemplates"] == {"nextTemplateId": 1, "templates": []}
                   and reloaded["state"]["researchTemplates"] == source["researchTemplates"]
@@ -686,7 +700,7 @@ try:
             source_file["savedAt"] = source_file["lastTickAt"] = int(time.time() * 1000) + 60_000
             source_raw = json.dumps(source_file, ensure_ascii=False, indent=2)
             source = oracle["state"]; floor = source["orders"]["nextJobId"]
-            expected = lift_legacy_state_to_r10(source, source_revision=9, grant_job_floor=floor)
+            expected = lift_legacy_state_to_r11(source, source_revision=9, grant_job_floor=floor)
             startup_host_before = int(time.time() * 1000)
             context, page = boot(source_raw)
             committed_raw = verify_commit(page, source_raw, "已升级并保存本地存档")
@@ -781,7 +795,7 @@ try:
 
 
         classification = "HTTP / native Storage backing / injected startup migration write fault"
-        for revision in (2, 3, 4, 5, 6, 7, 8, 9):
+        for revision in (2, 3, 4, 5, 6, 7, 8, 9, 10):
             for target, fault_mode in (("all", "throw"), ("backup", "drop"), ("current", "throw"), ("current", "drop")):
                 case = f"r{revision} startup migration fault: {target} {fault_mode}"
                 legacy_raw = legacy_fixture(revision)

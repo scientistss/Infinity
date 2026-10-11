@@ -1,3 +1,4 @@
+import { paidJobIdentityProblem } from "./paid-job-identity";
 import balance from "../data/balance.json";
 import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
@@ -210,7 +211,9 @@ export function readOrders(raw: unknown, revision: 5 | 6 | 8 = 8): OrderState {
 export function validateOrderReferences(state: GameState): void {
   const { orders } = state;
   const tasks = new Map(orders.tasks.map(entry => [entry.id, entry]));
-  const ids = new Set<number>(), owners = new Set<number>(), goals = new Set<string>();
+  const identityProblem = paidJobIdentityProblem(state);
+  if (identityProblem) throw Error(identityProblem);
+  const owners = new Set<number>(), goals = new Set<string>();
   for (const entry of orders.tasks) {
     if (!live(entry)) continue;
     if (!state.planets.some(planet => planet.id === entry.planetId)) throw Error("计划出资星球不存在");
@@ -220,9 +223,6 @@ export function validateOrderReferences(state: GameState): void {
     goals.add(goal);
   }
   function own(job: { jobId: number; taskId: number | null; source: string }, kind: OrderTask["kind"], payer: string): OrderTask | null {
-    integer(job.jobId, "付款 ID", 1, MAX_ID);
-    if (job.jobId >= orders.nextJobId || ids.has(job.jobId)) throw Error("付款 ID 重复或计数器过期");
-    ids.add(job.jobId);
     if (job.source !== "plan") {
       if ((job.source !== "manual" && job.source !== "protocol") || job.taskId !== null) throw Error("普通队列不能拥有计划付款");
       return null;

@@ -1,59 +1,50 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import historical from "./fixtures/demolition-r10.json";
 import { SAVE_REVISION } from "../src/game/content";
-import { big } from "../src/game/decimal";
-import { activePlanet } from "../src/game/empire";
-import { emptyTickLog, tick } from "../src/game/logic";
-import { enqueue } from "../src/game/queue";
-import { exportSave, importSave } from "../src/game/save";
-import { createInitialState } from "../src/game/state";
+import { importSave } from "../src/game/save";
 
 afterEach(() => {
   vi.doUnmock("../src/game/content");
   vi.resetModules();
 });
 
+const row = historical.rows.find(value => value.id === "G10a-earned-grant")!;
+function lifted(original: any, revision: number) {
+  return { ...original, revision, state: { ...original.state, planets: original.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
+}
+
 describe("terraformer historical revision boundary", () => {
-  it("keeps genuine r10 grants strict when a later reader supports r11", async () => {
-    // Produce genuine r10 bytes before mocking the later reader. Only prerequisites
-    // are synthetic; no ledger, grant, job counter or revision is manufactured.
-    expect(SAVE_REVISION).toBe(10);
-    const state = createInitialState(123, 456), planet = activePlanet(state);
-    planet.buildings.nanite_factory = 1;
-    state.research.levels.energy_tech = 12;
-    planet.tempMax = 10;
-    planet.units.solar_satellite = 100;
-    planet.resources = { metal: big(1e6), crystal: big(1e6), deuterium: big(1e6) };
-    const paid = enqueue(state, "terraformer", "manual");
-    expect(paid.ok, paid.reason).toBe(true);
-    const log = emptyTickLog();
-    const completed = tick(paid.state, Math.ceil(activePlanet(paid.state).buildQueue[0]!.remainingSeconds), "live", log);
-    expect(log.completedBuilds).toEqual([{ building: "terraformer", level: 1 }]);
-    const raw = exportSave(completed, 1000), original = importSave(raw);
-    expect(original.revision).toBe(10);
-    expect(original.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 1 });
+  it("keeps actual fixed r10 earned grants unchanged when r11 and a future r12 reader adopt them", async () => {
+    // The source is retained ac3 serializer bytes from real enqueue/tick, not a new export
+    // relabeled r10. Its own old reader output is independently saved with byte hashes.
+    expect(SAVE_REVISION).toBe(11);
+    expect(historical.sourceSha).toBe("ac3cce98403bea1e7162bcb4092e4cfeeb448a9a");
+    const original: any = row.oldReaderOutput;
+    expect(JSON.parse(row.raw).revision).toBe(10);
+    expect(original.state.planets[0].terraformerFields).toEqual({ base: 163, grantedLevels: 1 });
     expect(original.state.terraformerGrantJobFloor).toBe(1);
     expect(original.state.orders.nextJobId).toBe(2);
-    for (const revision of [11, 12]) {
-      expect(() => importSave(JSON.stringify({ ...original, revision }))).toThrow(/修订不兼容/);
-    }
+    expect(importSave(row.raw)).toEqual(lifted(original, 11));
+    expect(() => importSave(JSON.stringify({ ...original, revision: 12 }))).toThrow(/修订不兼容/);
 
-    // Reset only this test file's module graph; the production format stays r10.
     vi.resetModules();
     vi.doMock("../src/game/content", async () => ({
       ...await vi.importActual<typeof import("../src/game/content")>("../src/game/content"),
-      SAVE_REVISION: 11,
+      SAVE_REVISION: 12,
+      // Future compatibility is an explicit opt-in, separate from the output revision.
+      SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
     }));
     const future = await import("../src/game/save");
-    const restored = future.importSave(raw);
-    expect(restored).toEqual({ ...original, revision: 11 });
+    const restored = future.importSave(row.raw);
+    expect(restored).toEqual(lifted(original, 12));
     expect(future.importSave(JSON.stringify(restored))).toEqual(restored);
 
-    const missingFloor = structuredClone(original) as any;
+    const missingFloor = JSON.parse(row.raw);
     delete missingFloor.state.terraformerGrantJobFloor;
     expect(() => future.importSave(JSON.stringify(missingFloor))).toThrow();
-    const missingLedger = structuredClone(original) as any;
+    const missingLedger = JSON.parse(row.raw);
     delete missingLedger.state.planets[0].terraformerFields;
     expect(() => future.importSave(JSON.stringify(missingLedger))).toThrow();
-    expect(() => future.importSave(JSON.stringify({ ...original, revision: 12 }))).toThrow(/修订不兼容/);
+    expect(() => future.importSave(JSON.stringify({ ...original, revision: 13 }))).toThrow(/修订不兼容/);
   });
 });

@@ -454,12 +454,15 @@ async function loadOrigin(): Promise<void> {
     milestoneName: ORIGIN_MILESTONE, strictRoundtrips: old.strictRoundtrips, subsequentLiveTickObserved: old.subsequentLiveTickObserved,
     sourceBinding: "Pinned immutable CI report plus verified source artifact binding; the old report does not itself embed sourceSha.", originalSave: old.save };
   const migrated = importSave(JSON.stringify(old.save)); state = deserializeState(migrated.state); stateInitialized = true;
-  check(migrated.revision === 10 && SAVE_REVISION === 10 && SAVE_VERSION === 9, "formal r9-to-r10 migration is not active");
+  check(migrated.revision === 11 && SAVE_REVISION === 11 && SAVE_VERSION === 9, "formal r9-to-r11 migration is not active");
   check(migrated.savedAt === old.save.savedAt && migrated.lastTickAt === old.save.lastTickAt, "migration changed original envelope clocks");
   const projected = structuredClone(serializeState(state)) as unknown as Record<string, unknown>;
   delete projected.terraformerGrantJobFloor;
-  for (const planet of projected.planets as Array<Record<string, unknown>>) delete planet.terraformerFields;
-  exact(old.save.state, projected, "r10 additive migration complete old-state projection");
+  for (const planet of projected.planets as Array<Record<string, unknown>>) {
+    check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "Old r9 migration must add only null demolition");
+    delete planet.demolition; delete planet.terraformerFields;
+  }
+  exact(old.save.state, projected, "r11 additive migration complete old-state projection");
   const oldOrders = old.save.state.orders as { nextJobId: number };
   check(state.terraformerGrantJobFloor === oldOrders.nextJobId, "migration floor is not the historical nextJobId");
   for (const planet of state.planets) check(planet.terraformerFields.base === planet.fieldsMax && planet.terraformerFields.grantedLevels === 0,

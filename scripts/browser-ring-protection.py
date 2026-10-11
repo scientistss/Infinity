@@ -18,6 +18,8 @@ pinned, exact r10 terraformer delta can establish source provenance only; it nev
 waives native assertions or retroactively changes earlier failed CI evidence.
 A second immutable manifest admits only the exact two-file IRN semantic delta
 atop that r10 source. This explicit adoption is not native or CI acceptance.
+Demolition has its own exact-file and exact-hunk adoption atop the verified IRN
+source. Neither shared-core path is removed from the original protected scope.
 """
 import argparse
 import hashlib
@@ -46,6 +48,35 @@ DOMAIN_MANIFEST_SHA256 = 'f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e12
 IRN_MANIFEST = 'tests/fixtures/research-network-domain-provenance.json'
 IRN_MANIFEST_SHA256 = '2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1'
 IRN_CHANGED_PATHS = ('src/data/research.ts', 'src/game/research.ts')
+DEMOLITION_ADOPTION = 'ac3cce98403bea1e7162bcb4092e4cfeeb448a9a'
+DEMOLITION_MANIFEST = 'tests/fixtures/demolition-domain-provenance.json'
+# Frozen production delta: any later byte or mode change requires a new explicit adoption.
+DEMOLITION_MANIFEST_SHA256 = 'cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529'
+DEMOLITION_CHANGED_PATHS = (
+    'src/automation/engine.ts',
+    'src/core/offline.ts',
+    'src/game/building-templates.ts',
+    'src/game/content.ts',
+    'src/game/demolition-pricing.ts',
+    'src/game/demolition-save.ts',
+    'src/game/demolition-state.ts',
+    'src/game/demolition.ts',
+    'src/game/fleet.ts',
+    'src/game/logic.ts',
+    'src/game/order-ledger.ts',
+    'src/game/orders-save.ts',
+    'src/game/orders.ts',
+    'src/game/paid-job-identity.ts',
+    'src/game/planet.ts',
+    'src/game/queue.ts',
+    'src/game/research.ts',
+    'src/game/save-session.ts',
+    'src/game/save.ts',
+    'src/game/shipyard.ts',
+    'src/game/terraformer.ts',
+    'src/game/types.ts',
+)
+DEMOLITION_RING_DELTAS = ('src/automation/engine.ts', 'src/core/offline.ts')
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -118,6 +149,9 @@ def production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != DEMOLITION_ADOPTION and git('ls-tree', candidate, '--', DEMOLITION_MANIFEST):
+        return demolition_domain_provenance(repository, candidate, git, check)
+
     def changed(before, after, paths):
         return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
                    before, after, '--', *paths).decode().splitlines()
@@ -192,6 +226,89 @@ def synchronized_domain_provenance(repository, candidate, git, check):
             'declaredAdoptionSourceSha': DOMAIN_ADOPTION, 'candidateSourceSha': candidate,
             'manifestPath': DOMAIN_MANIFEST, 'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Source provenance only; all native protection and recovery assertions remain required.'}
+
+
+def source_delta_patch(git, before, after, path):
+    """A deterministic per-file Git patch, including modes and full object IDs."""
+    return git('diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
+               '--full-index', '--binary', '--diff-algorithm=myers', '--no-indent-heuristic',
+               '--unified=3', '--inter-hunk-context=0', '--no-relative',
+               '--src-prefix=a/', '--dst-prefix=b/', '--line-prefix=',
+               '--output-indicator-new=+', '--output-indicator-old=-', '--output-indicator-context= ',
+               before, after, '--', path)
+
+
+def source_delta_hunks(patch):
+    """Pin every complete patch hunk, not merely a count or a permitted directory."""
+    lines = patch.splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if line.startswith(b'@@ ')]
+    return [{'header': lines[start].decode('utf-8').rstrip('\n'),
+             'sha256': sha(b''.join(lines[start:starts[index + 1] if index + 1 < len(starts) else len(lines)]))}
+            for index, start in enumerate(starts)]
+
+
+def demolition_domain_provenance(repository, candidate, git, check):
+    """Adopt only a frozen demolition delta; retain both earlier contracts verbatim."""
+    # Critically, validate the prior IRN source itself. The demolition candidate
+    # must never be passed off as the old two-file r10-to-IRN semantic delta.
+    prior = synchronized_domain_provenance(repository, DEMOLITION_ADOPTION, git, check)
+    check('demolition adoption starts at the exact independently verified IRN source contract',
+          prior['contract'] == 'exact-declared-irn-semantic-delta'
+          and prior['candidateSourceSha'] == DEMOLITION_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared demolition path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    for path, digest in ((DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256)):
+        check('demolition candidate preserves the complete earlier manifest bytes and mode: ' + path,
+              entry(candidate, path) == entry(DEMOLITION_ADOPTION, path) == {'mode': '100644', 'sha256': digest})
+    raw = (repository / DEMOLITION_MANIFEST).read_bytes()
+    check('demolition adoption manifest has the immutable approved digest and committed ordinary-file bytes',
+          sha(raw) == DEMOLITION_MANIFEST_SHA256
+          and entry(candidate, DEMOLITION_MANIFEST) == {'mode': '100644', 'sha256': DEMOLITION_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + DEMOLITION_MANIFEST))
+    manifest = json.loads(raw)
+    check('demolition adoption pins every historical source, manifest and original protection scope',
+          manifest.get('schema') == 'infinity-ring-protection-demolition-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == DEMOLITION_ADOPTION
+          and manifest.get('previousManifests') == [
+              {'path': DOMAIN_MANIFEST, 'sha256': DOMAIN_MANIFEST_SHA256},
+              {'path': IRN_MANIFEST, 'sha256': IRN_MANIFEST_SHA256}]
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactRingCriticalDeltaPaths') == list(DEMOLITION_RING_DELTAS))
+    delta = changed(DEMOLITION_ADOPTION, candidate, DOMAIN_PATHS)
+    check('entire protected domain differs from IRN only at the frozen approved demolition files',
+          bool(DEMOLITION_CHANGED_PATHS) and delta == list(DEMOLITION_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, DEMOLITION_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(DEMOLITION_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('every demolition file, mode, complete patch and individual hunk matches its immutable record',
+          manifest.get('changedPaths') == rows)
+    check('original complete ring-critical scope permits only the two exact recorded shared-source deltas',
+          changed(BASELINE, candidate, RING_CRITICAL_PATHS) == list(DEMOLITION_RING_DELTAS)
+          and all(path in delta for path in DEMOLITION_RING_DELTAS))
+    return {'contract': 'exact-declared-demolition-semantic-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': DEMOLITION_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': DEMOLITION_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact demolition semantic source adoption only. All original ring native UI/handler protection and recovery assertions, plus the separate demolition native UI/handler guards, remain required. Source identity is not native or CI acceptance.'}
 
 
 def atomic_json(path, value):

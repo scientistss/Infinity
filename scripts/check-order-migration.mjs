@@ -2,7 +2,7 @@
  * Inputs are synthetic, pre-funded states; this is not natural player progression.
  * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root r6-root r7-root r8-root
  */
-import { assertR8StatePreserved, assertTerraformerMetadata } from "./r8-compatibility.mjs";
+import { assertR8StatePreserved, assertTerraformerMetadata } from "./r11-compatibility.mjs";
 import { createLegacyR8Fixtures } from "./legacy-r8-fixture.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -142,7 +142,7 @@ for (const [phase, actual] of Object.entries(await createLegacyR6Fixtures(resolv
   for (const task of fullR6Projection.orders.tasks) { assert.equal(task.formationOrigin, null); delete task.formationOrigin; }
   assert.deepEqual(researchTemplates, { nextTemplateId: 1, templates: [] });
   assert.deepEqual(fullR6Projection, old, `r6 ${phase}: complete old state changed`);
-  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r10 round trip changed migrated r6 work");
+  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r11 round trip changed migrated r6 work");
   assert.equal(migrated.orders.tasks.length, 2);
   assert.ok(migrated.orders.tasks.every(task => task.status === "paused"));
   assert.equal(migrated.orders.tasks[0].currentWork.stage, "pending");
@@ -171,10 +171,10 @@ for (const [phase, actual] of Object.entries(await createLegacyR7Fixtures(resolv
   assert.equal(migrated.orders.tasks[0].transport.trips[0].phase.kind, phase);
   assert.equal(migrated.research.queue.length, 1);
   assert.equal(migrated.planets[0].shipyardQueue[0].count, 5);
-  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r10 round trip changed migrated r7 work");
+  assert.deepEqual(importSave(JSON.stringify(importSave(raw))), importSave(raw), "r11 round trip changed migrated r7 work");
   assert.throws(() => r7Save.importSave(JSON.stringify(r8GuardSave.importSave(raw))), /修订不兼容/, "Actual r7 reader must reject actual r8 migrated bytes");
-  assert.throws(() => r7Save.importSave(JSON.stringify(importSave(raw))), /修订不兼容/, "Actual r7 reader must also reject r10");
-  reports.push({sourceRevision:7,phase,researchTemplates:2,paidResearchJobs:1,remainingPaidShips:5,ownedFleets:1,fullPriorProjection:"unchanged",oldReader:"real r8 and r10 both rejected; separate archived r7-to-r8 guard also retained",result:"passed"});
+  assert.throws(() => r7Save.importSave(JSON.stringify(importSave(raw))), /修订不兼容/, "Actual r7 reader must also reject r11");
+  reports.push({sourceRevision:7,phase,researchTemplates:2,paidResearchJobs:1,remainingPaidShips:5,ownedFleets:1,fullPriorProjection:"unchanged",oldReader:"real r8 and r11 both rejected; separate archived r7-to-r8 guard also retained",result:"passed"});
 }
 // Actual r8 source retains every field. Migration adds only the empty r9 library and exact zero-grant r10 ledgers.
 const pinnedR8 = JSON.parse(readFileSync(new URL("../tests/fixtures/building-templates-r8.json", import.meta.url), "utf8"));
@@ -189,7 +189,7 @@ for (const [phase, actual] of Object.entries(await createLegacyR8Fixtures(resolv
   assert.equal(createHash("sha256").update(nativeRaw).digest("hex"), pinnedR8.sha256[phase], `r8 ${phase}: native byte hash`);
   assert.equal(actual.revision, 8);
   assert.equal(actual.version, 9);
-  assert.equal(migratedFile.revision, 10);
+  assert.equal(migratedFile.revision, 11);
   assertR8StatePreserved(migratedFile.state, old, `r8 ${phase}: complete prior state`, old.orders.nextJobId);
   assert.equal(old.researchTemplates.templates.length, 2);
   assert.equal(old.formations.entries.length, 1);
@@ -200,8 +200,8 @@ for (const [phase, actual] of Object.entries(await createLegacyR8Fixtures(resolv
   assert.equal(old.research.queue.length, 1);
   assert.equal(old.planets[0].shipyardQueue[0].count, 5);
   assert.equal(old.planets[1].shipyardQueue[0].count, 1);
-  assert.deepEqual(importSave(JSON.stringify(migratedFile)), migratedFile, "r10 round trip changed migrated r8 work");
-  assert.throws(() => r8Save.importSave(JSON.stringify(migratedFile)), /修订不兼容/, "Actual r8 reader must reject r10");
-  reports.push({sourceRevision:8,phase,researchTemplates:2,formations:1,immutableOrigins:1,paidResearchJobs:1,remainingManualShips:5,remainingFormationShips:1,ownedFleets:1,fullPriorState:"unchanged; additions are empty buildingTemplates and independently asserted grant metadata",oldReader:"r10 rejected",result:"passed"});
+  assert.deepEqual(importSave(JSON.stringify(migratedFile)), migratedFile, "r11 round trip changed migrated r8 work");
+  assert.throws(() => r8Save.importSave(JSON.stringify(migratedFile)), /修订不兼容/, "Actual r8 reader must reject r11");
+  reports.push({sourceRevision:8,phase,researchTemplates:2,formations:1,immutableOrigins:1,paidResearchJobs:1,remainingManualShips:5,remainingFormationShips:1,ownedFleets:1,fullPriorState:"unchanged; additions are empty buildingTemplates and independently asserted grant metadata",oldReader:"r11 rejected",result:"passed"});
 }
 console.log(JSON.stringify({scope:"real old-source paid queues, partial ship production, wallets, timers, payer, full prior-schema state, deterministic identity migration, real r5 paid plans and an ordinary in-flight transport; complete real r6/r7/r8 outbound/returning transport and paid research, plus retained nonempty r7 templates and a real paid ship remainder; r8 nonempty formations, immutable origins and partial replenishment",synthetic:true,revisions:reports,result:"passed"}, null, 2));

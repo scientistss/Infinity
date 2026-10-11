@@ -28,12 +28,23 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Independent ordinary demolition price and time goldens
+        run: |
+          python scripts/demolition-spec-goldens.py > demolition-spec-goldens-report.json
+          cmp tests/fixtures/demolition-spec-goldens.json demolition-spec-goldens-report.json
       - name: Offline production observer shape contract
         run: python -m unittest discover -s scripts -p 'test_ring_protection_observer.py' -v
       - name: Offline native target preparation and live failure evidence
         run: python -m unittest discover -s scripts -p 'test_terraformer_native_preparation.py' -v
       - name: Offline exact terraformer order-option projection contract
         run: python -m unittest discover -s scripts -p 'test_render_order_target_parity.py' -v
+      - name: Offline strict demolition provenance and null migration contract
+        run: |
+          python -m unittest discover -s scripts -p 'test_demolition_domain_provenance.py' -v
+          python -m unittest discover -s scripts -p 'test_r11_compatibility.py' -v
+          node --test scripts/test-r11-compatibility.mjs
+          python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Natural manual-to-bounded ring progression
@@ -66,7 +77,11 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/pre-terraformer" f96894eb1b32737ab403890ed83fdb3da41a0644
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-terraformer/node_modules"
           node --import tsx "$RUNNER_TEMP/pre-terraformer/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-building-templates" > building-templates-save-revision-report.json
-          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-terraformer" > save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-demolition" ac3cce98403bea1e7162bcb4092e4cfeeb448a9a
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-demolition/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-demolition/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-terraformer" > terraformer-save-revision-report.json
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-demolition" > save-revision-report.json
+          node --import tsx scripts/check-demolition-migration.mjs "$RUNNER_TEMP/pre-demolition" > demolition-migration-report.json
           node --import tsx scripts/terraformer-migration-fixture.ts "$RUNNER_TEMP/pre-terraformer" terraformer-migration-review.json > terraformer-migration-report.json
           cmp tests/fixtures/terraformer-r9.json terraformer-migration-review.json
           mkdir -p "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3"
@@ -142,6 +157,14 @@ jobs:
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/research-network-browser-fixture.ts "$GITHUB_WORKSPACE/natural-research-network-report.json" "$NATURAL_REPORT_SHA256" "$GITHUB_SHA") > research-network-review-save.json 2> research-network-browser-fixture.log
           test -z "$(git -C "$RUNNER_TEMP/research-network-origin" status --porcelain=v1 --untracked-files=all)"
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Natural paid demolition cancellation reload completion and ordinary rebuild
+        shell: bash
+        run: |
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/demolition-natural-growth.ts --origin tests/fixtures/demolition-origin-provenance.json --expected-origin-sha256 a1a8ce7985030f6a8e500755eda4d908c8834b3ecfa888197d5ef5ed8ef27f69) > demolition-natural-report.json 2> demolition-natural-report.log
+          sha256sum demolition-natural-report.json > demolition-natural-report.sha256.txt
+          DEMOLITION_HASH="$(cut -d' ' -f1 demolition-natural-report.sha256.txt)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/demolition-fixture.ts "$GITHUB_WORKSPACE/demolition-natural-report.json" "$DEMOLITION_HASH" "$GITHUB_SHA") > demolition-review-save.json
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
       - name: Exact before source and legal combined performance fixture
         run: |
           mkdir -p "$RUNNER_TEMP/pre-performance"
@@ -207,6 +230,7 @@ jobs:
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.
           python scripts/browser-ring-protection.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --expect synchronized-controls --output ring-protection-evidence
+          python scripts/browser-demolition.py --url http://127.0.0.1:4173/Infinity/ --fixture demolition-review-save.json --natural-report demolition-natural-report.json --expected-report-sha256 "$(cut -d' ' -f1 demolition-natural-report.sha256.txt)" --expected-sha "$GITHUB_SHA" --output demolition-evidence
           node --import tsx scripts/order-quotes-fixture.ts > order-quotes-review-save.json
           python scripts/browser-order-quotes.py --url http://127.0.0.1:4173/Infinity/ --fixture order-quotes-review-save.json --expected-sha "$GITHUB_SHA" --output order-quotes-evidence
           node --import tsx scripts/transport-load-fixture.ts natural-growth-report.json > transport-load-review-save.json
@@ -218,7 +242,7 @@ jobs:
           sha256sum -c research-network-origin-terraformer-report.sha256.txt natural-research-network-report.sha256.txt
           python scripts/browser-research-network.py --url http://127.0.0.1:4173/Infinity/ --fixture research-network-review-save.json --natural-report natural-research-network-report.json --expected-report-sha256 "$(cut -d' ' -f1 natural-research-network-report.sha256.txt)" --expected-sha "$GITHUB_SHA" --output research-network-evidence > research-network-browser.log 2>&1
           python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" > save-session-review-save.json
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" > save-session-review-save.json
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
@@ -309,6 +333,14 @@ jobs:
             transport-save-revision-report.json
             templates-save-revision-report.json
             building-templates-save-revision-report.json
+            terraformer-save-revision-report.json
+            demolition-natural-report.json
+            demolition-natural-report.log
+            demolition-natural-report.sha256.txt
+            demolition-review-save.json
+            demolition-evidence/**
+            demolition-migration-report.json
+            demolition-spec-goldens-report.json
             terraformer-migration-report.json
             terraformer-migration-review.json
             terraformer-origin-growth-report.json

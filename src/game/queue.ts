@@ -103,6 +103,7 @@ export function canEnqueue(state: GameState, id: BuildingId): EnqueueCheck {
   const cost = id === "terraformer" && (!Number.isSafeInteger(targetLevel) || targetLevel < 1 || targetLevel > MAX_ORDER_LEVEL)
     ? zeroCost() : costFor(state, id, targetLevel);
   const fail = (reason: string): EnqueueCheck => ({ ok: false, reason, targetLevel, cost });
+  if (planet.demolition) return fail("本星拆除进行中，暂不能支付新的建筑升级");
   if (!isBuildingAvailable(def)) return fail(`第 ${def.phase} 阶段开放`);
   const missing = missingRequirements(state, def);
   if (missing.length > 0) return fail(`需要 ${missing.join("、")}`);

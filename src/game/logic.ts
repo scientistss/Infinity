@@ -1,3 +1,5 @@
+import { completeDemolition, withDemolitionRemaining, type CompletedDemolition } from "./demolition";
+import { validDemolitionSeconds } from "./demolition-state";
 import { cloneFormation } from "./formation-state";
 import { accrueOrderPlanTime, runDueOrderPass, nextOrderPassIn, terminateOrdersForPrestige } from "./orders";
 import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
@@ -37,6 +39,7 @@ export type TickMode = "live" | "offline";
 /** Optional sink for things that happened inside one tick (offline summary). */
 export interface TickLog {
   completedBuilds: Array<CompletedBuild & { planetId?: string }>;
+  completedDemolitions?: Array<CompletedDemolition & { planetId?: string }>;
   completedResearch: CompletedResearch[];
   completedUnits: Array<CompletedUnits & { planetId?: string }>;
 }
@@ -64,6 +67,7 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
   // Defensive refusal of a corrupt due terraformer cannot create an endless zero-time
   // event or prevent another planet, research, fleets, or production from advancing.
   const blockedBuilds = new Set<number>();
+  const blockedDemolitions = new Set<string>();
   let t = 0, segments = 0;
   while (dtSeconds - t > EPS) {
     if (++segments > limit) throw new Error("模拟事件过密，已停止结算以保护存档；请缩短结算间隔");
@@ -80,6 +84,8 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
       const local = selectPlanet(current, snapshot.id);
       const head = activePlanet(local).buildQueue[0];
       if (head && head.totalSeconds > 0 && !blockedBuilds.has(head.jobId)) step = Math.min(step, Math.max(0, head.remainingSeconds));
+      const demolition = activePlanet(local).demolition;
+      if (demolition && validDemolitionSeconds(demolition.totalSeconds, demolition.remainingSeconds) && !blockedDemolitions.has(`${snapshot.id}:${demolition.jobId}`)) step = Math.min(step, demolition.remainingSeconds);
       step = Math.min(step, nextBoundary(local, snapshot.eco), nextShipyardEvent(local, fleetCensus));
     }
     const orderAccrual = accrueOrderPlanTime(current, step);
@@ -114,6 +120,27 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
             if (done.completed) log?.completedBuilds.push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
             if (snapshot.id === selectedId) queueIdle = activePlanet(result).buildQueue.length < queueCapacity(result);
           } else result = withHeadRemaining(result, remaining);
+        }
+        const demolition = activePlanet(result).demolition;
+        const demolitionKey = demolition ? `${snapshot.id}:${demolition.jobId}` : "";
+        if (demolition && validDemolitionSeconds(demolition.totalSeconds, demolition.remainingSeconds) && !blockedDemolitions.has(demolitionKey)) {
+          // Match the engine's absolute event tolerance only after actual positive
+          // progress, eliminating sub-nanosecond subtraction dust at a RAF boundary.
+          // Never scale this by totalSeconds, change the saved total, or reprice.
+          // The external completion primitive and save reader still require/preserve
+          // the exact stored remaining value; they perform no epsilon completion.
+          const rawRemaining = demolition.remainingSeconds - step;
+          const remaining = step > 0 && rawRemaining <= EPS ? 0 : Math.max(0, rawRemaining);
+          result = withDemolitionRemaining(result, snapshot.id, demolition.jobId, remaining);
+          if (remaining === 0) {
+            const done = completeDemolition(result, { kind: "demolition", planetId: snapshot.id, jobId: demolition.jobId, taskId: null });
+            result = done.state;
+            if (!done.completed) blockedDemolitions.add(demolitionKey);
+            else {
+              if (log) (log.completedDemolitions ??= []).push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
+              if (snapshot.id === selectedId) queueIdle = true;
+            }
+          }
         }
         return result;
       });

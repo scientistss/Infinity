@@ -220,7 +220,8 @@ export function unitTotal(planet: PlanetState, id: UnitId): number {
 }
 
 export function siloCapacity(planet: PlanetState): number {
-  return planet.buildings.missile_silo * SILO_SLOTS_PER_LEVEL;
+  const level = planet.demolition?.building === "missile_silo" ? planet.demolition.toLevel : planet.buildings.missile_silo;
+  return level * SILO_SLOTS_PER_LEVEL;
 }
 
 /** Silo slots taken by built and queued missiles. */
@@ -267,6 +268,8 @@ export function canBuildUnits(state: GameState, id: UnitId, count: number): Unit
   const n = Math.floor(count);
   const cost = unitCost(def, Math.max(1, n));
   const fail = (reason: string, extra: Partial<UnitCheck> = {}): UnitCheck => ({ ok: false, reason, count: Math.max(0, n), cost, ...extra });
+  const demolition = activePlanet(state).demolition;
+  if (demolition && (demolition.building === "shipyard" || demolition.building === "nanite_factory")) return fail("本星造船厂或纳米工厂正在拆除，暂不能支付新的舰船或防御");
   if (activePlanet(state).buildings.shipyard < 1) return fail("需要造船厂 等级 1");
   const missing = unitMissing(state, id);
   if (missing.length > 0) return fail(`需要 ${missing.join("、")}`);

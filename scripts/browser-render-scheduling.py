@@ -8,7 +8,8 @@ All normal clicks/typing are trusted browser input. Adversarial old-node replay,
 synthetic hidden state and native File.text completion gates are clearly labeled.
 """
 import argparse
-from r10_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r10
+from demolition_display_contract import FACILITY_DEMOLITION_SAMPLE_JS, normalize_demolition_display
+from r11_compatibility import CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r11
 import base64
 import copy
 import hashlib
@@ -163,7 +164,7 @@ def exact_state(actual, expected):
 
 
 def lift_r8_state(state, grant_job_floor):
-    return lift_legacy_state_to_r10(state, source_revision=8, grant_job_floor=grant_job_floor)
+    return lift_legacy_state_to_r11(state, source_revision=8, grant_job_floor=grant_job_floor)
 
 
 def expected_floor(name):
@@ -333,7 +334,22 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       }
       return result;
     }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base,'researchBase':research_base})
-    if facility_base:result=facility_base_snapshot(page,facility_base,result)
+    if facility_base:
+        stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+        evidence=page.evaluate(FACILITY_DEMOLITION_SAMPLE_JS)
+        artifact=f'panel-parity-demolition-{facility_base}-{len(audits)}-raw.json'
+        (out/artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+        state=json.loads(stored)['state']
+        check('demolition display exception starts from the complete fixed old trajectory: '+facility_base,
+              exact_state(state,expected_state('base.initial',page)))
+        result=normalize_demolition_display(result,evidence,state,facility_base)
+        check('only independently identified demolition additions were projected from copied evidence: '+facility_base,True)
+        check('demolition display adapter never writes native DOM, storage or simulated time: '+facility_base,
+              raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and
+              page.locator('[data-tab-panel="facilities"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
+        audits.append({'kind':'exact-manual-demolition-null-state-additions','side':facility_base,'rawArtifact':artifact,
+            'constraint':'Exact unchanged state, thirteen fixed levels/ordered native rows, six visible manual buttons, seven hidden buttons, two empty hidden sections, twelve empty hidden protocol warnings and every parent/sibling identity are independently asserted before copied removal. All other content is retained.'})
+        result=facility_base_snapshot(page,facility_base,result)
     if order_base:result=order_quote_base_snapshot(page,order_base,result)
     if research_base:result=research_base_snapshot(page,research_base,result)
     return ring_base_snapshot(page,ring_base,result) if ring_base else result
@@ -809,7 +825,7 @@ def run_cases():
         before,count_before=differential_trace(name,args.before_url)
         after,count_after=differential_trace(name,args.url)
         check('trace metadata retains its original migration boundary even after new payments',assert_zero_grant_metadata(after,before,grant_job_floor=fixtures['base']['state']['orders']['nextJobId']))
-        check('every archived field matches on identical trace with only exact r9/r10 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'])))
+        check('every archived field matches on identical trace with only exact r9/r10/r11 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'])))
         if name.startswith('steady'):
             check('old bundle updates on every requested frame',count_before==len(fixtures['traces'][name]))
             check('ordinary latest-only rendering is bounded at 10Hz',18<=count_after<=21,{'before':count_before,'after':count_after})
@@ -1013,7 +1029,7 @@ def run_cases():
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
     context,page=boot();tab(page,'save');baseline=raw(page)
-    # Migration already wrote canonical r10 at time zero. Re-saving identical
+    # Migration already wrote canonical r11 at time zero. Re-saving identical
     # bytes is a legitimate no-op, so make only the save envelope 1 ms newer.
     before_events=page.evaluate('window.__renderProbe.snapshot().events')
     page.evaluate('window.__renderProbe.advance(1)')
@@ -1087,7 +1103,7 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r10/r9) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option and IRN-copy exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r11/r10) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',

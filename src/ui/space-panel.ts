@@ -1,4 +1,6 @@
 import { installExpansionNavigation } from "./expansion-navigation";
+import { installDemolitionPanel, type DemolitionUiAction } from "./demolition-panel";
+import { installProtocolSafety } from "./protocol-safety";
 import { installPrestigePreview } from "./prestige-preview";
 import { formationsPanelHtml, installFormationsPanel, type FormationUiAction } from "./formations-panel";
 import type { FleetFormation } from "../game/formation-state";
@@ -18,7 +20,7 @@ import { transportLoadView } from "./space-present";
 import { fillTransportCargo } from "./transport-load-model";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
 import { RESOURCE_IDS, type GameState } from "../game/types";
-export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | FormationUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
+export type UiAction = OriginalAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | FormationUiAction | DemolitionUiAction | {type:"send-fleet";request:FleetRequest} | {type:"recall-fleet";id:number} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {const n=root.querySelector<T>(sel);if(!n)throw Error(`缺少界面节点 ${sel}`);return n;}
@@ -160,6 +162,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   const formationPanel=installFormationsPanel(root,onAction);
   const prestigePreview=installPrestigePreview(root);
   const expansionNavigation=installExpansionNavigation(root);
+  const demolitionPanel=installDemolitionPanel(root,onAction);
+  const protocolSafety=installProtocolSafety(root);
   let filledFormation: Pick<FleetFormation,"id" | "revision" | "name"> | null = null;
   function clearFormationFill(){if(!filledFormation)return;for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value="0";filledFormation=null;put(root,"#formation-dispatch-source","");el(root,"#formation-dispatch-source").hidden=true;}
   // Each surface owns its rendered capabilities; rebuilding the fleet tab must
@@ -239,7 +243,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   function updateSpaceMessages(model:SpaceMessagesView){
     html(root,"#space-messages",model.messages.length?model.messages.map(m=>`<article class="space-message"><small>${m.time}</small><p>${enc(m.text)}</p></article>`).join(""):'<p class="muted">尚无航行记录。</p>');
   }
-  return {...original, updateDeep, updateOrders:orderPanel.update, updateResearchTemplates(state:GameState,writable:boolean){
+  return {...original, updateDeep, updateDemolition:demolitionPanel.update.bind(demolitionPanel), updateDemolitionOffline:demolitionPanel.updateOffline, completeDemolitionAction:demolitionPanel.complete, updateProtocolSafety:protocolSafety.update, updateOrders:orderPanel.update, updateResearchTemplates(state:GameState,writable:boolean){
       templatePanel.observe(state,writable);
       if(!el(root,"#space-orders").hidden&&el<HTMLDetailsElement>(root,"#research-templates").open)templatePanel.update(state,writable);
     }, completeResearchTemplateAction:templatePanel.completeAction, updateBuildingTemplates(state:GameState,writable:boolean){
@@ -249,9 +253,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
     }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean,protectionMessage:string){transportLoad.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
+    observeContexts(state:GameState,writable:boolean,protectionMessage:string){demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
     fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();},
-    invalidateOrderAuthority(){expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    invalidateOrderAuthority(){demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){
