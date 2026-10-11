@@ -1,0 +1,187 @@
+{
+  "schema": "infinity-ring-protection-domain-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "declaredAdoptionSourceSha": "0c563a6a2bafe70c8a0531dd935d36f9c83917cd",
+  "referenceStatus": "Declared r10 terraformer source reference only; not a passing CI or native acceptance claim.",
+  "scope": "Only the exact recorded terraformer/r10 delta is admitted. Any later domain change, including IRN, requires a separate explicit adoption. All original native protection and recovery assertions still run.",
+  "historicalInvariant": "The original 7f17 domain-byte-identity guard remains false for this adoption. Historical failed reports and commits are not reclassified.",
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "unchangedRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "changedPaths": [
+    {
+      "path": "src/data/buildings.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "e505e19764a01235f83f57f9dfdfa420e5ae95077bf6a5f6b69475e5da6f40c5"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "a06d1e477c219f468113c176c3fc6053e55296e84024eada1f4fe586cddb0221"
+      }
+    },
+    {
+      "path": "src/game/building-templates.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "eee7b2c4123f6282b21fa2b9aeaf50014f859606e3cd8b546e8fbf092ed73237"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "31cee84c84a2937791ccd153e56f0fb76e23978d091d1b5b964b8d5f43f10cad"
+      }
+    },
+    {
+      "path": "src/game/content.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "d41206a68c02484f56cf806fb14d97fe37324119fa5c21f200276b2a46b8582b"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "9e8dd609df3efce4a71707932c041adb7c8f0c6bf8b4f35693943f4292c99500"
+      }
+    },
+    {
+      "path": "src/game/dark-matter.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "62459ba78059d4b15569edf61ef5c08d0619b82d6f6b18aa2436884d531ae0d5"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "01e5f77d7f44a1e236389028787701398fc4dfa118a09ece10be71b792fa44c9"
+      }
+    },
+    {
+      "path": "src/game/fleet.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "e582f651e37131a13cfc970a5774b2729b1bfbf74828d38adce9f3830edf1b1e"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "736ed3d5f34ed40238149d71a5de192954fda8d2f6b36789ed380305e81ddc3a"
+      }
+    },
+    {
+      "path": "src/game/logic.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "427e649e2f3ec433349e08487a46193a0b5d7c08d490c2902fadddb53c077a66"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "ea4136f5af27e69dd69668fffccc994ff94978076adc62b7db5ae242358fa7dc"
+      }
+    },
+    {
+      "path": "src/game/orders.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "a8f5986a0fea34ed68509e5c21d56428dd11a388e8e75024230580d76ec6d078"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "218a607afa9e9d1daf411481ab100a972e24db40b75dec31532ca7630f8c2d87"
+      }
+    },
+    {
+      "path": "src/game/planet.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "2f46e3654c771433d31d900d7d4b1de6ba811325dc05960b7102e05ddf808e7e"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "849eeb5447e9e1720435b3643f005723b460563e34c5d1d9467bf61fb30f1de3"
+      }
+    },
+    {
+      "path": "src/game/queue.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "646d19f636d13fec4fb2b486eb0962caafac76e27de847f69a2581cd473ba96c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "0e0c01caba2f155e078fbd92e01ff512b189bb1cc2dc451967e4a65cdc3685eb"
+      }
+    },
+    {
+      "path": "src/game/save-session.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "1a86ba241e04b4eae7fc33a46c25249095c7621857b34de82d743bad2d97b829"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "4d5c7d88e53d963ef529a82712597f00f2963e2cf9b728ff3b44bc9381447086"
+      }
+    },
+    {
+      "path": "src/game/save.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "27bef4a220caa314ad574c38dc396adc2f40417c02091c668f79c6d4323b3690"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "f8b98635afcf59cef228d9e1ee8036aff59963dabd01349286f009b4d6f937f6"
+      }
+    },
+    {
+      "path": "src/game/state.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "354e6d5dafd25446753ee18a115e19f3554eb70c36491a00deb42795a8f1031c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "2b79c173282eb114408db2fe21a3bc8f9c3cf43762a967ce9c07dd33707c9de7"
+      }
+    },
+    {
+      "path": "src/game/terraformer-save.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "8a8de85b2b6efe931b2a54e2555fd0722cae82174947e2f3b83cf481946964db"
+      }
+    },
+    {
+      "path": "src/game/terraformer.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "1ffaedde279d5dbfdf71423c6ecd3c2e4fd774707255174ca5c667a237bd445c"
+      }
+    },
+    {
+      "path": "src/game/types.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "dbb3e44429db13172e3cb56308494e8c557ea6fe6a0212710a1a6c078faff5b9"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "bc1d8f9eb456a47fb519a89935dc395529f946cc1774b2a367c4fac5f48eda62"
+      }
+    }
+  ]
+}

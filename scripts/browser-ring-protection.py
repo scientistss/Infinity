@@ -12,6 +12,10 @@ baselineKnownLimitationReproduced, never UI correctness. Synchronized mode check
 immediate presentation and bounded recovery, with explicitly labeled synthetic
 visibility and stale-enabled event replay. CDP observations remain read-only.
 Linux bounded process cleanup is reused from browser-natural-ring.py.
+
+The historical domain-byte guard is retained for unchanged sources. A separately
+pinned, exact r10 terraformer delta can establish source provenance only; it never
+waives native assertions or retroactively changes earlier failed CI evidence.
 """
 import argparse
 import hashlib
@@ -33,6 +37,14 @@ from urllib.parse import unquote, urljoin, urlparse
 REPORT_NAME = 'ring-protection-report.json'
 WORK_SECONDS, SUPERVISOR_SECONDS = 210, 225
 BASELINE = '7f17a121ff35822a85d6889a9823f76bccbff227'
+DOMAIN_ADOPTION = '0c563a6a2bafe70c8a0531dd935d36f9c83917cd'
+DOMAIN_PATHS = ('src/game', 'src/core', 'src/data', 'src/automation')
+DOMAIN_MANIFEST = 'tests/fixtures/ring-protection-domain-provenance.json'
+DOMAIN_MANIFEST_SHA256 = 'f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c'
+RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
+                       'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
+                       'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
+                       'src/ui/ring-auto-model.ts', 'src/ui/ring-model.ts')
 NAMES = {'equipped': '08-equipped-off-current-three-tickets',
          'armed': '10-armed-two-existing-tickets-fixed-home-source',
          'before_stop': '13-armed-before-explicit-stop'}
@@ -55,6 +67,54 @@ CONTROLS = {
 
 def sha(value):
     return hashlib.sha256(value.encode('utf-8') if isinstance(value, str) else value).hexdigest()
+
+
+def synchronized_domain_provenance(repository, candidate, git, check):
+    """Verify exact source identity, independently of the later native assertions."""
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    original_delta = changed(BASELINE, candidate, DOMAIN_PATHS)
+    if not original_delta:
+        check('synchronization preserves original domain, economy, automation and SaveSession bytes', True)
+        return {'contract': 'historical-domain-byte-identity', 'historicalBaselineSha': BASELINE,
+                'historicalDomainByteIdentity': True, 'candidateSourceSha': candidate}
+
+    raw = (repository / DOMAIN_MANIFEST).read_bytes()
+    check('r10 adoption manifest matches its fixed SHA256 and exact committed candidate bytes',
+          sha(raw) == DOMAIN_MANIFEST_SHA256 and raw == git('show', candidate+':'+DOMAIN_MANIFEST))
+    manifest = json.loads(raw)
+    check('r10 adoption pins the historical root, declared reference and complete domain scope',
+          manifest.get('schema') == 'infinity-ring-protection-domain-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('declaredAdoptionSourceSha') == DOMAIN_ADOPTION
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('unchangedRingCriticalPaths') == list(RING_CRITICAL_PATHS))
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared domain path must be a file: '+path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    declared_delta = changed(BASELINE, DOMAIN_ADOPTION, DOMAIN_PATHS)
+    actual_rows = [{'path': path, 'before': entry(BASELINE, path),
+                    'after': entry(DOMAIN_ADOPTION, path)} for path in declared_delta]
+    check('only the exact recorded r10 paths, file modes and before/after bytes differ from 7f17',
+          manifest.get('changedPaths') == actual_rows)
+    check('candidate complete domain tree byte-matches the declared r10 source without additional changes',
+          changed(DOMAIN_ADOPTION, candidate, DOMAIN_PATHS) == [])
+    check('original ring logic, automation, clocks, cards and unchanged ring models retain 7f17 bytes',
+          changed(BASELINE, candidate, RING_CRITICAL_PATHS) == [])
+    return {'contract': 'exact-declared-r10-terraformer-delta', 'historicalBaselineSha': BASELINE,
+            'historicalDomainByteIdentity': False, 'historicalChangedPaths': original_delta,
+            'declaredAdoptionSourceSha': DOMAIN_ADOPTION, 'candidateSourceSha': candidate,
+            'manifestPath': DOMAIN_MANIFEST, 'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Source provenance only; all native protection and recovery assertions remain required.'}
 
 
 def atomic_json(path, value):
@@ -279,7 +339,7 @@ def worker(args):
     milestones = {}
     synchronized = args.expect == 'synchronized-controls'
     if synchronized:
-        report['classification'] = 'bounded synchronized ring controls and recovery acceptance; unchanged domain/SaveSession rules'
+        report['classification'] = 'bounded synchronized ring controls and recovery acceptance; source-domain provenance verified separately from native behavior'
         report['liveStateObservation'] += ' A second read-only breakpoint observes real original guarded-handler entry; it never invokes the handler.'
         report['limitations'][2] = 'Synthetic stale-enabled dispatch is adversarial handler coverage, never trusted/native user input.'
         report['limitations'].append('Synthetic document visibility plus stopped controlled RAF exercises immediate DOM retirement; not native operating-system background throttling.')
@@ -820,7 +880,7 @@ def worker(args):
         check('acceptance checkout has no runtime/source edits', clean_status(git('status', '--porcelain=v1', '--untracked-files=all').decode().rstrip('\n')))
         production = ['src', 'public', 'index.html', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts']
         if synchronized:
-            check('synchronization preserves original domain, economy, automation and SaveSession bytes', git('diff', '--name-only', BASELINE, args.expected_sha, '--', 'src/game', 'src/core', 'src/data', 'src/automation') == b'')
+            report['domainProvenance'] = synchronized_domain_provenance(repository, args.expected_sha, git, check)
         else:
             check('baseline reproduction leaves committed production tree byte-identical', git('diff', '--name-only', BASELINE, args.expected_sha, '--', *production) == b'')
         report['domainSource']['sourceMetadata'] = metadata
