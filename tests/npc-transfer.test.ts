@@ -183,15 +183,34 @@ describe("NPC dedicated exact fuel debit", () => {
 });
 
 describe("NPC integer cargo and atomic landing credit", () => {
-  it("constructs and reloads every allowed integer in each resource", () => {
+  // Preserve all 45,003 inputs while bounding each test's work under the same
+  // default timeout. This is exhaustive correctness, not a CPU benchmark.
+  const exhaustiveRanges = NPC_LOOT_CAPS.flatMap((cap, index) =>
+    Array.from({ length: Math.floor(cap / 5000) + 1 }, (_, part) =>
+      ({ index, start: part * 5000, end: Math.min(cap + 1, (part + 1) * 5000) })));
+
+  it("covers every allowed integer exactly once across fixed continuous ranges", () => {
     expect(NPC_MAX_LOOT).toBe(45_000);
-    for (let index = 0; index < 3; index++) for (let integer = 0; integer <= NPC_LOOT_CAPS[index]!; integer++) {
+    expect(exhaustiveRanges.reduce((count, range) => count + range.end - range.start, 0)).toBe(45_003);
+    for (let index = 0; index < 3; index++) {
+      const ranges = exhaustiveRanges.filter(range => range.index === index);
+      expect(ranges[0]!.start).toBe(0);
+      expect(ranges.at(-1)!.end).toBe(NPC_LOOT_CAPS[index]! + 1);
+      for (let part = 1; part < ranges.length; part++) expect(ranges[part]!.start).toBe(ranges[part - 1]!.end);
+    }
+  });
+
+  it.each(exhaustiveRanges)("constructs and reloads resource $index integers [$start, $end)", ({ index, start, end }) => {
+    let visited = 0;
+    for (let integer = start; integer < end; integer++) {
       const loot = [0, 0, 0]; loot[index] = integer;
       const cargo = value(checkedNpcLootCargo(loot));
       const restored = money(cargo.metal.toString(), cargo.crystal.toString(), cargo.deuterium.toString());
       expect(value(readNpcLootCargo(cargo))).toEqual(loot);
       expect(value(readNpcLootCargo(restored))).toEqual(loot);
+      visited++;
     }
+    expect(visited).toBe(end - start);
   });
 
   it.each([[25_001, 0, 0], [0, 15_001, 0], [0, 0, 5_001], [-1, 0, 0], [0.1, 0, 0], [NaN, 0, 0], [Infinity, 0, 0], [0, 0], [0, 0, 0, 0], new Array<number>(3)])(
