@@ -56,6 +56,7 @@ const RESEARCH_BASE: Partial<Record<ResearchId, readonly [number, number, number
   intergalactic_research_network: [240000, 400000, 160000], computer_tech: [0, 400, 600],
 };
 type Save = ReturnType<typeof importSave>;
+type OriginSave = Omit<Save, "revision"> & { revision: number };
 interface Milestone {
   name: string; gameSeconds: number; continuationSeconds: number; strictRoundtrips: number;
   stateAdoptedFromReload: boolean; subsequentLiveTickObserved: boolean; firstSubsequentLiveTickAt?: number;
@@ -63,7 +64,7 @@ interface Milestone {
 }
 interface OriginMilestone {
   name: string; gameSeconds: number; strictRoundtrips: number; stateAdoptedFromReload: boolean;
-  subsequentLiveTickObserved: boolean; firstSubsequentLiveTickAt?: number; save: Save;
+  subsequentLiveTickObserved: boolean; firstSubsequentLiveTickAt?: number; save: OriginSave;
 }
 interface PaidProof {
   jobId: number; taskId: number | null; planetId: string; source: string;
@@ -384,6 +385,28 @@ function paymentTotal(category?: string): OrderMoney {
   return { metal: String(sums.metal), crystal: String(sums.crystal), deuterium: String(sums.deuterium) };
 }
 
+/** The workflow's fixed pre-IRN source is r10; current-source handoffs are r11.
+ * Build the entire expected migrated envelope independently. Never erase source
+ * fields to make a comparison pass, and never admit live demolition as origin.
+ */
+export function readNaturalResearchOrigin(original: OriginSave, sourceSha: string) {
+  check(original.schema === SAVE_SCHEMA && original.version === SAVE_VERSION && SAVE_REVISION === 11,
+    "origin schema/version or current revision differs");
+  const historical = original.revision === 10;
+  check(historical ? sourceSha === "4afa5331d6e54509a643572570dc3cd194c78ebf" : original.revision === SAVE_REVISION,
+    "only the exact pinned pre-IRN r10 source or an unchanged current r11 origin is supported");
+  check(Array.isArray(original.state.planets), "origin planet list missing");
+  if (historical) for (const planet of original.state.planets) check(!Object.hasOwn(planet, "demolition"), "r10 source already contains a forbidden demolition field");
+  else for (const planet of original.state.planets) check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "current origin has missing or competing demolition authority");
+  const expected = historical ? { ...original, revision: SAVE_REVISION, state: { ...original.state,
+    planets: original.state.planets.map(planet => ({ ...planet, demolition: null })) } } : structuredClone(original);
+  const imported = importSave(JSON.stringify(original)), candidate = deserializeState(imported.state);
+  exact(imported, expected, "origin entire envelope equals only the independently allowed revision/null additions");
+  exact(serializeState(candidate), expected.state, "origin entire strict reload equals independently expected state");
+  check(candidate.planets.every(planet => planet.demolition === null), "origin contains competing demolition work");
+  return { imported, candidate, migration: historical ? "r10→r11: revision plus one explicit null demolition slot per planet; every prior field preserved" : "r11 unchanged complete envelope and state" };
+}
+
 async function loadOrigin(): Promise<void> {
   const [{ readFileSync }, { createHash }, { execFileSync }] = await Promise.all([
     import("node:fs" as string), import("node:crypto" as string), import("node:child_process" as string),
@@ -420,8 +443,8 @@ async function loadOrigin(): Promise<void> {
   const old = found[0]!;
   check(old.strictRoundtrips === 2 && old.stateAdoptedFromReload && old.subsequentLiveTickObserved
     && typeof old.firstSubsequentLiveTickAt === "number" && old.firstSubsequentLiveTickAt > old.gameSeconds
-    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && old.save.revision === SAVE_REVISION && SAVE_REVISION === 11,
-    "origin milestone lacks strict live reload evidence or is not the unchanged current r11 world");
+    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && (old.save.revision === 10 || old.save.revision === SAVE_REVISION) && SAVE_REVISION === 11,
+    "origin milestone lacks strict live reload evidence or a supported r10/r11 envelope");
   check(Number.isSafeInteger(old.gameSeconds) && old.gameSeconds > 0 && Number.isSafeInteger(old.save.savedAt) && old.save.lastTickAt === old.save.savedAt,
     "origin game time or save envelope clocks are invalid");
   origin = { sourceSha: expectedSource, gitHead: report.source.gitHead, reportPath: args.get("--report"), reportSha256: hash,
@@ -429,9 +452,8 @@ async function loadOrigin(): Promise<void> {
     sourceWorktreeStatusPorcelain: report.source.worktreeStatusPorcelain, sourceScopeStatusPorcelain: report.source.sourceScopeStatusPorcelain,
     sourceBinding: "Caller-supplied digest and SHA, matched to raw report bytes and both embedded SHA fields. This does not by itself claim CI success.",
     originalSave: old.save };
-  const imported = importSave(JSON.stringify(old.save)), candidate = deserializeState(imported.state);
-  exact(old.save, imported, "origin strict full raw save import, without field projection or migration");
-  exact(old.save.state, serializeState(candidate), "origin full raw state reload, without field projection");
+  const { candidate, migration } = readNaturalResearchOrigin(old.save, expectedSource);
+  origin.migration = migration;
   const home = candidate.planets.find(p => p.id === HOME), colony = candidate.planets.find(p => p.id === COLONY);
   check(candidate.planets.length === 2 && home && colony, "route requires the actual mother and one actual colony");
   check(home.buildings.research_lab === 6 && colony.buildings.research_lab === 3
@@ -441,7 +463,7 @@ async function loadOrigin(): Promise<void> {
   check(home.buildings.terraformer === 2 && home.terraformerFields.grantedLevels === 2 && home.fieldsMax === 173
     && home.terraformerFields.base === 163 && colony.buildings.terraformer === 0 && colony.terraformerFields.grantedLevels === 0,
     "origin is not the two-real-mother-terraformer world");
-  check(candidate.research.queue.length === 0 && candidate.planets.every(p => p.buildQueue.length === 0 && p.shipyardQueue.length === 0)
+  check(candidate.research.queue.length === 0 && candidate.planets.every(p => p.demolition === null && p.buildQueue.length === 0 && p.shipyardQueue.length === 0)
     && candidate.fleets.length === 0 && candidate.boosters.length === 0
     && candidate.orders.tasks.every(t => t.status === "completed" || t.status === "cancelled")
     && candidate.orders.accumulator === 0 && candidate.protocols.slots.every(s => s.card === null), "origin has competing active or unpaid work");
@@ -454,6 +476,7 @@ async function loadOrigin(): Promise<void> {
   observe();
 }
 
+async function main(): Promise<void> {
 let outcome: Record<string, unknown>;
 try {
   await loadOrigin();
@@ -575,3 +598,5 @@ process.stdout.write(JSON.stringify({ schema: "infinity-natural-research-network
     totalGameSeconds: stateInitialized ? originGameSeconds + elapsed : null },
   limits: { totalGameSeconds: TOTAL_LIMIT, individualWaitSeconds: WAIT_LIMIT, playerActions: ACTION_LIMIT }, golden: GOLDEN,
   outcome, milestones, actions, waits, events, payments, paidJobs: [...jobs.values()], completions, saveDifference }, null, 2) + "\n");
+}
+if (process.argv[1]?.replace(/\\/g, "/").endsWith("/natural-research-network-journey.ts")) await main();
