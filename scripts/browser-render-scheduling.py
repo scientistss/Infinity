@@ -204,8 +204,8 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     return context,page
 
 
-def snapshot(page, omit_building_addition=False, ring_base=None):
-    result=page.evaluate('''({omitBuilding,ringBase}) => {
+def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None):
+    result=page.evaluate('''({omitBuilding,ringBase,orderBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
       const visible=e=>{
         // Chromium may return geometry for closed-details content. Its first
@@ -234,6 +234,23 @@ def snapshot(page, omit_building_addition=False, ring_base=None):
       const result={tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:inputs.map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
+      if(orderBase){
+        const form=panel.querySelector('#order-form'),fieldset=form?.querySelector(':scope > fieldset');
+        const budgets=fieldset?.querySelector(':scope > .order-budgets'),quote=panel.querySelector('#order-quote');
+        const toggle=fieldset?.nextElementSibling;
+        result.orderQuoteEvidence={panelHTML:panel.outerHTML,count:panel.querySelectorAll('#order-quote').length,
+          quoteHTML:quote?.outerHTML??null,quoteText:quote?.innerText??null,
+          partVisibility:quote?Object.fromEntries(['order-quote','order-quote-status','order-quote-cost','order-quote-note'].map(id=>[id,visible(panel.querySelector('#'+id))])):null,
+          exactPlacement:panel.dataset.tabPanel==='orders'&&fieldset?.parentElement===form&&budgets?.parentElement===fieldset&&
+            toggle?.matches('label.order-transport-toggle')&&toggle.querySelector('#order-transport-enabled')?.checked===false&&
+            (orderBase==='before'?fieldset.lastElementChild===budgets:
+              quote?.parentElement===fieldset&&quote.previousElementSibling===budgets&&fieldset.lastElementChild===quote),
+          leftText:budgets?.innerText,rightText:toggle?.innerText,
+          caps:[...(budgets?.querySelectorAll('input')??[])].map(e=>[e.id,e.value,e.disabled]),
+          controls:[...(quote?.querySelectorAll('input,select,textarea,button')??[])].map(e=>({tag:e.tagName,id:e.id,type:e.type,
+            value:e.value,disabled:e.disabled,hidden:e.hidden,visible:visible(e),index:inputs.indexOf(e)})),
+        };
+      }
       if(ringBase){
         const auto=panel.querySelector('section.ring-auto'),progress=panel.querySelector('[data-bind="arcade-auto"]');
         const side=panel.querySelector('.arcade-side'),manual=side?.querySelector('.arcade-controls'),topup=side?.querySelector('[data-action="arcade-topup"]');
@@ -253,8 +270,73 @@ def snapshot(page, omit_building_addition=False, ring_base=None):
         };
       }
       return result;
-    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base})
+    }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base})
+    if order_base:result=order_quote_base_snapshot(page,order_base,result)
     return ring_base_snapshot(page,ring_base,result) if ring_base else result
+
+
+def order_quote_base_snapshot(page,label,projected):
+    # New read-only quote UI is the only orders-body exception. Preserve exact
+    # original snapshots and assert every added node before excluding this region.
+    evidence=projected.pop('orderQuoteEvidence')
+    original=copy.deepcopy(projected);stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+    artifact=f'panel-parity-orders-{label}-{len(audits)}-raw.json'
+    (out/artifact).write_text(json.dumps({'snapshot':original,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+    check('order quote exception starts from exact legal unchanged base state: '+label,
+          exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
+    after=label=='after'
+    check('order quote exception has unique exact original budget/toggle boundaries: '+label,
+          label in ('before','after') and projected['tab']=='orders' and evidence['exactPlacement'] and evidence['count']==int(after))
+    check('order quote exception preserves three zero editable budgets: '+label,
+          evidence['caps']==[[f'order-budget-{resource}','0',False] for resource in ('metal','crystal','deuterium')])
+    expected=('<div id="order-quote" class="order-quote">'
+      '<div class="order-actions"><button id="order-quote-view" type="button">查看当前费用</button><button id="order-quote-fill" type="button" hidden="" disabled="">按当前报价填入预算</button></div>'
+      '<p id="order-quote-status" class="muted" role="status">尚未查看当前费用；预算仍由你确认。</p><p id="order-quote-cost" hidden=""></p>'
+      '<p id="order-quote-note" class="muted">按当前规则估算未付工作，不含燃料；价格与条件可能变化。查看不付款，填入只改草稿，仍需确认创建。</p></div>')
+    class Tokens(HTMLParser):
+        def __init__(self):super().__init__(convert_charrefs=True);self.tokens=[]
+        def handle_starttag(self,tag,attrs):self.tokens.append(('start',tag,sorted(attrs)))
+        def handle_endtag(self,tag):self.tokens.append(('end',tag))
+        def handle_data(self,data):
+            if data.strip():self.tokens.append(('text',data))
+        def handle_comment(self,data):self.tokens.append(('comment',data))
+    def tokens(html):
+        parser=Tokens();parser.feed(html);parser.close();return parser.tokens
+    check('order quote exception has exact complete initial structure and literal text: '+label,
+          tokens(evidence['quoteHTML'])==tokens(expected) if after else evidence['quoteHTML'] is None)
+    expected_lines=['查看当前费用','尚未查看当前费用；预算仍由你确认。','按当前规则估算未付工作，不含燃料；价格与条件可能变化。查看不付款，填入只改草稿，仍需确认创建。']
+    check('order quote exception presents every exact initial visible text block and no hidden cost: '+label,
+          evidence['partVisibility']=={'order-quote':True,'order-quote-status':True,'order-quote-cost':False,'order-quote-note':True} and
+          [line for line in evidence['quoteText'].splitlines() if line] == expected_lines if after else
+          evidence['partVisibility'] is None and evidence['quoteText'] is None)
+    controls=evidence['controls']
+    check('order quote exception excludes only one enabled view button and one hidden disabled fill button: '+label,
+          [(c['tag'],c['id'],c['type'],c['value'],c['disabled'],c['hidden'],c['visible']) for c in controls]==
+          ([('BUTTON','order-quote-view','button','',False,False,True),('BUTTON','order-quote-fill','button','',True,True,False)] if after else []))
+    text=projected['text'];left=evidence['leftText'];right=evidence['rightText'];block=evidence['quoteText']
+    check('order quote exception has unique complete budget and transport labels: '+label,
+          bool(left) and right=='授权单源真实运输（默认关闭）' and text.count(left)==1 and text.count(right)==1)
+    left_end=text.index(left)+len(left);right_start=text.index(right)
+    if after:
+        check('order quote exception whole verified block occurs exactly once: '+label,bool(block) and text.count(block)==1)
+        start=text.index(block);end=start+len(block)
+        separators=[text[left_end:start],text[end:right_start]]
+        check('order quote exception exact sibling linebreak boundaries: '+label,left_end<start<end<right_start and all(x in ('\n','\n\n') for x in separators))
+        indices=[c['index'] for c in controls]
+        check('order quote exception removes exact view control identity only: '+label,
+              len(indices)==2 and indices[0]>=0 and indices[1]==-1 and projected['inputs'][indices[0]]==
+              {'id':'order-quote-view','action':None,'type':'button','value':'','disabled':False,'checked':None,'text':'查看当前费用'})
+        projected['inputs']=[item for i,item in enumerate(projected['inputs']) if i!=indices[0]]
+    else:
+        separators=[text[left_end:right_start]]
+        check('original budget to transport boundary has only native linebreaks: '+label,left_end<right_start and separators[0] in ('\n','\n\n'))
+    projected['text']=text[:left_end]+'\n'+text[right_start:]
+    check('order quote snapshot exception never mutates storage or advances time: '+label,
+          raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at)
+    audits.append({'kind':'explicit-order-quote-parity-exception','side':label,'rawArtifact':artifact,
+      'removedNode':'#order-quote' if after else None,'removedText':block,'adjacentSiblingSeparators':separators,
+      'constraint':'Exact zero-budget no-quote state, full added DOM/controls/text asserted before only its visible region is excluded; all remaining old text, controls and state are compared.'})
+    return projected
 
 
 def ring_base_snapshot(page,label,projected):
@@ -507,7 +589,7 @@ def run_cases():
         context,page=boot(url=url);snapshots[label]={}
         release=context.request.get(urljoin(url,'release.json'))
         check('served parity release manifest is available',release.status==200)
-        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.13-alpha.2'
+        expected_version='0.6.7-alpha.1' if label=='before' else '0.6.14-alpha.1'
         check('served version is the explicit expected before/after metadata',release.json()['version']==expected_version)
         check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else 9))
         check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
@@ -520,7 +602,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None)
             if name=='galaxy':
                 # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
@@ -554,7 +636,7 @@ def run_cases():
                 click(page,f'#{details_id} > summary')
                 check('native summary opens library for full visible parity: '+details_id,
                       page.locator('#'+details_id).evaluate('(element)=>element.open'))
-                opened=snapshot(page, label=='after' and name=='orders')
+                opened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None)
                 check('opened library controls enter the complete paired snapshot: '+details_id,
                       any(control['id']==new_id for control in opened['inputs']) and
                       len(opened['inputs'])>=len(snapshots[label][name]['inputs'])+4)
@@ -563,7 +645,7 @@ def run_cases():
                 check('library returns to folded state after parity observation: '+details_id,
                       not page.locator('#'+details_id).evaluate('(element)=>element.open'))
                 click(page,f'#{details_id} > summary')
-                reopened=snapshot(page, label=='after' and name=='orders')
+                reopened=snapshot(page, label=='after' and name=='orders', order_base=label if name=='orders' else None)
                 check('closed then reopened library retains complete visible snapshot: '+details_id,reopened==opened)
                 snapshots[label][name+'-library-reopened']=reopened
                 click(page,f'#{details_id} > summary')
@@ -772,8 +854,9 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact and only empty buildingTemplates is added. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.13-alpha.2) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring exception, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
+            'parityMetadataException':'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / 0.6.14-alpha.1) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r9/r8) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring and exact initial order-quote exceptions, complete paragraph boundaries, all other visible text, status, and controls remain exact.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
+            'parityOrderQuoteException':'Only the uniquely placed initial #order-quote region is excluded after exact DOM, literal text, two-button permission, zero-cap and full-base-state assertions. Before/after raw snapshots are retained. Budgets, existing create/transport controls and all remaining visible content remain exact. No DOM or state is rewritten.',
             'counterMeaning':'Native DOMTokenList.toggle delegated energy-chip update calls, one per unchanged original view.update. These are instrumented render invocation counts, never CPU/presentation timings.',
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},

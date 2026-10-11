@@ -11,6 +11,9 @@
 .order-budgets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
 .order-review, .order-row, #order-draft-status { overflow-wrap:anywhere; }
 .order-review { line-height:1.7; }
+.order-quote { margin-top:12px; overflow-wrap:anywhere; }
+.order-quote p { margin:8px 0 0; line-height:1.6; }
+.order-quote [hidden] { display:none; }
 .order-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .order-list { display:grid; gap:12px; }
 .order-row { display:grid; gap:8px; }

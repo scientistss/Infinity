@@ -3,11 +3,14 @@ import { isBuildingId } from "../data/buildings";
 import { isResearchId } from "../data/research";
 import { isUnitId, unitById } from "../data/units";
 import { SPACE } from "../game/galaxy";
-import { MAX_ORDER_LEVEL, MAX_ORDER_QUANTITY, MAX_ORDER_TRIPS, MAX_ORDER_SPEED_PERCENT, MIN_ORDER_SPEED_PERCENT, ORDER_SPEED_STEP, type CreateOrderRequest, type OrderAction, type OrderKind, type OrderMoney, type OrderTransportAuthorization } from "../game/order-state";
+import { MAX_ORDER_LEVEL, MAX_ORDER_QUANTITY, MAX_ORDER_TRIPS, MAX_ORDER_SPEED_PERCENT, MIN_ORDER_SPEED_PERCENT, ORDER_SPEED_STEP, type CreateOrderRequest, type OrderAction, type OrderKind, type OrderMoney, type OrderTarget, type OrderTransportAuthorization } from "../game/order-state";
 import { ORDER_KIND_LABEL, ORDER_RESOURCES, ORDER_TRANSPORT_SHIPS, orderChoices, type OrdersView } from "./orders-present";
+import { localOrderQuoteContextKey, quoteLocalOrder, type LocalOrderQuote } from "./order-quote-model";
 import "./orders.css";
 
 const escaped = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[c]!);
+const QUOTE_NOTE = "按当前规则估算未付工作，不含燃料；价格与条件可能变化。";
+const QUOTE_DRAFT_NOTE = "查看不付款，填入只改草稿，仍需确认创建。";
 function node<T extends HTMLElement = HTMLElement>(root: ParentNode, selector: string): T {
   const found = root.querySelector<T>(selector);
   if (!found) throw new Error(`缺少计划控件 ${selector}`);
@@ -25,7 +28,10 @@ export function ordersPanelHtml(): string {
       <label>计划类型<select id="order-kind"><option value="building">建筑</option><option value="research">研究</option><option value="shipyard">造船 / 防御</option></select></label>
       <label>目标<select id="order-target" required></select></label>
       <label><span id="order-goal-label">目标等级</span><input id="order-goal" type="number" min="1" max="${MAX_ORDER_LEVEL}" step="1" value="1" required /></label>
-    </div><fieldset><legend>资源净支出上限（实际工作 + 不可退往返燃料）</legend><div class="order-budgets">${ORDER_RESOURCES.map(([id,label]) => `<label>${label}<input id="order-budget-${id}" type="text" inputmode="decimal" maxlength="256" value="0" required autocomplete="off" /></label>`).join("")}</div></fieldset>
+    </div><fieldset><legend>资源净支出上限（实际工作 + 不可退往返燃料）</legend><div class="order-budgets">${ORDER_RESOURCES.map(([id,label]) => `<label>${label}<input id="order-budget-${id}" type="text" inputmode="decimal" maxlength="256" value="0" required autocomplete="off" /></label>`).join("")}</div><div id="order-quote" class="order-quote">
+      <div class="order-actions"><button id="order-quote-view" type="button">查看当前费用</button><button id="order-quote-fill" type="button" hidden disabled>按当前报价填入预算</button></div>
+      <p id="order-quote-status" class="muted" role="status">尚未查看当前费用；预算仍由你确认。</p><p id="order-quote-cost" hidden></p><p id="order-quote-note" class="muted">${QUOTE_NOTE}${QUOTE_DRAFT_NOTE}</p>
+    </div></fieldset>
     <label class="order-transport-toggle"><input id="order-transport-enabled" type="checkbox" /> 授权单源真实运输（默认关闭）</label>
     <fieldset id="order-transport-fields" hidden><legend>固定运输授权（创建后不能更改）</legend><div class="order-fields">
       <label>固定来源星球<select id="order-donor" required></select></label>
@@ -51,6 +57,13 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   const enabled = node<HTMLInputElement>(root, "#order-transport-enabled");
   const donor = node<HTMLSelectElement>(root, "#order-donor");
   const ship = node<HTMLSelectElement>(root, "#order-ship");
+  const quoteView = node<HTMLButtonElement>(root, "#order-quote-view");
+  const quoteFill = node<HTMLButtonElement>(root, "#order-quote-fill");
+  const quoteCost = node(root, "#order-quote-cost");
+  const quoteRegion = node(root, "#order-quote");
+  const quoteBudgetInputs = ORDER_RESOURCES.map(([id]) => [id, node<HTMLInputElement>(root, `#order-budget-${id}`)] as const);
+  const quoteMountNodes = [form, quoteRegion, quoteView, quoteFill, quoteCost, node(root, "#order-quote-status"), node(root, "#order-quote-note"), planet, kind, target, goal, enabled, ...quoteBudgetInputs.map(([,input]) => input)];
+  let quoteMountRetired = false;
   let transportInitialized = false;
   const rows = new Map<number, HTMLElement>();
   let latest: OrdersView | null = null;
@@ -64,6 +77,74 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   let taskButtons = new WeakMap<HTMLButtonElement, ButtonAuthority>();
   let lastDraftSignature: string | null = null;
   let targetKind: string | null = null;
+  let currentQuote: LocalOrderQuote | null = null;
+  let quotedTarget: OrderTarget | null = null;
+  let quotedDraftSignature: string | null = null;
+  // These controls are stable during normal renders. A removed form/control
+  // must never regain its old quote capability by being reinserted later.
+  function retireRemovedQuoteNodes(records: MutationRecord[]) {
+    if (quoteMountRetired) return;
+    for (const record of records) for (const removed of record.removedNodes) {
+      if (!(removed instanceof Element) || !quoteMountNodes.some(item => removed === item || removed.contains(item))) continue;
+      quoteMountRetired = true;
+      currentQuote = null; quotedTarget = null; quotedDraftSignature = null;
+      quoteView.disabled = true; quoteFill.disabled = true; quoteFill.hidden = true;
+      quoteObserver.disconnect();
+      return;
+    }
+  }
+  const quoteObserver = new MutationObserver(retireRemovedQuoteNodes);
+  quoteObserver.observe(form, {childList: true, subtree: true});
+  // Observe only ancestor child lists, not unrelated panels' descendants.
+  for (let parent = form.parentElement; parent; parent = parent.parentElement) {
+    quoteObserver.observe(parent, {childList: true});
+    if (parent === root.parentElement) break;
+  }
+  function quoteControlsMounted(): boolean {
+    retireRemovedQuoteNodes(quoteObserver.takeRecords());
+    return !quoteMountRetired && root.isConnected && quoteMountNodes.every(item => item.isConnected && root.querySelector(`#${item.id}`) === item);
+  }
+  function quoteDraftSignature(): string {
+    return JSON.stringify([planet.value, kind.value, target.value, goal.value, enabled.checked]);
+  }
+  function draftTarget(): OrderTarget | null {
+    const planetId = planet.value;
+    if (kind.value === "building" && isBuildingId(target.value)) return {kind: "building", planetId, building: target.value, targetLevel: Number(goal.value)};
+    if (kind.value === "research" && isResearchId(target.value)) return {kind: "research", planetId, tech: target.value, targetLevel: Number(goal.value)};
+    if (kind.value === "shipyard" && isUnitId(target.value)) return {kind: "shipyard", planetId, unit: target.value, quantity: Number(goal.value)};
+    return null;
+  }
+  function syncQuoteControls() {
+    quoteView.disabled = quoteMountRetired || !writable || latestState === null;
+    quoteFill.hidden = quoteMountRetired || !currentQuote?.available || !currentQuote.cost || enabled.checked;
+    quoteFill.disabled = !writable || latestState === null || quoteFill.hidden;
+  }
+  function retireQuote(reason: string) {
+    if (!currentQuote) return;
+    currentQuote = null;
+    quotedTarget = null;
+    quotedDraftSignature = null;
+    text(root, "#order-quote-status", `报价已失效：${reason}。请重新查看当前费用。`);
+    text(root, "#order-quote-cost", "");
+    quoteCost.hidden = true;
+    syncQuoteControls();
+  }
+  function checkQuoteContext(): boolean {
+    if (!currentQuote || !quotedTarget) return false;
+    if (!writable || !latestState) {
+      retireQuote("存档执行状态已改变");
+      return false;
+    }
+    if (quotedDraftSignature !== quoteDraftSignature()) {
+      retireQuote("付款星球、目标或运输选项已改变");
+      return false;
+    }
+    if (currentQuote.contextKey !== localOrderQuoteContextKey(latestState, quotedTarget)) {
+      retireQuote("当前价格、进度或已付款队列已改变");
+      return false;
+    }
+    return true;
+  }
   function draftSignature(): string {
     return JSON.stringify([planet.value,kind.value,target.value,goal.value,
       ...ORDER_RESOURCES.map(([id]) => node<HTMLInputElement>(root, `#order-budget-${id}`).value),
@@ -95,6 +176,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   function review() {
     const caps = budget(), auth = transport();
     node(root,"#order-transport-fields").hidden = !enabled.checked;
+    text(root, "#order-quote-note", `${QUOTE_NOTE}${enabled.checked ? "运输已启用，不能填入预算；请手动设置含燃料的上限。" : QUOTE_DRAFT_NOTE}`);
     const available = latestState
       ? latestState.planets.find(p => p.id === donor.value)?.units[ship.value as typeof ORDER_TRANSPORT_SHIPS[number]]
       : latest?.donorShips.find(p => p.planetId === donor.value)?.ships.find(s => s.id === ship.value)?.count;
@@ -103,6 +185,8 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     text(root, "#order-draft-status", retired ? "存档已替换，旧草稿授权已失效。请检查目标和预算，编辑表单或点“新计划”后再创建。" : attempted ? "本次创建已提交；重复点击不会再次创建。修改表单或点“新计划”可重新授权。" : "切换顶部当前星球不会更改这个计划的付款星球。");
   }
   function edited(explicitNew = false) {
+    if (explicitNew) retireQuote("已开始新计划草稿");
+    else if (currentQuote && quotedDraftSignature !== quoteDraftSignature()) retireQuote("付款星球、目标或运输选项已改变");
     const signature = draftSignature();
     // Blur can deliver an earlier edit's change event after a file import has
     // retired its authority. Only genuinely changed values or New plan renew it.
@@ -125,6 +209,39 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     edited();
   });
   node(root, "#order-new").addEventListener("click", () => edited(true));
+  quoteView.addEventListener("click", () => {
+    if (!quoteControlsMounted() || !writable || !latestState) return;
+    const selected = draftTarget();
+    if (!selected) {
+      retireQuote("目标无效");
+      text(root, "#order-quote-status", "请选择有效的付款星球和目标后，再查看当前费用。");
+      return;
+    }
+    // Explicit inspection only: this never changes budgets, queues or the
+    // create nonce. The displayed quote is a capability scoped to this context.
+    currentQuote = quoteLocalOrder(latestState, selected);
+    quotedTarget = selected;
+    quotedDraftSignature = quoteDraftSignature();
+    const payer = currentQuote.payer;
+    const location = payer ? `${payer.name}（${payer.id}）` : selected.planetId;
+    const progress = currentQuote.unit === "units"
+      ? `额外新造 ${currentQuote.remaining} 个；已有库存与其他已付款批次不抵扣`
+      : `当前已完成 ${currentQuote.completed} 级，已付款覆盖 ${currentQuote.paidCoverage} 级，尚未完成且未付款 ${currentQuote.remaining} 级`;
+    const status = currentQuote.available ? progress : currentQuote.reason;
+    text(root, "#order-quote-status", `固定付款星球：${location}；${status}${currentQuote.warnings.length ? `；${currentQuote.warnings.join("；")}` : ""}。`);
+    const costs = currentQuote.cost;
+    text(root, "#order-quote-cost", costs ? `当前未付款费用：${ORDER_RESOURCES.map(([id,label]) => `${label} ${costs[id]}`).join(" / ")}` : "");
+    quoteCost.hidden = costs === null;
+    syncQuoteControls();
+  });
+  quoteFill.addEventListener("click", () => {
+    if (!quoteControlsMounted() || !checkQuoteContext() || enabled.checked || !currentQuote?.available || !currentQuote.cost) return;
+    for (const [id,input] of quoteBudgetInputs) input.value = currentQuote.cost[id];
+    // Filling is an intentional draft edit, but an unchanged/zero fill cannot
+    // renew an imported or already-used creation nonce via a delayed event.
+    edited();
+    syncQuoteControls();
+  });
   form.addEventListener("submit", event => {
     event.preventDefault();
     if (!writable || nonce === null || attempted) return;
@@ -136,6 +253,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
     else return;
     attempted = true;
     lastDraftSignature = draftSignature();
+    retireQuote("本次创建已提交");
     onAction({type: "order-create", request});
     review();
   });
@@ -155,6 +273,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   populateTargets();
   function syncFormDisabled() {
     for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button")) input.disabled = !writable || (!!input.closest("#order-transport-fields") && !enabled.checked);
+    syncQuoteControls();
   }
   function syncDisabled() {
     syncFormDisabled();
@@ -198,6 +317,9 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   function observe(state: GameState, ready: boolean) {
     const maskChanged = latestState === null || writable !== ready;
     latestState = state; writable = ready;
+    // No quote means no pricing/queue observation. Once quoted, cheap context
+    // keys retire it immediately, including hidden A → B → A transitions.
+    if (currentQuote) checkQuoteContext();
     if (bootstrapped) {
       if (maskChanged) syncDisabled();
       return;
@@ -215,6 +337,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
   }
   const update = (model: OrdersView, ready = true) => {
     latest = model; writable = ready;
+    if (currentQuote) checkQuoteContext();
     bootstrapped = true;
     updateDraftContext(model);
     const list = node(root, "#order-list");
@@ -261,6 +384,7 @@ export function installOrdersPanel(root: HTMLElement, onAction: (action: OrderAc
       nonce = null;
       latest = null;
       latestState = null;
+      retireQuote("存档或世界已替换");
       // Retire capabilities without inventing a protected session or blurring a
       // live draft. The next observe() applies the replacement's actual readiness.
       attempted = false;

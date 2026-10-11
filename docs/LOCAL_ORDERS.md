@@ -18,6 +18,18 @@ Net committed spending is `charged − refunded`, independently for metal, cryst
 
 Budgets and ledgers accept nonnegative decimal amounts, including scientific notation, up to `1e190` and 18 fractional decimal places. Inputs are bounded to 256 characters. Unsupported precision or an out-of-range cumulative ledger is rejected rather than rounded. This exact accounting describes economic price quotes; the underlying inventory wallet still uses floating-point large-number arithmetic. Each positive plan debit or refund must move the wallet in the correct direction and match its quote within a relative tolerance of `1e-9`. An unrepresentable transfer pauses the plan without consuming money or an identity. Wallet rounding dust is never added to the ledger.
 
+## Inspect a local plan’s current cost
+
+Use **查看当前费用** to inspect the draft without changing resources, queue entries, plan IDs or budgets. The quote fixes the draft’s paying planet, not the top navigation’s active planet. Building and research targets exclude already-finished levels and valid, already-paid queue coverage; shared research coverage may have been paid by another planet. Shipyard quantity always means additional units, regardless of existing inventory or unrelated queued ships.
+
+**按当前报价填入预算** copies all three quoted amounts into this draft only. It is an explicit edit, not payment or creation. Budgets initially remain zero, can be edited below the estimate, and do not change any existing plan. Use the normal **创建有限计划** action afterward; duplicate submissions keep the existing single-use identity rule. Lower budgets can leave future work waiting.
+
+The estimate uses current production prices and the bounded exact ledger arithmetic above. It does not guarantee future prices, prerequisites, capacity, affordability or completion. Paid queue entries retain their real historical price and ownership; their earlier payment is not charged again. Cancelling paid coverage changes the remaining estimate. Invalid targets or unrepresentable totals cannot fill budgets.
+
+A changed payer, target, pricing dependency, relevant progress or paid queue retires the displayed estimate. Imports, world changes and protected saves also retire it. Reverting a selection or restoring an old control does not revive its former quote. Request a fresh view; retirement never silently overwrites the amounts already entered.
+
+When single-source transport is enabled, the work estimate explicitly excludes fuel and cannot fill budgets. Set the combined work/fuel limit manually under the existing transport contract. Quoting does not estimate an unknown number of trips or grant shipping permission.
+
 ## Scheduling and conflicts
 
 Running plans are checked every 10 simulated seconds in both live and offline play. The first check occurs ten seconds after an idle scheduler is activated. A pass visits plans by ascending stable plan ID and makes at most one enqueue attempt per plan. Between passes, normal queues continue to work. With no running plans, the scheduler creates no simulation boundaries.
@@ -41,4 +53,4 @@ Every shipyard enqueue also reserves safe integer headroom for stock, queued uni
 
 ## Saves
 
-Revision 6 persists authorizations, fixed payer/target fields, exact ledgers, stable queue identities and ship completion watermarks. Current saves must have matching real paid jobs and ownership receipts. Invalid relationships are rejected rather than silently recreated. Legacy queue migration assigns deterministic identities without inventing historical completion or changing old costs and timers.
+The current v9/r9 format retains authorizations, fixed payer/target fields, exact ledgers, stable queue identities and ship completion watermarks. Current saves must have matching real paid jobs and ownership receipts. Invalid relationships are rejected rather than silently recreated. Legacy queue migration assigns deterministic identities without inventing historical completion or changing old costs and timers.
