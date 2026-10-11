@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 SCRIPT = Path(__file__).with_name('browser-npc-pressure.py')
 SPEC = importlib.util.spec_from_file_location('npc_pressure', SCRIPT)
@@ -348,6 +349,252 @@ class ClickObserverPreparationTests(unittest.TestCase):
         # Completion observer cannot change production propagation to make a test pass.
         self.assertNotIn('stopPropagation', MODULE.PROBE)
         self.assertNotIn('stopImmediatePropagation', MODULE.PROBE)
+
+
+class ExactSourceComparisonTests(unittest.TestCase):
+    """Comparison preparation doubles, never measured browser evidence."""
+    def sources(self, directory):
+        result = []
+        for name, commit in (('old', MODULE.OLD_SOURCE_SHA), ('new', MODULE.NEW_SOURCE_SHA)):
+            root = Path(directory) / name
+            root.mkdir()
+            fixture = fixture_double()
+            fixture.update(sourceSha=commit, sourceTreeSha=MODULE.SOURCE_TREES[commit],
+                           generatorSourceSha=commit, generatorSourceTreeSha=MODULE.SOURCE_TREES[commit])
+            fixture['hashes']['fixtureSource'] = 'c' * 64
+            for variant, basename in (('control', 'control0'), ('pressure', 'max512')):
+                raw = json.dumps(fixture[variant + 'Raw']).encode()
+                fixture['hashes'][variant + 'Raw'] = MODULE.sha(raw)
+                (root / (basename + '.raw.json')).write_bytes(raw)
+                (root / (basename + '.save.txt')).write_bytes(fixture[variant].encode())
+            path = root / 'fixtures.json'
+            path.write_text(json.dumps(fixture))
+            result.append({'sha': commit, 'root': str(root), 'url': 'http://127.0.0.1:' + ('4180' if name == 'old' else '4181') + '/Infinity/',
+                           'path': str(path), 'fixture': fixture})
+        return result
+
+    def runs(self):
+        result = []
+        for row in MODULE.run_schedule(True):
+            source, variant, repetition = row['source'], row['variant'], row['repetition']
+            # Source, workload and stage effects are separable known doubles.
+            offset = (7 if source == 'new' else 0) + (4 if variant == 'pressure' else 0)
+            result.append({**row, 'id': f'{source}-{repetition}-{variant}', 'completed': True,
+                'context': {'ordinal': len(result) + 1, 'independent': True, 'closed': True},
+                'samples': [{'stage': stage, 'cpuMs': {'ScriptDuration': 10 + offset + index, 'TaskDuration': 20 + offset * 2 + index * 2}} for index, stage in enumerate(MODULE.STAGES)],
+                'actions': [{'selector': selector, 'eventToSecondRafCallbackMs': 12 + offset} for selector in MODULE.ACTION_SELECTORS]})
+        return result
+
+    def test_compare_arguments_are_an_indivisible_optional_group(self):
+        self.assertFalse(MODULE.compare_enabled(SimpleNamespace()))
+        for missing in MODULE.COMPARE_ARGUMENTS:
+            args = {name: 'specified' for name in MODULE.COMPARE_ARGUMENTS if name != missing}
+            with self.subTest(missing=missing), self.assertRaisesRegex(AssertionError, 'All five'):
+                MODULE.compare_enabled(SimpleNamespace(**args))
+        self.assertTrue(MODULE.compare_enabled(SimpleNamespace(**dict.fromkeys(MODULE.COMPARE_ARGUMENTS, 'specified'))))
+
+    def test_partial_cli_group_fails_before_reading_missing_fixture(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), '--preflight', '--fixture', '/does-not-exist', '--source-root', '.',
+                                 '--expected-sha', SHA, '--expected-fixture-sha256', 'b' * 64, '--compare-url', 'http://127.0.0.1:4181/Infinity/'], capture_output=True, text=True, timeout=5)
+        self.assertIn('All five', result.stderr)
+        self.assertNotIn('FileNotFoundError', result.stderr)
+
+    def test_fixed_order_preserves_each_source_alternation_and_adjacent_loads(self):
+        schedule = MODULE.run_schedule(True)
+        expected_even = [('old', 'control'), ('new', 'control'), ('new', 'pressure'), ('old', 'pressure')]
+        expected_odd = [('new', 'pressure'), ('old', 'pressure'), ('old', 'control'), ('new', 'control')]
+        self.assertEqual(len(schedule), 12)
+        for repetition, expected in enumerate((expected_even, expected_odd, expected_even)):
+            self.assertEqual([(row['source'], row['variant']) for row in schedule if row['repetition'] == repetition], expected)
+        for source in ('old', 'new'):
+            self.assertEqual([row['variant'] for row in schedule if row['source'] == source], ['control', 'pressure', 'pressure', 'control', 'control', 'pressure'])
+        self.assertEqual(len(MODULE.run_schedule(False)), 6)
+        self.assertEqual(MODULE.WHOLE_SECONDS, 230)
+        self.assertEqual(MODULE.COMPARE_SECONDS, 300)
+
+    def test_source_whitelist_is_exact_commit_tree_and_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = self.sources(directory)
+            changed = 'src/ui/npc-attack-controls.ts\ntests/npc-attack-ui.test.ts\n'
+            with patch.object(MODULE.subprocess, 'check_output', return_value=changed):
+                self.assertEqual(MODULE.comparison_source_identity(old, new)['productionChangedPaths'], ['src/ui/npc-attack-controls.ts'])
+                for key, value, error in (('sha', SHA, 'commits'), ('root', old['root'], 'independent'), ('url', old['url'], 'distinct')):
+                    with self.subTest(key=key), self.assertRaisesRegex(AssertionError, error):
+                        MODULE.comparison_source_identity(old, {**new, key: value})
+                wrong = copy.deepcopy(new); wrong['fixture']['sourceTreeSha'] = 'f' * 40
+                with self.assertRaisesRegex(AssertionError, 'source tree'):
+                    MODULE.comparison_source_identity(old, wrong)
+            for extra in ('src/ui/other.ts', 'src/game/fleet.ts', 'public/art.svg', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'scripts/write-release.mjs'):
+                with self.subTest(path=extra), patch.object(MODULE.subprocess, 'check_output', return_value=changed + extra + '\n'), self.assertRaisesRegex(AssertionError, 'exact observer production path'):
+                    MODULE.comparison_source_identity(old, new)
+            with patch.object(MODULE.subprocess, 'check_output', return_value=''), self.assertRaisesRegex(AssertionError, 'exact observer production path'):
+                MODULE.comparison_source_identity(old, new)
+
+    def test_wrong_actual_worktree_tree_is_rejected(self):
+        with patch.object(MODULE.subprocess, 'check_output', side_effect=[SHA, 'c' * 40, '']), self.assertRaisesRegex(AssertionError, 'commit/tree'):
+            MODULE.source_identity('.', SHA, fixture_double())
+
+    def test_complete_save_raw_and_original_state_text_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = self.sources(directory)
+            evidence = MODULE.compare_fixture_bytes(old, new)
+            for variant in ('control', 'pressure'):
+                self.assertTrue(evidence[variant]['save.txt']['equal'])
+                self.assertTrue(evidence[variant]['raw.json']['equal'])
+                self.assertEqual(len(evidence[variant]['stateTextSha256']), 64)
+
+    def test_even_one_byte_difference_in_save_or_raw_fails(self):
+        for basename in ('control0.save.txt', 'max512.save.txt', 'control0.raw.json', 'max512.raw.json'):
+            with self.subTest(file=basename), tempfile.TemporaryDirectory() as directory:
+                old, new = self.sources(directory)
+                path = Path(new['path']).parent / basename
+                path.write_bytes(path.read_bytes() + b' ')
+                with self.assertRaisesRegex(AssertionError, 'bytes differ'):
+                    MODULE.compare_fixture_bytes(old, new)
+
+    def test_fixture_generator_and_non_source_metadata_cannot_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = self.sources(directory)
+            new['fixture']['extraChangedToolOption'] = True
+            with self.assertRaisesRegex(AssertionError, 'metadata differs'):
+                MODULE.compare_fixture_bytes(old, new)
+            del new['fixture']['extraChangedToolOption']
+            new['fixture']['hashes']['fixtureSource'] = 'd' * 64
+            with self.assertRaisesRegex(AssertionError, 'metadata differs'):
+                MODULE.compare_fixture_bytes(old, new)
+
+    def test_300_second_lifetime_is_checked_without_altering_flights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, _ = self.sources(directory)
+            path = Path(old['path']); data = path.read_bytes()
+            MODULE.load_fixture(path, old['sha'], MODULE.sha(data), MODULE.COMPARE_SECONDS)
+            fixture = old['fixture']
+            state = fixture['pressureRaw']; state['fleets'][0]['remaining'] = 309
+            envelope = json.loads(fixture['pressure']); envelope['state'] = state
+            fixture['pressure'] = json.dumps(envelope)
+            fixture['hashes']['pressureSave'] = MODULE.sha(fixture['pressure'])
+            fixture['minimumRemainingSeconds'] = 309
+            data = json.dumps(fixture).encode(); path.write_bytes(data)
+            with self.assertRaisesRegex(AssertionError, 'lifetime'):
+                MODULE.load_fixture(path, old['sha'], MODULE.sha(data), MODULE.COMPARE_SECONDS)
+            # The original single-source 230-second budget remains independent.
+            MODULE.load_fixture(path, old['sha'], MODULE.sha(data), MODULE.WHOLE_SECONDS)
+
+    def test_exact_complete_grid_and_duplicate_missing_or_reordered_runs(self):
+        runs = self.runs()
+        self.assertEqual(MODULE.validate_comparison_runs(runs), {'uniqueRuns': 12, 'windows': 36, 'actions': 60, 'completeCrossSourcePairs': 6})
+        for broken in (runs + [runs[0]], runs[:-1], [runs[1], runs[0], *runs[2:]]):
+            with self.subTest(count=len(broken)), self.assertRaises(AssertionError):
+                MODULE.validate_comparison_runs(broken)
+        for operation in (lambda row: row.update(completed=False), lambda row: row['samples'].pop(), lambda row: row['actions'].pop(),
+                          lambda row: row['context'].update(closed=False), lambda row: row['actions'][0].update(selector='other')):
+            broken = copy.deepcopy(runs); operation(broken[0])
+            with self.subTest(operation=operation), self.assertRaises(AssertionError):
+                MODULE.validate_comparison_runs(broken)
+
+    def test_same_source_summary_cannot_overwrite_other_source(self):
+        result = MODULE.paired_summary(self.runs())
+        self.assertEqual(len(result), 6)
+        self.assertEqual({row['source'] for row in result}, {'old', 'new'})
+        self.assertTrue(all(row['pairedDifferenceSummaryMs']['ScriptDuration']['n'] == 3 for row in result))
+        with self.assertRaisesRegex(AssertionError, 'Duplicate'):
+            MODULE.paired_summary(self.runs() + [self.runs()[0]])
+
+    def test_four_cells_new_minus_old_difference_in_differences_and_hidden_change(self):
+        result = MODULE.comparative_summary(self.runs())
+        for stage in result['stages']:
+            self.assertEqual(stage['newMinusOldSummaryMs']['pressure']['ScriptDuration'], {'raw': [7, 7, 7], 'n': 3, 'median': 7, 'min': 7, 'max': 7})
+            self.assertEqual(stage['pressureMinusControlSummaryMs']['new']['TaskDuration']['raw'], [8, 8, 8])
+            self.assertEqual(stage['differenceInDifferencesSummaryMs']['ScriptDuration']['raw'], [0, 0, 0])
+        for row in result['hiddenAfterMinusBefore']:
+            self.assertEqual(row['sourceSummaryMs']['old']['ScriptDuration']['raw'], [2, 2, 2])
+            self.assertEqual(row['newMinusOldChangeSummaryMs']['TaskDuration']['raw'], [0, 0, 0])
+        self.assertEqual(len(result['actions']), 10)
+        for action in result['actions']:
+            self.assertEqual(action['newMinusOldSummaryMs']['eventToSecondRafCallbackMs']['raw'], [7, 7, 7])
+            self.assertIsNone(action['newMinusOldSummaryMs']['captureToDocumentBubbleMs'])
+
+    def test_timeout_or_post_success_supervisor_failure_invalidates_all_comparison_pairs(self):
+        for failure in ('timeout', 'worker-exit', 'live-process', 'late-error'):
+            report = {'completed': True, 'comparison': {'enabled': True}, 'runs': self.runs(), 'errors': []}
+            MODULE.finalize_comparison(report, True)
+            self.assertTrue(report['comparativeCompleted'])
+            self.assertEqual(report['availableCompleteComparisonPairs'], 6)
+            if failure == 'late-error':
+                report['errors'].append('failure after runs')
+            MODULE.finalize_comparison(report, failure == 'late-error')
+            with self.subTest(failure=failure):
+                self.assertFalse(report['comparativeCompleted'])
+                self.assertEqual(report['availableCompleteComparisonPairs'], 0)
+                self.assertNotIn('comparativeSummary', report)
+                self.assertEqual(report['pairedSummary'], [])
+                self.assertEqual(len(report['runs']), 12)
+
+    def test_missing_run_prevents_comparative_success_after_worker_success(self):
+        report = {'completed': True, 'comparison': {'enabled': True}, 'runs': self.runs()[:-1], 'errors': []}
+        MODULE.finalize_comparison(report, True)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['comparativeCompleted'])
+        self.assertEqual(report['availableCompleteComparisonPairs'], 0)
+        self.assertTrue(report['errors'])
+
+    def test_internal_summary_failure_publishes_no_partial_completed_summary(self):
+        report = {'completed': True, 'comparison': {'enabled': True}, 'runs': self.runs(), 'errors': []}
+        report['runs'][0]['actions'][0]['eventToSecondRafCallbackMs'] = float('inf')
+        original_runs = report['runs']
+        MODULE.finalize_comparison(report, True)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['comparativeCompleted'])
+        self.assertEqual(report['availableCompleteComparisonPairs'], 0)
+        self.assertNotIn('comparisonCounts', report)
+        self.assertNotIn('comparativeSummary', report)
+        self.assertEqual(report['pairedSummary'], [])
+        self.assertIs(report['runs'], original_runs)
+        self.assertEqual(len(report['runs']), 12)
+        self.assertTrue(report['errors'])
+
+    def test_real_supervisor_finalization_revokes_worker_success_on_timeout_exit_or_residual(self):
+        runs = self.runs()
+        for failure in ('timeout', 'exit', 'residual', 'none'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                args = SimpleNamespace(output=str(Path(directory) / 'evidence'), **dict.fromkeys(MODULE.COMPARE_ARGUMENTS, 'specified'))
+                class WorkerDouble:
+                    pid = 99999999
+                    returncode = 2 if failure == 'exit' else 0
+                    def __init__(self, *unused, **keywords):
+                        MODULE.atomic_json(Path(args.output) / MODULE.REPORT, {
+                            'completed': True, 'comparison': {'enabled': True}, 'runs': runs, 'errors': [],
+                            'comparativeCompleted': True, 'availableCompleteComparisonPairs': 6,
+                            'comparativeSummary': {'mustDisappearOnFailure': True}})
+                    def poll(self):
+                        return None if failure == 'timeout' else self.returncode
+                    def wait(self, **keywords):
+                        return self.returncode
+                alive = {'pid': WorkerDouble.pid, 'birth': 'test', 'state': 'S'} if failure == 'residual' else None
+                clock = iter([0, 301, 302] if failure == 'timeout' else [0, 1])
+                with patch.object(MODULE.subprocess, 'Popen', WorkerDouble), patch.object(MODULE, 'process_info', return_value=alive), \
+                     patch.object(MODULE.time, 'monotonic', side_effect=lambda: next(clock)), patch.object(MODULE.os, 'kill'):
+                    status = MODULE.supervise(args)
+                report = json.loads((Path(args.output) / MODULE.REPORT).read_text())
+                self.assertEqual(report['supervisor']['wholeBudgetSeconds'], 300)
+                self.assertEqual(report['comparativeCompleted'], failure == 'none')
+                self.assertEqual(status, 0 if failure == 'none' else 1)
+                if failure != 'none':
+                    self.assertEqual(report['availableCompleteComparisonPairs'], 0)
+                    self.assertNotIn('comparativeSummary', report)
+                    self.assertNotIn('comparisonCounts', report)
+                    self.assertEqual(len(report['runs']), 12)
+
+    def test_workflow_builds_clean_sources_before_overlay_and_cleans_both_previews(self):
+        workflow = (SCRIPT.parent.parent / '.github/workflows/npc-pressure-verify.yml').read_text()
+        self.assertIn('timeout-minutes: 15', workflow)
+        self.assertIn(MODULE.OLD_SOURCE_SHA, workflow)
+        self.assertIn(MODULE.NEW_SOURCE_SHA, workflow)
+        self.assertLess(workflow.index('npm run build'), workflow.index('cp scripts/npc-pressure-fixture.ts'))
+        self.assertIn('trap cleanup EXIT', workflow)
+        self.assertIn('for PID in "$OLD_PID" "$NEW_PID"', workflow)
+        self.assertEqual(workflow.count('--strictPort'), 2)
+        self.assertEqual(SCRIPT.read_text().count('playwright.chromium.launch('), 1)
 
 
 if __name__ == '__main__':

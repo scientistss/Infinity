@@ -35,8 +35,15 @@ const sourceTreeSha = String(execFileSync("git", ["rev-parse", `${sourceSha}:src
 const generatorSourceTreeSha = String(execFileSync("git", ["rev-parse", "HEAD:src"])).trim();
 const generatorScriptGitStatus = String(execFileSync("git", ["status", "--porcelain", "--", "scripts/npc-pressure-fixture.ts"])).trim();
 check(sourceTreeSha === generatorSourceTreeSha, "Requested game source and imported current checkout must have identical src trees");
-check(sourceTreeSha === "900f78b5866d4cb9cc6e5c3026e415558ea07e3b", "Fixture must use the frozen candidate production tree");
+const allowedSourceTrees: Record<string, string> = {
+  d97d37c9b664a450e83bd152c84848cf1e617d6a: "900f78b5866d4cb9cc6e5c3026e415558ea07e3b",
+  "8f2ea441a42f36ded7eeb60f03c3c2b0fbed073b": "b982437c729910e705ef2e44b202ef03dc2034df",
+};
+check(allowedSourceTrees[sourceSha] === sourceTreeSha, "Fixture requires one exact designated source commit/tree pair");
 check(String(execFileSync("git", ["diff", "HEAD", "--", "src"])).length === 0, "Production source must be unchanged");
+check(String(execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", "src"])).trim() === "", "Whole actual imported src tree must be clean, including untracked files");
+const generatorScriptWasTracked = String(execFileSync("git", ["ls-tree", "HEAD", "--", "scripts/npc-pressure-fixture.ts"])).trim() !== "";
+const generatorOriginalScriptSha256 = generatorScriptWasTracked ? hash(String(execFileSync("git", ["show", "HEAD:scripts/npc-pressure-fixture.ts"]))) : null;
 const strict = (state: GameState): GameState => deserializeState(importSave(exportSave(state, stamp, stamp)).state);
 let pressure = createInitialState(20261010, 97531);
 const home = activePlanet(pressure);
@@ -113,7 +120,7 @@ const expected = { siteCount: 512, unfinishedAttackCount: 64, terminalReportCoun
 for (const [field, value] of Object.entries(expected)) check(counts(pressure)[field as keyof ReturnType<typeof counts>] === value, `Pressure ${field} mismatch`);
 check(counts(control).siteCount === 0 && !control.fleets.length && !control.npcBattles.reports.length, "Control must have no NPC/fleet workload");
 const minimumRemainingSeconds = Math.min(...pressure.fleets.map(fleet => fleet.remaining));
-check(minimumRemainingSeconds > 300, "Natural quoted outbound flights must survive a four-minute CPU window");
+check(minimumRemainingSeconds > 310, "Natural quoted outbound flights must survive the bounded 300-second comparison plus ten seconds");
 const workloadFields = ["npcEconomy", "npcBattles", "fleets", "nextFleetId", "messages"];
 const ordinary = (state: GameState) => Object.fromEntries(Object.entries(serializeState(state)).filter(([key]) => !workloadFields.includes(key)));
 equal(ordinary(control), ordinary(pressure), "Paired ordinary economies must match exactly");
@@ -123,10 +130,14 @@ for (const [name, state] of Object.entries({ control, pressure })) {
   const source = JSON.stringify(serializeState(state));
   equal(serializeState(deserializeState(JSON.parse(source))), serializeState(state), `${name} strict raw roundtrip`);
   equal(serializeState(deserializeState(importSave(exportSave(state, stamp, stamp)).state)), serializeState(state), `${name} strict save roundtrip`);
-  const after = tick(state, 240);
+  const at240 = tick(state, 240);
+  strict(at240);
+  for (const field of ["siteCount", "unfinishedAttackCount", "terminalReportCount", "pinnedReportCount", "outboundAttackCount"] as const)
+    check(counts(at240)[field] === counts(state)[field], `${name} ${field} must remain stable for240 simulated seconds`);
+  const after = tick(state, 310);
   strict(after);
   for (const field of ["siteCount", "unfinishedAttackCount", "terminalReportCount", "pinnedReportCount", "outboundAttackCount"] as const)
-    check(counts(after)[field] === counts(state)[field], `${name} ${field} must remain stable for240 simulated seconds`);
+    check(counts(after)[field] === counts(state)[field], `${name} ${field} must remain stable for310 simulated seconds`);
   // Manual reveals are not run at startup. This proves the one granted ticket
   // can resolve without bet expenditure; native auto authorization is separate.
   const reveal = revealRun(state, "manual");
@@ -138,6 +149,7 @@ const output = process.argv[2] ?? "/tmp/infinity-cff0ff86-npc-pressure-fixtures"
 mkdirSync(output, { recursive: true });
 const manifest = { schemaVersion: 1, key: STORAGE_KEY, sourceSha, sourceTreeSha, sourceTreeScope: "sourceSha:src",
   generatorSourceSha, generatorSourceTreeSha, generatorScriptGitStatus,
+  generatorToolOverlay: { previouslyTracked: generatorScriptWasTracked, path: "scripts/npc-pressure-fixture.ts", originalScriptSha256: generatorOriginalScriptSha256, actualScriptSha256: hash(String(readFileSync("scripts/npc-pressure-fixture.ts"))) },
   generatorProvenance: "Current checkout HEAD is recorded separately from the designated game commit. Actual fixture script bytes are hashed; imports use the verified identical current src tree.", synthetic: true,
   stamp, expected, control: saves.control, pressure: saves.pressure, controlRaw: raw.control, pressureRaw: raw.pressure,
   counts: { control: counts(control), pressure: counts(pressure) }, minimumRemainingSeconds,
@@ -155,7 +167,7 @@ const manifest = { schemaVersion: 1, key: STORAGE_KEY, sourceSha, sourceTreeSha,
     "Remaining persistent NPC sites materialized through production wallet helper to512; no invented battle, contract, cargo or receipt fields.",
     "Control copied from final pressure ordinary economy; only enumerated workload fields reset. Auto ring remains unarmed during observation."],
   operations: { paidLaunches: 124, battleArrivals, returnArrivals, totalFuel, reportTargets: terminalTargets.map(coordinateKey), outboundTargets: outboundTargets.map(coordinateKey) },
-  validation: { strictRawRoundtrip: true, strictEnvelopeRoundtrip: true, stableAt240SimulatedSeconds: true, sixtyFifthAttackRejected: true, sourceUnchanged: true,
+  validation: { strictRawRoundtrip: true, strictEnvelopeRoundtrip: true, stableAt240SimulatedSeconds: true, stableAt310SimulatedSeconds: true, sixtyFifthAttackRejected: true, sourceUnchanged: true,
     singleZeroBetManualReveal: true, productionSourceUnchanged: true, designatedGameTreeMatchesImportedTree: true } };
 for (const [name, value] of Object.entries({ control0: control, max512: pressure })) {
   writeFileSync(`${output}/${name}.raw.json`, JSON.stringify(serializeState(value)));

@@ -11,9 +11,10 @@ concurrency:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
-      GAME_SOURCE_SHA: a8454529ee5abf8d915fee7f4cc1c5d77d6a8ef7
+      OLD_GAME_SOURCE_SHA: d97d37c9b664a450e83bd152c84848cf1e617d6a
+      NEW_GAME_SOURCE_SHA: 8f2ea441a42f36ded7eeb60f03c3c2b0fbed073b
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,51 +29,90 @@ jobs:
         run: |
           npx tsc --noEmit
           python -m unittest discover -s scripts -p test_npc_pressure_preparation.py -v
-      - name: Build only the exact game source
+      - name: Build both exact clean game sources before the identical tool overlay
         run: |
           set -euo pipefail
-          git worktree add --detach "$RUNNER_TEMP/npc-pressure-game" "$GAME_SOURCE_SHA"
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/npc-pressure-game/node_modules"
-          test "$(git -C "$RUNNER_TEMP/npc-pressure-game" rev-parse HEAD)" = "$GAME_SOURCE_SHA"
-          test "$(git rev-parse HEAD:src)" = "$(git rev-parse "$GAME_SOURCE_SHA:src")"
-          (cd "$RUNNER_TEMP/npc-pressure-game" && GITHUB_SHA="$GAME_SOURCE_SHA" GITHUB_REF_NAME=codex/infinity-rebuild-npc-orbital-20261011 npm run build) > npc-pressure-game-build.log 2>&1
-          node --import tsx scripts/npc-pressure-fixture.ts npc-pressure-fixtures "$GAME_SOURCE_SHA" > npc-pressure-fixture-build.json
-          FIXTURE_HASH="$(sha256sum npc-pressure-fixtures/fixtures.json | cut -d' ' -f1)"
-          python scripts/browser-npc-pressure.py --preflight --fixture npc-pressure-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-game" > npc-pressure-preflight.json
+          for SOURCE in old new; do
+            if [ "$SOURCE" = old ]; then SHA="$OLD_GAME_SOURCE_SHA"; else SHA="$NEW_GAME_SOURCE_SHA"; fi
+            ROOT="$RUNNER_TEMP/npc-pressure-$SOURCE-game"
+            git worktree add --detach "$ROOT" "$SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$ROOT/node_modules"
+            test "$(git -C "$ROOT" rev-parse HEAD)" = "$SHA"
+            test -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)"
+            (cd "$ROOT" && GITHUB_SHA="$SHA" GITHUB_REF_NAME=codex/infinity-rebuild-npc-orbital-20261011 npm run build) > "npc-pressure-$SOURCE-game-build.log" 2>&1
+            test -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)"
+            # Production build is finished; this one measurement tool replaces its
+            # earlier version and imports ../src from this exact clean source tree.
+            cp scripts/npc-pressure-fixture.ts "$ROOT/scripts/npc-pressure-fixture.ts"
+            cmp scripts/npc-pressure-fixture.ts "$ROOT/scripts/npc-pressure-fixture.ts"
+            (cd "$ROOT" && node --import tsx scripts/npc-pressure-fixture.ts "$GITHUB_WORKSPACE/npc-pressure-$SOURCE-fixtures" "$SHA") > "npc-pressure-$SOURCE-fixture-build.json"
+            git -C "$ROOT" status --porcelain --untracked-files=all > "npc-pressure-$SOURCE-tool-overlay-status.txt"
+          done
+          OLD_HASH="$(sha256sum npc-pressure-old-fixtures/fixtures.json | cut -d' ' -f1)"
+          NEW_HASH="$(sha256sum npc-pressure-new-fixtures/fixtures.json | cut -d' ' -f1)"
+          python scripts/browser-npc-pressure.py --preflight \
+            --url http://127.0.0.1:4180/Infinity/ --fixture npc-pressure-old-fixtures/fixtures.json --expected-fixture-sha256 "$OLD_HASH" --expected-sha "$OLD_GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-old-game" \
+            --compare-url http://127.0.0.1:4181/Infinity/ --compare-fixture npc-pressure-new-fixtures/fixtures.json --compare-expected-fixture-sha256 "$NEW_HASH" --compare-expected-sha "$NEW_GAME_SOURCE_SHA" --compare-source-root "$RUNNER_TEMP/npc-pressure-new-game" > npc-pressure-preflight.json
       - name: Official native browser prerequisites
         timeout-minutes: 4
         run: bash scripts/browser-prerequisites.sh
-      - name: Measure alternating sparse and full NPC workloads with native clocks
+      - name: Measure twelve fixed-order independent contexts in one native Chrome
         run: |
           set -euo pipefail
-          (cd "$RUNNER_TEMP/npc-pressure-game" && npm run preview -- --host 127.0.0.1 --port 4180) > npc-pressure-preview.log 2>&1 &
-          SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
-          READY=0
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:4180/Infinity/release.json > /tmp/npc-pressure-release-ready.json; then READY=1; break; fi
-            sleep 0.5
+          OLD_PID=''
+          NEW_PID=''
+          cleanup() {
+            for PID in "$OLD_PID" "$NEW_PID"; do
+              if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi
+            done
+            for PID in "$OLD_PID" "$NEW_PID"; do
+              if [ -n "$PID" ]; then wait "$PID" 2>/dev/null || true; fi
+            done
+          }
+          trap cleanup EXIT
+          # exec makes each captured PID the preview process rather than an npm shell.
+          (cd "$RUNNER_TEMP/npc-pressure-old-game" && exec node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4180 --strictPort) > npc-pressure-old-preview.log 2>&1 &
+          OLD_PID=$!
+          (cd "$RUNNER_TEMP/npc-pressure-new-game" && exec node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4181 --strictPort) > npc-pressure-new-preview.log 2>&1 &
+          NEW_PID=$!
+          printf 'old=%s\nnew=%s\n' "$OLD_PID" "$NEW_PID" > npc-pressure-preview-processes.txt
+          for SOURCE in old new; do
+            if [ "$SOURCE" = old ]; then PORT=4180; else PORT=4181; fi
+            READY=0
+            for i in $(seq 1 60); do
+              if curl -fsS "http://127.0.0.1:$PORT/Infinity/release.json" > "npc-pressure-$SOURCE-release-ready.json"; then READY=1; break; fi
+              sleep 0.5
+            done
+            test "$READY" = 1
           done
-          test "$READY" = 1
-          FIXTURE_HASH="$(sha256sum npc-pressure-fixtures/fixtures.json | cut -d' ' -f1)"
-          xvfb-run -a python scripts/browser-npc-pressure.py --url http://127.0.0.1:4180/Infinity/ --fixture npc-pressure-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-game" --output npc-pressure-evidence
+          OLD_HASH="$(sha256sum npc-pressure-old-fixtures/fixtures.json | cut -d' ' -f1)"
+          NEW_HASH="$(sha256sum npc-pressure-new-fixtures/fixtures.json | cut -d' ' -f1)"
+          xvfb-run -a python scripts/browser-npc-pressure.py \
+            --url http://127.0.0.1:4180/Infinity/ --fixture npc-pressure-old-fixtures/fixtures.json --expected-fixture-sha256 "$OLD_HASH" --expected-sha "$OLD_GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-old-game" \
+            --compare-url http://127.0.0.1:4181/Infinity/ --compare-fixture npc-pressure-new-fixtures/fixtures.json --compare-expected-fixture-sha256 "$NEW_HASH" --compare-expected-sha "$NEW_GAME_SOURCE_SHA" --compare-source-root "$RUNNER_TEMP/npc-pressure-new-game" \
+            --output npc-pressure-evidence
       - name: Archive separate game and measurement sources
         if: always()
         run: |
           git archive --format=zip --output=npc-pressure-measurement-source.zip "$GITHUB_SHA"
-          git archive --format=zip --output=npc-pressure-game-source.zip "$GAME_SOURCE_SHA"
+          git archive --format=zip --output=npc-pressure-old-game-source.zip "$OLD_GAME_SOURCE_SHA"
+          git archive --format=zip --output=npc-pressure-new-game-source.zip "$NEW_GAME_SOURCE_SHA"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: npc-pressure-${{ github.sha }}
           path: |
-            npc-pressure-game-build.log
-            npc-pressure-fixture-build.json
+            npc-pressure-*-game-build.log
+            npc-pressure-*-fixture-build.json
+            npc-pressure-*-tool-overlay-status.txt
             npc-pressure-preflight.json
-            npc-pressure-preview.log
-            npc-pressure-fixtures
+            npc-pressure-*-preview.log
+            npc-pressure-preview-processes.txt
+            npc-pressure-*-release-ready.json
+            npc-pressure-old-fixtures
+            npc-pressure-new-fixtures
             npc-pressure-evidence
             npc-pressure-measurement-source.zip
-            npc-pressure-game-source.zip
+            npc-pressure-*-game-source.zip
           retention-days: 7
           if-no-files-found: error
