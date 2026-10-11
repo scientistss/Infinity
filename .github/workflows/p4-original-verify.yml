@@ -28,6 +28,11 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Independent NPC primitive numerical goldens
+        run: |
+          python scripts/generate_npc_economy_goldens.py --source-dir docs --output npc-economy-goldens-review.json > npc-economy-oracle-report.json
+          cmp tests/fixtures/npc-economy-goldens.json npc-economy-goldens-review.json
+          node --import tsx scripts/check-npc-economy-goldens.mjs > npc-economy-primitives-report.json
       - name: Offline production observer shape contract
         run: python -m unittest discover -s scripts -p 'test_ring_protection_observer.py' -v
       - name: Offline native target preparation and live failure evidence
@@ -296,6 +301,9 @@ jobs:
             native-background-review-save.json
             deep-fixtures
             test-results.json
+            npc-economy-goldens-review.json
+            npc-economy-oracle-report.json
+            npc-economy-primitives-report.json
             natural-growth-report.json
             natural-growth-report.log
             natural-ring-report.json

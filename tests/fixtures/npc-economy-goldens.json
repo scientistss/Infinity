@@ -1,0 +1,2073 @@
+{
+  "fixtureFormat": "independent-npc-economy-goldens-v1",
+  "status": "Independent preparation only; no application integration, save revision change, or deployment.",
+  "provenance": {
+    "underlyingSourceCommit": "52e7ed83a24f96dbdd240b4e0e4216c63fd90d55",
+    "specificationStatus": "The two proposed specification documents were untracked additions on this base commit when frozen; they are identified by byte hashes, not claimed to exist in that commit.",
+    "specifications": [
+      {
+        "file": "docs/NPC_ECONOMY.md",
+        "sha256": "5c3564988b036255c40ecebb6c475fbe8f18c3cecfa23b724c5e9e0f27e65128"
+      },
+      {
+        "file": "docs/NPC_ECONOMY_ACCEPTANCE.md",
+        "sha256": "ee8b1a564231f49ce4cdd45cbae31546d0cc7c7a460bdd0a147023556ca3bb15"
+      }
+    ],
+    "derivation": "Python standard-library Fraction arithmetic from the frozen prose parameters, with independent Decimal step-integration verification.",
+    "productionCodeReadOrExecuted": false
+  },
+  "contract": {
+    "model": "fixed-production-v1",
+    "minimumElapsedSeconds": "0",
+    "maximumElapsedSeconds": "11900",
+    "inputTransport": "Ordinary case inputs are JSON numbers exactly representable in binary64. $runtimeNumber descriptors explicitly represent otherwise non-JSON runtime inputs for validation tests only.",
+    "expectedTransport": "All expected numeric values are exact base-10 strings; booleans remain booleans. Do not infer expected values from production outputs or formatted reports.",
+    "actualConsumed": "Always zero in this proposed model; an oracle conservation assertion, not a requirement to add a production API or save field.",
+    "invalidStates": "Reject rather than clamp, coerce, or initialize. This file does not select an exception class or error text.",
+    "invalidSteps": "Zero, negative, non-finite and non-numeric steps do not advance a valid age; no production API object-identity assertion is made.",
+    "negativeZero": "Negative zero is numerically zero and is accepted in the specified non-negative range. Query must not modify its input. No-op steps preserve the input state, including its sign bit; expected snapshot ages compare numerically to zero. JSON text byte or sign-bit equality is not an economic invariant.",
+    "precision": "Every ordinary numeric case is binary-exact. No epsilon or decimal-display rounding is needed or authorized by these cases; arbitrary non-binary frame-time tolerance remains outside this fixture."
+  },
+  "parameters": {
+    "metal": {
+      "initialStock": "500",
+      "productionPerSecond": "5",
+      "capacity": "50000",
+      "fullAtSeconds": "9900"
+    },
+    "crystal": {
+      "initialStock": "250",
+      "productionPerSecond": "2.5",
+      "capacity": "30000",
+      "fullAtSeconds": "11900"
+    },
+    "deuterium": {
+      "initialStock": "0",
+      "productionPerSecond": "1",
+      "capacity": "10000",
+      "fullAtSeconds": "10000"
+    }
+  },
+  "specGoldens": [
+    {
+      "id": "spec-age-0",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-0_25",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0.25
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "0.25",
+        "resources": {
+          "metal": {
+            "stock": "501.25",
+            "actualProduced": "1.25",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250.625",
+            "actualProduced": "0.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0.25",
+            "actualProduced": "0.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-60",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-7200",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 7200
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "7200",
+        "resources": {
+          "metal": {
+            "stock": "36500",
+            "actualProduced": "36000",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "18250",
+            "actualProduced": "18000",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "7200",
+            "actualProduced": "7200",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-9900",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9900
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "9900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25000",
+            "actualProduced": "24750",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9900",
+            "actualProduced": "9900",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-10000",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 10000
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "10000",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25250",
+            "actualProduced": "25000",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-age-11900",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11900
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    },
+    {
+      "id": "spec-advance-28800",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        },
+        "stepSeconds": 28800
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    }
+  ],
+  "capacityBoundaries": [
+    {
+      "id": "metal-full-before",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9899.75
+        },
+        "stepSeconds": 0
+      },
+      "expected": {
+        "elapsedSeconds": "9899.75",
+        "resources": {
+          "metal": {
+            "stock": "49998.75",
+            "actualProduced": "49498.75",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "24999.375",
+            "actualProduced": "24749.375",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9899.75",
+            "actualProduced": "9899.75",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "targetResource": "metal",
+      "requestedAgeSeconds": "9899.75"
+    },
+    {
+      "id": "metal-full-at",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9899.75
+        },
+        "stepSeconds": 0.25
+      },
+      "expected": {
+        "elapsedSeconds": "9900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25000",
+            "actualProduced": "24750",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9900",
+            "actualProduced": "9900",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "targetResource": "metal",
+      "requestedAgeSeconds": "9900"
+    },
+    {
+      "id": "metal-full-after",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9899.75
+        },
+        "stepSeconds": 0.5
+      },
+      "expected": {
+        "elapsedSeconds": "9900.25",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25000.625",
+            "actualProduced": "24750.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9900.25",
+            "actualProduced": "9900.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "targetResource": "metal",
+      "requestedAgeSeconds": "9900.25"
+    },
+    {
+      "id": "crystal-full-before",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11899.75
+        },
+        "stepSeconds": 0
+      },
+      "expected": {
+        "elapsedSeconds": "11899.75",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "29999.375",
+            "actualProduced": "29749.375",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      },
+      "targetResource": "crystal",
+      "requestedAgeSeconds": "11899.75"
+    },
+    {
+      "id": "crystal-full-at",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11899.75
+        },
+        "stepSeconds": 0.25
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      },
+      "targetResource": "crystal",
+      "requestedAgeSeconds": "11900"
+    },
+    {
+      "id": "crystal-full-after",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11899.75
+        },
+        "stepSeconds": 0.5
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      },
+      "targetResource": "crystal",
+      "requestedAgeSeconds": "11900.25"
+    },
+    {
+      "id": "deuterium-full-before",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9999.75
+        },
+        "stepSeconds": 0
+      },
+      "expected": {
+        "elapsedSeconds": "9999.75",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25249.375",
+            "actualProduced": "24999.375",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9999.75",
+            "actualProduced": "9999.75",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "targetResource": "deuterium",
+      "requestedAgeSeconds": "9999.75"
+    },
+    {
+      "id": "deuterium-full-at",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9999.75
+        },
+        "stepSeconds": 0.25
+      },
+      "expected": {
+        "elapsedSeconds": "10000",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25250",
+            "actualProduced": "25000",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      },
+      "targetResource": "deuterium",
+      "requestedAgeSeconds": "10000"
+    },
+    {
+      "id": "deuterium-full-after",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9999.75
+        },
+        "stepSeconds": 0.5
+      },
+      "expected": {
+        "elapsedSeconds": "10000.25",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25250.625",
+            "actualProduced": "25000.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      },
+      "targetResource": "deuterium",
+      "requestedAgeSeconds": "10000.25"
+    }
+  ],
+  "stepNoops": [
+    {
+      "id": "step-noop-zero",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": 0
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-negative",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": -0.25
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-nan",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": {
+          "$runtimeNumber": "NaN"
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-positive-infinity",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": {
+          "$runtimeNumber": "+Infinity"
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-negative-infinity",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": {
+          "$runtimeNumber": "-Infinity"
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-string",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": "1"
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-null",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": null
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-boolean",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": true
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-array",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": []
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "step-noop-object",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 60
+        },
+        "stepSeconds": {}
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    }
+  ],
+  "partitionGoldens": [
+    {
+      "id": "quarter-once",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        },
+        "stepsSeconds": [
+          0.25
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "0.25",
+        "resources": {
+          "metal": {
+            "stock": "501.25",
+            "actualProduced": "1.25",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250.625",
+            "actualProduced": "0.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0.25",
+            "actualProduced": "0.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "quarter-two-eighths",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        },
+        "stepsSeconds": [
+          0.125,
+          0.125
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "0.25",
+        "resources": {
+          "metal": {
+            "stock": "501.25",
+            "actualProduced": "1.25",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250.625",
+            "actualProduced": "0.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0.25",
+            "actualProduced": "0.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "minute-once",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        },
+        "stepsSeconds": [
+          60
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "minute-quarter-steps",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0
+        },
+        "stepsSeconds": [
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "60",
+        "resources": {
+          "metal": {
+            "stock": "800",
+            "actualProduced": "300",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "400",
+            "actualProduced": "150",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "60",
+            "actualProduced": "60",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "cross-metal-cap",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9899.75
+        },
+        "stepsSeconds": [
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "9900.25",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25000.625",
+            "actualProduced": "24750.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "9900.25",
+            "actualProduced": "9900.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "id": "cross-deuterium-cap",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 9999.75
+        },
+        "stepsSeconds": [
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "10000.25",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "25250.625",
+            "actualProduced": "25000.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    },
+    {
+      "id": "cross-crystal-cap",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11899.75
+        },
+        "stepsSeconds": [
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    },
+    {
+      "id": "full-then-more-time",
+      "input": {
+        "operation": "advanceSequence",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11900
+        },
+        "stepsSeconds": [
+          0.25,
+          7200,
+          28800
+        ]
+      },
+      "expected": {
+        "elapsedSeconds": "11900",
+        "resources": {
+          "metal": {
+            "stock": "50000",
+            "actualProduced": "49500",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "crystal": {
+            "stock": "30000",
+            "actualProduced": "29750",
+            "actualConsumed": "0",
+            "full": true
+          },
+          "deuterium": {
+            "stock": "10000",
+            "actualProduced": "10000",
+            "actualConsumed": "0",
+            "full": true
+          }
+        }
+      }
+    }
+  ],
+  "signedZeroGoldens": [
+    {
+      "id": "query-negative-zero",
+      "input": {
+        "operation": "query",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality"
+    },
+    {
+      "id": "advance-negative-zero-with-zero-step",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        },
+        "stepSeconds": 0
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality",
+      "expectedSameInputStateForNoop": true
+    },
+    {
+      "id": "advance-negative-zero-with-negative-zero-step",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        },
+        "stepSeconds": -0.0
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality",
+      "expectedSameInputStateForNoop": true
+    },
+    {
+      "id": "advance-negative-zero-with-negative-step",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        },
+        "stepSeconds": -1
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality",
+      "expectedSameInputStateForNoop": true
+    },
+    {
+      "id": "advance-negative-zero-with-nan-step",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        },
+        "stepSeconds": {
+          "$runtimeNumber": "NaN"
+        }
+      },
+      "expected": {
+        "elapsedSeconds": "0",
+        "resources": {
+          "metal": {
+            "stock": "500",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0",
+            "actualProduced": "0",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality",
+      "expectedSameInputStateForNoop": true
+    },
+    {
+      "id": "advance-negative-zero-with-positive-step",
+      "input": {
+        "operation": "advance",
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.0
+        },
+        "stepSeconds": 0.25
+      },
+      "expected": {
+        "elapsedSeconds": "0.25",
+        "resources": {
+          "metal": {
+            "stock": "501.25",
+            "actualProduced": "1.25",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "crystal": {
+            "stock": "250.625",
+            "actualProduced": "0.625",
+            "actualConsumed": "0",
+            "full": false
+          },
+          "deuterium": {
+            "stock": "0.25",
+            "actualProduced": "0.25",
+            "actualConsumed": "0",
+            "full": false
+          }
+        }
+      },
+      "inputMustRemainUnmodified": true,
+      "zeroComparison": "Numeric equality, not sign-bit or decimal-string equality",
+      "expectedSameInputStateForNoop": false
+    }
+  ],
+  "invalidStates": [
+    {
+      "id": "null-state",
+      "input": {
+        "state": null
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "array-state",
+      "input": {
+        "state": []
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "boolean-state",
+      "input": {
+        "state": false
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "number-state",
+      "input": {
+        "state": 0
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "string-state",
+      "input": {
+        "state": "fixed-production-v1"
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "missing-both-fields",
+      "input": {
+        "state": {}
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "missing-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1"
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "missing-model",
+      "input": {
+        "state": {
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "wrong-location-wrapper",
+      "input": {
+        "state": {
+          "npcEconomy": {
+            "model": "fixed-production-v1",
+            "elapsedSeconds": 0
+          }
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "unexpected-field",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 0,
+          "stock": 500
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "negative-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": -0.25
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "over-cap-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 11900.25
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "advance-horizon-used-as-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": 28800
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "string-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": "0"
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "null-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": null
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "false-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": false
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "true-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": true
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "array-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": []
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "object-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": {}
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "nan-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": {
+            "$runtimeNumber": "NaN"
+          }
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "positive-infinity-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": {
+            "$runtimeNumber": "+Infinity"
+          }
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "negative-infinity-age",
+      "input": {
+        "state": {
+          "model": "fixed-production-v1",
+          "elapsedSeconds": {
+            "$runtimeNumber": "-Infinity"
+          }
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "unknown-model",
+      "input": {
+        "state": {
+          "model": "fixed-production-v2",
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "empty-model",
+      "input": {
+        "state": {
+          "model": "",
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "null-model",
+      "input": {
+        "state": {
+          "model": null,
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "numeric-model",
+      "input": {
+        "state": {
+          "model": 1,
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "boolean-model",
+      "input": {
+        "state": {
+          "model": true,
+          "elapsedSeconds": 0
+        }
+      },
+      "expected": {
+        "accepted": false
+      }
+    }
+  ]
+}
