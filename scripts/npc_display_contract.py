@@ -9,11 +9,41 @@ INTRO='按游戏时间记录派遣、抵达、侦察和返航；保留最近 150
 HISTORY='保留 60 份终端历史与全部尚未交付的战报。'
 RULES='按舰种聚合结算，最多六轮。阵亡舰船永久损失，幸存者下一场恢复完整船体与护盾。仅获胜且有幸存舰船才装载战利品；按幸存货舱分配，返抵原出发星球后一次结算；不足 1 的部分保留为该星球待结算权益。空驻军收集为 0 回合。NPC 不会主动袭击母星。'
 ATTACK_OPTIONS_HTML='<div id="npc-attack-options" hidden=""><p class="muted">武器技术 1 级 · 空载出航。空载出发，战后按幸存货舱装载；被毁舰船永久损失。</p><p id="npc-attack-quota" class="chip"></p><p id="npc-attack-draft-status" class="space-error" role="status"></p></div>'
+SHIPYARD_INTRO='每艘耗时 = (金属 + 晶体) / (2500 × (1 + 造船厂) × 2^纳米) 小时 ÷ 宇宙速度。按批次下单、下单时扣全款，逐艘完成；舰船与防御共用一条造船队列。造船厂或纳米机器人工厂升级期间造船暂停。'
+DEFENSE_INTRO='防御和舰船共用造船队列与造船时间公式。护盾罩每种限 1 个；导弹放在导弹井里（每级 10 格，反弹道导弹 1 格、星际导弹 2 格）。'
+UNIT_PANEL_COPY={
+ 'shipyard':{
+  'before':SHIPYARD_INTRO+'攻击、护盾、结构已计入武器、护盾、装甲技术（战斗第 5 阶段开放），速度已计入引擎（飞行第 4 阶段开放）。',
+  'after':SHIPYARD_INTRO+'攻击、护盾、结构已计入武器、护盾、装甲技术；可飞舰船可参与 NPC 轨道战斗，速度已计入引擎。'},
+ 'defense':{
+  'before':DEFENSE_INTRO+'第 1–4 阶段没有敌人，防御在第 5 阶段开始派上用场。',
+  'after':DEFENSE_INTRO+'当前 NPC 轨道攻击仅派遣可飞舰船，防御与导弹不参与；NPC 不会主动袭击母星。'}}
 SAMPLE_JS=r'''() => {
  const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden),tab=panel.dataset.tabPanel;
  const visible=e=>{for(let a=e;a;a=a.parentElement){if(a.hidden||getComputedStyle(a).display==='none')return false;if(a instanceof HTMLDetailsElement&&!a.open&&!a.firstElementChild?.contains(e))return false;}return e.getClientRects().length>0;};
  const inputs=[...panel.querySelectorAll('input,select,textarea,button')].filter(visible);
  const result={tab,panelHTML:panel.outerHTML};
+ if(tab==='shipyard'||tab==='defense'){
+  // Bind the one complete introductory paragraph to the native panel head,
+  // queue, card grid and status siblings, never to a text search.
+  const children=[...panel.children],head=children[0],intro=head?.nextElementSibling,queue=intro?.nextElementSibling,
+   grid=queue?.nextElementSibling,status=grid?.nextElementSibling,suffix=tab==='defense'?'-def':'';
+  result.intro=intro?.innerText;
+  result.introBoundary={
+   counts:{children:children.length,blurbs:panel.querySelectorAll('p.blurb').length,heads:panel.querySelectorAll('.panel-head').length,
+    queues:panel.querySelectorAll('.queue-panel').length,grids:panel.querySelectorAll('.bld-grid').length,
+    statuses:panel.querySelectorAll(`[data-bind="status-${tab}"]`).length},
+   exactOrder:panel.matches(`section.tab-panel[data-tab-panel="${tab}"][aria-labelledby="${tab}-title"]`)&&
+    head?.matches('div.panel-head')&&head.parentElement===panel&&head.children.length===2&&
+    head.firstElementChild?.matches(`h2#${tab}-title`)&&
+    head.lastElementChild?.matches(`p[data-bind="${tab==='shipyard'?'shipyard-summary':'defense-silo'}"]`)&&
+    intro?.matches('p.blurb')&&intro.parentElement===panel&&
+    queue?.matches('div.queue-panel')&&queue.parentElement===panel&&
+    queue.querySelectorAll(`ol.queue-list[data-bind="squeue-list${suffix}"]`).length===1&&
+    grid?.matches('div.bld-grid')&&grid.parentElement===panel&&
+    status?.matches(`p.status[data-bind="status-${tab}"][role="status"]`)&&status.parentElement===panel&&panel.lastElementChild===status,
+   introHTML:intro?.outerHTML};
+ }
  if(tab==='galaxy'){
   // The existing folded navigator follows the hint. Bind the hint to the
   // unique coordinate table, never to its text or the panel's final child.
@@ -70,14 +100,27 @@ def parts_exact(text,parts):
     assert text[cursor:] in ('','\n')
 
 def normalize_npc_display(snapshot,evidence,state,side):
-    assert side in ('before','after') and snapshot['tab']==evidence['tab'] in ('galaxy','fleet','messages')
+    assert side in ('before','after') and snapshot['tab']==evidence['tab'] in ('shipyard','defense','galaxy','fleet','messages')
     out=deepcopy(snapshot);after=side=='after';tab=snapshot['tab']
     if after:
         assert state['npcBattles']=={'model':'npc-battle-receipts-v1','reports':[]}
         assert state['npcEconomy']['sites']=={},'Base has no materialized targets'
         for planet in state['planets']:
             assert planet.get('npcResourceRemainder')=={'metal':'0','crystal':'0','deuterium':'0'},'Zero-rights historical UI only; never hide a positive entitlement'
-    if tab=='galaxy':
+    if tab in UNIT_PANEL_COPY:
+        paragraph=UNIT_PANEL_COPY[tab][side];node=f'<p class="blurb">{paragraph}</p>'
+        assert evidence['intro']==paragraph
+        assert evidence['introBoundary']=={
+            'counts':{'children':5,'blurbs':1,'heads':1,'queues':1,'grids':1,'statuses':1},
+            'exactOrder':True,'introHTML':node}
+        # Assert both old/current complete literals and unique native nodes.
+        # Only copied strings change; every card, cost, timer and control stays.
+        assert evidence['panelHTML'].count(node)==1
+        assert out['text'].count(paragraph)==1
+        out['unitPanelInvariantDOM']=replace_once(evidence['panelHTML'],node,
+            '<p class="blurb">'+UNIT_PANEL_COPY[tab]['before']+'</p>')
+        out['text']=replace_once(out['text'],paragraph,UNIT_PANEL_COPY[tab]['before'])
+    elif tab=='galaxy':
         hint=NEW_HINT if after else OLD_HINT
         assert evidence['hint']==hint
         assert evidence['hintBoundary']=={

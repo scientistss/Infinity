@@ -5,6 +5,88 @@ from npc_display_contract import *
 
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]}}
+    def unit_panel(self,tab,side):
+        # Deliberately copied evidence only. Live SAMPLE_JS and complete native
+        # DOM/state preservation are verified by browser-render-scheduling.py.
+        paragraph=UNIT_PANEL_COPY[tab][side];node=f'<p class="blurb">{paragraph}</p>'
+        snapshot={'tab':tab,'text':'标题\n\n'+paragraph+'\n\n造船队列\n每艘 3.20 秒\n可造 39',
+            'shared':{'status':'已保存到本地','amount-metal':'7.80e4'},
+            'inputs':[{'id':'','action':'build-units','type':'button','value':'','disabled':False,'checked':None,'text':'最大 39'}]}
+        evidence={'tab':tab,'intro':paragraph,'panelHTML':'<section><div class="panel-head">标题</div>'+node+
+            '<div class="queue-panel">造船队列</div><div class="bld-grid">每艘 3.20 秒</div><p class="status">已保存到本地</p></section>',
+            'introBoundary':{'counts':{'children':5,'blurbs':1,'heads':1,'queues':1,'grids':1,'statuses':1},
+                'exactOrder':True,'introHTML':node}}
+        return snapshot,evidence
+    def test_complete_unit_panel_copy_has_exact_before_after_parity_without_mutation(self):
+        for tab in UNIT_PANEL_COPY:
+            results=[]
+            for side in ('before','after'):
+                snapshot,evidence=self.unit_panel(tab,side);state=self.state();original=copy.deepcopy((snapshot,evidence,state))
+                results.append(normalize_npc_display(snapshot,evidence,state,side))
+                self.assertEqual((snapshot,evidence,state),original)
+                self.assertIsNot(results[-1],snapshot)
+            self.assertEqual(results[0],results[1])
+    def test_unit_panel_requires_its_complete_side_specific_literal(self):
+        for tab in UNIT_PANEL_COPY:
+            for side in ('before','after'):
+                for mutation in ('literal','truncated','other-side','missing','duplicate'):
+                    snapshot,evidence=self.unit_panel(tab,side)
+                    if mutation=='literal':evidence['intro']+='changed'
+                    if mutation=='truncated':evidence['intro']=evidence['intro'][:-1]
+                    if mutation=='other-side':evidence['intro']=UNIT_PANEL_COPY[tab]['after' if side=='before' else 'before']
+                    if mutation=='missing':snapshot['text']=snapshot['text'].replace(evidence['intro'],'')
+                    if mutation=='duplicate':snapshot['text']+='\n'+evidence['intro']
+                    with self.subTest(tab=tab,side=side,mutation=mutation),self.assertRaises(AssertionError):
+                        normalize_npc_display(snapshot,evidence,self.state(),side)
+    def test_unit_panel_rejects_missing_duplicate_or_reordered_native_siblings(self):
+        for tab in UNIT_PANEL_COPY:
+            for side in ('before','after'):
+                for key in ('children','blurbs','heads','queues','grids','statuses'):
+                    for count in (0,2,6):
+                        snapshot,evidence=self.unit_panel(tab,side);evidence['introBoundary']['counts'][key]=count
+                        with self.subTest(tab=tab,side=side,key=key,count=count),self.assertRaises(AssertionError):
+                            normalize_npc_display(snapshot,evidence,self.state(),side)
+                snapshot,evidence=self.unit_panel(tab,side);evidence['introBoundary']['exactOrder']=False
+                with self.subTest(tab=tab,side=side),self.assertRaises(AssertionError):
+                    normalize_npc_display(snapshot,evidence,self.state(),side)
+    def test_unit_panel_rejects_changed_class_nested_markup_and_duplicate_dom_node(self):
+        for tab in UNIT_PANEL_COPY:
+            for side in ('before','after'):
+                for mutation in ('class','tag','nested','attribute','duplicate','missing'):
+                    snapshot,evidence=self.unit_panel(tab,side);node=evidence['introBoundary']['introHTML']
+                    if mutation=='class':evidence['introBoundary']['introHTML']=node.replace('blurb','bld-blurb')
+                    if mutation=='tag':evidence['introBoundary']['introHTML']=node.replace('<p ','<div ').replace('</p>','</div>')
+                    if mutation=='nested':evidence['introBoundary']['introHTML']=node.replace('">','"><span>',1).replace('</p>','</span></p>')
+                    if mutation=='attribute':evidence['introBoundary']['introHTML']=node.replace('<p ','<p id="other" ')
+                    if mutation=='duplicate':evidence['panelHTML']+=node
+                    if mutation=='missing':evidence['panelHTML']=evidence['panelHTML'].replace(node,'')
+                    with self.subTest(tab=tab,side=side,mutation=mutation),self.assertRaises(AssertionError):
+                        normalize_npc_display(snapshot,evidence,self.state(),side)
+    def test_unit_panel_preserves_every_unrelated_text_control_shared_value_and_dom_change(self):
+        for tab in UNIT_PANEL_COPY:
+            before,old_evidence=self.unit_panel(tab,'before');expected=normalize_npc_display(before,old_evidence,self.state(),'before')
+            for mutation in ('cost','timer','status','control','shared','hidden-attribute'):
+                snapshot,evidence=self.unit_panel(tab,'after')
+                if mutation=='cost':snapshot['text']=snapshot['text'].replace('可造 39','可造 40')
+                if mutation=='timer':snapshot['text']=snapshot['text'].replace('3.20','3.21')
+                if mutation=='status':snapshot['text']+='\n其他状态'
+                if mutation=='control':snapshot['inputs'][0]['disabled']=True
+                if mutation=='shared':snapshot['shared']['amount-metal']='0'
+                if mutation=='hidden-attribute':evidence['panelHTML']=evidence['panelHTML'].replace('class="bld-grid"','class="bld-grid" hidden=""')
+                original=copy.deepcopy((snapshot,evidence));actual=normalize_npc_display(snapshot,evidence,self.state(),'after')
+                with self.subTest(tab=tab,mutation=mutation):
+                    self.assertNotEqual(actual,expected)
+                    self.assertEqual((snapshot,evidence),original)
+                    self.assertEqual(actual['inputs'],snapshot['inputs']);self.assertEqual(actual['shared'],snapshot['shared'])
+    def test_unit_panel_will_not_project_positive_rights_or_existing_battle_reports(self):
+        for tab in UNIT_PANEL_COPY:
+            for mutation in ('rights','report','site'):
+                snapshot,evidence=self.unit_panel(tab,'after');state=self.state()
+                if mutation=='rights':state['planets'][0]['npcResourceRemainder']['metal']='0.1'
+                if mutation=='report':state['npcBattles']['reports'].append({'id':1})
+                if mutation=='site':state['npcEconomy']['sites']['1:50:1']={}
+                with self.subTest(tab=tab,mutation=mutation),self.assertRaises(AssertionError):
+                    normalize_npc_display(snapshot,evidence,state,'after')
     def hint_boundary(self,hint):
         # Copied native evidence shape, not an offline execution of SAMPLE_JS.
         return {'counts':{'tables':1,'worlds':1,'hints':1,'navigation':1,'summaries':1},
