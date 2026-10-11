@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -464,11 +465,20 @@ def visibility(page, selectors):
 
 def native_scroll_to(page, selector):
     for _ in range(5):
-        box = page.locator(selector).bounding_box()
-        limits = page.evaluate('({height:innerHeight,width:innerWidth,top:Math.max(0,document.querySelector(".topbar")?.getBoundingClientRect().bottom||0)+12})')
+        target = page.locator(selector); box = target.bounding_box()
+        limits = target.evaluate('''element=>{
+          const header=document.querySelector('.topbar');
+          return {height:innerHeight,width:innerWidth,inTopbar:!!header&&header.contains(element),
+            headerPosition:header?getComputedStyle(header).position:null,
+            headerBottom:header?.getBoundingClientRect().bottom||0};}''')
+        # The prestige button and planet selector are INSIDE the topbar. The
+        # mobile topbar is static. Neither is a sticky obstruction above itself.
+        limits['top'] = 12 if limits['inTopbar'] or limits['headerPosition'] not in ('sticky', 'fixed') else max(0, limits['headerBottom']) + 12
         available = limits['height'] - limits['top'] - 12
-        check('target fits below actual sticky header', box is not None and box['height'] <= available, {'selector': selector, 'box': box, 'limits': limits})
+        check('target fits its actual unobstructed viewport region', box is not None and box['height'] <= available, {'selector': selector, 'box': box, 'limits': limits})
         if box['y'] >= limits['top'] and box['y'] + box['height'] <= limits['height'] - 12:
+            proof = visibility(page, [selector])
+            check('native target is wholly visible with five unoccluded hit-tests', all(item['visible'] and item['contained'] and len(item['points']) == 5 and all(point['unoccluded'] for point in item['points']) for item in proof['targets']), proof)
             return
         target_y = limits['top'] + (available - box['height']) / 2
         page.mouse.move(limits['width'] - 12, limits['height'] - 12)
@@ -484,6 +494,48 @@ def reload_verified(page):
 
 def timeout(_signal, _frame):
     raise TimeoutError('Terraformer native acceptance exceeded the 420-second worker bound')
+
+
+def capture_failure(error, page=None):
+    global completed, failure
+    completed = False
+    failure = {'case': case, 'error': repr(error), 'traceback': traceback.format_exc()}
+
+    def attempt(label, action):
+        try:
+            action()
+        except BaseException as capture_error:
+            failure.setdefault('captureErrors', []).append({'step': label, 'error': repr(capture_error)})
+
+    def artifact(name, data):
+        path = out / name; path.write_bytes(data)
+        evidence.append({'case': case, 'file': name, 'sha256': hashlib.sha256(data).hexdigest()})
+
+    def capture_raw():
+        failure['rawSave'] = raw(page)
+        if failure['rawSave'] is not None:
+            artifact('failure-raw-save.json', failure['rawSave'].encode('utf-8'))
+
+    # Persist the original failure before diagnostics. A failed individual
+    # capture must neither hide that error nor prevent the other evidence.
+    attempt('original failure report', flush)
+    if page is not None:
+        attempt('raw save', capture_raw)
+        for name, selector in [('card', CARD), ('queue', QUEUE), ('status', '[data-bind="status"]')]:
+            attempt(name, lambda name=name, selector=selector: failure.__setitem__(name, page.locator(selector).all_text_contents()))
+        attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')))
+        attempt('report before screenshot', flush)
+        attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)))
+    attempt('final failure report', flush)
+
+
+@contextmanager
+def capture_live_failure():
+    try:
+        yield
+    except BaseException as error:
+        capture_failure(error, active_page)
+        raise
 
 
 signal.signal(signal.SIGALRM, timeout); signal.alarm(420)
@@ -503,7 +555,9 @@ try:
         check('entire named natural milestone is unchanged: ' + key, len(matches) == 1 and matches[0] == milestone and milestone['strictRoundtrips'] == 2 and milestone['stateAdoptedFromReload'] and milestone['subsequentLiveTickObserved'])
     (out / 'source-natural-terraformer-report.json').write_bytes(source_bytes)
     check('independent literal first/second payment and energy goldens', fixtures['golden']['first'] == {'metal': '0', 'crystal': '50000', 'deuterium': '100000'} and fixtures['golden']['second'] == {'metal': '0', 'crystal': '100000', 'deuterium': '200000'} and fixtures['golden']['firstEnergy'] == 1000 and fixtures['golden']['secondEnergy'] == 2000)
-    with sync_playwright() as playwright:
+    # Exit this guard before Playwright stops its event loop, so live evidence
+    # can still be read. The original exception then leaves both contexts.
+    with sync_playwright() as playwright, capture_live_failure():
         browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox'])
         case = 'natural ready milestone -> trusted payment -> live paid reload -> actual +5/net4 completion'
         context, page = boot(); handoff(page, 'ready'); baseline = save(page, 'firstBaseline')
@@ -659,16 +713,10 @@ try:
         check('version and current strict save release were verified', release_metadata['version'] == '0.6.16-alpha.1' and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 10)
         completed = True; flush(); browser.close()
 except BaseException as error:
-    failure = {'case': case, 'error': repr(error), 'traceback': traceback.format_exc()}
-    if active_page is not None:
-        try:
-            failure['rawSave'] = raw(active_page)
-            failure['card'] = active_page.locator(CARD).all_text_contents()
-            failure['queue'] = active_page.locator(QUEUE).all_text_contents()
-            failure['status'] = active_page.locator('[data-bind="status"]').all_text_contents()
-            snap(active_page, 'failure.png')
-        except BaseException as capture_error:
-            failure['captureError'] = repr(capture_error)
-    flush(); raise
+    if failure is None:
+        capture_failure(error)
+    raise
 finally:
-    signal.alarm(0); flush()
+    signal.alarm(0)
+    if failure is None:
+        flush()
