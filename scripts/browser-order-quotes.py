@@ -128,6 +128,10 @@ FIRST_PAYMENTS = {
     'research': {'metal': '0', 'crystal': '800', 'deuterium': '400'},
     'shipyard': {'metal': '15000', 'crystal': '5000', 'deuterium': '0'},
 }
+SECOND_PAYMENTS = {
+    'building': {'metal': '135', 'crystal': '33', 'deuterium': '0'},
+    'research': {'metal': '0', 'crystal': '1600', 'deuterium': '800'},
+}
 MODE = 'Actual HTTP / native Storage and file import / anonymous synthetic saves / controlled simulation timestamps'
 EPOCH = int(time.time() * 1000)
 parsed = urlparse(args.url)
@@ -530,6 +534,10 @@ try:
             check('exact receipt belongs to matching real queue target, task and fixed payer', paid_job['jobId'] == expected_job_id and paid_job['taskId'] == task['id'] and paid_job['source'] == 'plan' and
                   paid_job['building' if kind == 'building' else 'tech' if kind == 'research' else 'unit'] == target and
                   (paid_job['planetId'] == HOME if kind == 'research' else True) and exact_payment == task['charged'], {'receipt': task['activeJob'], 'actualQueueJob': paid_job, 'exactPayment': exact_payment})
+            check('first paid queue binds independent task, payer and exact level or batch quantity', task['id'] == paid_job['taskId'] == 1 and task['kind'] == kind and task['planetId'] == HOME and
+                  task['building' if kind == 'building' else 'tech' if kind == 'research' else 'unit'] == target and
+                  (paid_job['orderedCount'] == 5 if kind == 'shipyard' else paid_job['targetLevel'] == (2 if kind == 'building' else 1)),
+                  {'taskId': task['id'], 'payer': task['planetId'], 'actualQueueJob': paid_job})
             wallet_delta(kind + '-paid', baseline, paid, {resource: str(Decimal(task['charged'][resource]) - Decimal(task['refunded'][resource])) for resource in RESOURCES})
             check('other planet complete wallet/queue/buildings/inventory stay unchanged', planet(paid, COLONY) == planet(baseline, COLONY))
             record(page, kind + '-paid')
@@ -538,7 +546,43 @@ try:
             whole_state(kind + '-reloaded-paid', restored, oracle['reloadedPaid'])
             restored_queue = planet(restored)['buildQueue'] if kind == 'building' else restored['research']['queue'] if kind == 'research' else planet(restored)['shipyardQueue']
             check('native reload retains exact real queue job, receipt and ledger', restored['orders'] == paid['orders'] and restored_queue == queue)
-            advance(page, 180000); finished = save(page); task = finished['orders']['tasks'][0]
+            if kind != 'shipyard':
+                # Split the same 180-second gap so every real payment is observed.
+                # These literal goldens do not come from the quote or state oracle.
+                advance(page, 10000); second_paid = save(page); task = second_paid['orders']['tasks'][0]
+                record(page, kind + '-second-paid')
+                whole_state(kind + '-second-paid', second_paid, oracle['secondPaid'])
+                second_queue = planet(second_paid)['buildQueue'] if kind == 'building' else second_paid['research']['queue']
+                check('second payment allocates exactly independent job 3 and receipt without duplicating the task',
+                      len(second_queue) == 1 and len(second_paid['orders']['tasks']) == 1 and task['id'] == 1 and
+                      second_paid['orders']['nextTaskId'] == 2 and second_paid['orders']['nextJobId'] == 4 and
+                      task['activeJob'] == {'jobId': 3, 'quantity': 1, 'credited': 0})
+                second_job = second_queue[0]
+                previous_task = restored['orders']['tasks'][0]
+                ledger_increment = {resource: str(Decimal(task['charged'][resource]) - Decimal(previous_task['charged'][resource])) for resource in RESOURCES}
+                check('second actual immutable job price and exact ledger increment equal independent fixed resource goldens',
+                      second_job['paid'] == SECOND_PAYMENTS[kind] and ledger_increment == SECOND_PAYMENTS[kind] and
+                      previous_task['charged'] == FIRST_PAYMENTS[kind] and task['charged'] == expected and
+                      previous_task['refunded'] == task['refunded'] == dict.fromkeys(RESOURCES, '0'),
+                      {'independentGolden': SECOND_PAYMENTS[kind], 'actualPaid': second_job['paid'],
+                       'previousCharged': previous_task['charged'], 'charged': task['charged'], 'exactLedgerIncrement': ledger_increment})
+                check('second receipt belongs to exact real queue target, fixed task and home payer',
+                      second_job['jobId'] == task['activeJob']['jobId'] == 3 and second_job['taskId'] == task['id'] == 1 and
+                      second_job['source'] == 'plan' and task['kind'] == kind and task['planetId'] == HOME and
+                      second_job['building' if kind == 'building' else 'tech'] == task['building' if kind == 'building' else 'tech'] == target and
+                      second_job['targetLevel'] == task['targetLevel'] == (3 if kind == 'building' else 2) and
+                      (second_job['planetId'] == HOME if kind == 'research' else True),
+                      {'receipt': task['activeJob'], 'actualQueueJob': second_job, 'payer': task['planetId']})
+                completed_level = planet(second_paid)['buildings'][target] if kind == 'building' else second_paid['research']['levels'][target]
+                check('first paid level is complete while the second paid level is genuinely queued',
+                      completed_level == (2 if kind == 'building' else 1) and task['status'] == 'running' and
+                      second_job['remainingSeconds'] > 0)
+                wallet_delta(kind + '-second-paid', restored, second_paid, SECOND_PAYMENTS[kind])
+                check('second payment leaves the other planet complete wallet and work unchanged', planet(second_paid, COLONY) == planet(restored, COLONY))
+                advance(page, 170000)
+            else:
+                advance(page, 180000)
+            finished = save(page); task = finished['orders']['tasks'][0]
             whole_state(kind + '-finished', finished, oracle['finished'])
             actual = planet(finished)['buildings'][target] if kind == 'building' else finished['research']['levels'][target] if kind == 'research' else task['completedUnits']
             check('finite real work completes exact goal and consumes exact quote', task['status'] == 'completed' and task['activeJob'] is None and actual == goal and task['charged'] == expected and task['refunded'] == dict.fromkeys(RESOURCES, '0'))

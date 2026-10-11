@@ -104,9 +104,13 @@ const execution = Object.fromEntries(targets.map(target => {
   // catchUp (offline protocol cadence), and SaveSession reload uses catchUp(0).
   const paid = catchUp(created, 10).state;
   const reloadedPaid = catchUp(clone(paid), 0).state;
-  const finished = catchUp(reloadedPaid, 180).state;
+  // Observe each level's real payment without changing the total controlled gap.
+  // Ships have one paid batch, so their original uninterrupted path is retained.
+  const secondPaid = target.kind === "shipyard" ? null : catchUp(reloadedPaid, 10).state;
+  const finished = catchUp(secondPaid ?? reloadedPaid, secondPaid ? 170 : 180).state;
   const later = catchUp(finished, 60).state;
-  return [target.kind, Object.fromEntries(Object.entries({ baseline, created, paid, reloadedPaid, finished, later })
+  return [target.kind, Object.fromEntries(Object.entries({ baseline, created, paid, reloadedPaid,
+    ...(secondPaid ? { secondPaid } : {}), finished, later })
     .map(([name, state]) => [name, snapshot(state)]))];
 }));
 const belowCreated = ok(createOrderTask(clone(base), { kind: "building", planetId: homeId, building: "metal_mine", targetLevel: 3,
@@ -133,7 +137,7 @@ const prestige = evaluatePrestige(base);
 if (prestige.next === base || !prestige.gain.gt(0)) throw new Error("Synthetic prestige source is ineligible");
 importSave(exportSave(prestige.next));
 process.stdout.write(JSON.stringify({
-  description: "Anonymous synthetic pre-funded two-planet local-order quote acceptance. Initial buildings, research, wallets, cores and lifetime score are explicit setup. Seven existing ships and all manual paid jobs use real queue APIs. Strict initial readers/tick(0) are settled twice. Independent fixed costs and full-state execution, reload, completion, underbudget and enqueue/cancel oracles use established production APIs, never the quote helper. Controlled gaps of 10/180/60 seconds match main.frame's actual catchUp/offline route; reload matches SaveSession catchUp(0). Original 1e-10 legacy-wallet dust is preserved; exact ledgers have no tolerance. Controlled Date/performance/RAF are not natural play.",
+  description: "Anonymous synthetic pre-funded two-planet local-order quote acceptance. Initial buildings, research, wallets, cores and lifetime score are explicit setup. Seven existing ships and all manual paid jobs use real queue APIs. Strict initial readers/tick(0) are settled twice. Independent fixed costs and full-state execution, reload, each payment, completion, underbudget and enqueue/cancel oracles use established production APIs, never the quote helper. Controlled gaps are 10/10/170/60 seconds for building and research, and the original 10/180/60 for the single ship batch; both match main.frame's actual catchUp/offline route with equal total elapsed time. Reload matches SaveSession catchUp(0). Original 1e-10 legacy-wallet dust is preserved; exact ledgers have no tolerance. Controlled Date/performance/RAF are not natural play.",
   key: STORAGE_KEY, homeId, colonyId: colony.id, expectedQuotes, execution, belowQuote, queueAba,
   originalPaymentProbe, walletRepresentationBound: "0.000000001",
   ...Object.fromEntries(Object.entries(variants).map(([name, state]) => [name, JSON.parse(exportSave(state))])),
