@@ -102,6 +102,58 @@ def capture_audit(page, label):
                           "classification": classification, "events": rows})
 
 
+def migration_differences(expected, actual, path="$state"):
+    """Diagnostic only: retain every mismatch; never normalize a comparison."""
+    if type(expected) is not type(actual):
+        return [{"path": path, "expected": expected, "actual": actual}]
+    if isinstance(expected, dict):
+        differences = []
+        for key in sorted(expected.keys() | actual.keys()):
+            if key not in expected or key not in actual:
+                differences.append({"path": path + "." + key, "expected": expected.get(key), "actual": actual.get(key),
+                                    "expectedPresent": key in expected, "actualPresent": key in actual})
+            else:
+                differences.extend(migration_differences(expected[key], actual[key], path + "." + key))
+        return differences
+    if isinstance(expected, list):
+        if len(expected) != len(actual):
+            return [{"path": path, "expected": expected, "actual": actual}]
+        return [difference for index, (left, right) in enumerate(zip(expected, actual))
+                for difference in migration_differences(left, right, f"{path}[{index}]")]
+    return [] if expected == actual else [{"path": path, "expected": expected, "actual": actual}]
+
+
+def capture_startup_migration(page, original, revision):
+    # Persist complete evidence while Playwright is still alive and BEFORE any
+    # equality assertion. Hash-only audit summaries cannot diagnose state drift.
+    current, backup = raw(page), raw(page, BACKUP)
+    rows = events(page)
+    first = next((row["value"] for row in rows if row["operation"] == "write-return" and row["key"] == KEY), None)
+    prefix = f"r{revision}-startup"
+    artifacts = {}
+    for label, value in (("original", original), ("first-current", first), ("current", current), ("backup", backup)):
+        if value is None:
+            artifacts[label] = {"missing": True}
+            continue
+        path = out / f"{prefix}-{label}.json"
+        data = value.encode("utf-8"); path.write_bytes(data)
+        artifacts[label] = {"file": path.name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    audit_path = out / f"{prefix}-complete-audit.json"
+    audit_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    diagnostic = {"classification": "Unmodified native startup clock; complete captured bytes, not a reconstructed prior failure",
+                  "case": case, "artifacts": artifacts, "auditFile": audit_path.name,
+                  "firstCommitEqualsCurrent": first == current, "originalEqualsBackup": original == backup,
+                  "assertionPolicy": "The strict full-state and exact-backup assertions remain unchanged; no drift is allowed by this diagnostic."}
+    if first is not None:
+        source, committed = json.loads(original), json.loads(first)
+        diagnostic["clock"] = {"sourceSavedAt": source["savedAt"], "sourceLastTickAt": source["lastTickAt"],
+                               "firstSavedAt": committed["savedAt"], "firstLastTickAt": committed["lastTickAt"],
+                               "constructorGapMilliseconds": committed["savedAt"] - source["lastTickAt"]}
+        if revision == 10:
+            diagnostic["fullStateDifferencesFromNullOnlyLift"] = migration_differences(lift_r10_state_to_r11(source["state"]), committed["state"])
+    (out / f"{prefix}-diagnostic.json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def select_save(page):
     modal = page.locator('[data-bind="offline-modal"]')
     if modal.is_visible():
@@ -436,6 +488,8 @@ try:
             case = f"supported same-schema r{revision} startup migration"
             legacy_raw = legacy_fixture(revision)
             context, page = boot(legacy_raw)
+            if revision == 10:
+                capture_startup_migration(page, legacy_raw, revision)
             migrated = verify_commit(page, legacy_raw, "已升级并保存本地存档")
             migrated_file = json.loads(migrated)
             check(f"supported migration produces revision {SAVE_REVISION}", migrated_file["revision"] == SAVE_REVISION)
