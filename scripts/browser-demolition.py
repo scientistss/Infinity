@@ -160,10 +160,24 @@ GROSS = {'metal': 578.1007209732234, 'crystal': 384.44214731548226, 'deuterium':
 
 CLOCK = r'''(() => {
  if(location.origin!==__ORIGIN__)return;
- const raf=window.requestAnimationFrame.bind(window);
+ const raf=window.requestAnimationFrame.bind(window),caf=window.cancelAnimationFrame.bind(window);
  const saved=sessionStorage.getItem('demolition-clock');
  const epoch=saved?Number(saved):__EPOCH__;let elapsed=0;
  Date.now=()=>epoch+elapsed;Object.defineProperty(performance,'now',{value:()=>elapsed});
+ // Read-only native-frame observer: deliberately bypass the controlled RAF
+ // wrapper and expose its real callback timestamp, without advancing elapsed.
+ let observerFrame=0;
+ window.__demoObserveFrame=({selector,timeoutMs})=>new Promise(resolve=>{
+   const observe=(nativeFrameTimestamp,observerTimedOut)=>{
+     const element=document.querySelector(selector),r=element?.getBoundingClientRect();
+     return {nativeFrameSequence:observerFrame,nativeFrameTimestamp,observerTimedOut,controlledElapsed:elapsed,
+       geometry:{scrollX,scrollY,width:innerWidth,height:innerHeight,
+         documentWidth:document.scrollingElement.scrollWidth,documentHeight:document.scrollingElement.scrollHeight,
+         rect:r?{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}:null}};
+   };
+   const guard=setTimeout(()=>{caf(frame);resolve(observe(null,true));},timeoutMs);
+   const frame=raf(timestamp=>{clearTimeout(guard);observerFrame++;resolve(observe(timestamp,false));});
+ });
  window.__demoFrameCount=0;
  window.requestAnimationFrame=callback=>raf(()=>{window.__demoFrameCount++;callback(elapsed);});
  window.__demoAdvance=async ms=>{const beforeAt=epoch+elapsed;elapsed+=ms;sessionStorage.setItem('demolition-clock',String(epoch+elapsed));await new Promise(raf);await new Promise(raf);return{beforeAt,afterAt:epoch+elapsed};};
@@ -410,7 +424,53 @@ def text_leaf_visibility(page, selectors):
       })};
     }""", selectors)
 
+def wait_for_scroll_settled(page, selector):
+    # A target entering the viewport does not mean its native smooth scroll has
+    # stopped. Require four fresh native frames with exact complete geometry,
+    # spanning >=150ms on both the native RAF and independent host clocks.
+    # Nothing here changes CSS, input, elapsed game time or application methods.
+    started = time.monotonic()
+    samples, previous, identical, stable_host, stable_native = [], None, 0, None, None
+    for attempt in range(33):
+        remaining = 1600 - (time.monotonic() - started) * 1000
+        if remaining <= 0:
+            break
+        current = page.evaluate('options=>window.__demoObserveFrame(options)',
+                                {'selector': selector, 'timeoutMs': min(250, remaining)})
+        observed_at = time.monotonic()
+        current['hostOffsetMilliseconds'] = (observed_at - started) * 1000
+        samples.append(current)
+        geometry = current['geometry']
+        fresh = not current['observerTimedOut'] and current['nativeFrameTimestamp'] is not None and (
+            previous is None or current['nativeFrameSequence'] > previous['nativeFrameSequence'] and
+            current['nativeFrameTimestamp'] > previous['nativeFrameTimestamp'] and
+            current['controlledElapsed'] == previous['controlledElapsed'])
+        if not fresh or geometry['rect'] is None:
+            check('scroll readiness requires a fresh native frame, unchanged game clock and mounted target', False,
+                  {'selector': selector, 'samples': samples})
+        if previous is not None and exact_json(previous['geometry'], geometry):
+            identical += 1
+        else:
+            identical, stable_host, stable_native = 1, observed_at, current['nativeFrameTimestamp']
+        host_span = (observed_at - stable_host) * 1000
+        native_span = current['nativeFrameTimestamp'] - stable_native
+        if identical >= 4 and host_span >= 150 and native_span >= 150 and current['hostOffsetMilliseconds'] <= 1600:
+            check('native scroll and target geometry settle across four fresh frames and 150 ms', True,
+                  {'selector': selector, 'samples': samples, 'stableSamples': identical,
+                   'stableHostMilliseconds': host_span, 'stableNativeFrameMilliseconds': native_span,
+                   'hostClock': 'Python monotonic; not the controlled browser clock'})
+            return
+        previous = current
+        if attempt < 32:
+            remaining = 1600 - (time.monotonic() - started) * 1000
+            if remaining <= 0:
+                break
+            page.wait_for_timeout(min(50, remaining))
+    check('native scroll and target geometry settle within 1600 ms bounded sampling', False, {'selector': selector, 'samples': samples})
+
+
 def native_scroll_to(page, selector):
+    wait_for_scroll_settled(page, selector)
     for _ in range(5):
         target = page.locator(selector); box = target.bounding_box()
         limits = target.evaluate('''element=>{
@@ -429,7 +489,8 @@ def native_scroll_to(page, selector):
             return
         target_y = limits['top'] + (available - box['height']) / 2
         page.mouse.move(limits['width'] - 12, limits['height'] - 12)
-        page.mouse.wheel(0, round(box['y'] - target_y)); page.wait_for_timeout(100); advance(page)
+        page.mouse.wheel(0, round(box['y'] - target_y)); advance(page)
+        wait_for_scroll_settled(page, selector)
     raise AssertionError('Actual wheel input could not expose the complete requested region')
 
 def capture_failure(error, page=None):
@@ -643,9 +704,12 @@ def responsive(page, label, quote=False):
                 check(f'{label} {width}px old upgrade is visibly structurally blocked during demolition', page.locator(REBUILD).is_disabled() and '拆除' in page.locator(REBUILD).inner_text())
             snap(page, f'{label}-{width}-{index}.png')
             after = visibility(page, [selector]); after_leaves = text_leaf_visibility(page, [selector])
-            check('screenshot preserves actual visible control and every glyph', exact_json(before, after) and exact_json(leaves, after_leaves))
+            # Persist both complete observations BEFORE asserting so a real
+            # screenshot movement/clipping failure retains its exact difference.
             artifact = out / f'{label}-{width}-{index}-visibility.json'; atomic_json(artifact, {'before': before, 'after': after, 'textLeaves': leaves, 'afterTextLeaves': after_leaves})
             evidence.append({'case': case, 'file': artifact.name, 'sha256': hashlib.sha256(artifact.read_bytes()).hexdigest()})
+            check('screenshot preserves actual visible control and every glyph', exact_json(before, after) and exact_json(leaves, after_leaves),
+                  {'artifact': artifact.name, 'beforeTarget': before, 'afterTarget': after, 'everyGlyphAndAncestorExact': exact_json(leaves, after_leaves)})
         check(f'{label} {width}px no horizontal document overflow', page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
         if quote:
             native_scroll_to(page, '#demolition-review'); snap(page, f'{label}-{width}-complete-quote.png')
