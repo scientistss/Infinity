@@ -390,3 +390,16 @@ node --import tsx scripts/check-original-parity.mjs /tmp/infinity-original-p3
 候选最终本地重新通过1950项单元、构建、自然地形路线与原生fixture生成；Python全脚本语法检查通过。独审补齐四宽内部付款／取消／DM按钮本体的滚轮、命中和截图合同，并要求正式原生验收的限定源码工作树干净且实际Git HEAD匹配目标SHA。这里的本地运行仍明确标为未提交准备态，正式精确来源证明由随后干净CI重新生成。
 
 剩余本地性能模型及舰船产能完整状态对照随后通过，保存会话八版本fixture也生成成功。旧模型新增卡的首轮差异保留为合同变化；产能对照另捕获真实自动曲率后的授予账epoch变更，修订仅在固定旧引擎独立证明单次重置、全部旧付款权限退役与无重置后工作时建立新floor，普通步骤继续固定原floor。一次追加断言误把“全轮无手动动作”的 automatedLaunches 统计当作协议执行计数，实际运行拒绝后按旧字段合同更正；不能据此改生产统计或把首轮失败追认为成功。Node时间样本只说明该环境下的模型运行，不作为浏览器CPU或新性能提升结论。
+
+
+## 阶段 17–18：研究网络与普通拆除 A 的精确交付
+
+地形改造与星际研究网络已以 [ac3cce9](https://github.com/scientistss/Infinity/commit/ac3cce98403bea1e7162bcb4092e4cfeeb448a9a)／0.6.17-alpha.1／v9r10 交付；[CI 38123216394](https://github.com/scientistss/Infinity/actions/runs/38123216394)及[独立推广 CI 38125421008](https://github.com/scientistss/Infinity/actions/runs/38125421008)分别成功。精确62资源已发布到隔离私人试玩站。实验室资格、固定付款、已开工时长冻结和旧授格边界分别见 [IRN](RESEARCH_NETWORK.md) 与[地形规则](TERRAFORMER.md)。
+
+普通拆除 A 的 [ca5ef0c769856f2c4c8925e76a5c7d322822fe1b](https://github.com/scientistss/Infinity/commit/ca5ef0c769856f2c4c8925e76a5c7d322822fe1b)／0.6.18-alpha.1／v9r11 于2026-10-11 12:15 UTC通过自己的[完整 CI 38136407547](https://github.com/scientistss/Infinity/actions/runs/38136407547)：2327单元、1225拆除原生、1610 SaveSession及全部原有门禁完成。精确 [artifact11701848232](https://github.com/scientistss/Infinity/actions/runs/38136407547/artifacts/11701848232) 的62资源与402源码全核后，已于12:24 UTC前发布同一隔离私人试玩站；原站保持。非强制开发分支推广已远端读回ca5，[额外 CI38139011115](https://github.com/scientistss/Infinity/actions/runs/38139011115)在本文记录时仍运行，不能借候选绿宣称它已结束。
+
+[完整验收记录](DEMOLITION_RELEASE.md)保留实际经济路径、真实启动381ms的完整旧引擎对照、显式无推进导入、原件/备份安全、四宽截图以及前序失败。性能12次／6对完整样本相对固定旧4b基线观察到CPU增加，正常场景无稳态长任务；极端100星／1000舰队页面的既有高负载仍需后续优化，不声称提速或60fps。
+
+NPC另有独立准备检查点 [1b648fca](https://github.com/scientistss/Infinity/commit/1b648fca6f5124ff13acf2f41664dc5d16831428)／[CI38131736893](https://github.com/scientistss/Infinity/actions/runs/38131736893)及 [e3ca1123](https://github.com/scientistss/Infinity/commit/e3ca112323889b8190802cbfd01d3b75c6c640fd)／[CI38133994773](https://github.com/scientistss/Infinity/actions/runs/38133994773)，均完整成功。e3范围为2039单元、68纯函数金标、1769项旧r10自然身份侦察续程及原应用回归；生产src/资源仍为ac3。NPC经济没有接入tick、存档、到达库存或UI，也未作为新版游戏发布。
+
+[27项路线图](ROADMAP_ACCEPTANCE.md)现按已发布、部分、未实现与机制未定义更新；原始交接全文缺失和旧R12不可验证仍明确记录。本轮文档提交只记录上述代码及发布事实，它自己的CI待独立完成；不因文档后继检查再循环生成“完成”提交。

@@ -25,8 +25,12 @@ Exact fee/job/timer/state comparisons are separate from the independently integr
 
 Existing full ring, SaveSession, order, template, formation, navigation, background-time and paired-browser performance gates remain mandatory. There was no local native-browser run for this candidate. Publication requires this candidate's own complete CI and independently verified immutable dist/source artifact.
 
-## Local preparation record
+## Historical local preparation record
 
 The integration run passed2319 unit tests and the build; original view/style/assets and ring artwork checks passed. Fifteen later fixture generators actually executed, producing127 accepted strict cold-read envelopes. Four existing formation/research-template inputs still receive the same achievement/card normalization as separately executed fixed ac3 source; their pre-existing unseeded ring outcomes differ between independent generation runs and are not presented as whole-fixture byte parity.
 
 Earlier local red cases were retained: one-second RAF subtraction tails, downward-rounded quote display, and unsettled synthetic achievement/card setup. The fixes did not alter historical upgrade prices, grant fields, or previously published CI outcomes. Native CI remains the next independent gate.
+
+## Final exact-code acceptance
+
+The candidate subsequently passed its own complete CI and immutable-artifact review at ca5ef0c769856f2c4c8925e76a5c7d322822fe1b. See [the release record](DEMOLITION_RELEASE.md) for the successful run, actual native coverage, startup-oracle correction, preserved failed runs and measured performance costs. The earlier local preparation counts above remain historical rather than being relabeled as the final run.
