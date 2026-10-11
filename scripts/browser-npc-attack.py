@@ -25,6 +25,35 @@ from playwright.sync_api import sync_playwright, expect
 
 HOST_STARTED_MONOTONIC = time.monotonic()
 HOST_STARTED_AT = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+NATIVE_RELOAD_CHECKPOINTS = ('attack7-paid-outbound', 'attack8-paid-outbound',
+                             'win8-loot-delivered-once', 'empty10-zero-round-loot-delivered')
+
+
+def native_reload_schedule_valid(report):
+    """Reject a frequent-reload or ambiguously labeled oracle before browser use."""
+    expected = {'name': 'native-four-reload-oracle', 'mode': 'native-main-four',
+        'checkpointNames': list(NATIVE_RELOAD_CHECKPOINTS), 'strictRoundtripsPerCheckpoint': 2,
+        'validation': 'detached-copies', 'candidateReadsPerReload': 1, 'controlReadsPerReload': 1,
+        'blockedRetryAdoptsReload': False}
+    if report.get('schema') != 'infinity-npc-attack-natural-route-v2' or not exact_json(report.get('reloadSchedule'), expected):
+        return False
+    if report.get('source', {}).get('reloadSchedule') != 'native-main-four':
+        return False
+    rows = report.get('milestones', [])
+    names = [row.get('name') for row in rows]
+    if len(rows) != 34 or len(set(names)) != 34:
+        return False
+    if [op.get('name') for op in report.get('tape', []) if op.get('kind') == 'checkpoint'] != names:
+        return False
+    if [name for name in names if name in NATIVE_RELOAD_CHECKPOINTS] != list(NATIVE_RELOAD_CHECKPOINTS):
+        return False
+    for row in rows:
+        adopted = row['name'] in NATIVE_RELOAD_CHECKPOINTS
+        if (not exact_json(row.get('strictRoundtrips'), 2) or row.get('stateAdoptedFromReload') is not adopted
+                or not exact_json(row.get('candidateReloadReads'), int(adopted)) or not exact_json(row.get('controlReloadReads'), int(adopted))):
+            return False
+    blocked = report.get('branches', {}).get('blockedRetry', {})
+    return blocked.get('stateAdoptedFromReload') is False and exact_json(blocked.get('strictRoundtrips'), 1)
 
 
 def atomic_json(path, value):
@@ -35,8 +64,8 @@ def atomic_json(path, value):
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--url', default='http://127.0.0.1:4173/Infinity/')
-parser.add_argument('--fixture', default='npc-attack-natural-report.json')
-parser.add_argument('--natural-report', default='npc-attack-natural-report.json')
+parser.add_argument('--fixture', default='npc-attack-native-report.json')
+parser.add_argument('--natural-report', default='npc-attack-native-report.json')
 parser.add_argument('--expected-report-sha256', required=True)
 parser.add_argument('--release')
 parser.add_argument('--output', default='npc-attack-evidence')
@@ -141,6 +170,7 @@ checks, errors, failed_requests, evidence, source_bindings = [], [], [], [], []
 page_sources, release_metadata = {}, None
 completed, active_page, source_sha, failure = False, None, None, None
 case, branch_metrics = 'setup', {}
+main_reload_checkpoints = []
 CARD, QUEUE = '#space-messages', '#space-fleets'
 WALLET_TOLERANCE = 1e-7
 CLOCK = r'''(() => {
@@ -794,6 +824,7 @@ def flush():
         'case': case, 'url': args.url, 'sourceSha': source_sha, 'fixture': fixtures['description'],
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR12SaveSha256': fixtures['origin']['rawSha256'],
+        'oracleReloadSchedule': fixtures.get('reloadSchedule'), 'observedMainReloadCheckpoints': main_reload_checkpoints,
         'classification': 'Unedited public eef r12 66s two-scout save imported through the native file picker; complete r13 paid action/tick tape replay. Explicit native Storage fault wrappers and DOM mutation probes are separate branches. The two enumerated synthetic boundary fixtures change only colony metal right to 0.25 or landed LF count to 1e15; neither is part of the natural main.',
         'responsiveScope': '320/390/768/1440 actual frozen report glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only, with route/clear/form/report four-width witnesses at real milestones.',
         'timing': timing_report(), 'oracle': 'Natural-main serialized fields equal pinned eef legacy engine plus independent NPC LF combat, loot, FNV, wallet, event and exact-decimal oracle. Curvature and abandonment have independent whole-state branch checks. Other boundary envelopes are real current-engine executions with separately asserted ownership, money and combat invariants. No game globals or source injection. Natural main is never economically patched; the explicitly synthetic branch fields are enumerated separately.',
@@ -1063,8 +1094,8 @@ def native_tape(page):
         kind = operation['kind']
         if kind == 'checkpoint':
             name = operation['name']; actual = save(page, name)
-            if name in ('attack7-paid-outbound', 'attack8-paid-outbound', 'win8-loot-delivered-once', 'empty10-zero-round-loot-delivered'):
-                reload_same_time(page, name); record(page, 'native-' + name)
+            if name in NATIVE_RELOAD_CHECKPOINTS:
+                reload_same_time(page, name); main_reload_checkpoints.append(name); record(page, 'native-' + name)
             if name == 'empty10-zero-round-loot-delivered':
                 remainder_detail_witness(page, actual)
             if name == 'first-three-fighters-complete' and not draft_done:
@@ -1111,6 +1142,7 @@ def native_tape(page):
             tab(page, 'fleet'); trusted_click(page, f'[data-space="npc-retry-dock"][data-fleet="{operation["fleetId"]}"]')
         else:
             raise AssertionError('Unknown exact natural tape operation: ' + kind)
+    check('exactly the four declared native main reloads completed in order', main_reload_checkpoints == list(NATIVE_RELOAD_CHECKPOINTS))
     check('full native paid route includes four-width draft/form/report witnesses', draft_done and quote_widths_done and report_widths_done)
 
 
@@ -1345,9 +1377,10 @@ try:
     source_bytes = Path(args.natural_report).read_bytes(); source_report = json.loads(source_bytes)
     check('complete natural report independently pinned by fixture and CLI', hashlib.sha256(source_bytes).hexdigest() == args.expected_report_sha256 == fixture_sha256)
     check('passing exact candidate natural report with clean source required',
-          source_report['schema'] == 'infinity-npc-attack-natural-route-v1' and source_report['outcome']['status'] == 'passed'
+          source_report['schema'] == 'infinity-npc-attack-natural-route-v2' and source_report['outcome']['status'] == 'passed'
           and source_report['source']['sourceSha'] == source_report['source']['gitHead'] == args.expected_sha
           and source_report['source']['sourceScopeStatusPorcelain'] == '')
+    check('native oracle declares and proves the exact four-reload schedule', native_reload_schedule_valid(source_report))
     check('original public r12 final raw remains byte-exact', hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
           and fixtures['originalSave']['revision'] == 12 and fixtures['base']['revision'] == 13
           and fixtures['provenance']['injectedGameState'] is False)

@@ -3,6 +3,7 @@
  * Test-oracle state is never supplied to the candidate. Browser replay is CI-only.
  * node --import tsx scripts/npc-attack-natural-route.ts --base-report PATH
  *   --base-report-sha256 SHA --legacy-root EEF_CHECKOUT --output NEW.json
+ *   [--reload-schedule frequent-reload | native-main-four]
  */
 import { activePlanet } from "../src/game/empire";
 import { emptyCargo, quoteFlight, sendFleet, recallFleet, abandonColony } from "../src/game/fleet";
@@ -32,10 +33,14 @@ const DURATION = (10 + 35000 / 100 * Math.sqrt(10 * 1025 / (12500 * 1.3))) / 120
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i]!, value = process.argv[i + 1];
-  if (!["--base-report", "--base-report-sha256", "--legacy-root", "--output"].includes(key) || !value || args.has(key)) throw Error("Require --base-report PATH --base-report-sha256 SHA --legacy-root EEF --output NEW.json");
+  if (!["--base-report", "--base-report-sha256", "--legacy-root", "--output", "--reload-schedule"].includes(key) || !value || args.has(key)) throw Error("Require --base-report PATH --base-report-sha256 SHA --legacy-root EEF --output NEW.json");
   args.set(key, value);
 }
-if (args.size !== 4) throw Error("Four named arguments required");
+if (!["--base-report", "--base-report-sha256", "--legacy-root", "--output"].every(key => args.has(key))) throw Error("Four required named arguments missing");
+const RELOAD_SCHEDULE = args.get("--reload-schedule") ?? "frequent-reload";
+if (!["frequent-reload", "native-main-four"].includes(RELOAD_SCHEDULE)) throw Error("Unknown --reload-schedule; require frequent-reload or native-main-four");
+const NATIVE_RELOAD_CHECKPOINTS = ["attack7-paid-outbound", "attack8-paid-outbound", "win8-loot-delivered-once", "empty10-zero-round-loot-delivered"];
+const nativeSchedule = RELOAD_SCHEDULE === "native-main-four";
 const OUTPUT = resolve(args.get("--output")), LEGACY = realpathSync(args.get("--legacy-root"));
 if (existsSync(OUTPUT) || /^(src|scripts|tests|public|docs|\.github|\.git)(\/|$)/.test(OUTPUT.slice(ROOT.length + 1))) throw Error("Output must be a new evidence file outside protected source paths");
 realpathSync(dirname(OUTPUT));
@@ -107,12 +112,22 @@ function invariant() {
 function checkpoint(name: string) {
   stage = name; invariant(); const before = serializeState(state), at = startAt + elapsed * 1000;
   const raw = exportSave(state, at, at), parsed = importSave(raw); exact("strict full-state roundtrip", parsed.state, before);
-  state = deserializeState(parsed.state); const canonical = exportSave(state, at, at);
-  state = deserializeState(importSave(canonical).state); exact("second strict roundtrip full state", serializeState(state), before);
-  exact("canonical export is stable", exportSave(state, at, at), canonical);
-  // Historical control gets the identical ordinary save read, without any candidate state.
-  control = old.save.deserializeState(old.save.importSave(old.save.exportSave(control, at, at)).state);
-  invariant(); milestones.push({ name, elapsedSeconds: elapsed, raw: canonical, rawSha256: hash(canonical), save: JSON.parse(canonical), strictRoundtrips: 2, stateAdoptedFromReload: true });
+  // Saving and strict validation must not silently replace the live Decimal
+  // representation. Only an actual scheduled reload adopts a parsed state.
+  const restored = deserializeState(parsed.state), canonical = exportSave(restored, at, at);
+  const twice = deserializeState(importSave(canonical).state); exact("second strict roundtrip full state", serializeState(twice), before);
+  exact("canonical export is stable", exportSave(twice, at, at), canonical);
+  const adopted = !nativeSchedule || NATIVE_RELOAD_CHECKPOINTS.includes(name);
+  if (adopted) {
+    // Preserve the original frequent-reload regression's two candidate reads;
+    // the native route has one browser startup read at each of four checkpoints.
+    state = nativeSchedule ? restored : twice;
+    // Historical control receives its own ordinary read on the same schedule,
+    // without ever receiving candidate state or the independent NPC oracle.
+    control = old.save.deserializeState(old.save.importSave(old.save.exportSave(control, at, at)).state);
+  }
+  invariant(); milestones.push({ name, elapsedSeconds: elapsed, raw: canonical, rawSha256: hash(canonical), save: JSON.parse(canonical),
+    strictRoundtrips: 2, stateAdoptedFromReload: adopted, candidateReloadReads: adopted ? (nativeSchedule ? 1 : 2) : 0, controlReloadReads: adopted ? 1 : 0 });
   tape.push({ kind: "checkpoint", name });
 }
 // Independent ordinary-route oracle: a fixed 256-place integer grid, not the
@@ -332,7 +347,7 @@ try {
     exact(`independent frozen monetary pair: ${golden.name}`, pair ? [pair.wallet.toString(), pair.remainder] : [null, null], [golden.wallet, golden.remainder]);
   }
   const files = git(ROOT, "ls-files", "--cached", "--others", "--exclude-standard", "--", "src").split("\n").filter(Boolean).map((path: string) => ({ path, sha256: hash(readFileSync(resolve(ROOT, path))) }));
-  source = { sourceSha: git(ROOT, "rev-parse", "HEAD"), gitHead: git(ROOT, "rev-parse", "HEAD"), sourceScopeStatusPorcelain: git(ROOT, "status", "--porcelain=v1", "--untracked-files=all", "--", "src", "scripts", "tests", "public", ":(glob)*.json", ":(glob)*.ts", ":(glob)*.mjs", "index.html", ".github"), sourceFiles: files, scriptSha256: hash(readFileSync(new URL(import.meta.url))), historicalProducer: { sourceSha: PIN, srcTree: git(LEGACY, "rev-parse", "HEAD:src"), sourceFiles: historicalFiles }, baseReportSha256: hash(bytes) };
+  source = { reloadSchedule: RELOAD_SCHEDULE, sourceSha: git(ROOT, "rev-parse", "HEAD"), gitHead: git(ROOT, "rev-parse", "HEAD"), sourceScopeStatusPorcelain: git(ROOT, "status", "--porcelain=v1", "--untracked-files=all", "--", "src", "scripts", "tests", "public", ":(glob)*.json", ":(glob)*.ts", ":(glob)*.mjs", "index.html", ".github"), sourceFiles: files, scriptSha256: hash(readFileSync(new URL(import.meta.url))), historicalProducer: { sourceSha: PIN, srcTree: git(LEGACY, "rev-parse", "HEAD:src"), sourceFiles: historicalFiles }, baseReportSha256: hash(bytes) };
   original = { ...row.save, raw: row.raw, rawSha256: RAW_SHA }; startAt = row.save.lastTickAt;
   state = deserializeState(importSave(row.raw).state); control = old.save.deserializeState(old.save.importSave(row.raw).state);
   // Oracle-only relative clock, never passed to candidate or browser as a save.
@@ -357,6 +372,9 @@ try {
   const empty = state.npcBattles.reports.find(r => r.fleetId === 10)!; exact("no replenishment: zero-round paid collection", [empty.battle.rounds, empty.battle.defenderBefore, empty.battle.defenderAfter], [[], {}, {}]);
   exact("unchanged natural action/time sequence finishes at31 seconds", elapsed, 31);
   check("one player loss persists after all returns", activePlanet(state).units.light_fighter === 6); check("same actual probe safely returned", activePlanet(state).units.espionage_probe === 1);
+  exact("all34 checkpoints retain both strict roundtrip validations", milestones.length, 34);
+  exact("live adoption follows the selected complete reload schedule", milestones.filter(m => m.stateAdoptedFromReload).map(m => m.name),
+    nativeSchedule ? NATIVE_RELOAD_CHECKPOINTS : milestones.map(m => m.name));
   mainComplete = true;
   // Refresh/offline use genuine complete saved milestones, no economic edits.
   stage = "branch-offline";
@@ -441,8 +459,9 @@ try {
   exact("failed retry preserves every source field", serializeState(refused.state), blockedSave);
   const blockedAt = preDockRow.save.savedAt + 1000;
   const blockedRaw = exportSave(blockedState, blockedAt, blockedAt);
-  blockedState = deserializeState(importSave(blockedRaw).state);
-  exact("blocked return strictly reloads complete ship/cargo/right ownership", serializeState(blockedState), blockedSave);
+  const blockedReloadedCopy = deserializeState(importSave(blockedRaw).state);
+  exact("blocked return strictly reloads complete ship/cargo/right ownership", serializeState(blockedReloadedCopy), blockedSave);
+  if (!nativeSchedule) blockedState = blockedReloadedCopy; // Preserve original frequent-reload branch coverage.
   const capacityQuote = quoteFlight(blockedState, request("attack", 6)); check("new attack permits legal release from stationed 1e15 without changing flight limit", capacityQuote.ok);
   const freed = sendFleet(blockedState, request("attack", 6)); check("six real paid outgoing ships release exactly six landed slots", freed.ok);
   const freedSave = serializeState(freed.state), oldHome = activePlanet(blockedState), freedHome = activePlanet(freed.state);
@@ -468,19 +487,23 @@ try {
   branches.blockedRetry = { classification: "EXPLICIT SYNTHETIC BOUNDARY: real paid attack8 return from natural18, only home landed LF count set to 1e15. Strict reader accepts it. Real arrival blocks, unchanged retry fails, genuine paid attack sends six ships, one retry deposits original six ships and original loot exactly once. No resource, technology, NPC, fleet, cargo or time injection.",
     syntheticChanges: [{ path: "planets[homeworld].units.light_fighter", before: beforeSyntheticShips, after: 1e15 }],
     base: JSON.parse(blockedBaseRaw), baseRaw: blockedBaseRaw, advanceToBlocked: 1, fleetId: 8, releaseCount: 6, releaseFleetId: freed.fleetId,
-    blocked: blockedSave, blockedRaw, refusal: refused.reason, released: freedSave, expected: serializeState(docked.state), moneyWitnesses: retryMoney };
+    stateAdoptedFromReload: !nativeSchedule, strictRoundtrips: 1, blocked: blockedSave, blockedRaw, refusal: refused.reason, released: freedSave, expected: serializeState(docked.state), moneyWitnesses: retryMoney };
 
   stage = "source-recheck";
   check("historical bytes unchanged during route", historicalFiles.every((f: RecordValue) => hash(readFileSync(resolve(LEGACY, f.path))) === f.sha256));
   check("candidate bytes unchanged during route", files.every((f: RecordValue) => hash(readFileSync(resolve(ROOT, f.path))) === f.sha256));
 } catch (error) { failure = error instanceof Error ? error.message : String(error); process.exitCode = 1; }
 const expected = Object.fromEntries(milestones.map(m => [m.name, m.save.state]));
-const report = { schema: "infinity-npc-attack-natural-route-v1", source: source!, key: STORAGE_KEY, homeId: "homeworld", colonyId: "colony-1",
+const report = { schema: "infinity-npc-attack-natural-route-v2", source: source!, key: STORAGE_KEY, homeId: "homeworld", colonyId: "colony-1",
   description: "Exact public eef r12 66-second two-scout save → real r13 scout6 → paid weapons1 and six built LF → draw7 permanent loss → win8 loot/return → production/rescout9 → empty10 collection. Independent LF combat/loot plus exact pinned eef whole-state legacy control.",
   origin: original!, originalSave: original! ? JSON.parse(original!.raw) : null, originalSaveRaw: original?.raw, base: milestones[0]?.save,
   importedSave: milestones[0]?.save, provenance: { scope: "Natural main and non-synthetic forks only; branches.abandon and branches.blockedRetry enumerate all authorized synthetic changes", syntheticBranches: ["abandon", "blockedRetry"], injectedGameState: false, noWalletTechnologyShipClockInjection: true, originalR12RawSha256: RAW_SHA, legacyOracleSource: PIN, oracleStateNeverAdoptedByCandidate: true },
   literalGoldens: { originalTotalTime: 25876, originalNpcStock: [830, 415, 66], weaponsCost: [800, 200, 0], eachThreeFighterCost: [9000, 3000, 0], lightFighterSeconds: .96, distance: 1025, duration: DURATION, attack7Seed: 1037330552, attack8Seed: 1344031299, draw7: battle(7, 4, 4), win8: battle(8, 6, 2), winCapacity: 420, finalFighters: 6 },
   moneyWitnesses, remainderGoldens: JSON.parse(String(readFileSync(new URL("../tests/fixtures/npc-attack-independent-goldens.json", import.meta.url)))).remainderGoldens, remainderOracle: "Independent fixed256-place BigInt grid; old eef Decimal represents candidate values only. Five-term conservation is proven for each exact-event fuel/loot settlement. Bounded greatest-candidate enumeration is independently implemented and cross-checked with frozen literal amount goldens; no production remainder helper imports.",
+  reloadSchedule: { name: nativeSchedule ? "native-four-reload-oracle" : "frequent-reload-regression", mode: RELOAD_SCHEDULE,
+    checkpointNames: milestones.filter(m => m.stateAdoptedFromReload).map(m => m.name), strictRoundtripsPerCheckpoint: 2,
+    validation: "detached-copies", candidateReadsPerReload: nativeSchedule ? 1 : 2, controlReadsPerReload: 1,
+    blockedRetryAdoptsReload: !nativeSchedule },
   tape, milestones, naturalMilestones: Object.fromEntries(milestones.map(m => [m.name, m])), expected, branches,
   timing: { wallElapsedSeconds: (performance.now() - started) / 1000, adoptedContinuationGameSeconds: elapsed }, checks,
   outcome: { status: failure ? "failed" : "passed", mainStatus: mainComplete ? "passed" : "failed", failure, lastStage: stage, finalStateSha256: state! ? hash(JSON.stringify(serializeState(state!))) : null, totalGameSeconds: state!?.totalTime.toString() } };

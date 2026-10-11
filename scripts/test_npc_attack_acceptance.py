@@ -95,6 +95,118 @@ class AttackAcceptanceContract(unittest.TestCase):
 
 
 
+class NativeReloadScheduleContract(unittest.TestCase):
+    """Exercise the real pre-browser validator without importing Playwright."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+        tree = ast.parse(cls.source)
+        selected = ast.Module(body=[node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in ('native_reload_schedule_valid', 'exact_json')
+            or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                and target.id == 'NATIVE_RELOAD_CHECKPOINTS' for target in node.targets)], type_ignores=[])
+        cls.functions = {}
+        exec(compile(selected, '<offline-native-reload-contract>', 'exec'), cls.functions)
+        cls.reloads = ('attack7-paid-outbound', 'attack8-paid-outbound',
+                      'win8-loot-delivered-once', 'empty10-zero-round-loot-delivered')
+
+    def fixture(self):
+        names = [f'save-only-{n}' for n in range(30)] + list(self.reloads)
+        return {'schema': 'infinity-npc-attack-natural-route-v2',
+            'source': {'reloadSchedule': 'native-main-four'},
+            'reloadSchedule': {'name': 'native-four-reload-oracle', 'mode': 'native-main-four',
+                'checkpointNames': list(self.reloads), 'strictRoundtripsPerCheckpoint': 2,
+                'validation': 'detached-copies', 'candidateReadsPerReload': 1, 'controlReadsPerReload': 1,
+                'blockedRetryAdoptsReload': False},
+            'milestones': [{'name': name, 'strictRoundtrips': 2, 'stateAdoptedFromReload': name in self.reloads,
+                'candidateReloadReads': int(name in self.reloads), 'controlReloadReads': int(name in self.reloads)} for name in names],
+            'tape': [{'kind': 'checkpoint', 'name': name} for name in names],
+            'branches': {'blockedRetry': {'stateAdoptedFromReload': False, 'strictRoundtrips': 1}}}
+
+    def valid(self, fixture):
+        return self.functions['native_reload_schedule_valid'](fixture)
+
+    def test_exact_four_reload_oracle_is_accepted(self):
+        self.assertEqual(self.functions['NATIVE_RELOAD_CHECKPOINTS'], self.reloads)
+        self.assertTrue(self.valid(self.fixture()))
+
+    def test_missing_old_frequent_or_mislabeled_metadata_is_rejected(self):
+        for mutation in ('missing', 'v1', 'frequent', 'source', 'one_missing', 'reordered',
+                         'validation', 'double_adoption', 'legacy_mismatch', 'blocked', 'boolean_read'):
+            fixture = self.fixture()
+            with self.subTest(mutation=mutation):
+                schedule = fixture['reloadSchedule']
+                if mutation == 'missing': del fixture['reloadSchedule']
+                elif mutation == 'v1': fixture['schema'] = 'infinity-npc-attack-natural-route-v1'
+                elif mutation == 'frequent': schedule.update(name='frequent-reload-regression', mode='frequent-reload')
+                elif mutation == 'source': fixture['source']['reloadSchedule'] = 'frequent-reload'
+                elif mutation == 'one_missing': schedule['checkpointNames'].pop()
+                elif mutation == 'reordered': schedule['checkpointNames'].reverse()
+                elif mutation == 'validation': schedule['strictRoundtripsPerCheckpoint'] = 1
+                elif mutation == 'double_adoption': schedule['candidateReadsPerReload'] = 2
+                elif mutation == 'legacy_mismatch': schedule['controlReadsPerReload'] = 0
+                elif mutation == 'blocked': schedule['blockedRetryAdoptsReload'] = True
+                elif mutation == 'boolean_read': schedule['candidateReadsPerReload'] = True
+                self.assertFalse(self.valid(fixture))
+
+    def test_actual_adoption_and_complete_checkpoint_sequence_are_required(self):
+        for mutation in ('all_adopted', 'undeclared_adoption', 'missed_reload', 'candidate_twice',
+                         'legacy_missing', 'strict_missing', 'boolean_read', 'duplicate', 'incomplete',
+                         'tape_reordered', 'tape_missing', 'blocked_adopted', 'blocked_unvalidated'):
+            fixture = self.fixture()
+            with self.subTest(mutation=mutation):
+                rows = fixture['milestones']
+                if mutation == 'all_adopted':
+                    for row in rows: row.update(stateAdoptedFromReload=True, candidateReloadReads=1, controlReloadReads=1)
+                elif mutation == 'undeclared_adoption': rows[0]['stateAdoptedFromReload'] = True
+                elif mutation == 'missed_reload': rows[-1]['stateAdoptedFromReload'] = False
+                elif mutation == 'candidate_twice': rows[-1]['candidateReloadReads'] = 2
+                elif mutation == 'legacy_missing': rows[-1]['controlReloadReads'] = 0
+                elif mutation == 'strict_missing': rows[0]['strictRoundtrips'] = 1
+                elif mutation == 'boolean_read': rows[-1]['candidateReloadReads'] = True
+                elif mutation == 'duplicate': rows[0]['name'] = rows[1]['name']
+                elif mutation == 'incomplete': rows.pop()
+                elif mutation == 'tape_reordered': fixture['tape'].reverse()
+                elif mutation == 'tape_missing': fixture['tape'].pop()
+                elif mutation == 'blocked_adopted': fixture['branches']['blockedRetry']['stateAdoptedFromReload'] = True
+                elif mutation == 'blocked_unvalidated': fixture['branches']['blockedRetry'].pop('strictRoundtrips')
+                self.assertFalse(self.valid(fixture))
+
+    def test_schedules_have_separate_outputs_and_both_complete_ci_gates(self):
+        workflow = (ROOT / '.github/workflows/p4-original-verify.yml').read_text()
+        calls = [line for line in workflow.splitlines() if 'node --import tsx scripts/npc-attack-natural-route.ts ' in line]
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn('--reload-schedule', calls[0])
+        self.assertIn('--output "$GITHUB_WORKSPACE/npc-attack-natural-report.json"', calls[0])
+        self.assertIn('--reload-schedule native-main-four', calls[1])
+        self.assertIn('--output "$GITHUB_WORKSPACE/npc-attack-native-report.json"', calls[1])
+        browser = next(line for line in workflow.splitlines() if 'python scripts/browser-npc-attack.py ' in line)
+        self.assertIn('--fixture npc-attack-native-report.json --natural-report npc-attack-native-report.json', browser)
+        self.assertIn('$(sha256sum npc-attack-native-report.json', browser)
+        self.assertIn('            npc-attack-natural-report.json', workflow)
+        self.assertIn('            npc-attack-native-report.json', workflow)
+
+    def test_live_reload_adoption_is_distinct_from_strict_validation(self):
+        source = (ROOT / 'scripts/npc-attack-natural-route.ts').read_text()
+        self.assertIn('args.get("--reload-schedule") ?? "frequent-reload"', source)
+        self.assertIn('if (!["frequent-reload", "native-main-four"].includes(RELOAD_SCHEDULE)) throw', source)
+        checkpoint = source[source.index('function checkpoint('):source.index('// Independent ordinary-route oracle:')]
+        self.assertIn('const restored = deserializeState(parsed.state)', checkpoint)
+        self.assertIn('const twice = deserializeState(importSave(canonical).state)', checkpoint)
+        self.assertIn('const adopted = !nativeSchedule || NATIVE_RELOAD_CHECKPOINTS.includes(name)', checkpoint)
+        self.assertIn('if (adopted) {', checkpoint)
+        self.assertIn('state = nativeSchedule ? restored : twice', checkpoint)
+        self.assertIn('control = old.save.deserializeState', checkpoint)
+        self.assertNotIn('blockedState = deserializeState(importSave(blockedRaw).state)', source)
+        self.assertIn('const blockedReloadedCopy = deserializeState(importSave(blockedRaw).state)', source)
+        self.assertIn('if (!nativeSchedule) blockedState = blockedReloadedCopy', source)
+        self.assertIn('blockedRetryAdoptsReload: !nativeSchedule', source)
+        self.assertIn('native_reload_schedule_valid(source_report)', self.source)
+        self.assertLess(self.source.index('native_reload_schedule_valid(source_report)'), self.source.index('with sync_playwright()'))
+        self.assertIn('main_reload_checkpoints == list(NATIVE_RELOAD_CHECKPOINTS)', self.source)
+
+
 class NativeScrollGeometryContract(unittest.TestCase):
     """Offline geometry and input sequencing, never substitutes for native CI."""
 

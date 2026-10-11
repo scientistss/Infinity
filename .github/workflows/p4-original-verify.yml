@@ -196,7 +196,7 @@ jobs:
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-economy-browser-fixture.ts "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" "$NPC_REPORT_HASH" "$GITHUB_SHA") > npc-economy-review-save.json
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
           sha256sum npc-source-evidence/npc-natural-r11-report.json > npc-source-evidence/npc-natural-r11-report.sha256.txt
-      - name: Natural paid orbital battles, exact rights, second collection and interrupted branches
+      - name: Frequent-reload regression for paid orbital battles, exact rights and interrupted branches
         shell: bash
         run: |
           mkdir -p npc-attack-source-evidence
@@ -206,6 +206,15 @@ jobs:
           NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --output "$GITHUB_WORKSPACE/npc-attack-natural-report.json")
           sha256sum npc-attack-natural-report.json > npc-attack-natural-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Native four-reload orbital oracle with complete independent checks
+        shell: bash
+        run: |
+          # Keep the independently run frequent-reload regression above. The browser
+          # continues live between saves and adopts state only at its four reloads.
+          NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --reload-schedule native-main-four --output "$GITHUB_WORKSPACE/npc-attack-native-report.json")
+          sha256sum npc-attack-native-report.json > npc-attack-native-report.sha256.txt
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
       - name: Exact before source and legal combined performance fixture
         run: |
@@ -278,7 +287,7 @@ jobs:
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
           R12_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc-attack" R12_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r13-r12-startup-oracle.mjs
           # Prioritize the new orbital UI gate; the complete SaveSession suite still follows in its own browser.
-          python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-natural-report.json --natural-report npc-attack-natural-report.json --expected-report-sha256 "$(sha256sum npc-attack-natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
+          python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-native-report.json --natural-report npc-attack-native-report.json --expected-report-sha256 "$(sha256sum npc-attack-native-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
           python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --expected-sha "$GITHUB_SHA"
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
@@ -389,6 +398,8 @@ jobs:
             npc-attack-source-evidence
             npc-attack-natural-report.json
             npc-attack-natural-report.sha256.txt
+            npc-attack-native-report.json
+            npc-attack-native-report.sha256.txt
             npc-attack-evidence
             transport-save-revision-report.json
             templates-save-revision-report.json
