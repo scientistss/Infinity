@@ -15,7 +15,22 @@ SAMPLE_JS=r'''() => {
  const inputs=[...panel.querySelectorAll('input,select,textarea,button')].filter(visible);
  const result={tab,panelHTML:panel.outerHTML};
  if(tab==='galaxy'){
-  result.hint=panel.lastElementChild.innerText;result.hintLast=panel.lastElementChild.matches('p.muted');
+  // The existing folded navigator follows the hint. Bind the hint to the
+  // unique coordinate table, never to its text or the panel's final child.
+  const children=[...panel.children],tables=panel.querySelectorAll('.space-table-scroll'),worlds=document.querySelectorAll('#space-worlds');
+  const table=tables[0],hint=table?.nextElementSibling,navigation=hint?.nextElementSibling,summary=navigation?.firstElementChild;
+  result.hint=hint?.innerText;
+  result.hintBoundary={
+   counts:{tables:tables.length,worlds:worlds.length,hints:children.filter(e=>e.matches('p.muted')&&!e.id).length,
+    navigation:document.querySelectorAll('#expansion-navigation').length,summaries:document.querySelectorAll('#expansion-navigation-summary').length},
+   positions:{children:children.length,table:children.indexOf(table),hint:children.indexOf(hint),navigation:children.indexOf(navigation)},
+   exactOrder:!!table&&!!hint&&!!navigation&&table.matches('div.space-table-scroll')&&table.parentElement===panel&&
+    worlds[0]?.matches('tbody#space-worlds')&&worlds[0].parentElement?.matches('table.ov-table.space-table')&&table.contains(worlds[0])&&
+    hint.parentElement===panel&&navigation.parentElement===panel&&panel.lastElementChild===navigation,
+   hintHTML:hint?.outerHTML,
+   navigation:{tag:navigation?.tagName,id:navigation?.id,className:navigation?.className,closed:navigation?.open===false,
+    children:navigation?.children.length,summaryHTML:summary?.outerHTML,
+    exactBody:navigation?.lastElementChild?.matches('div.expansion-navigation-body')&&navigation.querySelectorAll('summary').length===1}};
   result.rows=[...panel.querySelectorAll('#space-worlds > tr')].map(row=>({text:row.innerText,key:row.children[1].querySelector('small').textContent.slice(1,-1),kind:row.children[2].textContent,
    attacks:[...row.querySelectorAll('[data-mission="attack"]')].map(b=>({html:b.outerHTML,text:b.textContent,key:b.dataset.coordinate,action:b.dataset.space,type:b.type,disabled:b.disabled,index:inputs.indexOf(b),visible:visible(b),last:b.parentElement.lastElementChild===b,previous:b.previousElementSibling?.dataset.mission}))}));
  }
@@ -63,7 +78,14 @@ def normalize_npc_display(snapshot,evidence,state,side):
         for planet in state['planets']:
             assert planet.get('npcResourceRemainder')=={'metal':'0','crystal':'0','deuterium':'0'},'Zero-rights historical UI only; never hide a positive entitlement'
     if tab=='galaxy':
-        assert evidence['hintLast'] and evidence['hint']==(NEW_HINT if after else OLD_HINT)
+        hint=NEW_HINT if after else OLD_HINT
+        assert evidence['hint']==hint
+        assert evidence['hintBoundary']=={
+            'counts':{'tables':1,'worlds':1,'hints':1,'navigation':1,'summaries':1},
+            'positions':{'children':7,'table':4,'hint':5,'navigation':6},'exactOrder':True,
+            'hintHTML':f'<p class="muted">{hint}</p>',
+            'navigation':{'tag':'DETAILS','id':'expansion-navigation','className':'expansion-navigation','closed':True,
+                'children':2,'summaryHTML':'<summary id="expansion-navigation-summary">开拓查看（只读）</summary>','exactBody':True}}
         home=next(p for p in state['planets'] if p['id']==state['activePlanetId']);g,s=home['coordinates']['galaxy'],home['coordinates']['system']
         occupied={tuple(p['coordinates'][k] for k in ('galaxy','system','position')) for p in state['planets']}
         assert len(evidence['rows'])==16;removed=[]
