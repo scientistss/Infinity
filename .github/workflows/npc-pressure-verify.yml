@@ -1,7 +1,7 @@
-name: Measure exact NPC orbital pressure
+name: Compare exact NPC save snapshot sources
 on:
   push:
-    branches: ['codex/infinity-npc-pressure-*']
+    branches: ['codex/infinity-npc-save-compare-20261011']
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      OLD_GAME_SOURCE_SHA: d97d37c9b664a450e83bd152c84848cf1e617d6a
-      NEW_GAME_SOURCE_SHA: 8f2ea441a42f36ded7eeb60f03c3c2b0fbed073b
+      OLD_GAME_SOURCE_SHA: 3444a6ca9fd89e1e9a06bf6acf7c501afade493d
+      NEW_GAME_SOURCE_SHA: 894f0aea6d395134e2ae3421fc428d0fc8d12003
     steps:
       - uses: actions/checkout@v7
         with:

@@ -26,10 +26,32 @@ SAMPLE_MS, REPETITIONS, WHOLE_SECONDS, ACTION_MS = 5000, 3, 230, 10000
 STAGES = ('overview-before-fleet', 'fleet-visible', 'overview-after-fleet')
 PRESSURE_FIELDS = {'npcEconomy', 'npcBattles', 'fleets', 'nextFleetId', 'messages'}
 COMPARE_SECONDS = 300
-OLD_SOURCE_SHA = 'd97d37c9b664a450e83bd152c84848cf1e617d6a'
-NEW_SOURCE_SHA = '8f2ea441a42f36ded7eeb60f03c3c2b0fbed073b'
+OLD_SOURCE_SHA = '3444a6ca9fd89e1e9a06bf6acf7c501afade493d'
+NEW_SOURCE_SHA = '894f0aea6d395134e2ae3421fc428d0fc8d12003'
 SOURCE_TREES = {OLD_SOURCE_SHA: '900f78b5866d4cb9cc6e5c3026e415558ea07e3b',
-                NEW_SOURCE_SHA: 'b982437c729910e705ef2e44b202ef03dc2034df'}
+                NEW_SOURCE_SHA: 'd8e7b384e2b6955e183fc207b588db3f6e29db2a'}
+# Exact production candidate and its one boundary test; no pattern-based exclusions.
+PRODUCTION_CHANGED_PATHS = ('src/game/npc-attack-state.ts', 'src/game/save.ts')
+CHANGED_PATHS = (*PRODUCTION_CHANGED_PATHS, 'tests/npc-save-snapshot-boundary.test.ts')
+SOURCE_FILE_SHA256 = {
+    OLD_SOURCE_SHA: {
+        'src/game/npc-attack-state.ts': 'fcc6baf90c7e8dd7c9f1b81577546a4858bf21f44d889882fd7fd10f9dc4d280',
+        'src/game/save.ts': '0cc296d824fc11f9e4e536de9d34a73236d6e7b773b7be5ab9471c69f2a429df',
+        'tests/npc-save-snapshot-boundary.test.ts': None},
+    NEW_SOURCE_SHA: {
+        'src/game/npc-attack-state.ts': '754947ce09f7c536e0844819cf391e18a9f13505fd8c4880aee1e6247cbb2832',
+        'src/game/save.ts': '44c7398e57dc275e6727471bf5ddb2f4ec611e4989de7764dc68a39db811d4c2',
+        'tests/npc-save-snapshot-boundary.test.ts': 'f1e0518c8dcff391bd2953caca79956c0753896f9fd76bd3fc5ee8d97a134ced'},
+}
+# Accepted 12a measurement artifacts. A matching old/new pair is insufficient if
+# both generators drift from these full, original game/save bytes.
+GOLDEN_MEASUREMENT_SHA = '12a7a3eafb68f3f8576060c0f7543e80b818cb3a'
+GOLDEN_FIXTURE_SHA256 = {
+    'control0.raw.json': '721b559c09ddea7cb661cd366213dfa463939480d641403bcd9a271fd9f54847',
+    'control0.save.txt': 'd797e979c0a52595a7b06bbce3846d1bd5591ef86f05727e6c21d20b9f8efb32',
+    'max512.raw.json': '265fb33a00428cb963523162619b3b806e8143684dfcef81730b0452440c48c5',
+    'max512.save.txt': 'c2dd3c6406c286ec48b83186759261deb6138ad60152450736d5bcfb2abe03d9',
+}
 CPU_KEYS = ('ScriptDuration', 'TaskDuration')
 ACTION_SELECTORS = ('[data-tab="fleet"]', '[data-tab="overview"]', '[data-tab="save"]',
                     '[data-action="save"]', '[data-action="import-text"]')
@@ -185,6 +207,22 @@ def compare_enabled(args):
     return all(present)
 
 
+def source_file_hashes(source):
+    result = {}
+    for relative, expected in SOURCE_FILE_SHA256[source['sha']].items():
+        actual = Path(source['root'], relative)
+        if expected is None:
+            tracked = subprocess.check_output(['git', '-C', source['root'], 'ls-tree', source['sha'], '--', relative], timeout=10)
+            require(not tracked and not actual.exists(), 'Unexpected formerly absent candidate boundary test')
+            result[relative] = None
+            continue
+        committed = subprocess.check_output(['git', '-C', source['root'], 'show', source['sha'] + ':' + relative], timeout=10)
+        require(sha(committed) == expected, 'Designated source file SHA-256 mismatch: ' + relative)
+        require(actual.read_bytes() == committed, 'Actual source file differs from pinned commit: ' + relative)
+        result[relative] = expected
+    return result
+
+
 def comparison_source_identity(old, new):
     require(old['sha'] == OLD_SOURCE_SHA and new['sha'] == NEW_SOURCE_SHA, 'Comparison requires the exact designated old/new source commits')
     require(Path(old['root']).resolve() != Path(new['root']).resolve(), 'Comparison requires two independent source worktrees')
@@ -192,9 +230,10 @@ def comparison_source_identity(old, new):
     for source in (old, new):
         require(source['fixture']['sourceTreeSha'] == SOURCE_TREES[source['sha']], 'Comparison source tree is not the exact designated tree')
     paths = subprocess.check_output(['git', '-C', old['root'], 'diff', '--no-renames', '--name-only', OLD_SOURCE_SHA, NEW_SOURCE_SHA], text=True, timeout=10).splitlines()
-    require('src/ui/npc-attack-controls.ts' in paths and set(paths) <= {'src/ui/npc-attack-controls.ts', 'tests/npc-attack-ui.test.ts'},
-            'Only the exact observer production path and its test may differ between sources')
-    return {'allChangedPaths': paths, 'productionChangedPaths': ['src/ui/npc-attack-controls.ts'],
+    require(set(paths) == set(CHANGED_PATHS) and len(paths) == len(CHANGED_PATHS),
+            'Only both exact save snapshot production paths and their exact boundary test may differ between sources')
+    return {'allChangedPaths': paths, 'productionChangedPaths': list(PRODUCTION_CHANGED_PATHS),
+            'changedFileSha256': {'old': source_file_hashes(old), 'new': source_file_hashes(new)},
             'unchangedScope': 'Every other tracked path, including public, index, package/lock, configuration and build scripts.'}
 
 
@@ -206,6 +245,7 @@ def compare_fixture_bytes(old, new):
             left = (Path(old['path']).parent / f'{basename}.{suffix}').read_bytes()
             right = (Path(new['path']).parent / f'{basename}.{suffix}').read_bytes()
             require(left == right, f'{variant} complete {suffix} bytes differ across sources')
+            require(sha(left) == GOLDEN_FIXTURE_SHA256[f'{basename}.{suffix}'], f'{variant} complete {suffix} bytes differ from accepted 12a golden')
             for source, data in ((old, left), (new, right)):
                 require(sha(data) == source['fixture']['hashes'][field], f'{variant} {suffix} artifact hash mismatch')
                 if suffix == 'save.txt':
@@ -248,7 +288,9 @@ def prepare_sources(args):
         sources[name] = source
     comparison = {'enabled': comparing}
     if comparing:
-        comparison.update(sourceDiff=comparison_source_identity(sources['old'], sources['new']),
+        comparison.update(goldenMeasurementSourceSha=GOLDEN_MEASUREMENT_SHA,
+                          goldenFixtureSha256=GOLDEN_FIXTURE_SHA256,
+                          sourceDiff=comparison_source_identity(sources['old'], sources['new']),
                           identicalInputs=compare_fixture_bytes(sources['old'], sources['new']))
     return sources, comparison
 
@@ -562,7 +604,8 @@ def native_worker(args, fixture, envelopes, sources=None, comparison=None):
             'No invented performance pass threshold. Long tasks overlapping CPU windows are flagged; allLongTasks separately preserves all observed run entries, including startup and actions. Action observations exceeding the requested 10-second budget are flagged.',
             'This independent experiment does not replace mandatory formal native CI acceptance.']}
     if comparing:
-        report['limits'][2] = 'Exact two-source r13 observer comparison with byte-identical synthetic inputs; no r12 or natural progression claim.'
+        report['limits'][2] = 'Exact two-source r13 import-owned snapshot comparison with byte-identical accepted 12a synthetic inputs; no r12 or natural progression claim.'
+        report['limits'].append('Primary observed action is native Save capture-to-document-bubble with same-dispatch storage correctness. All other native action distributions and complete CPU windows remain included; n=3 does not establish a general speedup.')
         report['limits'].append('The fixed order preserves within-source C/P, P/C, C/P and adjacent cross-source workloads. Three repetitions are not fully order-balanced; temporal/runner drift remains a limitation.')
     atomic_json(out / 'fixture.json', fixture)
     for name, source in sources.items():

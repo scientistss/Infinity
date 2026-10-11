@@ -353,6 +353,18 @@ class ClickObserverPreparationTests(unittest.TestCase):
 
 class ExactSourceComparisonTests(unittest.TestCase):
     """Comparison preparation doubles, never measured browser evidence."""
+    def setUp(self):
+        # Explicit preparation doubles stand in for full accepted fixture bytes;
+        # real preflight always uses the literal production golden pins.
+        fixture = fixture_double()
+        goldens = {}
+        for variant, basename in (('control', 'control0'), ('pressure', 'max512')):
+            goldens[basename + '.save.txt'] = MODULE.sha(fixture[variant])
+            goldens[basename + '.raw.json'] = MODULE.sha(json.dumps(fixture[variant + 'Raw']).encode())
+        golden_patch = patch.object(MODULE, 'GOLDEN_FIXTURE_SHA256', goldens)
+        golden_patch.start()
+        self.addCleanup(golden_patch.stop)
+
     def sources(self, directory):
         result = []
         for name, commit in (('old', MODULE.OLD_SOURCE_SHA), ('new', MODULE.NEW_SOURCE_SHA)):
@@ -415,20 +427,59 @@ class ExactSourceComparisonTests(unittest.TestCase):
     def test_source_whitelist_is_exact_commit_tree_and_path(self):
         with tempfile.TemporaryDirectory() as directory:
             old, new = self.sources(directory)
-            changed = 'src/ui/npc-attack-controls.ts\ntests/npc-attack-ui.test.ts\n'
-            with patch.object(MODULE.subprocess, 'check_output', return_value=changed):
-                self.assertEqual(MODULE.comparison_source_identity(old, new)['productionChangedPaths'], ['src/ui/npc-attack-controls.ts'])
+            changed = '\n'.join(MODULE.CHANGED_PATHS) + '\n'
+            with patch.object(MODULE.subprocess, 'check_output', return_value=changed), patch.object(MODULE, 'source_file_hashes', return_value={}):
+                self.assertEqual(MODULE.comparison_source_identity(old, new)['productionChangedPaths'], ['src/game/npc-attack-state.ts', 'src/game/save.ts'])
                 for key, value, error in (('sha', SHA, 'commits'), ('root', old['root'], 'independent'), ('url', old['url'], 'distinct')):
                     with self.subTest(key=key), self.assertRaisesRegex(AssertionError, error):
                         MODULE.comparison_source_identity(old, {**new, key: value})
                 wrong = copy.deepcopy(new); wrong['fixture']['sourceTreeSha'] = 'f' * 40
                 with self.assertRaisesRegex(AssertionError, 'source tree'):
                     MODULE.comparison_source_identity(old, wrong)
-            for extra in ('src/ui/other.ts', 'src/game/fleet.ts', 'public/art.svg', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'scripts/write-release.mjs'):
-                with self.subTest(path=extra), patch.object(MODULE.subprocess, 'check_output', return_value=changed + extra + '\n'), self.assertRaisesRegex(AssertionError, 'exact observer production path'):
+            for extra in ('src/ui/other.ts', 'src/ui/npc-attack-controls.ts', 'src/game/fleet.ts', 'tests/npc-attack-ui.test.ts', 'tests/other.test.ts', 'public/art.svg', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'scripts/write-release.mjs'):
+                with self.subTest(path=extra), patch.object(MODULE.subprocess, 'check_output', return_value=changed + extra + '\n'), self.assertRaisesRegex(AssertionError, 'exact save snapshot production paths'):
                     MODULE.comparison_source_identity(old, new)
-            with patch.object(MODULE.subprocess, 'check_output', return_value=''), self.assertRaisesRegex(AssertionError, 'exact observer production path'):
+            with patch.object(MODULE.subprocess, 'check_output', return_value=''), self.assertRaisesRegex(AssertionError, 'exact save snapshot production paths'):
                 MODULE.comparison_source_identity(old, new)
+
+    def test_each_required_candidate_path_must_be_present_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = self.sources(directory)
+            for missing in MODULE.CHANGED_PATHS:
+                changed = '\n'.join(path for path in MODULE.CHANGED_PATHS if path != missing)
+                with self.subTest(missing=missing), patch.object(MODULE.subprocess, 'check_output', return_value=changed), self.assertRaisesRegex(AssertionError, 'exact save snapshot production paths'):
+                    MODULE.comparison_source_identity(old, new)
+            changed = '\n'.join((*MODULE.CHANGED_PATHS, MODULE.CHANGED_PATHS[0]))
+            with patch.object(MODULE.subprocess, 'check_output', return_value=changed), self.assertRaisesRegex(AssertionError, 'exact save snapshot production paths'):
+                MODULE.comparison_source_identity(old, new)
+
+    def test_changed_files_require_both_committed_hash_and_actual_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            relative, original = 'source.ts', b'exact committed source\n'
+            actual = Path(directory, relative); actual.write_bytes(original)
+            source = {'sha': SHA, 'root': directory}
+            pins = {SHA: {relative: MODULE.sha(original)}}
+            with patch.object(MODULE, 'SOURCE_FILE_SHA256', pins), patch.object(MODULE.subprocess, 'check_output', return_value=original):
+                self.assertEqual(MODULE.source_file_hashes(source), pins[SHA])
+                actual.write_bytes(original + b' ')
+                with self.assertRaisesRegex(AssertionError, 'Actual source file differs'):
+                    MODULE.source_file_hashes(source)
+                actual.write_bytes(original)
+            with patch.object(MODULE, 'SOURCE_FILE_SHA256', pins), patch.object(MODULE.subprocess, 'check_output', return_value=original + b' '), self.assertRaisesRegex(AssertionError, 'file SHA-256 mismatch'):
+                MODULE.source_file_hashes(source)
+
+    def test_absent_baseline_test_must_be_untracked_and_absent_from_actual_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = {'sha': SHA, 'root': directory}
+            pins = {SHA: {'boundary.test.ts': None}}
+            with patch.object(MODULE, 'SOURCE_FILE_SHA256', pins), patch.object(MODULE.subprocess, 'check_output', return_value=b''):
+                self.assertEqual(MODULE.source_file_hashes(source), pins[SHA])
+                Path(directory, 'boundary.test.ts').write_text('unexpected')
+                with self.assertRaisesRegex(AssertionError, 'formerly absent'):
+                    MODULE.source_file_hashes(source)
+            Path(directory, 'boundary.test.ts').unlink()
+            with patch.object(MODULE, 'SOURCE_FILE_SHA256', pins), patch.object(MODULE.subprocess, 'check_output', return_value=b'100644 blob tracked'), self.assertRaisesRegex(AssertionError, 'formerly absent'):
+                MODULE.source_file_hashes(source)
 
     def test_wrong_actual_worktree_tree_is_rejected(self):
         with patch.object(MODULE.subprocess, 'check_output', side_effect=[SHA, 'c' * 40, '']), self.assertRaisesRegex(AssertionError, 'commit/tree'):
@@ -450,6 +501,16 @@ class ExactSourceComparisonTests(unittest.TestCase):
                 path = Path(new['path']).parent / basename
                 path.write_bytes(path.read_bytes() + b' ')
                 with self.assertRaisesRegex(AssertionError, 'bytes differ'):
+                    MODULE.compare_fixture_bytes(old, new)
+
+    def test_equal_cross_source_drift_still_fails_accepted_golden_pin(self):
+        for basename in ('control0.save.txt', 'max512.save.txt', 'control0.raw.json', 'max512.raw.json'):
+            with self.subTest(file=basename), tempfile.TemporaryDirectory() as directory:
+                old, new = self.sources(directory)
+                for source in (old, new):
+                    path = Path(source['path']).parent / basename
+                    path.write_bytes(path.read_bytes() + b' ')
+                with self.assertRaisesRegex(AssertionError, 'accepted 12a golden'):
                     MODULE.compare_fixture_bytes(old, new)
 
     def test_fixture_generator_and_non_source_metadata_cannot_drift(self):
@@ -588,6 +649,7 @@ class ExactSourceComparisonTests(unittest.TestCase):
     def test_workflow_builds_clean_sources_before_overlay_and_cleans_both_previews(self):
         workflow = (SCRIPT.parent.parent / '.github/workflows/npc-pressure-verify.yml').read_text()
         self.assertIn('timeout-minutes: 15', workflow)
+        self.assertIn("branches: ['codex/infinity-npc-save-compare-20261011']", workflow)
         self.assertIn(MODULE.OLD_SOURCE_SHA, workflow)
         self.assertIn(MODULE.NEW_SOURCE_SHA, workflow)
         self.assertLess(workflow.index('npm run build'), workflow.index('cp scripts/npc-pressure-fixture.ts'))

@@ -36,8 +36,8 @@ const generatorSourceTreeSha = String(execFileSync("git", ["rev-parse", "HEAD:sr
 const generatorScriptGitStatus = String(execFileSync("git", ["status", "--porcelain", "--", "scripts/npc-pressure-fixture.ts"])).trim();
 check(sourceTreeSha === generatorSourceTreeSha, "Requested game source and imported current checkout must have identical src trees");
 const allowedSourceTrees: Record<string, string> = {
-  d97d37c9b664a450e83bd152c84848cf1e617d6a: "900f78b5866d4cb9cc6e5c3026e415558ea07e3b",
-  "8f2ea441a42f36ded7eeb60f03c3c2b0fbed073b": "b982437c729910e705ef2e44b202ef03dc2034df",
+  "3444a6ca9fd89e1e9a06bf6acf7c501afade493d": "900f78b5866d4cb9cc6e5c3026e415558ea07e3b",
+  "894f0aea6d395134e2ae3421fc428d0fc8d12003": "d8e7b384e2b6955e183fc207b588db3f6e29db2a",
 };
 check(allowedSourceTrees[sourceSha] === sourceTreeSha, "Fixture requires one exact designated source commit/tree pair");
 check(String(execFileSync("git", ["diff", "HEAD", "--", "src"])).length === 0, "Production source must be unchanged");
