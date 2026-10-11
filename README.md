@@ -54,6 +54,7 @@ GitHub Pages：https://scientistss.github.io/Infinity/
 
 ## 实现与设计文档
 
+- [路线图与分项验收](docs/ROADMAP_ACCEPTANCE.md)：现存计划的已发布、部分、未实现与待定机制；每项闭环、依赖、存档影响及下一阶段顺序。
 - [重建验收报告](docs/REBUILD_ACCEPTANCE.md)：交付范围、精确提交证据、存档兼容及未验收边界。
 - [重建阶段与检查点](docs/REBUILD_CHECKPOINTS.md)：本次基线、验收门槛与每阶段远端保存。
 - [表现与性能验收](docs/PRESENTATION_PERFORMANCE.md)：可见内容、独立模拟、合法组合压力档与分层实测。
