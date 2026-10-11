@@ -1,6 +1,6 @@
 import { npcEconomySnapshot } from "./npc-economy";
 import { createNpcWalletContext, npcWalletFromSnapshot, readNpcWalletState } from "./npc-wallet";
-import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences } from "./npc-attack-state";
+import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences, type ValidatedNpcSnapshot } from "./npc-attack-state";
 import { createNpcResourceRemainder, readNpcResourceRemainder } from "./npc-remainder";
 import { readDemolitionJob, serializeDemolitionJob, rejectLegacyDemolitionFields, rejectMisplacedDemolitionFields, migrateLegacyDemolitionSlots, type SerializedDemolitionJob } from "./demolition-save";
 import { demolitionStateProblem } from "./demolition";
@@ -182,9 +182,17 @@ export function serializeState(state: GameState): SerializedState {
   rejectNpcAttackFields(state, false);
   validateNpcAttackReferences(state);
   const npcContext = createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
-  return {
+  // Public callers can supply effectful Decimal methods/proxies. Preserve both reads.
+  return serializeStateWithNpcSnapshot(state, {
     npcEconomy: readNpcWalletState(state.npcEconomy, npcContext),
     npcBattles: readNpcBattleState(state.npcBattles, npcContext),
+  });
+}
+
+function serializeStateWithNpcSnapshot(state: GameState, npc: ValidatedNpcSnapshot): SerializedState {
+  return {
+    npcEconomy: npc.npcEconomy,
+    npcBattles: npc.npcBattles,
     terraformerGrantJobFloor: readTerraformerGrantJobFloor(state.terraformerGrantJobFloor, state.orders.nextJobId),
     buildingTemplates: serializeBuildingTemplates(state.buildingTemplates),
     formations: serializeFormations(state.formations),
@@ -213,6 +221,15 @@ export function serializeState(state: GameState): SerializedState {
     stats: { ...state.stats },
     offlineBonusHours: state.offlineBonusHours,
   };
+}
+
+/** Only importSave's private JSON.parse result reaches this synchronous path. */
+function serializeImportedState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack: boolean): SerializedState {
+  const state = readState(raw, legacyTerraformer, legacyNpcAttack);
+  rejectNpcAttackFields(state, false);
+  // readState constructed this unexposed state; input-derived methods/proxies cannot run
+  // between validation and serialization. No caller-provided flag or persistent trust.
+  return serializeStateWithNpcSnapshot(state, validateNpcAttackReferences(state));
 }
 
 export function deserializeState(raw: unknown): GameState {
@@ -366,7 +383,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack)),
+    state: serializeImportedState(parsed.state, legacyTerraformer, legacyNpcAttack),
   };
 }
 

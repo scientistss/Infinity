@@ -5,7 +5,7 @@ import { coordinateKey, SPACE, type Coordinates } from "./galaxy";
 import { npcBattleSeed } from "./npc-battle";
 import { isNpcCoordinates, isNpcGarrison } from "./npc-garrison";
 import { allocateNpcLoot, isNpcResourceTuple, npcSurvivingWholeCapacity, type NpcResourceTuple, type NpcSurvivingShips } from "./npc-loot";
-import { createNpcWallet, createNpcWalletContext, projectNpc, readNpcWalletState, NPC_WALLET_MODEL, type NpcWalletContext } from "./npc-wallet";
+import { createNpcWallet, createNpcWalletContext, projectNpc, readNpcWalletState, NPC_WALLET_MODEL, type NpcWalletContext, type NpcWalletState } from "./npc-wallet";
 import { RESOURCE_IDS, type GameState } from "./types";
 
 export const NPC_SITE_LIMIT = 512;
@@ -175,8 +175,12 @@ export function trimNpcBattleReports(reports: readonly NpcBattleReceipt[]): NpcB
   for (let i = reports.length - 1; i >= 0; i--) if (!keep[i] && remaining > 0) { keep[i] = true; remaining--; }
   return Object.freeze({ model: NPC_BATTLE_MODEL, reports: Object.freeze(reports.filter((_, i) => keep[i])) });
 }
-/** Full bidirectional live authority and historical permanent-target validation. */
-export function validateNpcAttackReferences(state: GameState): void {
+export interface ValidatedNpcSnapshot {
+  readonly npcEconomy: NpcWalletState;
+  readonly npcBattles: NpcBattleState;
+}
+/** Full bidirectional validation; expose detached snapshots only after every reference passes. */
+export function validateNpcAttackReferences(state: GameState): ValidatedNpcSnapshot {
   const coordinates = state.planets.map(planet => planet.coordinates);
   // Preserve the established save-boundary diagnostic before the NPC context rejects duplicates.
   if (new Set(coordinates.map(coordinateKey)).size !== coordinates.length) throw Error("星球坐标重复");
@@ -217,6 +221,7 @@ export function validateNpcAttackReferences(state: GameState): void {
       || site.garrison.light_fighter > (report.battle.defenderAfter.light_fighter ?? 0)
       || site.garrison.heavy_fighter > (report.battle.defenderAfter.heavy_fighter ?? 0)) return fail();
   }
+  return Object.freeze({ npcEconomy: wallet, npcBattles: battles });
 }
 
 /** Reserve only attack-specific names/models. Generic stock/phase/seed remain unrelated data. */
