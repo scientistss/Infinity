@@ -277,8 +277,9 @@ jobs:
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
           R12_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc-attack" R12_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r13-r12-startup-oracle.mjs
-          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --expected-sha "$GITHUB_SHA"
+          # Prioritize the new orbital UI gate; the complete SaveSession suite still follows in its own browser.
           python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-natural-report.json --natural-report npc-attack-natural-report.json --expected-report-sha256 "$(sha256sum npc-attack-natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
+          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --expected-sha "$GITHUB_SHA"
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.

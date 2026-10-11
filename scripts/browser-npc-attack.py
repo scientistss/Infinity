@@ -10,6 +10,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -170,7 +171,12 @@ CLOCK = r'''(() => {
  window.__npcClicks=[];window.__npcEdits=[];window.__npcFiles=[];window.__npcWheels=[];window.__npcStorage=[];
  document.addEventListener('click',event=>{const b=event.target.closest?.('button');if(b)window.__npcClicks.push({action:b.dataset.action||b.dataset.orderAction||b.dataset.buildingTemplateAction||b.dataset.tab||(b.hasAttribute("data-demolish")?"demolition-preview":b.hasAttribute("data-demolition-confirm")?"demolition-confirm":b.hasAttribute("data-demolition-dismiss")?"demolition-dismiss":b.hasAttribute("data-cancel-demolition")?"demolition-cancel":null),id:b.dataset.id||b.id,trusted:event.isTrusted});},true);
  for(const type of ['input','change'])document.addEventListener(type,event=>{if(event.target.matches?.('select,input'))window.__npcEdits.push({id:event.target.id,type,trusted:event.isTrusted,value:event.target.value});},true);
- document.addEventListener('wheel',event=>window.__npcWheels.push({trusted:event.isTrusted,deltaY:event.deltaY,deltaX:event.deltaX}),{capture:true,passive:true});
+ document.addEventListener('wheel',event=>{const region=event.target.closest?.('.space-table-scroll');
+   window.__npcWheels.push({trusted:event.isTrusted,deltaY:event.deltaY,deltaX:event.deltaX,clientX:event.clientX,clientY:event.clientY,
+     target:{tag:event.target.tagName,id:event.target.id,className:event.target.className},
+     scrollRegion:region?{index:[...document.querySelectorAll('.space-table-scroll')].indexOf(region),
+       targetContained:region.contains(event.target),scrollLeft:region.scrollLeft,scrollWidth:region.scrollWidth,clientWidth:region.clientWidth}:null});
+ },{capture:true,passive:true});
  document.addEventListener('change',event=>{if(event.target.matches?.('[data-bind="import-file"]'))window.__npcFiles.push({trusted:event.isTrusted,name:event.target.files[0]?.name,size:event.target.files[0]?.size,priorRaw:localStorage.getItem(__KEY__)});},true);
  window.addEventListener('storage',event=>{if(event.storageArea===localStorage&&event.key===__KEY__)window.__npcStorage.push({trusted:event.isTrusted,oldValue:event.oldValue,newValue:event.newValue});});
 })();'''.replace('__ORIGIN__', json.dumps(ORIGIN)).replace('__KEY__', json.dumps(KEY))
@@ -430,7 +436,7 @@ def text_leaf_visibility(page, selectors):
     }""", selectors)
 
 
-def wait_for_scroll_settled(page, selector):
+def wait_for_scroll_settled(page, selector, region_selector=None):
     # A target entering the viewport does not mean its native smooth scroll has
     # stopped. Require four fresh native frames with exact complete geometry,
     # spanning >=150ms on both the native RAF and independent host clocks.
@@ -443,6 +449,8 @@ def wait_for_scroll_settled(page, selector):
             break
         current = page.evaluate('options=>window.__npcObserveFrame(options)',
                                 {'selector': selector, 'timeoutMs': min(250, remaining)})
+        if region_selector is not None:
+            current['geometry']['scrollRegion'] = scroll_region_state(page, region_selector, selector)
         observed_at = time.monotonic()
         current['hostOffsetMilliseconds'] = (observed_at - started) * 1000
         samples.append(current)
@@ -507,6 +515,147 @@ def native_scroll_to(page, selector):
         wait_for_scroll_settled(page, selector)
     check('Actual wheel input could not expose the complete requested region with five unoccluded hit-tests', False,
           {'selector': selector, 'lastVisibility': visibility(page, [selector])})
+
+
+def scroll_region_state(page, region_selector, target_selector):
+    # Read-only DOM measurements. The region may be taller than the viewport.
+    return page.evaluate(r"""({regionSelector,targetSelector})=>{
+      const region=document.querySelector(regionSelector),target=document.querySelector(targetSelector);
+      const rect=r=>({x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height});
+      const client=e=>{const r=e.getBoundingClientRect();return {x:r.x+e.clientLeft,y:r.y+e.clientTop,
+        right:r.x+e.clientLeft+e.clientWidth,bottom:r.y+e.clientTop+e.clientHeight};};
+      const clips=[],clipValues=new Set(['hidden','clip','scroll','auto']);
+      for(let node=region?.parentElement;node;node=node.parentElement){
+        const s=getComputedStyle(node),paint=s.contain.split(/\s+/).some(v=>['paint','strict','content'].includes(v));
+        clips.push({rect:client(node),clipX:clipValues.has(s.overflowX)||paint,clipY:clipValues.has(s.overflowY)||paint});
+      }
+      const header=document.querySelector('.topbar'),headerStyle=header&&getComputedStyle(header);
+      const top=header&&['sticky','fixed'].includes(headerStyle.position)&&!header.contains(target)?Math.max(0,header.getBoundingClientRect().bottom):0;
+      return {viewport:{width:innerWidth,height:innerHeight,top},scrollX,scrollY,clips,
+        region:region?{rect:rect(region.getBoundingClientRect()),clientRect:client(region),
+          index:[...document.querySelectorAll('.space-table-scroll')].indexOf(region),
+          scrollLeft:region.scrollLeft,scrollWidth:region.scrollWidth,clientWidth:region.clientWidth,
+          scrollTop:region.scrollTop,scrollHeight:region.scrollHeight,clientHeight:region.clientHeight}:null,
+        target:target?{rect:rect(target.getBoundingClientRect()),insideRegion:!!region&&region.contains(target)}:null};
+    }""", {'regionSelector': region_selector, 'targetSelector': target_selector})
+
+
+def scroll_region_plan(state):
+    # Pure geometry, also exercised offline. No screenshot padding or magic Y
+    # clamp: every candidate lies strictly inside the actual visible client box.
+    viewport, region, target = state['viewport'], state['region'], state['target']['rect']
+    client = region['clientRect']
+    left, right = max(0, client['x']), min(viewport['width'], client['right'])
+    top, bottom = max(0, client['y']), min(viewport['height'], client['bottom'])
+    for clip in state['clips']:
+        if clip['clipX']:
+            left, right = max(left, clip['rect']['x']), min(right, clip['rect']['right'])
+        if clip['clipY']:
+            top, bottom = max(top, clip['rect']['y']), min(bottom, clip['rect']['bottom'])
+    # Native MouseEvent coordinates are integer CSS pixels. Use interior
+    # integer candidates, and expose more of a subpixel-only sliver vertically.
+    points = [{'x': math.floor(left + (right - left) * x), 'y': math.floor(top + (bottom - top) * y)}
+              for y in (.5, .25, .75) for x in (.5, .25, .75)] if left < right and top < bottom else []
+    points = [point for point in points if left < point['x'] < right and top < point['y'] < bottom]
+    delta_x = target['x'] - left if target['x'] < left else target['right'] - right if target['right'] > right else 0
+    delta_y = target['y'] + target['height'] / 2 - (viewport['top'] + viewport['height']) / 2
+    return {'clip': {'x': left, 'y': top, 'right': right, 'bottom': bottom}, 'points': points,
+        'targetFitsX': target['width'] <= right - left,
+        'targetFitsY': target['height'] <= viewport['height'] - viewport['top'],
+        'targetContainedX': left <= target['x'] and target['right'] <= right,
+        'targetContainedY': top <= target['y'] and target['bottom'] <= bottom,
+        'deltaX': math.ceil(delta_x) if delta_x > 0 else math.floor(delta_x),
+        'deltaY': math.ceil(delta_y) if delta_y > 0 else math.floor(delta_y)}
+
+
+def scroll_pointer_hits(page, region_selector, points):
+    return page.evaluate("""({selector,points})=>{const region=document.querySelector(selector);
+      return points.map(point=>{const hit=document.elementFromPoint(point.x,point.y);
+        return {...point,insideRegion:!!region&&!!hit&&(hit===region||region.contains(hit)),
+          hit:hit?{tag:hit.tagName,id:hit.id,className:hit.className}:null};});
+    }""", {'selector': region_selector, 'points': points})
+
+
+def horizontal_wheel_proven(before, after, point, delta, events):
+    # A trusted delta alone is insufficient: the event itself must hit this
+    # container, and its actual scroll offset must progress in that direction.
+    if after['region'] is None or after['target'] is None or not after['target']['insideRegion']:
+        return False
+    clip = scroll_region_plan(before)['clip']
+    return (point['insideRegion'] and clip['x'] < point['x'] < clip['right']
+        and clip['y'] < point['y'] < clip['bottom'] and delta != 0
+        and (after['region']['scrollLeft'] - before['region']['scrollLeft']) * delta > 0
+        and (before['target']['rect']['x'] - after['target']['rect']['x']) * delta > 0
+        and bool(events) and all(event['trusted'] and event['deltaX'] == delta and event['deltaY'] == 0
+            and event['clientX'] == point['x'] and event['clientY'] == point['y']
+            and event.get('scrollRegion') is not None and event['scrollRegion']['targetContained']
+            and event['scrollRegion']['index'] == before['region']['index'] for event in events))
+
+
+def native_horizontal_to(page, region_selector, target_selector):
+    audit = {'case': case, 'kind': 'native-scroll-region-preparation', 'regionSelector': region_selector,
+             'targetSelector': target_selector, 'attempts': []}
+    evidence.append(audit); flush()
+    wait_for_scroll_settled(page, target_selector, region_selector)
+    # Bound actual input attempts, not the height of the table. Prepare the
+    # requested row vertically and expose its column using the existing scroller.
+    for attempt in range(9):
+        before = scroll_region_state(page, region_selector, target_selector)
+        row = {'attempt': attempt + 1, 'before': before}; audit['attempts'].append(row); flush()
+        check('scroll preparation retains the actual container and original descendant target',
+              before['region'] is not None and before['target'] is not None and before['target']['insideRegion'], row)
+        plan = scroll_region_plan(before)
+        proof = visibility(page, [target_selector])
+        hits = scroll_pointer_hits(page, region_selector, plan['points'])
+        row.update(plan=plan, visibilityBefore=proof, pointerCandidates=hits); flush()
+        check('requested target fits actual horizontal clip and unobstructed viewport height',
+              plan['targetFitsX'] and plan['targetFitsY'], row)
+        fully_visible = len(proof['targets']) == 1 and all(item['visible'] and item['contained']
+            and len(item['points']) == 5 and all(point['unoccluded'] for point in item['points']) for item in proof['targets'])
+        if plan['targetContainedX'] and plan['targetContainedY'] and fully_visible:
+            check('native scroll preparation exposes the complete original target with all five hit points', True, row)
+            return
+        if attempt == 8:
+            break  # Eight inputs at most, with the final resulting geometry checked.
+        point = next((hit for hit in hits if hit['insideRegion']), None)
+        horizontal = plan['targetContainedY'] and not plan['targetContainedX'] and point is not None
+        if not horizontal:
+            # This exposes a row/fragment, never asks a tall table to fit. Actual
+            # document progress is checked below; an overlay cannot be ignored.
+            point = {'x': math.floor(before['viewport']['width'] / 2),
+                     'y': math.floor((before['viewport']['top'] + before['viewport']['height']) / 2)}
+        page.mouse.move(point['x'], point['y'])
+        before = scroll_region_state(page, region_selector, target_selector)
+        plan = scroll_region_plan(before)
+        point = scroll_pointer_hits(page, region_selector, [point])[0]
+        delta_x, delta_y = (plan['deltaX'], 0) if horizontal else (0, plan['deltaY'])
+        row.update(axis='horizontal' if horizontal else 'vertical', beforeWheel=before, pointer=point,
+                   requestedDelta={'x': delta_x, 'y': delta_y}); flush()
+        clip = plan['clip']
+        check('wheel preparation uses an actual visible hit and a nonzero required delta',
+              bool(point['hit']) and (delta_x != 0 or delta_y != 0) and (not horizontal or point['insideRegion']
+              and clip['x'] < point['x'] < clip['right'] and clip['y'] < point['y'] < clip['bottom']), row)
+        prior = page.evaluate('window.__npcWheels.length')
+        row['wheelCountBefore'] = prior; flush()
+        try:
+            page.mouse.wheel(delta_x, delta_y)
+            row['immediateAfter'] = scroll_region_state(page, region_selector, target_selector)
+            row['immediateEvents'] = page.evaluate('(n)=>window.__npcWheels.slice(n)', prior); flush()
+            wait_for_scroll_settled(page, target_selector, region_selector)
+        finally:
+            # Preserve raw input, offsets and target geometry even when the
+            # native-frame settle assertion fails, before any progress assertion.
+            row['after'] = scroll_region_state(page, region_selector, target_selector)
+            row['events'] = page.evaluate('(n)=>window.__npcWheels.slice(n)', prior); flush()
+        if horizontal:
+            check('trusted horizontal wheel hits the exact container and advances its actual scrollLeft',
+                  horizontal_wheel_proven(before, row['after'], point, delta_x, row['events']), row)
+        else:
+            check('trusted vertical preparation advances the document toward the requested row',
+                  (row['after']['scrollY'] - before['scrollY']) * delta_y > 0 and bool(row['events'])
+                  and all(event['trusted'] and event['deltaX'] == 0 and event['deltaY'] == delta_y
+                          and event['clientX'] == point['x'] and event['clientY'] == point['y'] for event in row['events']), row)
+    check('bounded native scroll preparation must fully expose the requested original target', False, audit)
 
 
 def capture_failure(error, page=None):
@@ -750,15 +899,7 @@ def snapshot_control(page, selector, filename, capture=True):
 def route_attack(page):
     tab(page, 'galaxy'); trusted_click(page, '[data-space="home"]')
     selector = '[data-space="route"][data-mission="attack"][data-coordinate="1:56:6"]'
-    # A galaxy table is intentionally horizontally scrollable. Use actual wheel
-    # input inside that container; never change scrollLeft or element geometry.
-    native_scroll_to(page, '#space-range')
-    target = page.locator(selector); box = target.bounding_box()
-    if box and (box['x'] < 0 or box['x'] + box['width'] > page.viewport_size['width']):
-        region = page.locator('[data-tab-panel="galaxy"] .space-table-scroll').bounding_box()
-        if region:
-            page.mouse.move(min(region['x'] + region['width'] / 2, page.viewport_size['width'] - 15), max(80, min(region['y'] + 30, 900)))
-            page.mouse.wheel(1200, 0); advance(page)
+    native_horizontal_to(page, '[data-tab-panel="galaxy"] .space-table-scroll', selector)
     trusted_click(page, selector)
     check('native galaxy attack route fills mission and exact target',
           page.locator('#flight-mission').input_value() == 'attack' and [page.locator('#flight-' + key).input_value() for key in ('galaxy', 'system', 'position')] == ['1', '56', '6'])
@@ -835,21 +976,10 @@ def report_body_glyphs(page, selector, receipt, label, width):
         snapshot_control(page, rounds + ' > div', f'{label}-{receipt["fleetId"]}-{width}-zero-rounds')
     else:
         region = rounds + ' > div.space-table-scroll'
-        native_scroll_to(page, region)
-        # Walk columns first. On narrow screens expose each column with real
-        # horizontal wheel input, never scrollLeft/CSS or geometry substitution.
+        # Walk columns with the same real-container input/hit/offset evidence.
         for column, key in enumerate(('round', 'attacker', 'defender', 'attackDamage', 'defendDamage'), 1):
             first = rounds + f' tbody tr:first-child td:nth-child({column})'
-            for _ in range(3):
-                outer, cell = page.locator(region).bounding_box(), page.locator(first).bounding_box()
-                if cell['x'] >= outer['x'] and cell['x'] + cell['width'] <= outer['x'] + outer['width']:
-                    break
-                page.mouse.move(outer['x'] + outer['width'] / 2, outer['y'] + min(20, outer['height'] / 2))
-                prior = page.evaluate('window.__npcWheels.length')
-                page.mouse.wheel(round(cell['x'] + cell['width'] / 2 - outer['x'] - outer['width'] / 2), 0); advance(page)
-                wait_for_scroll_settled(page, first)
-                check('round column exposed by actual trusted horizontal wheel',
-                      any(e['trusted'] and e['deltaX'] != 0 for e in page.evaluate('(n)=>window.__npcWheels.slice(n)', prior)))
+            native_horizontal_to(page, region, first)
             for row, values in enumerate(battle['rounds'], 1):
                 leaf = rounds + f' tbody tr:nth-child({row}) td:nth-child({column})'
                 check('displayed round cell retains exact frozen numeric value',
