@@ -69,6 +69,48 @@ def sha(value):
     return hashlib.sha256(value.encode('utf-8') if isinstance(value, str) else value).hexdigest()
 
 
+def production_serializers(text):
+    """Recognize only the complete pinned r9/r10 serializeState return shape.
+
+    This is deliberately not a general JS parser. Source provenance and exact
+    HTTP/V8/release hashes still establish the helpers' production identity.
+    Match every field and its original argument, with no additional statements,
+    assignments or arbitrary expressions in this read-only wrapper. The sole
+    admitted shape difference is r10's fixed terraformer floor prefix.
+    """
+    identifier = r'[A-Za-z_$][A-Za-z0-9_$]*'
+    state = r'(?P=state)'
+
+    def call(field):
+        return rf'{field}:{identifier}\({state}\.{field}\)'
+
+    def copy(field):
+        return rf'{field}:\{{\.\.\.{state}\.{field}\}}'
+
+    def direct(field):
+        return rf'{field}:{state}\.{field}'
+
+    fields = [
+        *(call(field) for field in ('buildingTemplates', 'formations', 'researchTemplates', 'orders')),
+        rf'planets:{state}\.planets\.map\({identifier}\)',
+        direct('activePlanetId'), rf'deepSpace:structuredClone\({state}\.deepSpace\)',
+        copy('universe'), call('fleets'),
+        rf'messages:{state}\.messages\.map\((?P<message>{identifier})=>\(\{{\.\.\.(?P=message)\}}\)\)',
+        direct('nextFleetId'), call('research'),
+        rf'darkMatter:(?P<big>{identifier})\({state}\.darkMatter\)', copy('items'),
+        rf'boosters:{state}\.boosters\.map\((?P<booster>{identifier})=>\(\{{\.\.\.(?P=booster)\}}\)\)',
+        call('arcade'), call('lifetime'), rf'warpCores:(?P=big)\({state}\.warpCores\)',
+        copy('curvature'), rf'totalTime:(?P=big)\({state}\.totalTime\)',
+        *(direct(field) for field in ('manualClicks', 'seenEnergyShortage', 'hasPrestiged')),
+        rf'unlockedCards:{state}\.unlockedCards\.slice\(\)', call('protocols'),
+        rf'unlocked:{state}\.unlocked\.slice\(\)', copy('stats'), direct('offlineBonusHours'),
+    ]
+    prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{return\{{'
+              rf'(?:terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
+              rf'{state}\.orders\.nextJobId\),)?')
+    return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
+
+
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
     def changed(before, after, paths):
@@ -438,11 +480,14 @@ def worker(args):
                 anchor = anchors[0]
                 session = anchor.group(3)
                 body_after = text[anchor.end():anchor.end()+700]
-                state_match = re.search(r'const [\w$]+=([\w$]+),[\w$]+=\1\.unlocked;', body_after)
-                serializers = list(re.finditer(r'function ([\w$]+)\([\w$]+\)\{return\{buildingTemplates:', text))
+                state_matches = list(re.finditer(r'const [\w$]+=([\w$]+),[\w$]+=\1\.unlocked;', body_after))
+                serializers = production_serializers(text)
                 frames = list(re.finditer(r'window\.requestAnimationFrame\(([\w$]+)\);window\.setInterval', text))
-                check('state, pure production serializer and original frame resolve uniquely', state_match is not None and len(serializers) == len(frames) == 1)
-                state, serializer, frame = state_match.group(1), serializers[0].group(1), frames[0].group(1)
+                check('state, pure production serializer and original frame resolve uniquely',
+                      len(state_matches) == len(serializers) == len(frames) == 1,
+                      {'stateMatches': len(state_matches), 'serializerMatches': len(serializers),
+                       'frameMatches': len(frames), 'serializerNames': [m.group('name') for m in serializers]})
+                state, serializer, frame = state_matches[0].group(1), serializers[0].group('name'), frames[0].group(1)
                 declaration = re.search(r'function '+re.escape(frame)+r'\([\w$]+\)\{', text)
                 check('original application RAF declaration exists', declaration is not None)
                 position = declaration.end()
