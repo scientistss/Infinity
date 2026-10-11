@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 import traceback
 import unittest
-from test_terraformer_native_preparation import TargetPage as OriginalTargetPage, DiagnosticPage
+from test_terraformer_native_preparation import TargetPage as OriginalTargetPage, DiagnosticPage as OriginalDiagnosticPage
 
 SCRIPT = Path(__file__).with_name('browser-demolition.py')
 SOURCE = SCRIPT.read_text(encoding='utf-8')
@@ -40,12 +40,13 @@ class TargetPage(OriginalTargetPage):
     clock = None
 
     def __init__(self, *, scrolls=None, continuous=False, rect_motion=False, missing=False,
-                 stalled=False, stale_frame=False, stale_timestamp=False, clock_mutation=False, **kwargs):
+                 stalled=False, stale_frame=False, stale_timestamp=False, clock_mutation=False, header_occlusion=False, **kwargs):
         super().__init__(**kwargs)
         self.scrolls = list(scrolls or [0])
         self.continuous, self.rect_motion, self.missing = continuous, rect_motion, missing
         self.stalled, self.stale_frame, self.stale_timestamp = stalled, stale_frame, stale_timestamp
         self.clock_mutation = clock_mutation
+        self.header_occlusion = header_occlusion
         self.samples = 0
 
     def evaluate(self, source, options=None):
@@ -70,6 +71,28 @@ class TargetPage(OriginalTargetPage):
     def wait_for_timeout(self, value):
         super().wait_for_timeout(value)
         self.clock.now += value / 1000
+
+    def current_proof(self):
+        result = copy.deepcopy(self.proof)
+        box = self.box
+        result['targets'][0]['contained'] &= box['x'] >= 0 and box['y'] >= 0 and box['x'] + box['width'] <= self.limits['width'] and box['y'] + box['height'] <= self.limits['height']
+        if self.header_occlusion and box['y'] < self.limits['headerBottom']:
+            for point in result['targets'][0]['points']:
+                point['unoccluded'] = False
+        return result
+
+
+class DiagnosticPage(OriginalDiagnosticPage):
+    def evaluate(self, source, selectors=None):
+        if selectors is None:
+            return super().evaluate(source)
+        self.observe('target visibility')
+        assert 'hiddenAncestor' in source and 'getBoundingClientRect' in source and 'disabled:e.disabled' in source
+        return [{'selector': selector, 'hidden': selector == 'queue', 'hiddenAncestor': selector == 'queue',
+                 'display': 'none' if selector == 'queue' else 'block', 'visibility': 'visible',
+                 'rect': {'x': 0, 'y': 0, 'width': 0 if selector == 'queue' else 100, 'height': 0 if selector == 'queue' else 50},
+                 'controls': [{'tag': 'BUTTON', 'id': '', 'disabled': True}] if selector == 'queue' else []} for selector in selectors]
+
 
 
 class PureEvidenceTests(unittest.TestCase):
@@ -124,13 +147,13 @@ class TargetPreparationTests(unittest.TestCase):
             self.checks.append((name, condition, detail))
             if not condition:
                 raise AssertionError(name)
-        self.namespace.update(check=check, advance=lambda page: None, visibility=lambda page, selectors: page.proof)
+        self.namespace.update(check=check, advance=lambda page: None, visibility=lambda page, selectors: page.current_proof())
 
     def test_topbar_resource_capture_uses_its_actual_unobstructed_region(self):
         page = TargetPage(in_header=True)
         self.namespace['native_scroll_to'](page, '[data-bind="res-metal"]')
         self.assertEqual(page.wheels, [])
-        self.assertEqual(next(detail for name, _, detail in self.checks if name.startswith('target fits'))['limits']['top'], 12)
+        self.assertEqual(next(detail for name, _, detail in self.checks if name.startswith('target fits'))['limits']['top'], 0)
         self.assertIn('five unoccluded hit-tests', self.checks[-1][0])
 
     def test_mobile_static_header_and_desktop_sticky_header_are_distinct(self):
@@ -140,6 +163,34 @@ class TargetPreparationTests(unittest.TestCase):
         desktop = TargetPage(position='sticky', y=700, height=1000)
         with self.assertRaisesRegex(AssertionError, 'fits its actual'):
             self.namespace['native_scroll_to'](desktop, '#demolition-review')
+
+    def test_real_ci_resource_header_at10point5_is_visible_without_an_impossible_wheel(self):
+        page = TargetPage(in_header=True, y=10.5, height=74.8125, stuck=True)
+        self.namespace['native_scroll_to'](page, '[data-bind="res-metal"]')
+        self.assertEqual(page.wheels, [])
+        self.assertEqual(self.checks[-1][0], 'native target is wholly visible with five unoccluded hit-tests')
+
+    def test_actual_viewport_edges_and_foreground_layer_do_not_inherit_artificial_insets(self):
+        for y, height, in_header in ((0, 80, True), (1020, 80, True), (10.5, 74.8125, False)):
+            with self.subTest(y=y, in_header=in_header):
+                page = TargetPage(in_header=in_header, y=y, height=height, stuck=True)
+                self.namespace['native_scroll_to'](page, 'actual-hit-testable-target')
+                self.assertFalse(page.wheels)
+
+    def test_body_really_occluded_by_sticky_header_is_repositioned_and_rehit(self):
+        page = TargetPage(y=10.5, height=74.8125, header_occlusion=True)
+        self.namespace['native_scroll_to'](page, 'ordinary-body-target')
+        self.assertTrue(page.wheels)
+        self.assertGreaterEqual(page.box['y'], page.limits['headerBottom'])
+        self.assertTrue(all(point['unoccluded'] for point in self.checks[-1][2]['targets'][0]['points']))
+
+    def test_partial_viewport_and_unmovable_occluded_targets_cannot_pass(self):
+        for fault in ({'y': -.25}, {'y': 1080}, {'y': 10.5, 'occluded': True}):
+            with self.subTest(fault=fault):
+                page = TargetPage(in_header=True, stuck=True, **fault)
+                with self.assertRaisesRegex(AssertionError, 'five unoccluded'):
+                    self.namespace['native_scroll_to'](page, 'unmovable-target')
+                self.assertEqual(len(page.wheels), 5)
 
     def test_occluded_disabled_or_missing_fifth_hit_cannot_be_passed_as_layout(self):
         for fault in ({'visible': False}, {'contained': False}, {'occluded': True}):
@@ -159,7 +210,7 @@ class ScrollSettlementTests(unittest.TestCase):
             self.checks.append((name, condition, detail))
             if not condition:
                 raise AssertionError(name)
-        self.namespace.update(check=check, advance=lambda page: None, visibility=lambda page, selectors: page.proof)
+        self.namespace.update(check=check, advance=lambda page: None, visibility=lambda page, selectors: page.current_proof())
 
     def test_observed_941_939_938_tail_waits_for_four_complete_identical_samples(self):
         page = TargetPage(scrolls=[941, 939, 938, 938, 938, 938])
@@ -212,7 +263,7 @@ class ScrollSettlementTests(unittest.TestCase):
         page = TargetPage(in_header=True, occluded=True)
         with self.assertRaisesRegex(AssertionError, 'five unoccluded'):
             self.namespace['native_scroll_to'](page, '[data-demolition-confirm]')
-        self.assertEqual(page.samples, 4)
+        self.assertGreaterEqual(page.samples, 4)
 
     def test_screenshot_complete_before_after_artifact_is_saved_before_exact_assertion(self):
         node = next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'responsive')
@@ -281,6 +332,12 @@ class LiveFailureContractTests(unittest.TestCase):
             self.assertEqual((out / 'failure-dom.html').read_bytes(), page.DOM.encode())
             self.assertEqual((out / 'failure.png').read_bytes(), b'offline fake screenshot bytes')
             self.assertIn('original demolition failure', namespace['failure']['traceback'])
+            self.assertEqual(namespace['failure']['queue'], ['captured text'])
+            queue = next(row for row in namespace['failure']['targetVisibility'] if row['selector'] == 'queue')
+            self.assertTrue(queue['hidden'] and queue['hiddenAncestor'])
+            self.assertEqual(queue['rect']['height'], 0)
+            self.assertTrue(queue['controls'][0]['disabled'])
+            self.assertNotIn('captureErrors', namespace['failure'])
 
 
 if __name__ == '__main__':

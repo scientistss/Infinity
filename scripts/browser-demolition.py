@@ -478,20 +478,30 @@ def native_scroll_to(page, selector):
           return {height:innerHeight,width:innerWidth,inTopbar:!!header&&header.contains(element),
             headerPosition:header?getComputedStyle(header).position:null,
             headerBottom:header?.getBoundingClientRect().bottom||0};}''')
-        # The prestige button and planet selector are INSIDE the topbar. The
-        # mobile topbar is static. Neither is a sticky obstruction above itself.
-        limits['top'] = 12 if limits['inTopbar'] or limits['headerPosition'] not in ('sticky', 'fixed') else max(0, limits['headerBottom']) + 12
-        available = limits['height'] - limits['top'] - 12
-        check('target fits its actual unobstructed viewport region', box is not None and box['height'] <= available, {'selector': selector, 'box': box, 'limits': limits})
-        if box['y'] >= limits['top'] and box['y'] + box['height'] <= limits['height'] - 12:
-            proof = visibility(page, [selector])
-            check('native target is wholly visible with five unoccluded hit-tests', all(item['visible'] and item['contained'] and len(item['points']) == 5 and all(point['unoccluded'] for point in item['points']) for item in proof['targets']), proof)
+        # Read actual viewport/hit evidence first. A topbar child or a floating
+        # layer can be fully visible above headerBottom; header ancestry never
+        # grants visibility and an arbitrary screenshot inset is not a clip.
+        limits['top'] = 0 if limits['inTopbar'] or limits['headerPosition'] not in ('sticky', 'fixed') else max(0, limits['headerBottom'])
+        check('target fits its actual complete viewport', box is not None and box['height'] <= limits['height'] and box['width'] <= limits['width'],
+              {'selector': selector, 'box': box, 'limits': limits})
+        proof = visibility(page, [selector])
+        wholly_visible = len(proof['targets']) == 1 and all(item['visible'] and item['contained'] and len(item['points']) == 5 and all(point['unoccluded'] for point in item['points']) for item in proof['targets'])
+        if wholly_visible:
+            check('native target is wholly visible with five unoccluded hit-tests', True, proof)
             return
+        # Only a failed real visibility proof invokes repositioning. Reserve the
+        # sticky header for normal content, but never mistake it for an overlay
+        # above an already fully hit-testable floating target.
+        available = limits['height'] - limits['top']
+        check('target fits its actual unobstructed viewport region', box['height'] <= available,
+              {'selector': selector, 'box': box, 'limits': limits, 'failedVisibility': proof})
         target_y = limits['top'] + (available - box['height']) / 2
         page.mouse.move(limits['width'] - 12, limits['height'] - 12)
         page.mouse.wheel(0, round(box['y'] - target_y)); advance(page)
         wait_for_scroll_settled(page, selector)
-    raise AssertionError('Actual wheel input could not expose the complete requested region')
+    check('Actual wheel input could not expose the complete requested region with five unoccluded hit-tests', False,
+          {'selector': selector, 'lastVisibility': visibility(page, [selector])})
+
 
 def capture_failure(error, page=None):
     global completed, failure
@@ -521,6 +531,15 @@ def capture_failure(error, page=None):
         for name, selector in [('card', CARD), ('queue', QUEUE), ('status', '[data-bind="status"]')]:
             attempt(name, lambda name=name, selector=selector: failure.__setitem__(name, page.locator(selector).all_text_contents()))
         attempt('scroll and wheel diagnostics', lambda: failure.__setitem__('scrollAndWheels', page.evaluate('({width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.scrollingElement?.scrollHeight,wheelCount:window.__demoWheels?.length||0,wheels:window.__demoWheels?.slice(-200)||[]})')))
+        # all_text_contents above intentionally retains hidden historical text.
+        # Report visibility separately so it cannot be mistaken for shown work.
+        attempt('diagnostic target visibility', lambda: failure.__setitem__('targetVisibility', page.evaluate("""selectors=>selectors.map(selector=>{
+          const element=document.querySelector(selector);if(!element)return {selector,missing:true};
+          const r=element.getBoundingClientRect(),s=getComputedStyle(element);
+          return {selector,hidden:element.hidden,hiddenAncestor:!!element.closest('[hidden]'),
+            display:s.display,visibility:s.visibility,rect:{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom},
+            controls:[...element.querySelectorAll('button,input,select')].map(e=>({tag:e.tagName,id:e.id,disabled:e.disabled}))};
+        })""", [CARD, QUEUE, '[data-bind="res-metal"]'])))
         attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')))
         attempt('report before screenshot', flush)
         attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)))
@@ -837,6 +856,9 @@ try:
         reload_verified(page, 'partialReloaded'); native_scroll_to(page, QUEUE); snap(page, 'native-job203-partial-reload.png')
         one_seconds(page, 9); complete = save(page, 'demolitionComplete'); record(page, 'native-job203-actual-completion')
         wallet_golden(complete, 16, GROSS['metal'] * (2 + DURATION), 128000)
+        check('completed demolition panel is hidden and no enabled old cancellation control remains',
+              page.locator(QUEUE).is_hidden() and page.locator(CANCEL + ':enabled').count() == 0,
+              page.locator(QUEUE).evaluate('e=>({hidden:e.hidden,rectCount:e.getClientRects().length,oldCancelDisabled:e.querySelector("[data-cancel-demolition]")?.disabled??null})'))
         check('real completed overcap metal UI displays stopped natural production', page.locator('[data-bind="rate-metal"]').inner_text() == '+0.00/s')
         native_scroll_to(page, '[data-bind="res-metal"]'); snap(page, 'native-retained-overcap-metal-production-paused.png')
         check('true9→8 completion preserves overcap stock, one released field, unchanged total/grants/buildcount', planet(complete)['demolition'] is None and planet(complete)['buildings']['metal_storage'] == 8 and sum(planet(complete)['buildings'].values()) == 123 and planet(complete)['fieldsMax'] == 173 and planet(complete)['terraformerFields'] == {'base': 163, 'grantedLevels': 2} and float(planet(complete)['resources']['metal']) > 1590000 and complete['stats']['buildsCompleted'] == 135 and complete['orders']['nextJobId'] == 204)
