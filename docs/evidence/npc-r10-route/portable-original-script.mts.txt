@@ -1,0 +1,293 @@
+/**
+ * Bounded natural continuation of a genuine ac3/r10 engineering fixture.
+ * No NPC economy exists in this source. This verifies only existing identity scouts.
+ * Run from a repository whose src tree is byte-exact ac3. HEAD may include test/docs commits.
+ * node --import tsx scripts/npc-natural-r10-route.mts --output /path/to/report.json
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+import { activePlanet, selectPlanet } from "../src/game/empire.ts";
+import { enqueueResearch } from "../src/game/research.ts";
+import { orderUnits } from "../src/game/shipyard.ts";
+import { emptyTickLog, tick } from "../src/game/logic.ts";
+import { emptyCargo, quoteFlight, resolveFleetArrivals, sendFleet } from "../src/game/fleet.ts";
+import { npcAt } from "../src/game/galaxy.ts";
+import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save.ts";
+import type { GameState } from "../src/game/types.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = resolve(HERE, "..");
+const INPUT = resolve(REPO, "tests/fixtures/demolition-origin-r10-save.json");
+const PIN = "ac3cce98403bea1e7162bcb4092e4cfeeb448a9a";
+const INPUT_SHA = "d456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a";
+const SOURCE_TREE = "8df1d4635cfb04c3bb35666ea7b1380fccb1d47f";
+const args = process.argv.slice(2);
+if (args.length !== 0 && !(args.length === 2 && args[0] === "--output" && args[1])) {
+  throw new Error("Usage: npc-natural-r10-route.mts [--output report.json]");
+}
+const REPORT = args.length ? resolve(args[1]!) : resolve(REPO, "npc-natural-r10-report.json");
+const RES = ["metal", "crystal", "deuterium"] as const;
+const GOLD = Object.freeze({
+  sourceGameSeconds: 25810, researchMetal: 1600, researchDeuterium: 2400,
+  researchSeconds: 1, probeCrystal: 1000, probeSeconds: .24,
+  distance: 1025, probeSpeed: 130000000, legSeconds: 1, fuelEachDispatch: 4,
+  capacity: 7, firstFleetId: 4, secondFleetId: 5, researchJobId: 202, probeJobId: 203,
+  firstArrivalElapsed: 3, secondArrivalElapsed: 65, finalElapsed: 66,
+  npcId: "npc-1:56:6", npcName: "晨星共同体 56-6", npcFaction: "晨星共同体",
+});
+const BUDGET = { wallSeconds: 300, simulationSeconds: 120, ticks: 130, actions: 10 };
+const started = performance.now();
+const startedAt = new Date().toISOString();
+const checks: Array<{ name: string; passed: boolean }> = [];
+const actions: unknown[] = [], ticks: unknown[] = [], checkpoints: unknown[] = [];
+let stage = "source validation", elapsed = 0, actionCount = 0;
+let state: GameState;
+let origin: any;
+let originalAt = 0;
+let firstReport: any = null;
+const produced = { metal: 0, crystal: 0, deuterium: 0 };
+const spent = { metal: 0, crystal: 0, deuterium: 0 };
+const sha = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+const git = (...args: string[]) => execFileSync("git", args, { cwd: REPO, encoding: "utf8", timeout: 10000 }).trim();
+function check(name: string, valid: boolean): void {
+  checks.push({ name, passed: valid });
+  if (!valid) throw new Error(name);
+}
+function budget(): void {
+  check(`${stage}: bounded execution`, (performance.now() - started) / 1000 < BUDGET.wallSeconds && elapsed <= BUDGET.simulationSeconds && ticks.length <= BUDGET.ticks && actionCount <= BUDGET.actions);
+}
+function equal(name: string, actual: unknown, expected: unknown): void {
+  check(name, isDeepStrictEqual(actual, expected));
+}
+function near(name: string, actual: number, expected: number): void {
+  // Frozen before execution, inherited scale from the existing engineering evidence.
+  check(name, Number.isFinite(actual) && Number.isFinite(expected) && Math.abs(actual - expected) <= 1e-7 + Math.abs(expected) * 2e-14);
+}
+function wallet(s: GameState) {
+  return Object.fromEntries(s.planets.map(p => [p.id, Object.fromEntries(RES.map(r => [r, p.resources[r].toNumber()]))]));
+}
+function keyOrderChanges(a: any, b: any, path = "$"): unknown[] {
+  if (!a || typeof a !== "object") return [];
+  if (Array.isArray(a)) return a.flatMap((value, index) => keyOrderChanges(value, b[index], `${path}[${index}]`));
+  const keys = Object.keys(a), otherKeys = Object.keys(b);
+  const own = isDeepStrictEqual(keys, otherKeys) ? [] : [{ path, firstExportKeys: keys, canonicalExportKeys: otherKeys }];
+  return [...own, ...keys.flatMap(key => keyOrderChanges(a[key], b[key], `${path}.${key}`))];
+}
+function withReferenceKeyOrder(reference: any, value: any): any {
+  if (!reference || typeof reference !== "object") return value;
+  if (Array.isArray(reference)) return reference.map((item, index) => withReferenceKeyOrder(item, value[index]));
+  return Object.fromEntries(Object.keys(reference).map(key => [key, withReferenceKeyOrder(reference[key], value[key])]));
+}
+function invariant() {
+  const now: any = serializeState(state);
+  check(`${stage}: no NPC field or schema implementation`, !("npcEconomy" in now));
+  equal(`${stage}: existing plans and authorization unchanged`, now.orders.tasks, origin.orders.tasks);
+  equal(`${stage}: original reports retained verbatim`, now.messages.slice(0, origin.messages.length), origin.messages);
+  equal(`${stage}: random worlds and unrevealed ring outcomes unchanged`, [now.arcade, now.deepSpace], [origin.arcade, origin.deepSpace]);
+  equal(`${stage}: no external reward/core/item/booster/unlock changes`, [now.darkMatter, now.warpCores, now.items, now.boosters, now.curvature, now.unlocked], [origin.darkMatter, origin.warpCores, origin.items, origin.boosters, origin.curvature, origin.unlocked]);
+  for (const p of now.planets) {
+    const old = origin.planets.find((x: any) => x.id === p.id);
+    equal(`${stage}: ${p.id} fixed buildings/ratios/terraformer`, [p.buildings, p.productionPct, p.terraformerFields, p.fieldsMax], [old.buildings, old.productionPct, old.terraformerFields, old.fieldsMax]);
+  }
+  near(`${stage}: total game time`, state.totalTime.toNumber(), GOLD.sourceGameSeconds + elapsed);
+  if (firstReport) equal(`${stage}: first scout remains a frozen identity snapshot`, state.messages.find(m => m.id === "scout-4"), firstReport);
+}
+function checkpoint(name: string): void {
+  stage = name;
+  const before = serializeState(state);
+  const at = originalAt + elapsed * 1000;
+  const raw = exportSave(state, at, at);
+  const loaded = importSave(raw);
+  equal(`${name}: strict reader preserves full state`, loaded.state, before);
+  state = deserializeState(loaded.state);
+  equal(`${name}: adopted reload preserves every state field`, serializeState(state), before);
+  const canonical = exportSave(state, at, at);
+  equal(`${name}: restoring only original key order restores first export bytes`, JSON.stringify(withReferenceKeyOrder(JSON.parse(raw), JSON.parse(canonical)), null, 2), raw);
+  equal(`${name}: whole envelope values strictly stable despite possible key order`, JSON.parse(canonical), JSON.parse(raw));
+  state = deserializeState(importSave(canonical).state);
+  equal(`${name}: second strict roundtrip preserves every state field`, serializeState(state), before);
+  equal(`${name}: canonical same-time export bytes stable on second roundtrip`, exportSave(state, at, at), canonical);
+  checkpoints.push({ name, elapsedSeconds: elapsed, totalGameSeconds: state.totalTime.toString(), firstExportSha256: sha(raw), canonicalSaveSha256: sha(canonical), firstExportBytes: Buffer.byteLength(raw), canonicalSaveBytes: Buffer.byteLength(canonical), firstRoundtripChangedOnlyObjectKeyOrder: raw !== canonical, objectKeyOrderChanges: keyOrderChanges(JSON.parse(raw), JSON.parse(canonical)), sameEnvelopeValues: true, revision: loaded.revision, fullStateRoundtrip: true, adoptedReload: true, rawPayloadCopied: false });
+  invariant();
+}
+function payment(name: string, execute: () => { ok: boolean; state: GameState; reason: string; jobId?: number; fleetId?: number }, expected: { metal: number; crystal: number; deuterium: number }) {
+  stage = name; actionCount += 1; budget();
+  const before = wallet(state), priorLifetime = RES.map(r => state.lifetime[r].toString()), previousTime = state.totalTime.toString();
+  const result = execute(); check(`${name}: accepted through real API: ${result.reason}`, result.ok); state = result.state;
+  const after = wallet(state);
+  for (const p of state.planets) for (const r of RES) {
+    const debit = p.id === "homeworld" ? expected[r] : 0;
+    near(`${name}: ${p.id}/${r} payment source`, after[p.id][r], before[p.id][r] - debit);
+  }
+  equal(`${name}: payment never counts as lifetime production`, RES.map(r => state.lifetime[r].toString()), priorLifetime);
+  equal(`${name}: action does not assign simulation time`, state.totalTime.toString(), previousTime);
+  for (const r of RES) spent[r] += expected[r];
+  actions.push({ name, elapsedSeconds: elapsed, jobId: result.jobId, fleetId: result.fleetId, expectedDebit: expected, before, after });
+  invariant(); return result;
+}
+function independentRates(p: any) {
+  // Literal frozen r10 rule math. Never imports economy, storageCaps, or quote as its oracle.
+  const b = p.buildings;
+  const growth = (n: number) => n * Math.pow(1.1, n);
+  const supply = 20 * growth(b.solar_plant) + Math.max(0, Math.floor((p.tempMax + 140) / 6)) * p.units.solar_satellite;
+  const demand = 10 * growth(b.metal_mine) + 10 * growth(b.crystal_mine) + 20 * growth(b.deuterium_synth);
+  const efficiency = demand > 0 ? Math.min(1, supply / demand) : 1;
+  const metalPosition = p.id === "homeworld" ? 1 : p.coordinates.position === 10 ? 1.17 : NaN;
+  const rate = {
+    metal: (30 + 30 * growth(b.metal_mine) * efficiency * metalPosition) / 6 * 1.15,
+    crystal: (15 + 20 * growth(b.crystal_mine) * efficiency) / 6 * 1.15,
+    deuterium: 10 * growth(b.deuterium_synth) * (1.44 - .004 * p.tempMax) * efficiency / 6 * 1.15,
+  };
+  const cap = (level: number) => 5000 * Math.floor(2.5 * Math.exp(20 * level / 33));
+  return { rate, caps: { metal: cap(b.metal_storage), crystal: cap(b.crystal_storage), deuterium: cap(b.deuterium_tank) } };
+}
+function advance(seconds: number, name: string) {
+  stage = name; budget();
+  const before = wallet(state), oldLifetime = Object.fromEntries(RES.map(r => [r, state.lifetime[r].toNumber()]));
+  const expected: any = {}, output = { metal: 0, crystal: 0, deuterium: 0 };
+  for (const p of state.planets) {
+    const { rate, caps } = independentRates(p); expected[p.id] = {};
+    for (const r of RES) {
+      const gained = Math.max(0, Math.min(caps[r] - before[p.id][r], rate[r] * seconds));
+      output[r] += gained; expected[p.id][r] = before[p.id][r] + gained;
+    }
+  }
+  const previous = serializeState(state), log = emptyTickLog();
+  const sourceState = state;
+  state = tick(state, seconds, "live", log); elapsed += seconds;
+  equal(`${name}: original tick input immutable`, serializeState(sourceState), previous);
+  const after = wallet(state);
+  for (const p of state.planets) for (const r of RES) near(`${name}: ${p.id}/${r} independent capped production`, after[p.id][r], expected[p.id][r]);
+  for (const r of RES) {
+    near(`${name}: ${r} only actual production enters lifetime`, state.lifetime[r].toNumber(), oldLifetime[r] + output[r]);
+    produced[r] += output[r];
+  }
+  ticks.push({ name, seconds, elapsedSeconds: elapsed, before, after, independentActualProduction: output, completedResearch: log.completedResearch, completedUnits: log.completedUnits });
+  invariant(); budget(); return log;
+}
+const target = { galaxy: 1, system: 56, position: 6 };
+const request = () => ({ mission: "scout" as const, target, ships: { espionage_probe: 1 }, cargo: emptyCargo(), speedPercent: 100 });
+function dispatch(name: string, expectedId: number) {
+  const before = serializeState(state), quote = quoteFlight(state, request());
+  check(`${name}: real quote accepted`, quote.ok);
+  equal(`${name}: literal duration/fuel/capacity golden`, [quote.duration, quote.fuel.toNumber(), quote.capacity.toNumber()], [GOLD.legSeconds, GOLD.fuelEachDispatch, GOLD.capacity]);
+  equal(`${name}: quoting is pure`, serializeState(state), before);
+  check(`${name}: no early identity report`, !state.messages.some(m => m.id === `scout-${expectedId}`));
+  const result = payment(name, () => sendFleet(state, request()), { metal: 0, crystal: 0, deuterium: GOLD.fuelEachDispatch });
+  equal(`${name}: real fleet ID`, result.fleetId, expectedId);
+  const fleet = state.fleets.find(f => f.id === expectedId)!;
+  equal(`${name}: real locked outbound and empty cargo`, [fleet.duration, fleet.remaining, fleet.returning, fleet.elapsed, fleet.ships, RES.map(r => fleet.cargo[r].toString())], [1, 1, false, 0, { espionage_probe: 1 }, ["0", "0", "0"]]);
+  equal(`${name}: probe removed from home availability`, activePlanet(state).units.espionage_probe, 0);
+}
+function arrival(id: number, observedElapsed: number) {
+  const message = state.messages.find(m => m.id === `scout-${id}`);
+  check(`arrival-${id}: exactly one static identity message`, state.messages.filter(m => m.id === `scout-${id}`).length === 1);
+  check(`arrival-${id}: legacy identity report only`, !!message && message.text === "侦察报告 [1:56:6]：晨星共同体 56-6，派系：晨星共同体。当前阶段不会反击；战斗与精确情报尚未开放。");
+  equal(`arrival-${id}: actual global timestamp`, message!.at, GOLD.sourceGameSeconds + observedElapsed);
+  equal(`arrival-${id}: existing return leg retained`, state.fleets.filter(f => f.id === id).map(f => [f.returning, f.remaining, f.elapsed]), [[true, 1, 0]]);
+  equal(`arrival-${id}: repeated arrival resolution is idempotent`, serializeState(resolveFleetArrivals(state)), serializeState(state));
+  return structuredClone(message);
+}
+
+let failure: string | null = null;
+let source: any = null;
+try {
+  const raw = readFileSync(INPUT);
+  check("input exact original 35551 bytes and independently supplied digest", raw.length === 35551 && sha(raw) === INPUT_SHA);
+  const actualGitHead = git("rev-parse", "HEAD");
+  const worktreeStatusPorcelain = git("status", "--porcelain");
+  const sourceScopeStatusPorcelain = git("status", "--porcelain", "--", "src");
+  check("historical ac3 src tree matches independently pinned tree ID", git("rev-parse", `${PIN}:src`) === SOURCE_TREE);
+  check("actual HEAD retains exact ac3 committed src tree", git("rev-parse", "HEAD:src") === SOURCE_TREE);
+  check("runtime src has no tracked modifications", git("diff", PIN, "--", "src") === "" && sourceScopeStatusPorcelain === "");
+  check("runtime src has no additional untracked or ignored files", git("ls-files", "--others", "--", "src") === "");
+  const sourcePaths = git("ls-tree", "-r", "--name-only", PIN, "--", "src").split("\n").filter(Boolean);
+  const sourceFiles = sourcePaths.map(path => {
+    const expected = execFileSync("git", ["show", `${PIN}:${path}`], { cwd: REPO, timeout: 10000 });
+    const actual = readFileSync(resolve(REPO, path));
+    check(`runtime bytes exactly match ac3: ${path}`, actual.equals(expected));
+    return { path, sha256: sha(actual) };
+  });
+  const baselinePackage = JSON.parse(execFileSync("git", ["show", `${PIN}:package.json`], { cwd: REPO, encoding: "utf8", timeout: 10000 }));
+  const runtimePackage = JSON.parse(readFileSync(resolve(REPO, "package.json"), "utf8"));
+  equal("runtime dependency declarations equal ac3", [runtimePackage.dependencies, runtimePackage.devDependencies], [baselinePackage.dependencies, baselinePackage.devDependencies]);
+  const lock = readFileSync(resolve(REPO, "package-lock.json"));
+  check("runtime dependency lock equals exact ac3 bytes", lock.equals(execFileSync("git", ["show", `${PIN}:package-lock.json`], { cwd: REPO, timeout: 10000 })));
+  source = { domainSourceSha: PIN, actualGitHead, committedSourceTree: SOURCE_TREE, worktreeStatusPorcelain, sourceScopeStatusPorcelain, inputSha256: INPUT_SHA, inputBytes: raw.length, sourceRoot: ".", sourceFiles, scriptSha256: sha(readFileSync(fileURLToPath(import.meta.url))), lockSha256: sha(lock), runtimeNode: process.version, sourceBinding: "HEAD is the actual test/docs candidate; every imported production src byte and dependency lock must match ac3. Full worktree status is recorded, never silently labeled clean." };
+  const envelope = JSON.parse(raw.toString("utf8"));
+  equal("original schema/version/revision retained", [envelope.schema, envelope.version, envelope.revision], ["infinity-original-p4", 9, 10]);
+  const imported = importSave(raw.toString("utf8"));
+  equal("real r10 import preserves all original state fields", imported.state, envelope.state);
+  state = deserializeState(imported.state); origin = serializeState(state); originalAt = envelope.lastTickAt;
+  equal("fixed starting capability gap", [state.totalTime.toNumber(), state.research.levels.combustion_drive, state.research.levels.espionage_tech, state.planets.length], [25810, 2, 4, 2]);
+  check("production oracle scope: no new multiplier/cap/consumption changes", state.unlocked.length === 15 && state.warpCores.eq(0) && state.curvature.output_double === 0 && state.research.levels.plasma_tech === 0 && !state.boosters.length && state.planets.every(p => p.buildings.fusion_reactor === 0 && Object.values(p.productionPct).every(v => v === 100) && !p.buildQueue.length));
+  checkpoint("origin-unchanged-r10");
+  state = selectPlanet(state, "homeworld");
+  stage = "select home through original API"; invariant();
+  const beforeRejected = serializeState(state), refused = orderUnits(state, "espionage_probe", 1, "manual");
+  check("probe genuinely blocked before combustion 3", !refused.ok && refused.reason.includes("燃烧引擎"));
+  equal("failed probe order has no state effect", serializeState(refused.state), beforeRejected);
+  const research = payment("real-combustion-2-to-3-payment", () => enqueueResearch(state, "combustion_drive", "manual"), { metal: 1600, crystal: 0, deuterium: 2400 });
+  equal("real research stable job ID", research.jobId, 202);
+  equal("research locks independent literal duration", [state.research.queue[0]!.totalSeconds, state.research.queue[0]!.remainingSeconds], [1, 1]);
+  checkpoint("research-paid-unfinished");
+  advance(1, "real-research-completion");
+  equal("combustion only becomes 3 after real tick", state.research.levels.combustion_drive, 3);
+  const probe = payment("real-probe-payment", () => orderUnits(state, "espionage_probe", 1, "manual"), { metal: 0, crystal: 1000, deuterium: 0 });
+  equal("real probe stable job ID", probe.jobId, 203);
+  checkpoint("probe-paid-unfinished");
+  const units = advance(1, "real-probe-completion");
+  check("probe actually built by shipyard tick", activePlanet(state).units.espionage_probe === 1 && units.completedUnits.some(x => x.unit === "espionage_probe" && x.count === 1));
+  equal("original npcAt confirms independent coordinate-hash golden", npcAt(state, target), { name: GOLD.npcName, faction: GOLD.npcFaction, id: GOLD.npcId });
+  dispatch("first-real-scout", 4); checkpoint("first-scout-outbound");
+  advance(1, "first-scout-arrival"); firstReport = arrival(4, 3); checkpoint("first-identity-report-returning");
+  advance(1, "first-scout-return");
+  check("first probe returns once", activePlanet(state).units.espionage_probe === 1 && state.fleets.length === 0);
+  for (let i = 0; i < 60; i++) advance(1, `ordinary-wait-${i + 1}`);
+  dispatch("second-real-scout", 5);
+  advance(.5, "second-scout-midflight");
+  const uninterrupted = state;
+  checkpoint("second-scout-halfway-native-free-strict-reload");
+  const expectedUninterrupted = tick(uninterrupted, .5, "live");
+  advance(.5, "second-scout-arrival-after-adopted-reload");
+  equal("midflight reload equals uninterrupted full-state control", serializeState(state), serializeState(expectedUninterrupted));
+  arrival(5, 65); checkpoint("second-identity-report-returning");
+  advance(1, "second-scout-return");
+  check("same real probe safely returns twice", activePlanet(state).units.espionage_probe === 1 && state.fleets.length === 0);
+  checkpoint("final-returned-and-reloaded");
+  equal("all real debits match literal aggregate", spent, { metal: 1600, crystal: 1000, deuterium: 2408 });
+  const finalWallet = wallet(state);
+  for (const r of RES) {
+    const originalTotal = origin.planets.reduce((n: number, p: any) => n + Number(p.resources[r]), 0);
+    const finalTotal = Object.values(finalWallet).reduce((n: number, p: any) => n + p[r], 0);
+    near(`final conservation ${r}: original + real production - research/probe/fuel`, finalTotal, originalTotal + produced[r] - spent[r]);
+  }
+  equal("two identity reports have same identity text and distinct observation time", state.messages.filter(m => m.id.startsWith("scout-")).map(m => [m.id, m.at, m.text === firstReport.text]), [["scout-4", 25813, true], ["scout-5", 25875, true]]);
+  check("input original bytes still intact", sha(readFileSync(INPUT)) === INPUT_SHA);
+  check("runtime source still matches all pinned ac3 bytes", source.sourceFiles.every((file: { path: string; sha256: string }) => sha(readFileSync(resolve(REPO, file.path))) === file.sha256));
+  check("runtime src still has no untracked or ignored files", git("ls-files", "--others", "--", "src") === "");
+  check("actual HEAD unchanged during execution", git("rev-parse", "HEAD") === source.actualGitHead);
+  check("dependency lock unchanged during execution", sha(readFileSync(resolve(REPO, "package-lock.json"))) === source.lockSha256);
+  equal("bounded natural game time", elapsed, 66);
+} catch (error) {
+  failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  process.exitCode = 1;
+}
+const finalState: any = state! ? serializeState(state) : null;
+const originalBytesUnchangedAfterRun = (() => {
+  try { return sha(readFileSync(INPUT)) === INPUT_SHA; } catch { return null; }
+})();
+const report = {
+  schema: "npc-legacy-natural-r10-route-preparation-v1",
+  source,
+  provenance: { classification: "Actual existing ac3/r10 domain API continuation; compressed simulation, not browser acceptance or NPC economy implementation", sourceFixtureIsAnonymousEngineeringEvidence: true, originalBytesUnchanged: originalBytesUnchangedAfterRun, noWalletTechnologyShipClockInjection: true, timeAdvance: "Only tick(state, positiveSeconds, live); save metadata equals original lastTickAt plus actual counted simulation seconds", serializerEvidence: "Full strict roundtrip/adoption checked, only hashes retained; no player/save payload copied", independentOracle: "Literal payment/flight goldens plus direct frozen formula arithmetic; expected values do not call production economy or quoteFlight", walletTolerance: "absolute <= 1e-7 + abs(expected)*2e-14, frozen before execution" },
+  limits: BUDGET, timing: { startedAt, wallElapsedSeconds: (performance.now() - started) / 1000, adoptedContinuationGameSeconds: elapsed },
+  literalGoldens: GOLD, checks, actions, ticks, checkpoints,
+  outcome: { status: failure ? "failed" : "passed", failure, lastStage: stage, checksPassed: checks.filter(x => x.passed).length, checksFailed: checks.filter(x => !x.passed).length, realDebits: spent, independentlyAccountedActualProduction: produced, totalGameSeconds: finalState?.totalTime ?? null, finalWallets: state! ? wallet(state) : null, scoutReports: state! ? state.messages.filter(m => m.id.startsWith("scout-")) : [], nextFleetId: state! ? state.nextFleetId : null, finalProbeCount: state! ? activePlanet(state).units.espionage_probe : null, finalStateSha256: finalState ? sha(JSON.stringify(finalState)) : null, noNpcEconomyAcceptance: true, noNativeStorageOrBrowserClaim: true },
+};
+writeFileSync(REPORT, JSON.stringify(report, null, 2) + "\n");
+console.log(JSON.stringify({ status: report.outcome.status, failure, checksPassed: report.outcome.checksPassed, gameSeconds: elapsed, hostSeconds: report.timing.wallElapsedSeconds, report: REPORT }));

@@ -1,0 +1,45 @@
+{
+  "schema": "npc-natural-r10-portable-evidence-v1",
+  "status": "prior domain evidence retained with original digest bindings; runnable Node packaging has independent current-checkout acceptance",
+  "originalDomainSourceSha": "ac3cce98403bea1e7162bcb4092e4cfeeb448a9a",
+  "requiredSourceTree": "8df1d4635cfb04c3bb35666ea7b1380fccb1d47f",
+  "observedNpcCandidateHead": "1b648fca6f5124ff13acf2f41664dc5d16831428",
+  "files": [
+    {
+      "path": "docs/NPC_NATURAL_R10_ROUTE.md",
+      "bytes": 6786,
+      "sha256": "fda7487e4a5ba28dafe0994cd59351862bbec3aee6d1a3b9cfc84b21bad59e05"
+    },
+    {
+      "path": "docs/evidence/npc-r10-route/attempt1-failed-report.json",
+      "bytes": 18118,
+      "sha256": "ac2b765b065790f3df2b2b7c63dd3d1262111691d09a56b87e1ba5d7dcf93ef0"
+    },
+    {
+      "path": "docs/evidence/npc-r10-route/attempt1-script.mts.txt",
+      "bytes": 19734,
+      "sha256": "24bc2343be6d36b522a74623ecdca9cf2c687277b7b57b5b502c70945a23ca99"
+    },
+    {
+      "path": "docs/evidence/npc-r10-route/executed-ac3-script.mts.txt",
+      "bytes": 20988,
+      "sha256": "8f79af61fe987d632dc23b158527fa44523b9981ac601b703abd35657737d3af"
+    },
+    {
+      "path": "docs/evidence/npc-r10-route/observed-ac3-report.json",
+      "bytes": 256369,
+      "sha256": "bfeccc61f6827627d243920564846db58c64d799fa9e0b1a0afce09e0795a129"
+    },
+    {
+      "path": "docs/evidence/npc-r10-route/portable-original-script.mts.txt",
+      "bytes": 23935,
+      "sha256": "4f49df42ae292bd3a418a0ef72617dc995d785efe14ff68823c82e2d7ecb8cc3"
+    }
+  ],
+  "runnableNodePackaging": {
+    "path": "scripts/npc-natural-r10-route.mjs",
+    "bytes": 24619,
+    "sha256": "a60adc8cfdcc1efedbc78a8e38a1a3c6d9e5b740e1a5400af3b60a194a7d1ae4",
+    "note": "ES2022/ESNext runtime-equivalent packaging plus output path and exclusive-create safety; its exact execution report is separate from the historical ac3 report."
+  }
+}

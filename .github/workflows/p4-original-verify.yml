@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Pinned ac3 natural research probe and two-scout continuation
+        run: timeout --signal=TERM --kill-after=5s 300s node --import tsx scripts/npc-natural-r10-route.mjs --output npc-natural-r10-report.json
       - name: Independent NPC primitive numerical goldens
         run: |
           python scripts/generate_npc_economy_goldens.py --source-dir docs --output npc-economy-goldens-review.json > npc-economy-oracle-report.json
@@ -304,6 +306,7 @@ jobs:
             npc-economy-goldens-review.json
             npc-economy-oracle-report.json
             npc-economy-primitives-report.json
+            npc-natural-r10-report.json
             natural-growth-report.json
             natural-growth-report.log
             natural-ring-report.json

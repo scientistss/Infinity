@@ -1,0 +1,642 @@
+{
+  "schema": "npc-legacy-natural-r10-route-preparation-v1",
+  "source": {
+    "sha": "ac3cce98403bea1e7162bcb4092e4cfeeb448a9a",
+    "worktreeStatusPorcelain": "",
+    "sourceScopeStatusPorcelain": "",
+    "inputSha256": "d456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a",
+    "inputBytes": 35551,
+    "sourceRoot": "infinity-r10-fixture-source",
+    "scriptSha256": "24bc2343be6d36b522a74623ecdca9cf2c687277b7b57b5b502c70945a23ca99",
+    "lockSha256": "86f38762624d0b3fd2fee301b656693d6394d518dbf481f9b499a3f703819017",
+    "runtimeNode": "v24.19.0"
+  },
+  "provenance": {
+    "classification": "Actual existing ac3/r10 domain API continuation; compressed simulation, not browser acceptance or NPC economy implementation",
+    "sourceFixtureIsAnonymousEngineeringEvidence": true,
+    "originalBytesUnchanged": false,
+    "noWalletTechnologyShipClockInjection": true,
+    "timeAdvance": "Only tick(state, positiveSeconds, live); save metadata equals original lastTickAt plus actual counted simulation seconds",
+    "serializerEvidence": "Full strict roundtrip/adoption checked, only hashes retained; no player/save payload copied",
+    "independentOracle": "Literal payment/flight goldens plus direct frozen formula arithmetic; expected values do not call production economy or quoteFlight",
+    "walletTolerance": "absolute <= 1e-7 + abs(expected)*2e-14, frozen before execution"
+  },
+  "limits": {
+    "wallSeconds": 300,
+    "simulationSeconds": 120,
+    "ticks": 130,
+    "actions": 10
+  },
+  "timing": {
+    "startedAt": "2026-10-11T10:40:23.099Z",
+    "wallElapsedSeconds": 0.05304270500000001,
+    "adoptedContinuationGameSeconds": 1
+  },
+  "literalGoldens": {
+    "sourceGameSeconds": 25810,
+    "researchMetal": 1600,
+    "researchDeuterium": 2400,
+    "researchSeconds": 1,
+    "probeCrystal": 1000,
+    "probeSeconds": 0.24,
+    "distance": 1025,
+    "probeSpeed": 130000000,
+    "legSeconds": 1,
+    "fuelEachDispatch": 4,
+    "capacity": 7,
+    "firstFleetId": 4,
+    "secondFleetId": 5,
+    "researchJobId": 202,
+    "probeJobId": 203,
+    "firstArrivalElapsed": 3,
+    "secondArrivalElapsed": 65,
+    "finalElapsed": 66
+  },
+  "checks": [
+    {
+      "name": "input exact original 35551 bytes and independently supplied digest",
+      "passed": true
+    },
+    {
+      "name": "pinned source HEAD",
+      "passed": true
+    },
+    {
+      "name": "pinned source clean",
+      "passed": true
+    },
+    {
+      "name": "pinned source tracked tree unmodified",
+      "passed": true
+    },
+    {
+      "name": "original schema/version/revision retained",
+      "passed": true
+    },
+    {
+      "name": "real r10 import preserves all original state fields",
+      "passed": true
+    },
+    {
+      "name": "fixed starting capability gap",
+      "passed": true
+    },
+    {
+      "name": "production oracle scope: no new multiplier/cap/consumption changes",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: strict reader preserves full state",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: adopted reload preserves every state field",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: same-time re-export bytes stable",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "origin-unchanged-r10: total game time",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "select home through original API: total game time",
+      "passed": true
+    },
+    {
+      "name": "probe genuinely blocked before combustion 3",
+      "passed": true
+    },
+    {
+      "name": "failed probe order has no state effect",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: bounded execution",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: accepted through real API: 燃烧引擎 → 等级 3 已加入研究队列",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: homeworld/metal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: homeworld/crystal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: homeworld/deuterium payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: colony-1/metal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: colony-1/crystal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: colony-1/deuterium payment source",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: payment never counts as lifetime production",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: action does not assign simulation time",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-combustion-2-to-3-payment: total game time",
+      "passed": true
+    },
+    {
+      "name": "real research stable job ID",
+      "passed": true
+    },
+    {
+      "name": "research locks independent literal duration",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: strict reader preserves full state",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: adopted reload preserves every state field",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: same-time re-export bytes stable",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "research-paid-unfinished: total game time",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: bounded execution",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: original tick input immutable",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: homeworld/metal independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: homeworld/crystal independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: homeworld/deuterium independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: colony-1/metal independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: colony-1/crystal independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: colony-1/deuterium independent capped production",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: metal only actual production enters lifetime",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: crystal only actual production enters lifetime",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: deuterium only actual production enters lifetime",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: total game time",
+      "passed": true
+    },
+    {
+      "name": "real-research-completion: bounded execution",
+      "passed": true
+    },
+    {
+      "name": "combustion only becomes 3 after real tick",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: bounded execution",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: accepted through real API: 间谍卫星 ×1 已入队",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: homeworld/metal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: homeworld/crystal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: homeworld/deuterium payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: colony-1/metal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: colony-1/crystal payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: colony-1/deuterium payment source",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: payment never counts as lifetime production",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: action does not assign simulation time",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: no NPC field or schema implementation",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: existing plans and authorization unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: original reports retained verbatim",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: random worlds and unrevealed ring outcomes unchanged",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: no external reward/core/item/booster/unlock changes",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: homeworld fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: colony-1 fixed buildings/ratios/terraformer",
+      "passed": true
+    },
+    {
+      "name": "real-probe-payment: total game time",
+      "passed": true
+    },
+    {
+      "name": "real probe stable job ID",
+      "passed": true
+    },
+    {
+      "name": "probe-paid-unfinished: strict reader preserves full state",
+      "passed": true
+    },
+    {
+      "name": "probe-paid-unfinished: adopted reload preserves every state field",
+      "passed": true
+    },
+    {
+      "name": "probe-paid-unfinished: same-time re-export bytes stable",
+      "passed": false
+    }
+  ],
+  "actions": [
+    {
+      "name": "real-combustion-2-to-3-payment",
+      "elapsedSeconds": 0,
+      "jobId": 202,
+      "expectedDebit": {
+        "metal": 1600,
+        "crystal": 0,
+        "deuterium": 2400
+      },
+      "before": {
+        "homeworld": {
+          "metal": 2920000,
+          "crystal": 422309.63292262197,
+          "deuterium": 50583.4200556236
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      },
+      "after": {
+        "homeworld": {
+          "metal": 2918400,
+          "crystal": 422309.63292262197,
+          "deuterium": 48183.420055623596
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      }
+    },
+    {
+      "name": "real-probe-payment",
+      "elapsedSeconds": 1,
+      "jobId": 203,
+      "expectedDebit": {
+        "metal": 0,
+        "crystal": 1000,
+        "deuterium": 0
+      },
+      "before": {
+        "homeworld": {
+          "metal": 2918978.10072097,
+          "crystal": 422694.07506993704,
+          "deuterium": 48427.6230299055
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      },
+      "after": {
+        "homeworld": {
+          "metal": 2918978.10072097,
+          "crystal": 421694.07506993704,
+          "deuterium": 48427.6230299055
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      }
+    }
+  ],
+  "ticks": [
+    {
+      "name": "real-research-completion",
+      "seconds": 1,
+      "elapsedSeconds": 1,
+      "before": {
+        "homeworld": {
+          "metal": 2918400,
+          "crystal": 422309.63292262197,
+          "deuterium": 48183.420055623596
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      },
+      "after": {
+        "homeworld": {
+          "metal": 2918978.10072097,
+          "crystal": 422694.07506993704,
+          "deuterium": 48427.6230299055
+        },
+        "colony-1": {
+          "metal": 10000,
+          "crystal": 10000,
+          "deuterium": 0
+        }
+      },
+      "independentActualProduction": {
+        "metal": 578.1007209732234,
+        "crystal": 384.44214731548226,
+        "deuterium": 244.20297428190867
+      },
+      "completedResearch": [
+        {
+          "tech": "combustion_drive",
+          "level": 3
+        }
+      ],
+      "completedUnits": []
+    }
+  ],
+  "checkpoints": [
+    {
+      "name": "origin-unchanged-r10",
+      "elapsedSeconds": 0,
+      "totalGameSeconds": "25810",
+      "saveSha256": "4d5f34f66091a9ef9ead954157488f41389a4bd6f29d9af0fa0987cec1962831",
+      "saveBytes": 28759,
+      "revision": 10,
+      "fullStateRoundtrip": true,
+      "adoptedReload": true,
+      "rawPayloadCopied": false
+    },
+    {
+      "name": "research-paid-unfinished",
+      "elapsedSeconds": 0,
+      "totalGameSeconds": "25810",
+      "saveSha256": "0c34f1509a293e461c3b9ba12be937fc7fbbe424075f2c2632d58506a068655f",
+      "saveBytes": 29153,
+      "revision": 10,
+      "fullStateRoundtrip": true,
+      "adoptedReload": true,
+      "rawPayloadCopied": false
+    }
+  ],
+  "outcome": {
+    "status": "failed",
+    "failure": "Error: probe-paid-unfinished: same-time re-export bytes stable",
+    "lastStage": "probe-paid-unfinished",
+    "checksPassed": 102,
+    "checksFailed": 1,
+    "realDebits": {
+      "metal": 1600,
+      "crystal": 1000,
+      "deuterium": 2400
+    },
+    "independentlyAccountedActualProduction": {
+      "metal": 578.1007209732234,
+      "crystal": 384.44214731548226,
+      "deuterium": 244.20297428190867
+    },
+    "totalGameSeconds": "25811",
+    "finalWallets": {
+      "homeworld": {
+        "metal": 2918978.10072097,
+        "crystal": 421694.07506993704,
+        "deuterium": 48427.6230299055
+      },
+      "colony-1": {
+        "metal": 10000,
+        "crystal": 10000,
+        "deuterium": 0
+      }
+    },
+    "scoutReports": [],
+    "nextFleetId": 4,
+    "finalProbeCount": 0,
+    "finalStateSha256": "76aa30628a6271fc7e32a418e8141c4b50858af3259ee36e7c893ad46c502691",
+    "noNpcEconomyAcceptance": true,
+    "noNativeStorageOrBrowserClaim": true
+  }
+}
