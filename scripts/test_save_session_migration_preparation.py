@@ -198,5 +198,122 @@ class Ca5OracleContracts(OracleContracts):
     self.ns['expected_r11_startup'](self.raw,self.candidate,observed)
 
 
+class ReloadEvidenceTests(unittest.TestCase):
+ def helpers(self):
+  from contextlib import contextmanager
+  import traceback
+  names={'capture_reload_evidence','capture_failure','capture_live_failure','migration_differences','observe_reload_storage'}
+  nodes=[n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name in names]
+  class Clock:
+   @staticmethod
+   def time_ns():return 123456
+  ns=dict(json=json,copy=copy,hashlib=hashlib,time=Clock,contextmanager=contextmanager,traceback=traceback,
+          KEY='current',BACKUP='backup',case='offline reload diagnostic',failure=None)
+  exec(compile(ast.Module(body=nodes,type_ignores=[]),str(SCRIPT),'exec'),ns)
+  return ns
+
+ def test_full_reload_bytes_first_reads_writes_and_all_differences_are_retained(self):
+  ns=self.helpers()
+  original=' {"revision":9,"state":{}}\n'
+  prior={'revision':12,'savedAt':1000,'lastTickAt':1000,'state':{'npcEconomy':{'model':'fixed-production-v1','elapsedSeconds':0},'wallet':'10'}}
+  current=copy.deepcopy(prior);current.update(savedAt=1500,lastTickAt=1450)
+  current['state']['npcEconomy']['elapsedSeconds']=.45;current['state']['wallet']='10.01'
+  before=json.dumps(prior);after=json.dumps(current)
+  audit=[{'operation':'read','key':'current','value':after,'wallAt':1600,'performanceAt':1.25},
+         {'operation':'write-return','key':'current','value':after,'wallAt':1601,'performanceAt':2.25}]
+  snap={'wallAt':1700,'performanceAt':3.25,'current':after,'backup':original,'audit':audit}
+  class Page:
+   def evaluate(self,source):
+    self.source=source
+    return copy.deepcopy(snap)
+  page=Page()
+  observer={'events':[{'eventName':'domStorageItemUpdated','hostReceivedNanoseconds':123,'event':{'key':'current','oldValue':before,'newValue':after}}]}
+  frozen=copy.deepcopy(observer)
+  with tempfile.TemporaryDirectory() as directory:
+   ns['out']=Path(directory)
+   report=ns['capture_reload_evidence'](page,'zero',original,before,phase='after',observer=observer)
+   for label,raw in [('original',original),('migration-committed',before),('current',after),('backup',original)]:
+    self.assertEqual((Path(directory)/f'r9-zero-reload-after-{label}.json').read_bytes(),raw.encode())
+   self.assertEqual(report['firstCurrentRead'],audit[0]);self.assertEqual(report['firstCurrentWriteReturn'],audit[1])
+   self.assertEqual(report['firstCrossDocumentCurrentUpdate'],observer['events'][0])
+   self.assertTrue(report['backupEqualsOriginal']);self.assertFalse(report['currentEqualsMigrationCommit'])
+   self.assertEqual([r['path'] for r in report['completeEnvelopeDifferencesFromMigrationCommit']],
+                    ['$save.lastTickAt','$save.savedAt','$save.state.npcEconomy.elapsedSeconds','$save.state.wallet'])
+   self.assertEqual(json.loads((Path(directory)/report['completeAuditFile']).read_text()),audit)
+   self.assertEqual(json.loads((Path(directory)/report['nativeStorageEventsFile']).read_text()),observer['events'])
+  self.assertEqual(observer,frozen)
+  for forbidden in ('setItem','Date.now=','performance.now=','tick(','catchUp('):self.assertNotIn(forbidden,page.source)
+
+ def test_missing_current_write_or_backup_is_reported_without_invention(self):
+  ns=self.helpers()
+  class Page:
+   def evaluate(self,source):return {'wallAt':2,'performanceAt':1,'current':None,'backup':None,'audit':[]}
+  with tempfile.TemporaryDirectory() as directory:
+   ns['out']=Path(directory)
+   report=ns['capture_reload_evidence'](Page(),'zero','original','{}',phase='after')
+   self.assertEqual(report['artifacts']['current'],{'missing':True})
+   self.assertEqual(report['artifacts']['backup'],{'missing':True})
+   self.assertIsNone(report['firstCurrentRead']);self.assertIsNone(report['firstCurrentWriteReturn'])
+   self.assertIsNone(report['firstCrossDocumentCurrentUpdate'])
+   self.assertNotIn('completeEnvelopeDifferencesFromMigrationCommit',report)
+
+ def test_failure_artifacts_are_independent_and_original_error_survives(self):
+  for broken in ('current','backup','audit','summary','dom','screenshot'):
+   ns=self.helpers();calls=[]
+   def fail_if(name):
+    calls.append(name)
+    if name==broken:raise RuntimeError('capture '+name)
+   class Page:
+    def evaluate(self,source,key):fail_if(key);return ' raw '+key+'\n'
+    def content(self):fail_if('dom');return '<html>original</html>'
+   def events(page):fail_if('audit');return [{'operation':'read','value':'full bytes'}]
+   ns.update(active_page=Page(),events=events,capture_audit=lambda p,l:fail_if('summary'),screenshot=lambda p,f:fail_if('screenshot'))
+   with tempfile.TemporaryDirectory() as directory:
+    ns['out']=Path(directory);original=AssertionError('native assertion must survive')
+    with self.assertRaises(AssertionError) as caught:
+     with ns['capture_live_failure']():raise original
+    self.assertIs(caught.exception,original)
+    self.assertEqual(calls,['current','backup','audit','summary','dom','screenshot'])
+    report=json.loads((Path(directory)/'failure-diagnostic.json').read_text())
+    self.assertEqual(len(report['captureErrors']),1)
+    self.assertEqual(report['error'],repr(original))
+
+ def test_cdp_observes_only_native_storage_events_without_mutating_storage(self):
+  ns=self.helpers()
+  class CDP:
+   def __init__(self):self.callbacks={};self.sent=[]
+   def on(self,name,callback):self.callbacks[name]=callback
+   def send(self,name):self.sent.append(name)
+  cdp=CDP()
+  class Context:
+   def new_cdp_session(self,page):return cdp
+  class Page:context=Context()
+  observer=ns['observe_reload_storage'](Page())
+  self.assertEqual(cdp.sent,['DOMStorage.enable'])
+  self.assertEqual(set(cdp.callbacks),{'DOMStorage.'+name for name in ('domStorageItemAdded','domStorageItemUpdated','domStorageItemRemoved','domStorageItemsCleared')})
+  event={'storageId':{'isLocalStorage':True},'key':'current','oldValue':' before ','newValue':' after '}
+  cdp.callbacks['DOMStorage.domStorageItemUpdated'](event)
+  event['newValue']='later mutation'
+  self.assertEqual(observer['events'][0]['event']['newValue'],' after ')
+  for ignored in ({'storageId':{'isLocalStorage':False},'key':'current'}, {'storageId':{'isLocalStorage':True},'key':'unrelated'}):
+   cdp.callbacks['DOMStorage.domStorageItemUpdated'](ignored)
+  self.assertEqual(len(observer['events']),1)
+  self.assertIs(observer['session'],cdp)
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='observe_reload_storage')
+  text=ast.unparse(node)
+  for forbidden in ('setItem','removeItem','evaluate','Runtime.','Debugger.'):self.assertNotIn(forbidden,text)
+
+ def test_capture_guard_exits_before_playwright_and_all_original_reload_conditions_remain(self):
+  guarded=next(n for n in ast.walk(TREE) if isinstance(n,ast.With) and any(isinstance(i.context_expr,ast.Call) and isinstance(i.context_expr.func,ast.Name) and i.context_expr.func.id=='sync_playwright' for i in n.items))
+  self.assertEqual([ast.unparse(i.context_expr) for i in guarded.items],['sync_playwright()','capture_live_failure()'])
+  condition=next(n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and isinstance(n.args[0],ast.Constant) and n.args[0].value=='native reload retains original bytes and fixed grant metadata despite normal native time')
+  self.assertEqual(ast.unparse(condition.args[1]),"raw(page, BACKUP) == source_raw and raw(page) == committed_raw and assert_zero_grant_metadata(json.loads(raw(page))['state'], source, grant_job_floor=floor, npc_elapsed=0)")
+  captures=[n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='capture_reload_evidence']
+  self.assertEqual(len(captures),2)
+  self.assertTrue(all(n.lineno<condition.lineno for n in captures))
+  audit=SCRIPT.read_text()
+  self.assertIn('wallAt:nativeWall(),performanceAt:nativePerformance(),...event',audit)
+
+
 if __name__ == '__main__':
     unittest.main()

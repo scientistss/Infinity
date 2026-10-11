@@ -13,6 +13,8 @@ import json
 import shutil
 import subprocess
 import time
+import traceback
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -41,6 +43,7 @@ case = "setup"
 classification = "HTTP / native localStorage"
 browser = None
 active_page = None
+failure = None
 
 
 def check(name, condition):
@@ -155,6 +158,102 @@ def capture_startup_migration(page, original, revision):
         if revision == 10:
             diagnostic["fullStateDifferencesFromZeroAgeNullSlotLift"] = migration_differences(lift_r10_state_to_r12(source["state"]), committed["state"])
     (out / f"{prefix}-diagnostic.json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def capture_reload_evidence(page, label, original, committed, *, phase, observer=None):
+    """Read-only complete evidence, before the unchanged reload assertion."""
+    prefix = f'r9-{label}-reload-{phase}'
+    host_before = time.time_ns()
+    snapshot = page.evaluate('''() => ({
+      wallAt: Date.now(), performanceAt: performance.now(),
+      current: window.__saveNativeRead(__KEY__), backup: window.__saveNativeRead(__BACKUP__),
+      audit: window.__saveAudit
+    })'''.replace('__KEY__', json.dumps(KEY)).replace('__BACKUP__', json.dumps(BACKUP)))
+    host_after = time.time_ns()
+    artifacts = {}
+    for name, value in (('original',original),('migration-committed',committed),
+                        ('current',snapshot['current']),('backup',snapshot['backup'])):
+        if value is None:
+            artifacts[name] = {'missing':True}; continue
+        data = value.encode('utf-8'); path = out / f'{prefix}-{name}.json'; path.write_bytes(data)
+        artifacts[name] = {'file':path.name,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+    rows = snapshot['audit']
+    audit_file = out / f'{prefix}-complete-audit.json'
+    audit_file.write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
+    first_read = next((row for row in rows if row['operation']=='read' and row.get('key')==KEY),None)
+    first_write = next((row for row in rows if row['operation']=='write-return' and row.get('key')==KEY),None)
+    cdp_rows = [] if observer is None else copy.deepcopy(observer['events'])
+    cdp_file = out / f'{prefix}-native-storage-events.json'
+    cdp_file.write_text(json.dumps(cdp_rows,ensure_ascii=False,indent=2),encoding='utf-8')
+    diagnostic = {'case':case,'phase':phase,'classification':'Read-only native reload observation; no clock, storage or game-state replacement',
+        'hostObservationBeforeNanoseconds':host_before,'hostObservationAfterNanoseconds':host_after,
+        'browserWallAt':snapshot['wallAt'],'browserPerformanceAt':snapshot['performanceAt'],
+        'artifacts':artifacts,'completeAuditFile':audit_file.name,'nativeStorageEventsFile':cdp_file.name,
+        'firstCurrentRead':first_read,'firstCurrentWriteReturn':first_write,
+        'firstCrossDocumentCurrentUpdate':next((row for row in cdp_rows if row['event'].get('key')==KEY),None),
+        'backupEqualsOriginal':snapshot['backup']==original,'currentEqualsMigrationCommit':snapshot['current']==committed,
+        'assertionPolicy':'Original conjunction, exact backup and all state assertions remain unchanged.'}
+    if snapshot['current'] is not None:
+        current = json.loads(snapshot['current']); before = json.loads(committed)
+        diagnostic['completeEnvelopeDifferencesFromMigrationCommit'] = migration_differences(before,current,'$save')
+        diagnostic['currentEnvelopeClocks'] = {key:current.get(key) for key in ('revision','savedAt','lastTickAt')}
+    (out / f'{prefix}-diagnostic.json').write_text(json.dumps(diagnostic,ensure_ascii=False,indent=2),encoding='utf-8')
+    return diagnostic
+
+
+def observe_reload_storage(page):
+    """CDP observes real updates across old-document unload and new-document startup."""
+    observer = {'events':[]}
+    cdp = page.context.new_cdp_session(page)
+    def record(name, event):
+        if not event.get('storageId',{}).get('isLocalStorage'):
+            return
+        key = event.get('key')
+        if key is not None and key != KEY and not key.startswith(BACKUP):
+            return
+        observer['events'].append({'eventName':name,'hostReceivedNanoseconds':time.time_ns(),'event':copy.deepcopy(event)})
+    for name in ('domStorageItemAdded','domStorageItemUpdated','domStorageItemRemoved','domStorageItemsCleared'):
+        cdp.on('DOMStorage.'+name,lambda event,name=name:record(name,event))
+    cdp.send('DOMStorage.enable')
+    observer['session'] = cdp
+    return observer
+
+
+def capture_failure(error, page):
+    """Each artifact is independent; preserve the original exception if any capture fails."""
+    global failure
+    failure = {'case':case,'error':repr(error),'traceback':traceback.format_exc(),'captureErrors':[]}
+    def attempt(label, operation):
+        try:
+            operation()
+        except BaseException as capture_error:
+            failure['captureErrors'].append({'artifact':label,'error':repr(capture_error)})
+    if page is not None:
+        for label,key in (('current',KEY),('backup',BACKUP)):
+            def save_raw(label=label,key=key):
+                value = page.evaluate('key => window.__saveNativeRead(key)',key)
+                if value is None:
+                    (out/f'failure-{label}-missing.json').write_text('null\n',encoding='utf-8')
+                else:
+                    (out/f'failure-{label}.json').write_bytes(value.encode('utf-8'))
+            attempt(label,save_raw)
+        attempt('complete-audit',lambda:(out/'failure-complete-audit.json').write_text(json.dumps(events(page),ensure_ascii=False,indent=2),encoding='utf-8'))
+        attempt('summary-audit',lambda:capture_audit(page,'failure'))
+        attempt('dom',lambda:(out/'failure-dom.html').write_text(page.content(),encoding='utf-8'))
+        attempt('screenshot',lambda:screenshot(page,'failure.png'))
+    attempt('failure-report',lambda:(out/'failure-diagnostic.json').write_text(json.dumps(failure,ensure_ascii=False,indent=2),encoding='utf-8'))
+
+
+@contextmanager
+def capture_live_failure():
+    try:
+        yield
+    except BaseException as error:
+        try:
+            capture_failure(error,active_page)
+        except BaseException:
+            pass  # Never replace the original native assertion with a capture error.
+        raise
 
 
 def expected_r10_startup(original, candidate, observed):
@@ -322,7 +421,8 @@ AUDIT = r"""(() => {
   window.__saveWrittenKeys = new Set();
   window.__saveNativeRead = k => get.call(localStorage, k);
   const watched = k => k === key || k === backup || k.startsWith(backup + '.');
-  const log = event => window.__saveAudit.push(event);
+  const nativeWall = Date.now.bind(Date), nativePerformance = performance.now.bind(performance);
+  const log = event => window.__saveAudit.push({wallAt:nativeWall(),performanceAt:nativePerformance(),...event});
   Storage.prototype.getItem = function(k) {
     k = String(k);
     const fault = window.__saveFault;
@@ -449,7 +549,7 @@ def assert_no_replacement(page, original, original_name):
 
 
 try:
-    with sync_playwright() as playwright:
+    with sync_playwright() as playwright, capture_live_failure():
         executable = args.chromium or shutil.which("google-chrome") or shutil.which("chromium")
         if not executable:
             raise RuntimeError("Chrome/Chromium is required; native acceptance has no inline fallback")
@@ -923,7 +1023,10 @@ try:
             check("entire migrated r9 envelope has the exact independent native property order and bytes", committed_raw == expected_raw)
             check("r9 startup backup preserves complete original input bytes including noncanonical representation", raw(page, BACKUP) == source_raw)
             expect(page.locator('[data-bind="notice"]')).to_contain_text("旧版已付地形改造器完成升级，不增加格数；本版新付款入队每级增加5总格，建筑本身占1格。")
+            reload_observer = observe_reload_storage(page)
+            capture_reload_evidence(page,row['name'],source_raw,committed_raw,phase='before',observer=reload_observer)
             page.reload(wait_until="networkidle"); select_save(page)
+            capture_reload_evidence(page,row['name'],source_raw,committed_raw,phase='after',observer=reload_observer)
             check("native reload retains original bytes and fixed grant metadata despite normal native time", raw(page, BACKUP) == source_raw and raw(page) == committed_raw and assert_zero_grant_metadata(json.loads(raw(page))["state"], source, grant_job_floor=floor, npc_elapsed=0))
             check("native reload preserves the complete old building template library", exact_json(json.loads(raw(page))["state"]["buildingTemplates"], source["buildingTemplates"]))
             context.close()
@@ -1272,12 +1375,6 @@ try:
         browser.close()
         browser = None
 finally:
-    if not completed and active_page is not None:
-        try:
-            screenshot(active_page, "failure.png")
-            capture_audit(active_page, "failure")
-        except Exception:
-            pass
     report = {"completed": completed, "url": args.url,
               "mode": "HTTP production bundle / native localStorage; no inline fallback",
               "fixture": fixtures.get("description"),
@@ -1285,7 +1382,7 @@ finally:
               "faultInjection": "Explicitly labeled Storage.prototype throw/drop cases; native backing retained",
               "asyncTiming": "Explicitly labeled delayed native File.text results; real simulation clock",
               "passed": sum(row["passed"] for row in checks), "checks": checks,
-              "errors": errors, "failedRequests": failed_requests, "audits": audit_reports}
+              "errors": errors, "failedRequests": failed_requests, "audits": audit_reports, "failure": failure}
     (out / "save-session-browser-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps({"completed": completed, "passed": report["passed"], "total": len(checks),
                       "failedCase": None if completed else case, "errors": errors}, ensure_ascii=False))
