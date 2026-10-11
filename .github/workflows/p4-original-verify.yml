@@ -32,6 +32,10 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_ring_protection_observer.py' -v
       - name: Offline native target preparation and live failure evidence
         run: python -m unittest discover -s scripts -p 'test_terraformer_native_preparation.py' -v
+      - name: Independent ordinary demolition specification goldens
+        run: |
+          python scripts/demolition-spec-goldens.py > "$RUNNER_TEMP/demolition-spec-goldens.json"
+          cmp tests/fixtures/demolition-spec-goldens.json "$RUNNER_TEMP/demolition-spec-goldens.json"
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Natural manual-to-bounded ring progression
