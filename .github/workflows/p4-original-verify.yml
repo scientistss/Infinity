@@ -48,6 +48,7 @@ jobs:
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_native_frame_trace.py' -v
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Natural manual-to-bounded ring progression
@@ -251,7 +252,8 @@ jobs:
           # Run the independent SaveSession suite first to diagnose migration failures early.
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > save-session-review-save.json
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
-          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc"
+          R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
+          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --expected-sha "$GITHUB_SHA"
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.

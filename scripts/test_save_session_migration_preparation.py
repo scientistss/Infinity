@@ -303,16 +303,237 @@ class ReloadEvidenceTests(unittest.TestCase):
   text=ast.unparse(node)
   for forbidden in ('setItem','removeItem','evaluate','Runtime.','Debugger.'):self.assertNotIn(forbidden,text)
 
- def test_capture_guard_exits_before_playwright_and_all_original_reload_conditions_remain(self):
+ def test_capture_guard_exits_before_playwright_and_first_migration_remains_exact(self):
   guarded=next(n for n in ast.walk(TREE) if isinstance(n,ast.With) and any(isinstance(i.context_expr,ast.Call) and isinstance(i.context_expr.func,ast.Name) and i.context_expr.func.id=='sync_playwright' for i in n.items))
   self.assertEqual([ast.unparse(i.context_expr) for i in guarded.items],['sync_playwright()','capture_live_failure()'])
-  condition=next(n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and isinstance(n.args[0],ast.Constant) and n.args[0].value=='native reload retains original bytes and fixed grant metadata despite normal native time')
-  self.assertEqual(ast.unparse(condition.args[1]),"raw(page, BACKUP) == source_raw and raw(page) == committed_raw and assert_zero_grant_metadata(json.loads(raw(page))['state'], source, grant_job_floor=floor, npc_elapsed=0)")
-  captures=[n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='capture_reload_evidence']
-  self.assertEqual(len(captures),2)
-  self.assertTrue(all(n.lineno<condition.lineno for n in captures))
-  audit=SCRIPT.read_text()
-  self.assertIn('wallAt:nativeWall(),performanceAt:nativePerformance(),...event',audit)
+  checks={n.args[0].value:n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check' and isinstance(n.args[0],ast.Constant)}
+  self.assertEqual(ast.unparse(checks['all old r9 fields, scalar types and array positions match the fixed old-reader oracle'].args[1]),"exact_json(committed['state'], expected)")
+  first=checks['r9 migration is current and independently validates every new grant field']
+  self.assertEqual(ast.unparse(first.args[1]),"committed['revision'] == CURRENT_REVISION and assert_zero_grant_metadata(committed['state'], source, grant_job_floor=floor, npc_elapsed=0)")
+  self.assertNotIn('native reload retains original bytes and fixed grant metadata despite normal native time',checks)
+  calls=[n for n in ast.walk(TREE) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name)]
+  captures=[n for n in calls if n.func.id=='capture_reload_evidence']
+  replay=next(n for n in calls if n.func.id=='complete_r9_native_replay')
+  self.assertEqual(len(captures),2);self.assertTrue(all(n.lineno<replay.lineno for n in captures))
+  self.assertIn('wallAt:nativeWall(),performanceAt:nativePerformance(),...event',SCRIPT.read_text())
+
+
+class NativeReplayWiringTests(unittest.TestCase):
+ def setUp(self):
+  import re
+  from types import SimpleNamespace
+  from urllib.parse import urljoin, urlparse
+  self.SimpleNamespace=SimpleNamespace
+  def check(label,condition):
+   if not condition:raise AssertionError(label)
+  self.ns=dict(json=json,hashlib=hashlib,re=re,urljoin=urljoin,urlparse=urlparse,copy=copy,Path=Path,
+               exact_json=exact_json,lift_r11_state_to_r12=lift_r11_state_to_r12,npc_elapsed_from_segments=npc_elapsed_from_segments,
+               CURRENT_REVISION=12,KEY='current',check=check,args=SimpleNamespace(url='https://example.invalid/Infinity/',expected_sha='a'*40))
+  names={'prepare_r9_trace_plan','verify_r9_trace_navigation','verify_r9_native_storage','verify_r9_native_readbacks','verify_r9_replay_result'}
+  nodes=[n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name in names]
+  exec(compile(ast.Module(body=nodes,type_ignores=[]),'r9-wiring-helpers','exec'),self.ns)
+
+ def http_fixture(self):
+  base=self.ns['args'].url; html=b'<html>unmodified production</html>'; js=b'complete production source'
+  release={'sourceSha':'a'*40,'saveRevision':12,'saveVersion':9,'files':{'index.html':hashlib.sha256(html).hexdigest(),'assets/index-test.js':hashlib.sha256(js).hexdigest()}}
+  class Response:
+   status=200
+   def __init__(self,url,body):self.url=url;self.data=body
+   def body(self):return self.data
+   def json(self):return json.loads(self.data)
+  responses={base:Response(base,html),base+'assets/index-test.js':Response(base+'assets/index-test.js',js),base+'release.json':Response(base+'release.json',json.dumps(release).encode())}
+  self.disposed=False;self.requested=[]
+  def get(url,timeout):self.requested.append(url);return responses[url]
+  def dispose():self.disposed=True
+  request=self.SimpleNamespace(get=get,dispose=dispose)
+  playwright=self.SimpleNamespace(request=self.SimpleNamespace(new_context=lambda:request))
+  def prepare(url,data,digest):
+   self.assertEqual(hashlib.sha256(data).hexdigest(),digest)
+   return self.SimpleNamespace(url=url,http_bytes=data)
+  self.ns['prepare_plan']=prepare
+  return playwright,responses,release
+
+ def test_exact_http_release_document_asset_identity_and_artifacts(self):
+  playwright,responses,release=self.http_fixture()
+  with tempfile.TemporaryDirectory() as directory:
+   self.ns['out']=Path(directory)
+   plan=self.ns['prepare_r9_trace_plan'](playwright)
+   self.assertEqual(plan.http_bytes,responses[plan.url].body())
+   self.assertEqual(self.ns['native_release_metadata'],release)
+   self.assertEqual((Path(directory)/'r9-native-http-production.js').read_bytes(),plan.http_bytes)
+  self.assertTrue(self.disposed);self.assertEqual(len(self.requested),3)
+
+ def test_release_wrong_sha_schema_duplicate_script_redirect_or_document_hash_rejected(self):
+  for mutant in ('sha','schema','duplicate','redirect','document','javascript'):
+   playwright,responses,release=self.http_fixture();base=self.ns['args'].url
+   if mutant=='sha':release['sourceSha']='b'*40
+   if mutant=='schema':release['saveRevision']=11
+   if mutant=='duplicate':release['files']['assets/extra.js']='0'*64
+   if mutant=='redirect':responses[base+'release.json'].url=base+'moved.json'
+   if mutant=='document':responses[base].data+=b' changed'
+   if mutant=='javascript':responses[base+'assets/index-test.js'].data+=b' changed'
+   responses[base+'release.json'].data=json.dumps(release).encode()
+   with self.subTest(mutant=mutant),tempfile.TemporaryDirectory() as directory,self.assertRaises(AssertionError):
+    self.ns['out']=Path(directory);self.ns['prepare_r9_trace_plan'](playwright)
+   self.assertTrue(self.disposed)
+
+ def test_navigation_requires_real_script_response_and_executed_source_identity(self):
+  playwright,responses,release=self.http_fixture();base=self.ns['args'].url
+  script=responses[base+'assets/index-test.js'];script.request=self.SimpleNamespace(url=script.url)
+  self.ns['native_release_metadata']=release
+  verified=[]
+  def verify(body):
+   self.assertEqual(body,b'complete production source');verified.append(body);return {'actual-script':{'executionContextId':8}}
+  trace=self.SimpleNamespace(plan=self.SimpleNamespace(url=script.url),verify_executed=verify)
+  capture={'trace':trace,'responses':[script],'navigations':[]}
+  self.ns['verify_r9_trace_navigation'](capture,responses[base]);self.assertEqual(len(verified),1)
+  self.assertEqual(capture['responses'],[]);self.assertEqual(len(capture['navigations']),1)
+  for script_list in ([],[script,script]):
+   with self.assertRaises(AssertionError):self.ns['verify_r9_trace_navigation']({'trace':trace,'responses':script_list,'navigations':[]},responses[base])
+  script.data+=b' changed'
+  with self.assertRaises(AssertionError):self.ns['verify_r9_trace_navigation']({'trace':trace,'responses':[script],'navigations':[]},responses[base])
+
+ def storage_fixture(self):
+  epochs=[{'migrationRaw':'A','events':[{'kind':'save','raw':'B1'},{'kind':'save','raw':'B2'}]},
+          {'events':[{'kind':'save','raw':'C'},{'kind':'save','raw':'C'}]}]
+  rows=[{'eventName':'domStorageItemUpdated','event':{'key':'current','oldValue':old,'newValue':new,'storageId':{'securityOrigin':'https://example.invalid'}}}
+        for old,new in [('original','A'),('A','B1'),('B1','B2'),('B2','C')]]
+  return epochs,rows
+
+ def test_all_successful_lifecycle_writes_and_manual_c_have_exact_native_byte_order(self):
+  epochs,rows=self.storage_fixture();frozen=copy.deepcopy((epochs,rows))
+  self.ns['verify_r9_native_storage']('original',epochs,rows)
+  self.assertEqual((epochs,rows),frozen)
+
+ def test_missing_extra_reordered_wrong_old_new_origin_and_removed_native_writes_fail(self):
+  for mutation in ('missing','extra-before-c','order','old','new','origin','remove','clear'):
+   epochs,rows=self.storage_fixture()
+   if mutation=='missing':rows.pop(2)
+   if mutation=='extra-before-c':rows.insert(2,copy.deepcopy(rows[1]))
+   if mutation=='order':rows[1],rows[2]=rows[2],rows[1]
+   if mutation=='old':rows[2]['event']['oldValue']='A'
+   if mutation=='new':rows[2]['event']['newValue']='candidate guessed'
+   if mutation=='origin':rows[2]['event']['storageId']['securityOrigin']='https://other.invalid'
+   if mutation=='remove':rows[2]['eventName']='domStorageItemRemoved'
+   if mutation=='clear':rows[2]['eventName']='domStorageItemsCleared';rows[2]['event'].pop('key')
+   with self.subTest(mutation=mutation),self.assertRaises(AssertionError):self.ns['verify_r9_native_storage']('original',epochs,rows)
+
+ def test_only_missing_native_notifications_may_wait_and_received_mismatch_fails_immediately(self):
+  epochs,rows=self.storage_fixture()
+  partial=self.ns['verify_r9_native_storage']('original',epochs,rows[:2],require_complete=False)
+  self.assertFalse(partial['complete']);self.assertEqual(partial['throughC'],rows[:2])
+  rows[1]['event']['newValue']='wrong already received'
+  with self.assertRaises(AssertionError):self.ns['verify_r9_native_storage']('original',epochs,rows[:2],require_complete=False)
+
+ def test_later_autosave_is_recorded_separately_and_c_is_unchanged(self):
+  epochs,rows=self.storage_fixture()
+  later=copy.deepcopy(rows[-1]);later['event'].update(oldValue='C',newValue='later autosave');rows.append(later)
+  evidence=self.ns['verify_r9_native_storage']('original',epochs,rows)
+  self.assertEqual(evidence['throughC'][-1]['event']['newValue'],'C')
+  self.assertEqual(evidence['afterC'],[later])
+
+ def test_native_readback_prefix_binds_each_save_including_noops_and_retains_later_writes(self):
+  epoch={'sourceRaw':'B','events':[{'kind':'save','raw':'C1'},{'kind':'save','raw':'C1'},{'kind':'save','raw':'C'}]}
+  audit=[{'operation':'read','key':'current','value':'B'}];prior='B'
+  for value in ('C1','C1','C','later autosave'):
+   audit.extend([{'operation':'read','key':'current','value':prior} for _ in range(2)])
+   if value!=prior:audit.append({'operation':'write-return','key':'current','value':value})
+   audit.append({'operation':'read','key':'current','value':value});prior=value
+  evidence=self.ns['verify_r9_native_readbacks'](epoch,audit)
+  self.assertEqual(evidence['throughCReadback'],audit[:12]);self.assertEqual(evidence['afterCReadback'],audit[12:])
+  for index in range(12):
+   mutant=copy.deepcopy(audit);mutant[index]['value']='wrong'
+   with self.subTest(index=index),self.assertRaises(AssertionError):self.ns['verify_r9_native_readbacks'](epoch,mutant)
+
+ def test_only_trusted_marked_between_save_listener_reads_are_allowed(self):
+  epoch={'sourceRaw':'B','events':[{'kind':'save','raw':'C1'},{'kind':'save','raw':'C'}]}
+  def read(value):return {'operation':'read','key':'current','value':value}
+  first=[read('B'),read('B'),{'operation':'write-return','key':'current','value':'C1'},read('C1')]
+  second=[read('C1'),read('C1'),{'operation':'write-return','key':'current','value':'C'},read('C')]
+  for key in ('current',None):
+   marker={'operation':'storage-event','key':key,'trusted':True,'value':'C1'}
+   audit=[read('B'),*first,marker,read('C1'),*second]
+   with self.subTest(key=key):
+    evidence=self.ns['verify_r9_native_readbacks'](epoch,audit)
+    self.assertEqual(evidence['storageListenerReads'],[{'eventIndex':5,'readIndex':6,'expectedRaw':'C1'}])
+  pre={'operation':'storage-event','key':'current','trusted':True,'value':'B'}
+  evidence=self.ns['verify_r9_native_readbacks'](epoch,[pre,read('B'),*first,*second])
+  self.assertEqual(evidence['storageListenerReads'],[])
+  marker={'operation':'storage-event','key':'current','trusted':True,'value':'C1'}
+  invalids={
+   'unmarked':[read('C1')],
+   'wrong raw':[marker,read('wrong')],
+   'extra write':[marker,{'operation':'write-return','key':'current','value':'C1'},read('C1')],
+   'untrusted':[{**marker,'trusted':False},read('C1')],
+   'other key':[{**marker,'key':'unrelated'},read('C1')],
+   'not adjacent':[marker,{'operation':'ui-status','text':'intervening'},read('C1')],
+   'two reads':[marker,read('C1'),read('C1')],
+  }
+  for label,extra in invalids.items():
+   with self.subTest(label=label),self.assertRaises(AssertionError):
+    self.ns['verify_r9_native_readbacks'](epoch,[read('B'),*first,*extra,*second])
+  with self.assertRaises(AssertionError):
+   self.ns['verify_r9_native_readbacks'](epoch,[read('B'),*first,*second[:1],marker,read('C1'),*second[1:]])
+
+ def replay_fixture(self):
+  old={'wallet':'500','planets':[]};source={'revision':9,'savedAt':2000,'lastTickAt':2000,'state':old};original=json.dumps(source)
+  def raw(age,saved,watermark):return json.dumps({'revision':12,'savedAt':saved,'lastTickAt':watermark,'state':lift_r11_state_to_r12(old,npc_elapsed=age)})
+  a,b1,b2,c=raw(0,1000,1000),raw(.1,1102,1100),raw(.1,1108,1100),raw(.1+.1+.1,1302,1300)
+  def save(value,reason):return {'kind':'save','raw':value,'reason':reason}
+  epochs=[{'constructorNow':1000,'sourceRaw':original,'migrationRaw':a,'events':[{'kind':'frame','gapSeconds':.1},save(b1,'beforeunload'),save(b2,'visibility-hidden')]},
+          {'constructorNow':1200,'sourceRaw':b2,'events':[{'kind':'frame','gapSeconds':.1},save(c,'manual')]}]
+  request={'schema':'infinity-native-frame-replay-input-v1','originalRaw':original,'epochs':epochs}
+  dependencies={'breakInfinity':{'version':'2.2.0','commonSha256':'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06','esmSha256':'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},'padEnd':{'version':'1.0.2','entrySha256':'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'}}
+  saves=[]
+  for epoch,index,reason,value in [(0,-1,'migration',a),(0,1,'beforeunload',b1),(0,2,'visibility-hidden',b2),(1,1,'manual',c)]:
+   envelope=json.loads(value);saves.append({'epochIndex':epoch,'eventIndex':index,'reason':reason,'rawSha256':hashlib.sha256(value.encode()).hexdigest(),'expectedEnvelope':envelope,'npcElapsedSeconds':envelope['state']['npcEconomy']['elapsedSeconds']})
+  adoptions=[]
+  for epoch,index,kind,gap,before,steps in [(0,-1,'catchUp',-1,0,[]),(0,0,'tick',.1,0,[.1]),(1,-1,'catchUp',.1,.1,[.1]),(1,0,'tick',.1,.2,[.1])]:
+   adoptions.append({'epochIndex':epoch,'eventIndex':index,'kind':kind,'gapSeconds':gap,'ageBefore':before,'adoptedSegmentsSeconds':steps,'npcElapsedSeconds':npc_elapsed_from_segments([before,*steps]),'oldObservedAndUnobservedStateEqual':True})
+  result={'schema':'infinity-fixed-r11-native-replay-oracle-v1','sourceSha':'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b','inputRawSha256':hashlib.sha256(original.encode()).hexdigest(),'sourceRevision':9,'oldObservedAndUnobservedStateEqual':True,'dependencyIdentity':dependencies,'epochs':[{'npcElapsedSeconds':.1},{'npcElapsedSeconds':.1+.1+.1}],'saves':saves,'adoptions':adoptions,'npcElapsedSeconds':.1+.1+.1,'state':old}
+  return original,request,result
+
+ def test_complete_result_has_exact_first_zero_and_continued_b_c_ages(self):
+  original,request,result=self.replay_fixture();frozen=copy.deepcopy((request,result))
+  self.assertIs(self.ns['verify_r9_replay_result'](original,request,result),result)
+  self.assertEqual((request,result),frozen)
+  self.assertEqual(result['saves'][0]['npcElapsedSeconds'],0);self.assertEqual(result['npcElapsedSeconds'],.30000000000000004)
+
+ def test_result_source_dependency_call_boundaries_whole_state_and_age_mutations_fail(self):
+  for mutation in ('source','dependency','unobserved','omit-save','omit-frame','gap','age-before','age-after','age-reset','npc-extra','wallet','raw-hash','autosave-c'):
+   original,request,result=self.replay_fixture()
+   if mutation=='source':result['sourceSha']='wrong'
+   if mutation=='dependency':result['dependencyIdentity']['padEnd']['version']='wrong'
+   if mutation=='unobserved':result['adoptions'][1]['oldObservedAndUnobservedStateEqual']=False
+   if mutation=='omit-save':result['saves'].pop(1)
+   if mutation=='omit-frame':result['adoptions'].pop(1)
+   if mutation=='gap':result['adoptions'][1]['gapSeconds']+=.00000000001
+   if mutation=='age-before':result['adoptions'][2]['ageBefore']=0
+   if mutation=='age-after':result['adoptions'][1]['npcElapsedSeconds']+=.00000000001
+   if mutation=='age-reset':result['npcElapsedSeconds']=.2
+   if mutation=='npc-extra':result['saves'][-1]['expectedEnvelope']['state']['npcEconomy']['extra']=True
+   if mutation=='wallet':result['saves'][-1]['expectedEnvelope']['state']['wallet']='500.00000000001'
+   if mutation=='raw-hash':result['saves'][-1]['rawSha256']='wrong'
+   if mutation=='autosave-c':result['saves'][-1]['reason']='autosave';request['epochs'][-1]['events'][-1]['reason']='autosave'
+   with self.subTest(mutation=mutation),self.assertRaises(AssertionError):self.ns['verify_r9_replay_result'](original,request,result)
+
+ def test_boot_observes_before_goto_and_c_is_frozen_before_node_with_all_gates_present(self):
+  boot=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='boot')
+  text=ast.unparse(boot)
+  self.assertLess(text.index('start_r9_native_trace('),text.index('page.goto('))
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='complete_r9_native_replay')
+  text=ast.unparse(node)
+  self.assertIn("current_c = epochs[1]['events'][-1]['raw']",text)
+  self.assertNotIn('current_c = page.evaluate',text)
+  self.assertNotIn('boundary_b',text)
+  self.assertLess(text.index('through_manual_save('),text.index('subprocess.run('))
+  self.assertLess(text.index('verify_r9_native_storage('),text.index('subprocess.run('))
+  self.assertIn("'originalRaw': original",text);self.assertNotIn('npc_elapsed=0',text)
+  workflow=(SCRIPT.parent.parent/'.github/workflows/p4-original-verify.yml').read_text()
+  for required in ('test_native_frame_trace.py','test_save_session_migration_preparation.py','node --import tsx --test scripts/test-r12-native-replay-oracle.mjs','--expected-sha "$GITHUB_SHA"'):
+   self.assertIn(required,workflow)
+
+
 
 
 if __name__ == '__main__':

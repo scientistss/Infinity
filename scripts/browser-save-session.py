@@ -10,14 +10,16 @@ from r12_compatibility import CURRENT_REVISION, npc_elapsed_from_segments, lift_
 import copy
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import time
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
+from native_frame_trace import prepare_plan, NativeFrameTrace, to_replay_epoch, through_manual_save
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -26,6 +28,7 @@ parser.add_argument("--url", default="http://127.0.0.1:4173/Infinity/")
 parser.add_argument("--fixture", default="save-session-review-save.json")
 parser.add_argument("--output", default="save-session-evidence")
 parser.add_argument("--chromium", default=None)
+parser.add_argument("--expected-sha", required=True, help="Exact tested release commit for native HTTP/V8 trace identity")
 parser.add_argument("--r10-source", required=True, help="Exact clean ac3 r10 source for independent native startup catch-up expectations")
 parser.add_argument("--r11-source", required=True, help="Exact clean ca5 r11 source for independent adopted-segment startup expectations")
 args = parser.parse_args()
@@ -44,6 +47,8 @@ classification = "HTTP / native localStorage"
 browser = None
 active_page = None
 failure = None
+native_release_metadata = None
+active_native_trace = None
 
 
 def check(name, condition):
@@ -161,7 +166,7 @@ def capture_startup_migration(page, original, revision):
 
 
 def capture_reload_evidence(page, label, original, committed, *, phase, observer=None):
-    """Read-only complete evidence, before the unchanged reload assertion."""
+    """Read-only complete evidence, before the strict native trajectory assertions."""
     prefix = f'r9-{label}-reload-{phase}'
     host_before = time.time_ns()
     snapshot = page.evaluate('''() => ({
@@ -192,7 +197,7 @@ def capture_reload_evidence(page, label, original, committed, *, phase, observer
         'firstCurrentRead':first_read,'firstCurrentWriteReturn':first_write,
         'firstCrossDocumentCurrentUpdate':next((row for row in cdp_rows if row['event'].get('key')==KEY),None),
         'backupEqualsOriginal':snapshot['backup']==original,'currentEqualsMigrationCommit':snapshot['current']==committed,
-        'assertionPolicy':'Original conjunction, exact backup and all state assertions remain unchanged.'}
+        'assertionPolicy':'First migration remains exact; ordinary reload is checked by the independently replayed full native trajectory.'}
     if snapshot['current'] is not None:
         current = json.loads(snapshot['current']); before = json.loads(committed)
         diagnostic['completeEnvelopeDifferencesFromMigrationCommit'] = migration_differences(before,current,'$save')
@@ -219,6 +224,243 @@ def observe_reload_storage(page):
     return observer
 
 
+def prepare_r9_trace_plan(playwright):
+    """Preverify real HTTP bytes; no navigation, source replacement or clock hook."""
+    global native_release_metadata
+    request = playwright.request.new_context()
+    try:
+        release_url = urljoin(args.url, 'release.json')
+        response = request.get(release_url, timeout=15000)
+        check('native replay release is exact HTTP 200 without redirect', response.status == 200 and response.url == release_url)
+        release = response.json()
+        check('native replay release pins the mandatory exact candidate commit and current schema',
+              re.fullmatch(r'[0-9a-f]{40}', args.expected_sha) is not None
+              and release.get('sourceSha') == args.expected_sha
+              and release.get('saveRevision') == CURRENT_REVISION and release.get('saveVersion') == 9)
+        files = release['files']
+        script_files = [name for name in files if name.endswith('.js')]
+        check('native replay release contains exactly one production JavaScript asset', len(script_files) == 1)
+        asset = script_files[0]; asset_url = urljoin(args.url, asset)
+        check('native replay asset stays in the exact tested HTTP directory', asset_url.startswith(args.url) and '..' not in asset.split('/'))
+        html = request.get(args.url, timeout=15000)
+        check('prefetched complete HTTP document matches pinned release bytes', html.status == 200 and html.url == args.url
+              and hashlib.sha256(html.body()).hexdigest() == files['index.html'])
+        script = request.get(asset_url, timeout=15000)
+        check('prefetched production asset is exact HTTP 200 without redirect', script.status == 200 and script.url == asset_url)
+        plan = prepare_plan(asset_url, script.body(), files[asset])
+        native_release_metadata = release
+        (out / 'r9-native-release.json').write_bytes(response.body())
+        (out / 'r9-native-http-index.html').write_bytes(html.body())
+        (out / 'r9-native-http-production.js').write_bytes(script.body())
+        return plan
+    finally:
+        request.dispose()
+
+
+def start_r9_native_trace(page, plan):
+    trace = NativeFrameTrace(page.context.new_cdp_session(page), plan)
+    capture = {'trace': trace, 'responses': [], 'navigations': [], 'storage': observe_reload_storage(page)}
+    page.on('response', lambda response: capture['responses'].append(response)
+            if response.request.resource_type == 'script' else None)
+    trace.install()
+    return capture
+
+
+def verify_r9_trace_navigation(capture, response):
+    check('actual native replay document matches exact pinned HTTP index bytes',
+          response is not None and response.status == 200 and response.url == args.url
+          and hashlib.sha256(response.body()).hexdigest() == native_release_metadata['files']['index.html'])
+    scripts = capture['responses']
+    check('actual navigation loads exactly the single pinned production script', len(scripts) == 1
+          and scripts[0].status == 200 and scripts[0].url == scripts[0].request.url == capture['trace'].plan.url)
+    verified = capture['trace'].verify_executed(scripts[0].body())
+    capture['navigations'].append({'documentUrl':response.url,
+        'documentSha256':hashlib.sha256(response.body()).hexdigest(),
+        'scriptUrl':scripts[0].url,'scriptSha256':hashlib.sha256(scripts[0].body()).hexdigest(),
+        'executedScripts':verified})
+    capture['responses'] = []
+
+
+def verify_r9_replay_result(original, request, result):
+    """Validate independent result identity and every saved full-envelope target."""
+    check('native replay result is from the exact independent ca5 source and original r9 bytes',
+          result.get('schema') == 'infinity-fixed-r11-native-replay-oracle-v1'
+          and result.get('sourceSha') == 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
+          and result.get('inputRawSha256') == hashlib.sha256(original.encode('utf-8')).hexdigest()
+          and result.get('sourceRevision') == 9
+          and result.get('oldObservedAndUnobservedStateEqual') is True)
+    expected_dependencies = {
+        'breakInfinity': {'version':'2.2.0','commonSha256':'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06','esmSha256':'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},
+        'padEnd': {'version':'1.0.2','entrySha256':'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'}}
+    check('native replay uses exactly the pinned predecessor numerical dependencies', exact_json(result.get('dependencyIdentity'),expected_dependencies))
+    epochs = request['epochs']
+    check('native replay covers both complete captured document epochs', len(epochs) == len(result['epochs']) == 2)
+    checkpoints = [(0,-1,'migration',epochs[0]['migrationRaw'])]
+    for epoch_index, epoch in enumerate(epochs):
+        checkpoints.extend((epoch_index,index,event['reason'],event['raw'])
+                           for index,event in enumerate(epoch['events']) if event['kind']=='save')
+    check('native replay verifies every observed durable save without omission', len(checkpoints) == len(result['saves']))
+    for (epoch_index,event_index,reason,raw_value), saved in zip(checkpoints,result['saves']):
+        check('every original full saved envelope equals independent ca5 economic replay and exact cumulative NPC age',
+              saved['epochIndex'] == epoch_index and saved['eventIndex'] == event_index and saved['reason'] == reason
+              and saved['rawSha256'] == hashlib.sha256(raw_value.encode('utf-8')).hexdigest()
+              and exact_json(json.loads(raw_value),saved['expectedEnvelope'])
+              and exact_json(saved['expectedEnvelope']['state']['npcEconomy'],
+                  {'model':'fixed-production-v1','elapsedSeconds':saved['npcElapsedSeconds']}))
+    adoption_inputs = []
+    for epoch_index, epoch in enumerate(epochs):
+        adoption_inputs.append((epoch_index,-1,'catchUp',(epoch['constructorNow']-json.loads(epoch['sourceRaw'])['lastTickAt'])/1000))
+        adoption_inputs.extend((epoch_index,index,'catchUp' if event['gapSeconds']>=5 else 'tick',event['gapSeconds'])
+                               for index,event in enumerate(epoch['events']) if event['kind']=='frame' and event['gapSeconds']>0)
+    check('every actual startup and positive native frame has exactly one old-engine adoption',len(adoption_inputs)==len(result['adoptions']))
+    age, previous_epoch = 0, 0
+    for expected_adoption, adoption in zip(adoption_inputs,result['adoptions']):
+        epoch_index,event_index,kind,gap = expected_adoption
+        check('old-engine adoption preserves every actual native call boundary and exact input',
+              (adoption['epochIndex'],adoption['eventIndex'],adoption['kind'],adoption['gapSeconds']) == expected_adoption)
+        if epoch_index != previous_epoch:
+            age = next(saved['npcElapsedSeconds'] for saved in reversed(result['saves']) if saved['epochIndex']==previous_epoch)
+            previous_epoch = epoch_index
+        check('each old-engine adoption retains full observed/unobserved state equivalence and the preceding exact age',
+              adoption['oldObservedAndUnobservedStateEqual'] is True and adoption['ageBefore'] == age)
+        age = npc_elapsed_from_segments([age,*adoption['adoptedSegmentsSeconds']])
+        check('ordered actual adopted steps alone determine cumulative NPC age', adoption['npcElapsedSeconds'] == age)
+    check('final cumulative NPC age is never reset at current-revision reload', result['npcElapsedSeconds'] == age
+          and result['epochs'][-1]['npcElapsedSeconds'] == age)
+    check('C is the exact normal manual save checkpoint, never a later autosave', checkpoints[-1][2] == 'manual'
+          and result['saves'][-1]['npcElapsedSeconds'] == age
+          and exact_json(result['saves'][-1]['expectedEnvelope']['state'],
+                         lift_r11_state_to_r12(result['state'],npc_elapsed=age)))
+    return result
+
+
+def verify_r9_native_storage(original, epochs, observed, *, require_complete=True):
+    """Bind the full native prefix through C; retain later writes as later facts."""
+    prior = original
+    expected_changes = []
+    for epoch in epochs:
+        saved = ([epoch['migrationRaw']] if 'migrationRaw' in epoch else []) + [event['raw'] for event in epoch['events'] if event['kind']=='save']
+        for value in saved:
+            if value != prior:
+                expected_changes.append((prior,value))
+                prior = value
+    current_events = [row for row in observed if row['event'].get('key')==KEY or row['eventName']=='domStorageItemsCleared']
+    complete = len(current_events)>=len(expected_changes)
+    if require_complete:
+        check('all native current changes through manual C were actually observed',complete)
+    prefix = current_events[:len(expected_changes)]
+    origin = f'{urlparse(args.url).scheme}://{urlparse(args.url).netloc}'
+    actual_changes = []
+    for observed_event in prefix:
+        event = observed_event['event']
+        check('native replay never clears/removes the current slot or uses another origin before C',
+              observed_event['eventName'] == 'domStorageItemUpdated'
+              and event.get('storageId',{}).get('securityOrigin') == origin)
+        actual_changes.append((event.get('oldValue'),event.get('newValue')))
+    check('complete cross-document native current writes through C match all successful original save calls in exact order',
+          actual_changes == expected_changes[:len(prefix)])
+    return {'complete':complete,'throughC':copy.deepcopy(prefix),'afterC':copy.deepcopy(current_events[len(expected_changes):])}
+
+
+def verify_r9_native_readbacks(epoch, audit):
+    # Successful writeCandidate compares twice, writes only changed bytes, then
+    # reads back. The only extra read accepted is the original storage listener's
+    # explicitly marked, synchronous comparison between complete save calls.
+    prior = epoch['sourceRaw']
+    native = [(index,row) for index,row in enumerate(audit)
+              if (row['operation'] in ('read','write-return') and row.get('key')==KEY)
+              or (row['operation']=='storage-event' and row.get('key') in (KEY,None))]
+    cursor, last_read = 0, -1
+    listener_reads = []
+    def consume(operation, value):
+        nonlocal cursor, last_read
+        check('all native IO through C is present at its exact original call boundary',cursor<len(native))
+        index,row = native[cursor]
+        check('original comparison reads, optional changed-byte write and final readback remain exact',
+              row['operation']==operation and row.get('value')==value)
+        cursor += 1
+        if operation=='read':
+            last_read = index
+    # A pre-constructor event has no registered application listener yet. In
+    # particular, do not mistake 5dd's following constructor read for an extra read.
+    while cursor<len(native) and native[cursor][1]['operation']=='storage-event':
+        cursor += 1
+    consume('read',prior)
+    for event in epoch['events']:
+        if event['kind']!='save':
+            continue
+        while cursor<len(native) and native[cursor][1]['operation']=='storage-event':
+            index,marker = native[cursor]
+            check('an extra between-save comparison requires a trusted native storage event',marker.get('trusted') is True)
+            cursor += 1
+            check('the marked storage listener performs exactly one immediately following native read',
+                  cursor<len(native) and native[cursor][0]==index+1)
+            consume('read',prior)
+            listener_reads.append({'eventIndex':index,'readIndex':last_read,'expectedRaw':prior})
+        value = event['raw']
+        consume('read',prior)
+        consume('read',prior)
+        if value!=prior:
+            consume('write-return',value)
+        consume('read',value)
+        prior = value
+    return {'throughCReadback':copy.deepcopy(audit[:last_read+1]),
+            'afterCReadback':copy.deepcopy(audit[last_read+1:]),'storageListenerReads':listener_reads}
+
+
+def complete_r9_native_replay(page, capture, original, migrated, label, manual_after):
+    # Flush already-produced observations without touching application clocks or
+    # invoking a handler. C is the original synchronous manual result, never the
+    # subsequently read current slot (which may legitimately contain a later save).
+    capture['trace'].cdp.send('Runtime.getIsolateId')
+    snapshot = capture['trace'].snapshot()
+    (out / f'r9-{label}-native-trace.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
+    (out / f'r9-{label}-native-source-bindings.json').write_text(json.dumps(capture['navigations'],ensure_ascii=False,indent=2),encoding='utf-8')
+    contexts = [row['executionContextId'] for row in snapshot['executedScripts'].values()]
+    check('A to B to C uses exactly two verified native document contexts', len(contexts) == len(set(contexts)) == 2)
+    first = capture['trace'].document_events(contexts[0])
+    second = through_manual_save(capture['trace'].document_events(contexts[1]), manual_after)
+    epochs = [to_replay_epoch(first), to_replay_epoch(second)]
+    epochs[0]['migrationRaw'] = migrated
+    check('independently replayed initial document starts from complete untouched r9 bytes', epochs[0]['sourceRaw'] == original)
+    prior_saves = [event for event in epochs[0]['events'] if event['kind']=='save']
+    check('reload constructor B reads the exact final successful old-document lifecycle save',
+          bool(prior_saves) and epochs[1]['sourceRaw']==prior_saves[-1]['raw'])
+    check('C is the original captured synchronous manual save result',
+          epochs[1]['events'][-1]['kind']=='save' and epochs[1]['events'][-1]['reason']=='manual')
+    current_c = epochs[1]['events'][-1]['raw']
+    audit_c = events(page)
+    readback_evidence = verify_r9_native_readbacks(epochs[1],audit_c)
+    # This read-only native DOMStorage round trip drains already generated CDP
+    # notifications. It supplies evidence only, never an input to the old engine.
+    origin = f'{urlparse(args.url).scheme}://{urlparse(args.url).netloc}'
+    deadline = time.monotonic() + 2
+    while True:
+        after_current = capture['storage']['session'].send('DOMStorage.getDOMStorageItems',
+            {'storageId':{'securityOrigin':origin,'isLocalStorage':True}})
+        cdp_rows = copy.deepcopy(capture['storage']['events'])
+        storage_evidence = verify_r9_native_storage(original,epochs,cdp_rows,require_complete=False)
+        if storage_evidence['complete']:
+            break
+        check('the already selected C native notification arrives within its bounded evidence wait',time.monotonic()<deadline)
+        time.sleep(0.01)  # Host waits for this notification, not for a chosen game gap.
+    (out / f'r9-{label}-native-storage-events.json').write_text(json.dumps(cdp_rows,ensure_ascii=False,indent=2),encoding='utf-8')
+    (out / f'r9-{label}-manual-C-complete-audit.json').write_text(json.dumps(audit_c,ensure_ascii=False,indent=2),encoding='utf-8')
+    (out / f'r9-{label}-manual-C-native-boundary.json').write_text(json.dumps(
+        {'readbacks':readback_evidence,'storage':storage_evidence,'laterNativeStorageRead':after_current},ensure_ascii=False,indent=2),encoding='utf-8')
+    check('A B and C retain the complete immutable historical backup bytes',raw(page,BACKUP)==original)
+    request = {'schema':'infinity-native-frame-replay-input-v1','originalRaw':original,'epochs':epochs}
+    (out / f'r9-{label}-native-replay-input.json').write_text(json.dumps(request,ensure_ascii=False,indent=2),encoding='utf-8')
+    (out / f'r9-{label}-constructor-B-current.json').write_bytes(epochs[1]['sourceRaw'].encode('utf-8'))
+    (out / f'r9-{label}-manual-C-current.json').write_bytes(current_c.encode('utf-8'))
+    command = ['node','--import','tsx',str(Path(__file__).with_name('r12-native-replay-oracle.mjs')),args.r11_source]
+    process = subprocess.run(command,input=json.dumps(request),text=True,capture_output=True,timeout=30,check=False,cwd=Path(__file__).resolve().parent.parent)
+    (out / f'r9-{label}-native-replay-stdout.json').write_text(process.stdout,encoding='utf-8')
+    (out / f'r9-{label}-native-replay-stderr.txt').write_text(process.stderr,encoding='utf-8')
+    check('fixed predecessor independently replays both native epochs and every complete state exactly',process.returncode==0)
+    return verify_r9_replay_result(original,request,json.loads(process.stdout))
+
+
 def capture_failure(error, page):
     """Each artifact is independent; preserve the original exception if any capture fails."""
     global failure
@@ -228,6 +470,8 @@ def capture_failure(error, page):
             operation()
         except BaseException as capture_error:
             failure['captureErrors'].append({'artifact':label,'error':repr(capture_error)})
+    if globals().get('active_native_trace') is not None:
+        attempt('native-trace',lambda:(out/'failure-native-trace.json').write_text(json.dumps(active_native_trace['trace'].snapshot(),ensure_ascii=False,indent=2),encoding='utf-8'))
     if page is not None:
         for label,key in (('current',KEY),('backup',BACKUP)):
             def save_raw(label=label,key=key):
@@ -476,8 +720,9 @@ AUDIT = r"""(() => {
 })();""".replace("__KEY__", json.dumps(KEY)).replace("__BACKUP__", json.dumps(BACKUP))
 
 
-def boot(seed, extra=None, startup_fault=None):
-    global active_page
+def boot(seed, extra=None, startup_fault=None, native_plan=None):
+    global active_page, active_native_trace
+    active_native_trace = None
     parsed = urlparse(args.url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError("Native acceptance requires an HTTP(S) URL")
@@ -498,8 +743,12 @@ def boot(seed, extra=None, startup_fault=None):
     page = context.new_page()
     active_page = page
     attach_page(page)
+    if native_plan is not None:
+        active_native_trace = start_r9_native_trace(page,native_plan)
     response = page.goto(args.url, wait_until="networkidle")
     check("production page served over actual HTTP", response is not None and response.status == 200)
+    if active_native_trace is not None:
+        verify_r9_trace_navigation(active_native_trace,response)
     page.locator('[data-bind="amount-metal"]').wait_for()
     check("Storage backing is native browser storage", page.evaluate("window.__saveNativeStorage"))
     select_save(page)
@@ -993,6 +1242,7 @@ try:
         check("r9 native coverage retains all required independent old worlds", {row["name"] for row in r9["rows"]} == {
             "zero", "continuous_manual", "jump_protocol", "duplicate_manual", "already_built_manual", "full10000_plan",
             "9995_two_paid", "invalid_cancel_after_legacy_duplicate", "legacy_normalization", "complete_world_outbound", "complete_world_returning"})
+        r9_native_plan = prepare_r9_trace_plan(playwright)
         for row in r9["rows"]:
             case = "actual r9 full-state migration: " + row["name"]
             archived_raw = row["raw"]
@@ -1007,7 +1257,8 @@ try:
             source = oracle["state"]; floor = source["orders"]["nextJobId"]
             expected = lift_legacy_state_to_r12(source, source_revision=9, grant_job_floor=floor)
             startup_host_before = int(time.time() * 1000)
-            context, page = boot(source_raw)
+            context, page = boot(source_raw,native_plan=r9_native_plan)
+            native_capture = active_native_trace
             committed_raw = verify_commit(page, source_raw, "已升级并保存本地存档")
             committed = json.loads(committed_raw)
             check("r9 migration is current and independently validates every new grant field", committed["revision"] == CURRENT_REVISION and assert_zero_grant_metadata(committed["state"], source, grant_job_floor=floor, npc_elapsed=0))
@@ -1023,11 +1274,16 @@ try:
             check("entire migrated r9 envelope has the exact independent native property order and bytes", committed_raw == expected_raw)
             check("r9 startup backup preserves complete original input bytes including noncanonical representation", raw(page, BACKUP) == source_raw)
             expect(page.locator('[data-bind="notice"]')).to_contain_text("旧版已付地形改造器完成升级，不增加格数；本版新付款入队每级增加5总格，建筑本身占1格。")
-            reload_observer = observe_reload_storage(page)
+            reload_observer = native_capture['storage']
             capture_reload_evidence(page,row['name'],source_raw,committed_raw,phase='before',observer=reload_observer)
-            page.reload(wait_until="networkidle"); select_save(page)
+            reload_response = page.reload(wait_until="networkidle")
+            verify_r9_trace_navigation(native_capture,reload_response)
+            select_save(page)
             capture_reload_evidence(page,row['name'],source_raw,committed_raw,phase='after',observer=reload_observer)
-            check("native reload retains original bytes and fixed grant metadata despite normal native time", raw(page, BACKUP) == source_raw and raw(page) == committed_raw and assert_zero_grant_metadata(json.loads(raw(page))["state"], source, grant_job_floor=floor, npc_elapsed=0))
+            check("native reload preserves exact original backup bytes", raw(page,BACKUP)==source_raw)
+            manual_after = len(native_capture['trace'].events) - 1
+            page.locator('[data-action="save"]').click()
+            complete_r9_native_replay(page,native_capture,source_raw,committed_raw,row['name'],manual_after)
             check("native reload preserves the complete old building template library", exact_json(json.loads(raw(page))["state"]["buildingTemplates"], source["buildingTemplates"]))
             context.close()
 
