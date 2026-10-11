@@ -58,12 +58,28 @@ base = tick(base,base.fleets[0]!.remaining);
 const colony = base.planets.find(p=>p.id !== HOME)!;
 if (!colony) throw new Error("Real colonization did not create the owned fixture planet");
 const COLONY = colony.id;
+const generatedColony = planetProperties(base.universe.seed, colony.coordinates);
+if (colony.fieldsMax !== generatedColony.fieldsMax || colony.terraformerFields.base !== colony.fieldsMax ||
+    colony.terraformerFields.grantedLevels !== 0 || colony.buildings.terraformer !== 0 || colony.buildQueue.length !== 0 ||
+    base.terraformerGrantJobFloor !== 1 || base.orders.nextJobId !== 1 || colony.fieldsMax === 231) {
+  throw new Error("Stored-property fixture requires a fresh procedural colony with no paid jobs or earned field grants");
+}
 // Explicit synthetic stored values intentionally differ from procedural generation.
+// The capacity variation is an unearned starting baseline, never a terraformer reward.
 colony.name = "已存殖民地 <旧值&🌌>"; colony.tempMax = -77; colony.fieldsMax = 231;
 colony.productionPct = {...home.productionPct};
 colony.resources = {metal:big(100_000),crystal:big(100_000),deuterium:big(100_000)};
 Object.assign(colony.units,{colony_ship:2,small_cargo:5,recycler:1});
 base = ok(createFormation(base,{expectedNextFormationId:1,name:"只读检查保留编成",ships:{small_cargo:3,colony_ship:1}}));
+// Retain the formerly failing fields-only shape as a strict-reader negative.
+let forgedCapacityRejected = false;
+try { importSave(exportSave(base)); }
+catch (error) {
+  if (!(error instanceof Error) || error.message !== `星球 ${COLONY} 的地形改造器格子账无效`) throw error;
+  forgedCapacityRejected = true;
+}
+if (!forgedCapacityRejected) throw new Error("Strict r10 reader accepted a changed field maximum with its old baseline ledger");
+base.planets.find(p=>p.id === COLONY)!.terraformerFields = {base:231,grantedLevels:0};
 base = settled("base",base);
 const EMPTY = free(base,CURSOR)[0]!;
 const NPC = Array.from({length:15},(_,i)=>({...CURSOR,position:i+1})).find(c=>npcAt(base,c));
@@ -173,6 +189,6 @@ if (!cases.find(row=>row.name === "ready")?.expected.scenarios[0]?.ok ||
     cases.find(row=>row.name === "cargoCapacity")?.expected.scenarios[0]?.reason !== "货舱不足（货物与预留往返燃料共用货舱）" ||
     !cases.find(row=>row.name === "noShipyard")?.expected.scenarios[0]?.ok ||
     !cases.find(row=>row.name === "deep-deepDebris")?.expected.scenarios[1]?.ok) throw new Error("Scenario fixture failed its rule-level premise");
-process.stdout.write(JSON.stringify({description:"Anonymous synthetic inventory, balances and completed technologies. Real API colonization creates stored owned worlds and the 100-planet cap; real dispatch/recall produce reservations and returning slots; paid build/ship/research jobs use official APIs; bounded saved RNG selects a real pirate encounter and real debris. No player data. All snapshots pass strict canonical readers and unchanged zero-time startup. Expected quotes call quoteFlight directly, independently of the expansion model.",
+process.stdout.write(JSON.stringify({description:"Anonymous synthetic inventory, balances and completed technologies. Real API colonization creates stored owned worlds and the 100-planet cap; the first colony's stored temperature and zero-grant base capacity are explicit synthetic variations, not earned terraformer rewards. The fields-only forgery remains a required strict-reader rejection. Real dispatch/recall produce reservations and returning slots; paid build/ship/research jobs use official APIs; bounded saved RNG selects a real pirate encounter and real debris. No player data. All snapshots pass strict canonical readers and unchanged zero-time startup. Expected quotes call quoteFlight directly, independently of the expansion model.",
   key:STORAGE_KEY,homeId:HOME,colonyId:COLONY,cursor:CURSOR,empty:EMPTY,npc:NPC,colonyCoordinates:colony.coordinates,
   homeKey:coordinateKey(CURSOR),cases,...Object.fromEntries(Object.entries(variants).map(([name,state])=>[name,JSON.parse(exportSave(state))]))},null,2));
