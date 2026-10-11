@@ -205,5 +205,65 @@ class MeasurementPreparationTests(unittest.TestCase):
         self.assertFalse(any(name and name.startswith('playwright') for name in imports))
 
 
+class ClickObserverPreparationTests(unittest.TestCase):
+    """Explicit observation doubles, never substitutes for the next native CI."""
+    def setUp(self):
+        self.selector = '[data-tab="fleet"]'
+        self.row = {'trusted': True, 'enabled': True, 'selector': self.selector,
+                    'start': 100, 'firstRAF': 112, 'secondRAF': 128, 'postDispatchTaskAt': 104}
+
+    def test_real_navigation_may_stop_bubbling_but_later_task_is_required(self):
+        self.assertEqual(MODULE.qualify_click([self.row], self.selector), self.row)
+        self.row.pop('postDispatchTaskAt')
+        with self.assertRaisesRegex(AssertionError, 'subsequent native task'):
+            MODULE.qualify_click([self.row], self.selector)
+
+    def test_save_import_still_requires_same_dispatch_storage_witness(self):
+        with self.assertRaisesRegex(AssertionError, 'synchronous document-bubble'):
+            MODULE.qualify_click([self.row], self.selector, storage=True)
+        self.row.update(dispatchCompleted=102, beforeRaw='{"value":1}', afterRaw='{"value":1}')
+        self.assertEqual(MODULE.qualify_click([self.row], self.selector, storage=True), self.row)
+        for key in ('dispatchCompleted', 'beforeRaw', 'afterRaw'):
+            broken = {name: value for name, value in self.row.items() if name != key}
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'synchronous document-bubble'):
+                MODULE.qualify_click([broken], self.selector, storage=True)
+
+    def test_native_trust_enabled_selector_and_single_event_are_not_relaxed(self):
+        for key, value in (('trusted', False), ('enabled', False), ('selector', '[data-tab="other"]')):
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'trusted enabled'):
+                MODULE.qualify_click([{**self.row, key: value}], self.selector)
+        for rows in ([], [self.row, self.row]):
+            with self.subTest(count=len(rows)), self.assertRaisesRegex(AssertionError, 'exactly one'):
+                MODULE.qualify_click(rows, self.selector)
+
+    def test_both_native_raf_observations_still_required(self):
+        for key, value in (('firstRAF', None), ('secondRAF', None), ('secondRAF', 100)):
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(AssertionError, 'two native RAF'):
+                MODULE.qualify_click([{**self.row, key: value}], self.selector)
+
+    def test_runtime_evidence_written_before_click_gate_even_for_timeout(self):
+        tree = ast.parse(SCRIPT.read_text())
+        worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'native_worker')
+        click = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'click')
+        calls = [(node.lineno, node.func.id) for node in ast.walk(click)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id in ('atomic_json', 'qualify_click', 'flush')]
+        position = {name: line for line, name in calls}
+        self.assertLess(position['atomic_json'], position['qualify_click'])
+        self.assertLess(position['flush'], position['qualify_click'])
+        self.assertIn('action_error = error', ast.unparse(click))
+        self.assertIn('observedClicks=rows', ast.unparse(click))
+
+    def test_exact_production_navigation_stops_document_bubble(self):
+        source = (SCRIPT.parent.parent / 'src/ui/space-panel.ts').read_text()
+        self.assertIn('if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}', source)
+        self.assertIn('const eventRows=new WeakMap();', MODULE.PROBE)
+        self.assertIn("document.addEventListener('click',event=>{const row=eventRows.get(event)", MODULE.PROBE)
+        self.assertIn('setTimeout(()=>{row.postDispatchTaskAt=performance.now();},0)', MODULE.PROBE)
+        # Completion observer cannot change production propagation to make a test pass.
+        self.assertNotIn('stopPropagation', MODULE.PROBE)
+        self.assertNotIn('stopImmediatePropagation', MODULE.PROBE)
+
+
 if __name__ == '__main__':
     unittest.main()

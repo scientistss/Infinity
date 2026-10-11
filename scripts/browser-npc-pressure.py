@@ -186,7 +186,8 @@ PROBE = r'''(() => {
    get:native(Storage.prototype.getItem),set:native(Storage.prototype.setItem),file:native(File.prototype.text)}};
  const nodeTokens=new WeakMap();let nextNodeToken=0;
  const token=node=>{if(!nodeTokens.has(node))nodeTokens.set(node,++nextNodeToken);return nodeTokens.get(node);};
- let previous=null, armed=null, active=null;
+ const eventRows=new WeakMap();
+ let previous=null, armed=null;
  function frame(at){if(previous!==null)p.frames.push({at,interval:at-previous});previous=at;requestAnimationFrame(frame);}
  requestAnimationFrame(frame);
  if(p.supported.includes('longtask'))new PerformanceObserver(list=>{for(const e of list.getEntries())p.longTasks.push({start:e.startTime,duration:e.duration,name:e.name});}).observe({type:'longtask',buffered:true});
@@ -196,12 +197,14 @@ PROBE = r'''(() => {
    const button=event.target.closest?.('button'); if(!button)return;
    const row={trusted:event.isTrusted,target:button.dataset.tab||button.dataset.action||button.dataset.ring||button.id,
      start:performance.now(),eventTimestamp:event.timeStamp,firstRAF:null,secondRAF:null};p.clicks.push(row);
-   if(armed&&button.matches(armed.selector)){active=row;row.selector=armed.selector;row.wallAt=Date.now();row.enabled=!button.disabled;row.beforeStatus=document.querySelector('[data-bind="status"]')?.textContent;
+   if(armed&&button.matches(armed.selector)){eventRows.set(event,row);row.selector=armed.selector;row.wallAt=Date.now();row.enabled=!button.disabled;row.beforeStatus=document.querySelector('[data-bind="status"]')?.textContent;
      if(armed.storage)row.beforeRaw=localStorage.getItem(__KEY__);row.storage=armed.storage;armed=null;}
+   // A real later timer task runs after this dispatch even if production navigation stops bubbling.
+   setTimeout(()=>{row.postDispatchTaskAt=performance.now();},0);
    requestAnimationFrame(first=>{row.firstRAF=first;requestAnimationFrame(second=>{row.secondRAF=second;});});
  },true);
- document.addEventListener('click',()=>{if(active){active.dispatchCompleted=performance.now();active.afterStatus=document.querySelector('[data-bind="status"]')?.textContent;
-   if(active.storage)active.afterRaw=localStorage.getItem(__KEY__);active=null;}});
+ document.addEventListener('click',event=>{const row=eventRows.get(event);if(row){row.dispatchCompleted=performance.now();row.afterStatus=document.querySelector('[data-bind="status"]')?.textContent;
+   if(row.storage)row.afterRaw=localStorage.getItem(__KEY__);}});
  const snapshot=()=>({now:performance.now(),wallAt:Date.now(),visibility:document.visibilityState,hidden:document.hidden,
    frameCount:p.frames.length,longTaskCount:p.longTasks.length,eventCount:p.events.length,clickCount:p.clicks.length,
    status:document.querySelector('[data-bind="status"]')?.textContent??'',notice:document.querySelector('[data-bind="notice-text"]')?.textContent??'',
@@ -213,6 +216,23 @@ PROBE = r'''(() => {
    buttons:buttons.map(e=>({fleetId:e.dataset.fleet??null,action:e.dataset.space,disabled:e.disabled,connected:e.isConnected,hasClientRects:e.getClientRects().length>0}))};};
  window.__npcPressure={snapshot,fleet,all:()=>p,arm:request=>{armed=request;}};
 })();'''
+
+
+def qualify_click(rows, selector, storage=False):
+    """Read-only evidence gates. Native navigation may intentionally stop bubbling."""
+    require(len(rows) == 1, 'Expected exactly one native click, including unexpected nested clicks')
+    row = rows[0]
+    require(row.get('trusted') is True and row.get('enabled') is True and row.get('selector') == selector,
+            'Expected one trusted enabled native click on the exact requested selector')
+    require(row.get('postDispatchTaskAt') is not None and row['postDispatchTaskAt'] >= row['start'],
+            'Expected a subsequent native task to witness completed click dispatch')
+    require(row.get('firstRAF') is not None and row.get('secondRAF') is not None and row['secondRAF'] >= row['firstRAF'],
+            'Expected two native RAF observations after the click')
+    if storage:
+        require(row.get('dispatchCompleted') is not None and row['dispatchCompleted'] >= row['start']
+                and isinstance(row.get('beforeRaw'), str) and isinstance(row.get('afterRaw'), str),
+                'Save/import requires its synchronous document-bubble storage witness')
+    return row
 
 
 def process_info(pid):
@@ -317,21 +337,40 @@ def native_worker(args, fixture, envelopes):
         return json.loads(page.evaluate('(key)=>localStorage.getItem(key)', fixture['key']))
     def click(page, selector, run, storage=False):
         page.evaluate('(request)=>window.__npcPressure.arm(request)', {'selector': selector, 'storage': storage})
-        before = read(page)['clickCount']; host = time.monotonic()
+        before_snapshot = read(page); before = before_snapshot['clickCount']; host = time.monotonic()
+        action_error = None
         try:
             page.locator(selector).click(timeout=ACTION_MS)
             remaining = max(1, ACTION_MS - int((time.monotonic() - host) * 1000))
-            page.wait_for_function('(n)=>window.__npcPressure.all().clicks.length>n && window.__npcPressure.all().clicks.at(-1).secondRAF!==null', arg=before, timeout=remaining)
-        except Exception:
+            page.wait_for_function('(n)=>{const rows=window.__npcPressure.all().clicks;return rows.length>n && rows.at(-1).secondRAF!==null && rows.at(-1).postDispatchTaskAt!==undefined;}', arg=before, timeout=remaining)
+        except Exception as error:
+            action_error = error
             report['flags'].append({'kind': 'responsive-action-incomplete', 'run': run['id'], 'selector': selector, 'elapsedMs': (time.monotonic() - host) * 1000})
-            raise
         elapsed = (time.monotonic() - host) * 1000
-        rows = read(page, 'all()')['clicks'][before:]
-        require(len(rows) == 1 and rows[0]['trusted'] and rows[0].get('enabled') and rows[0].get('dispatchCompleted') is not None,
-                'Expected one trusted enabled native click with completed native dispatch')
-        row = rows[0]
+        # Persist unfiltered raw observations BEFORE every evidence gate. A failed
+        # gate must not erase the trusted event or the reason it could not qualify.
+        attempts = run.setdefault('actionAttempts', [])
+        attempt_path = f'{run["id"]}-action-attempt-{len(attempts)}.json'
+        attempt = {'selector': selector, 'storageWitnessRequired': storage, 'before': before_snapshot,
+                   'hostElapsedMs': elapsed, 'actionError': str(action_error) if action_error else None}
+        rows = []
+        try:
+            rows = read(page, 'all()')['clicks'][before:]
+            attempt.update(after=read(page), observedClicks=rows)
+        except Exception as error:
+            attempt['observationError'] = str(error)
+            if action_error is None:
+                action_error = error
+        atomic_json(out / attempt_path, attempt)
+        attempts.append({'selector': selector, 'rawEvidenceFile': attempt_path, 'hostElapsedMs': elapsed,
+                         'observedClickCount': len(rows), 'actionError': attempt['actionError']})
+        flush(run['id'] + ':native-click-observed')
+        if action_error is not None:
+            raise action_error
+        row = qualify_click(rows, selector, storage)
         row['hostToSecondRafObservationMs'] = elapsed
         row['eventToSecondRafMs'] = row['secondRAF'] - row['eventTimestamp']
+        row['dispatchBoundary'] = 'Synchronous document bubble' if row.get('dispatchCompleted') is not None else 'Subsequent native timer task; document bubble not observed'
         for key in ('beforeRaw', 'afterRaw'):
             if key in row:
                 raw = row.pop(key); row[key + 'Sha256'] = sha(raw or '')
@@ -520,8 +559,9 @@ def native_worker(args, fixture, envelopes):
         report['completed'] = False
     finally:
         flush('completed' if report['completed'] else 'failed')
-        if browser is not None:
-            browser.close()
+        # On exceptional exit sync_playwright has already stopped before this
+        # finally block. Do not send browser.close through its dead event loop.
+        # The independent supervisor still verifies/cleans observed owned PIDs.
     return 0 if report['completed'] else 1
 
 
