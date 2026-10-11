@@ -14,7 +14,8 @@ jobs:
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    # Preserve every existing gate/watchdog; add the bounded 240s IRN worker / 245s supervisor.
+    # Preserve all existing gates/watchdogs; r12 adds a bounded 300s NPC worker / 305s supervisor.
+    # Existing 45-minute total remains unchanged.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -43,6 +44,7 @@ jobs:
           python -m unittest discover -s scripts -p 'test_demolition_domain_provenance.py' -v
           python -m unittest discover -s scripts -p 'test_r11_compatibility.py' -v
           node --test scripts/test-r11-compatibility.mjs
+          node --test scripts/test-r12-compatibility.mjs
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
@@ -81,7 +83,14 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/pre-demolition" ac3cce98403bea1e7162bcb4092e4cfeeb448a9a
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-demolition/node_modules"
           node --import tsx "$RUNNER_TEMP/pre-demolition/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-terraformer" > terraformer-save-revision-report.json
-          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-demolition" > save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-npc" ca5ef0c769856f2c4c8925e76a5c7d322822fe1b
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-npc/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-demolition" > demolition-save-revision-report.json
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-npc" > save-revision-report.json
+          NPC_FIXTURE_DIR="$(mktemp -d /tmp/infinity-npc-fixture-reproduction.XXXXXX)"
+          node --import tsx scripts/npc-economy-r11-fixture.mjs --source-root "$RUNNER_TEMP/pre-npc" --out "$NPC_FIXTURE_DIR/npc-economy-r11.json"
+          cmp tests/fixtures/npc-economy-r11.json "$NPC_FIXTURE_DIR/npc-economy-r11.json"
+          node --import tsx scripts/check-npc-adopted-clock.mjs "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > npc-adopted-clock-report.json
           node --import tsx scripts/check-demolition-migration.mjs "$RUNNER_TEMP/pre-demolition" > demolition-migration-report.json
           node --import tsx scripts/terraformer-migration-fixture.ts "$RUNNER_TEMP/pre-terraformer" terraformer-migration-review.json > terraformer-migration-report.json
           cmp tests/fixtures/terraformer-r9.json terraformer-migration-review.json
@@ -166,6 +175,17 @@ jobs:
           DEMOLITION_HASH="$(cut -d' ' -f1 demolition-natural-report.sha256.txt)"
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/demolition-fixture.ts "$GITHUB_WORKSPACE/demolition-natural-report.json" "$DEMOLITION_HASH" "$GITHUB_SHA") > demolition-review-save.json
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Natural r11-source NPC research probes and two real scout arrivals
+        shell: bash
+        run: |
+          # Both old and current clean checkout identities are verified by the route.
+          # Write even failed natural reports directly to the always-archived evidence path.
+          mkdir -p npc-source-evidence
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root "$RUNNER_TEMP/pre-npc" --output "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json")
+          NPC_REPORT_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-economy-browser-fixture.ts "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" "$NPC_REPORT_HASH" "$GITHUB_SHA") > npc-economy-review-save.json
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+          sha256sum npc-source-evidence/npc-natural-r11-report.json > npc-source-evidence/npc-natural-r11-report.sha256.txt
       - name: Exact before source and legal combined performance fixture
         run: |
           mkdir -p "$RUNNER_TEMP/pre-performance"
@@ -229,8 +249,10 @@ jobs:
             sleep 1
           done
           # Run the independent SaveSession suite first to diagnose migration failures early.
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" > save-session-review-save.json
-          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition"
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > save-session-review-save.json
+          R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
+          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc"
+          python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.
           python scripts/browser-ring-protection.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --expect synchronized-controls --output ring-protection-evidence
@@ -332,6 +354,11 @@ jobs:
             parity-report.json
             prestige-parity-report.json
             save-revision-report.json
+            demolition-save-revision-report.json
+            npc-adopted-clock-report.json
+            npc-economy-review-save.json
+            npc-economy-evidence
+            npc-source-evidence
             transport-save-revision-report.json
             templates-save-revision-report.json
             building-templates-save-revision-report.json

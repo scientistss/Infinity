@@ -1,8 +1,9 @@
 /** Exact archived-engine comparison for the segment-local fleet census.
- * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata plus r11 null demolition slots are added.
+ * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r12 NPC state are added.
  * Usage: node --import tsx scripts/check-shipyard-census-parity.mjs BEFORE FIXTURE MODERATE
  */
-import { assertR8StatePreserved } from './r11-compatibility.mjs';
+import { assertR8StatePreserved, advanceExpectedNpcAge , assertHistoricalSource } from './r12-compatibility.mjs';
+import { captureAdoptedSteps } from './capture-adopted-steps.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -17,6 +18,7 @@ import * as nextFleet from '../src/game/fleet.ts';
 const [root,fixturePath,moderatePath]=process.argv.slice(2);
 assert.ok(root&&fixturePath&&moderatePath,'Provide fixed old source and both anonymous fixture paths');
 const baseline='8c19d044fb3c38c601223cd55272c6570c08525d';
+assertHistoricalSource(root, "8c19d044fb3c38c601223cd55272c6570c08525d");
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const pinned={shipyard:'a1a1717163d6bd1e48667aaddc544bdee9c7fbfdfbd032d0154caada0ae11f16',logic:'b7cb40e92c774abc52af2c92211288f6ac0def187c8a66a08c5ffc7c201aa3ba',fleet:'e582f651e37131a13cfc970a5774b2729b1bfbf74828d38adce9f3830edf1b1e',save:'de4caa2c4e88ea94b8f9ce5b360e1a64e7aa7c30539dc653402a444cec8a9965'};
 for(const [name,digest] of Object.entries(pinned))assert.equal(sha(readFileSync(resolve(root,`src/game/${name}.ts`))),digest,`exact ${baseline} ${name}`);
@@ -60,19 +62,23 @@ cases['synthetic-satellites-research-idle-protocol']=oldSave.serializeState(sate
 const upgrading=oldQueue.enqueue(satellites,'shipyard','manual');assert.ok(upgrading.ok,upgrading.reason);
 cases['synthetic-yard-upgrade-pause']=oldSave.serializeState(upgrading.state);
 const rows=[],grantEpochs=[];
+function observedOldTick(state, seconds, mode='live') {
+ return captureAdoptedSteps(state, input => {const log=oldLogic.emptyTickLog(); return {state:oldLogic.tick(input,seconds,mode,log),log};}, oldSave.serializeState);
+}
 function run(name,raw,steps,mode='live',recall=false){
  const migrationFloor=raw.orders.nextJobId;
- let expectedGrantFloor=migrationFloor;
+ let expectedGrantFloor=migrationFloor,expectedNpcAge=0;
  let old=oldSave.deserializeState(raw),next=nextSave.deserializeState(nextSave.importSave(oldSave.exportSave(oldSave.deserializeState(raw),123456)).state),recalled=null,recallStock=null,returnVerified=false;
- assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state',migrationFloor);
+ assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': initial complete state',migrationFloor,0);
  if(recall){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
-  const aLog=oldLogic.emptyTickLog(),bLog=nextLogic.emptyTickLog();
-  old=oldLogic.tick(old,.5,'live',aLog);next=nextLogic.tick(next,.5,'live',bLog);
-  assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': actual outbound elapsed before recall',migrationFloor);
+  const witnessed=observedOldTick(old,.5,'live'),aLog=witnessed.result.log,bLog=nextLogic.emptyTickLog();
+  expectedNpcAge=advanceExpectedNpcAge(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
+  old=witnessed.result.state;next=nextLogic.tick(next,.5,'live',bLog);
+  assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': actual outbound elapsed before recall',migrationFloor,expectedNpcAge);
   assert.deepEqual(aLog,bLog,name+': full pre-recall TickLog');
   assert.deepEqual(oldInput,raw,name+': original input canonical');
-  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical',migrationFloor);
+  assertR8StatePreserved(nextInput,raw,name+': candidate migrated input canonical',migrationFloor,0);
   rows.push({name:name+'-pre-recall',mode:'live',seconds:.5,sha256:sha(JSON.stringify(nextSave.serializeState(next)))});
   const fleet=old.fleets.find(f=>!f.returning&&!f.orderTransport);
   assert.ok(fleet&&fleet.elapsed>0,name+': real ordinary fleet has actually spent outbound time');
@@ -81,12 +87,13 @@ function run(name,raw,steps,mode='live',recall=false){
   const a=oldFleet.recallFleet(old,fleet.id),b=nextFleet.recallFleet(next,fleet.id);
   assert.equal(a.ok,b.ok,name+': recall outcome');assert.equal(a.reason,b.reason,name+': recall reason');
   assert.ok(a.ok&&a.state.fleets.some(f=>f.id===fleet.id&&f.returning&&f.remaining>0),name+': recall leaves a genuine in-flight return');
-  old=a.state;next=b.state;assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': full recall state',migrationFloor);
+  old=a.state;next=b.state;assertR8StatePreserved(nextSave.serializeState(next),oldSave.serializeState(old),name+': full recall state',migrationFloor,expectedNpcAge);
  }
  for(const seconds of steps){
   const oldInput=oldSave.serializeState(old),nextInput=nextSave.serializeState(next);
-  const aLog=oldLogic.emptyTickLog(),bLog=nextLogic.emptyTickLog();
-  const a=oldLogic.tick(old,seconds,mode,aLog),b=nextLogic.tick(next,seconds,mode,bLog);
+  const witnessed=observedOldTick(old,seconds,mode),aLog=witnessed.result.log,bLog=nextLogic.emptyTickLog();
+  expectedNpcAge=advanceExpectedNpcAge(expectedNpcAge,witnessed.adoptedSegmentsSeconds);
+  const a=witnessed.result.state,b=nextLogic.tick(next,seconds,mode,bLog);
   assert.deepEqual(oldSave.serializeState(old),oldInput,name+': archived input purity');
   assert.deepEqual(nextSave.serializeState(next),nextInput,name+': candidate input purity');
   const expected=oldSave.serializeState(a),actual=nextSave.serializeState(b);
@@ -110,7 +117,7 @@ function run(name,raw,steps,mode='live',recall=false){
    grantEpochs.push({name,seconds,mode,previousFloor:expectedGrantFloor,resetFloor:a.orders.nextJobId,launches:a.stats.launches});
    expectedGrantFloor=a.orders.nextJobId;
   }
-  assertR8StatePreserved(actual,expected,`${name}: every serialized field after ${seconds}s/${mode}`,expectedGrantFloor);
+  assertR8StatePreserved(actual,expected,`${name}: every serialized field after ${seconds}s/${mode}`,expectedGrantFloor,expectedNpcAge);
   assert.deepEqual(bLog,aLog,`${name}: full ordered TickLog`);
   rows.push({name,mode,seconds,sha256:sha(JSON.stringify(actual)),completedBuilds:bLog.completedBuilds.length,completedResearch:bLog.completedResearch.length,completedUnits:bLog.completedUnits.length});
   if(recalled&&!returnVerified&&!b.fleets.some(f=>f.id===recalled.id)){
@@ -150,14 +157,15 @@ const timings=[];
 for(const [name,raw] of [['moderate',moderate.ready.state],['combined',pressure.ready.state]]){
  const a=oldSave.deserializeState(raw),b=nextSave.deserializeState(nextSave.importSave(oldSave.exportSave(oldSave.deserializeState(raw),123456)).state),samples={before:[],after:[]};
  const input=JSON.stringify(nextSave.serializeState(b));
+ const expectedNpcAge=observedOldTick(a,1/60).npcElapsedSeconds;
  for(let n=0;n<26;n++)for(const label of n%2?['after','before']:['before','after']){
   const start=performance.now();const state=label==='before'?oldLogic.tick(a,1/60):nextLogic.tick(b,1/60);const elapsed=performance.now()-start;
   if(n>=6)samples[label].push(elapsed);
   // Complete-output equality is checked outside the measured interval.
-  if(n===25)assertR8StatePreserved(nextSave.serializeState(label==='after'?state:nextLogic.tick(b,1/60)),oldSave.serializeState(label==='before'?state:oldLogic.tick(a,1/60)),'timed whole-state output',raw.orders.nextJobId);
+  if(n===25)assertR8StatePreserved(nextSave.serializeState(label==='after'?state:nextLogic.tick(b,1/60)),oldSave.serializeState(label==='before'?state:oldLogic.tick(a,1/60)),'timed whole-state output',raw.orders.nextJobId,expectedNpcAge);
  }
  assert.equal(JSON.stringify(nextSave.serializeState(b)),input,'benchmark candidate input unchanged');
  assert.deepEqual(oldSave.serializeState(a),raw,'benchmark archived input unchanged');
  timings.push({profile:name,stepSeconds:1/60,mode:'live',warmupPairs:6,order:'AB/BA alternating',samplesMs:samples,summary:{before:stats(samples.before),after:stats(samples.after)}});
 }
-console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions and r11 null demolition slots with independently proven automatic-prestige epoch resets, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));
+console.log(JSON.stringify({baseline,result:'passed',comparisons:rows.length,scope:'Complete serialized state and ordered TickLog against independently pinned source; actual recall/arrival boundaries, independently asserted empty r9 buildingTemplates plus fixed-start-floor/zero-grant r10 additions and r11 null demolition slots with independently proven automatic-prestige epoch resets, exact r12 age from observed archived adopted segments, no economic or clock normalization',fixtureSha:pressure.manifest.canonicalSha256,grantEpochs,environment:{node:process.version,platform:process.platform,cpu:os.cpus()[0]?.model},rows,timings,limitations:['Synthetic initial assets are not natural progression','Node wall-clock samples are not browser CPU or a frame-rate claim','No elapsed-time CI pass threshold; correctness is exact']},null,2));

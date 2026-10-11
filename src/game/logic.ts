@@ -3,6 +3,7 @@ import { validDemolitionSeconds } from "./demolition-state";
 import { cloneFormation } from "./formation-state";
 import { accrueOrderPlanTime, runDueOrderPass, nextOrderPassIn, terminateOrdersForPrestige } from "./orders";
 import { advanceFleets, nextFleetEvent, resolveFleetArrivals } from "./fleet";
+import { advanceNpcEconomy } from "./npc-economy";
 import { activePlanet, withPlanet, onPlanet, selectPlanet } from "./empire";
 import { evaluateEvents, evaluateLoadout, refreshUnlocks, type ProtocolEvents } from "../automation/engine";
 import { ACHIEVEMENTS } from "../data/achievements";
@@ -99,7 +100,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         return moved.filled.length > 0 ? { ...moved.state, stats: { ...moved.state.stats, seenStorageFull: true } } : moved.state;
       });
     }
-    current = { ...current, totalTime: current.totalTime.add(step) };
+    // One global adopted segment, independent of the number of player planets.
+    // Keep the actual floating age and advance before any arrival observes it.
+    current = { ...current, totalTime: current.totalTime.add(step), npcEconomy: advanceNpcEconomy(current.npcEconomy, step) };
     let queueIdle = false, shipyardIdle = false;
     for (const snapshot of snapshots) {
       current = onPlanet(current, snapshot.id, (local) => {
@@ -323,6 +326,8 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   const gain = warpGain(state);
   if (gain.lt(1)) return { gain, next: state };
   const next = createInitialState(state.universe.seed, state.arcade.seed);
+  // Curvature starts a new player run inside the same universe, not a new NPC age.
+  next.npcEconomy = state.npcEconomy;
   next.deepSpace = {...structuredClone(state.deepSpace), offers:[], debris:[]};
   next.messages = state.messages.slice();
   next.nextFleetId = state.nextFleetId;

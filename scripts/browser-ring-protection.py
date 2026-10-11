@@ -20,6 +20,8 @@ A second immutable manifest admits only the exact two-file IRN semantic delta
 atop that r10 source. This explicit adoption is not native or CI acceptance.
 Demolition has its own exact-file and exact-hunk adoption atop the verified IRN
 source. Neither shared-core path is removed from the original protected scope.
+NPC adoption separately binds every production path to verified ca5, retaining
+all earlier manifest bytes and each original native protection obligation.
 """
 import argparse
 import hashlib
@@ -77,6 +79,24 @@ DEMOLITION_CHANGED_PATHS = (
     'src/game/types.ts',
 )
 DEMOLITION_RING_DELTAS = ('src/automation/engine.ts', 'src/core/offline.ts')
+NPC_ADOPTION = 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
+NPC_MANIFEST = 'tests/fixtures/npc-domain-provenance.json'
+# Frozen ca5-to-NPC source seal; later source changes require a new explicit adoption.
+NPC_MANIFEST_SHA256 = 'f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26'
+NPC_PRODUCTION_PATHS = ('src',)
+NPC_CHANGED_PATHS = (
+    'src/game/content.ts',
+    'src/game/fleet.ts',
+    'src/game/logic.ts',
+    'src/game/npc-economy-save.ts',
+    'src/game/npc-economy.ts',
+    'src/game/npc-scout.ts',
+    'src/game/save-session.ts',
+    'src/game/save.ts',
+    'src/game/state.ts',
+    'src/game/types.ts',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -130,13 +150,13 @@ def production_action_handlers(text):
 
 
 def production_serializers(text):
-    """Recognize only the complete pinned r9/r10 serializeState return shape.
+    """Recognize only the complete pinned r9/r10/r11/r12 serializeState return shape.
 
     This is deliberately not a general JS parser. Source provenance and exact
     HTTP/V8/release hashes still establish the helpers' production identity.
     Match every field and its original argument, with no additional statements,
-    assignments or arbitrary expressions in this read-only wrapper. The sole
-    admitted shape difference is r10's fixed terraformer floor prefix.
+    assignments or arbitrary expressions in this read-only wrapper. The admitted
+    additions are r10's fixed terraformer floor and r12's exact first NPC call. Every old field and argument remains mandatory.
     """
     identifier = r'[A-Za-z_$][A-Za-z0-9_$]*'
     state = r'(?P=state)'
@@ -166,13 +186,16 @@ def production_serializers(text):
         rf'unlocked:{state}\.unlocked\.slice\(\)', copy('stats'), direct('offlineBonusHours'),
     ]
     prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{return\{{'
-              rf'(?:terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
+              rf'(?:(?:npcEconomy:{identifier}\({state}\.npcEconomy\),)?'
+              rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
               rf'{state}\.orders\.nextJobId\),)?')
     return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
 
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != NPC_ADOPTION and git('ls-tree', candidate, '--', NPC_MANIFEST):
+        return npc_domain_provenance(repository, candidate, git, check)
     if candidate != DEMOLITION_ADOPTION and git('ls-tree', candidate, '--', DEMOLITION_MANIFEST):
         return demolition_domain_provenance(repository, candidate, git, check)
 
@@ -333,6 +356,68 @@ def demolition_domain_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': DEMOLITION_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact demolition semantic source adoption only. All original ring native UI/handler protection and recovery assertions, plus the separate demolition native UI/handler guards, remain required. Source identity is not native or CI acceptance.'}
+
+
+def npc_domain_provenance(repository, candidate, git, check):
+    """One explicit ca5-to-r12 source adoption; no historical contract is widened."""
+    prior = demolition_domain_provenance(repository, NPC_ADOPTION, git, check)
+    check('NPC adoption starts at the exact independently verified ca5 demolition source',
+          prior['contract'] == 'exact-declared-demolition-semantic-delta'
+          and prior['candidateSourceSha'] == NPC_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256)]
+    for path, digest in previous:
+        check('NPC candidate preserves complete earlier manifest bytes and mode: ' + path,
+              entry(candidate, path) == entry(NPC_ADOPTION, path) == {'mode': '100644', 'sha256': digest})
+    raw = (repository / NPC_MANIFEST).read_bytes()
+    check('NPC manifest has immutable approved digest and exact committed ordinary-file bytes',
+          sha(raw) == NPC_MANIFEST_SHA256
+          and entry(candidate, NPC_MANIFEST) == {'mode': '100644', 'sha256': NPC_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + NPC_MANIFEST))
+    manifest = json.loads(raw)
+    check('NPC adoption pins ca5, all prior manifests, complete source and original protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == NPC_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(NPC_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactRingCriticalDeltaPaths') == [])
+    delta = changed(NPC_ADOPTION, candidate, NPC_PRODUCTION_PATHS)
+    check('complete production tree differs from ca5 only at exactly approved NPC files',
+          bool(NPC_CHANGED_PATHS) and delta == list(NPC_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, NPC_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(NPC_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('every NPC file, mode, complete patch and individual hunk matches immutable approval',
+          manifest.get('changedPaths') == rows)
+    check('NPC adoption leaves the entire original ring-critical scope byte-identical to verified ca5',
+          changed(NPC_ADOPTION, candidate, RING_CRITICAL_PATHS) == [])
+    return {'contract': 'exact-declared-npc-semantic-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': NPC_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': NPC_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact NPC source adoption only; not native or CI acceptance. Every original protection, recovery, full-state and new NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):

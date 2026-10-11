@@ -10,33 +10,33 @@ afterEach(() => {
 
 const row = historical.rows.find(value => value.id === "G10a-earned-grant")!;
 function lifted(original: any, revision: number) {
-  return { ...original, revision, state: { ...original.state, planets: original.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
+  return { ...original, revision, state: { ...original.state, npcEconomy: { model: "fixed-production-v1", elapsedSeconds: 0 }, planets: original.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
 }
 
 describe("terraformer historical revision boundary", () => {
-  it("keeps actual fixed r10 earned grants unchanged when r11 and a future r12 reader adopt them", async () => {
+  it("keeps actual fixed r10 earned grants unchanged when r12 and a future r13 reader adopt them", async () => {
     // The source is retained ac3 serializer bytes from real enqueue/tick, not a new export
     // relabeled r10. Its own old reader output is independently saved with byte hashes.
-    expect(SAVE_REVISION).toBe(11);
+    expect(SAVE_REVISION).toBe(12);
     expect(historical.sourceSha).toBe("ac3cce98403bea1e7162bcb4092e4cfeeb448a9a");
     const original: any = row.oldReaderOutput;
     expect(JSON.parse(row.raw).revision).toBe(10);
     expect(original.state.planets[0].terraformerFields).toEqual({ base: 163, grantedLevels: 1 });
     expect(original.state.terraformerGrantJobFloor).toBe(1);
     expect(original.state.orders.nextJobId).toBe(2);
-    expect(importSave(row.raw)).toEqual(lifted(original, 11));
-    expect(() => importSave(JSON.stringify({ ...original, revision: 12 }))).toThrow(/修订不兼容/);
+    expect(importSave(row.raw)).toEqual(lifted(original, 12));
+    expect(() => importSave(JSON.stringify({ ...original, revision: 13 }))).toThrow(/修订不兼容/);
 
     vi.resetModules();
     vi.doMock("../src/game/content", async () => ({
       ...await vi.importActual<typeof import("../src/game/content")>("../src/game/content"),
-      SAVE_REVISION: 12,
+      SAVE_REVISION: 13,
       // Future compatibility is an explicit opt-in, separate from the output revision.
-      SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     }));
     const future = await import("../src/game/save");
     const restored = future.importSave(row.raw);
-    expect(restored).toEqual(lifted(original, 12));
+    expect(restored).toEqual(lifted(original, 13));
     expect(future.importSave(JSON.stringify(restored))).toEqual(restored);
 
     const missingFloor = JSON.parse(row.raw);
@@ -45,6 +45,6 @@ describe("terraformer historical revision boundary", () => {
     const missingLedger = JSON.parse(row.raw);
     delete missingLedger.state.planets[0].terraformerFields;
     expect(() => future.importSave(JSON.stringify(missingLedger))).toThrow();
-    expect(() => future.importSave(JSON.stringify({ ...original, revision: 13 }))).toThrow(/修订不兼容/);
+    expect(() => future.importSave(JSON.stringify({ ...original, revision: 14 }))).toThrow(/修订不兼容/);
   });
 });

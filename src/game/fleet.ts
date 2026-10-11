@@ -11,6 +11,7 @@ import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 import type { OrderFleetIdentity, OrderNonDelivery } from "./order-state";
 import { checkedCargoCredit, checkedShipLanding } from "./order-wallet";
 import { isOwnedDockBlocked, pauseOwnedFleetOwner, recordOwnedTripPhase, validateOwnedFleetContext, type ValidOwnedFleetContext } from "./order-transport-ledger";
+import { npcScoutReportText } from "./npc-scout";
 
 export const MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle"] as const;
 export type Mission = (typeof MISSIONS)[number];
@@ -164,7 +165,12 @@ export function advanceFleets(state: GameState, seconds: number): GameState {
   return resolveFleetArrivals(advanced);
 }
 function addMessage(state: GameState, id: string, text: string): GameState {
-  return { ...state, messages: [...state.messages, { id, at: state.totalTime.toNumber(), text }].slice(-SPACE.maxMessages) };
+  // `at` is only a list label, constrained by the existing save reader to 1e12.
+  // Keep the true Decimal time in overflow text; never change the simulation clock.
+  const timeBeyondDisplay = state.totalTime.gt(1e12);
+  const at = timeBeyondDisplay ? 1e12 : state.totalTime.toNumber();
+  const message = timeBeyondDisplay ? `${text}（列表时间已达显示上限；实际游戏时间 ${state.totalTime.toString()} 秒。）` : text;
+  return { ...state, messages: [...state.messages, { id, at, text: message }].slice(-SPACE.maxMessages) };
 }
 function unload(state: GameState, planetId: string, fleet: Fleet, ships: boolean): GameState {
   return { ...state, planets: state.planets.map((p) => {
@@ -271,9 +277,9 @@ export function resolveFleetArrivals(state: GameState): GameState {
       next = addMessage(next, `colony-${fleet.id}`, `已建立 ${planet.name}。消耗 1 艘殖民船；其余舰船返航。`);
       if (!Object.values(ships).some((n) => n > 0)) { remove(); continue; }
     } else if (fleet.mission === "scout") {
-      const npc = npcAt(next, fleet.target);
-      const detail = target ? `${target.name}（己方），${target.fieldsMax} 格` : npc ? `${npc.name}，派系：${npc.faction}。当前阶段不会反击；战斗与精确情报尚未开放` : "无人占据，可派殖民船建立基地";
-      next = addMessage(next, `scout-${fleet.id}`, `侦察报告 [${coordinateKey(fleet.target)}]：${detail}。`);
+      const npcReport = npcScoutReportText(next, fleet.target);
+      const detail = target ? `${target.name}（己方），${target.fieldsMax} 格` : "无人占据，可派殖民船建立基地";
+      next = addMessage(next, `scout-${fleet.id}`, npcReport ?? `侦察报告 [${coordinateKey(fleet.target)}]：${detail}。`);
     } else {
       next = addMessage(next, `failed-${fleet.id}`, `舰队 #${fleet.id} 目标失效，全部舰船及货物原路返航。`);
     }

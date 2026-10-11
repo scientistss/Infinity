@@ -1,4 +1,5 @@
-/** Independent ac3 r10 reader oracle, exact raw hashes, and a strict null-only r11 lift. */
+/** Independent ac3 r10 reader oracle, exact raw hashes, and an exact zero-age r12 lift composed with the frozen null-only r11 contract. */
+import { liftR10StateToR12, projectVerifiedNpcEconomy } from "./r12-compatibility.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -20,17 +21,18 @@ const sha = text => createHash("sha256").update(text).digest("hex");
 function verify(raw, old, label) {
   assert.deepEqual(previous.importSave(raw), old, `${label}: actual fixed r10 reader output`);
   const migrated = importSave(raw);
-  assert.equal(migrated.revision, 11);
+  assert.equal(migrated.revision, 12);
   assert.equal(migrated.savedAt, old.savedAt); assert.equal(migrated.lastTickAt, old.lastTickAt);
   assert.equal(migrated.state.planets.length, old.state.planets.length);
   for (const planet of migrated.state.planets) {
     assert.equal(Object.hasOwn(planet, "demolition"), true, `${label}: explicit slot`);
     assert.equal(planet.demolition, null, `${label}: no new authority`);
   }
-  const prior = structuredClone(migrated);
+  assert.deepEqual(migrated.state, liftR10StateToR12(old.state, 0), `${label}: exact zero-age NPC plus null-demolition lift`);
+  const prior = { ...structuredClone(migrated), state: projectVerifiedNpcEconomy(migrated.state, 0, label) };
   prior.revision = 10;
   for (const planet of prior.state.planets) delete planet.demolition;
-  assert.deepEqual(prior, old, `${label}: no state delta beyond null slots and revision`);
+  assert.deepEqual(prior, old, `${label}: no state delta beyond independently verified zero-age NPC, null slots and revision`);
   assert.deepEqual(importSave(JSON.stringify(migrated)), migrated, `${label}: idempotent cold read`);
   assert.deepEqual(serializeState(deserializeState(migrated.state)), migrated.state, `${label}: cold runtime round trip`);
 }
@@ -46,4 +48,4 @@ for (const row of fixtures.legacyInputs) {
 }
 console.log(JSON.stringify({ source, originalManifest: fixtures.originalEvidenceManifestSha256,
   sourceRows: fixtures.rows.length, preservedLegacyInputs: fixtures.legacyInputs.length,
-  oracle: "actual fixed r10 reader", delta: "revision 11 and one explicit null demolition slot per planet only", result: "passed" }));
+  oracle: "actual fixed r10 reader", delta: "revision 12, exact zero-age fixed-production-v1 NPC state, and one explicit null demolition slot per planet only", result: "passed" }));

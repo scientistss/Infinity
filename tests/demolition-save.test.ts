@@ -51,7 +51,7 @@ describe("r11 strict independent demolition slot", () => {
   it("preserves actual paid partial work, fractional time and stable ID through a cold read", () => {
     const issued = actuallyPaid(), paidTotal = activePlanet(issued).demolition!.totalSeconds;
     const partial = tick(issued, 0.25), raw = exportSave(partial, 1250), parsed = JSON.parse(raw);
-    expect(parsed.revision).toBe(11);
+    expect(parsed.revision).toBe(12);
     expect(parsed.state.planets[0].demolition.paid).toEqual({ metal: "1476", crystal: "369", deuterium: "0" });
     expect(Math.abs(paidTotal - 4.6104)).toBeLessThanOrEqual(Number.EPSILON * 4.6104);
     expect(parsed.state.planets[0].demolition.totalSeconds).toBe(paidTotal);

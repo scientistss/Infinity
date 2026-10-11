@@ -9,7 +9,8 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
-import { assertR8StatePreserved, liftR8StateToR11 } from "./r11-compatibility.mjs";
+import { assertR8StatePreserved, liftR8StateToR12, assertHistoricalSource } from "./r12-compatibility.mjs";
+import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -50,6 +51,7 @@ const warmup = boundedInteger("--warmup", 5, 1, 100);
 const samples = boundedInteger("--samples", 30, 5, 1000);
 const simulationSamples = boundedInteger("--simulation-samples", 5, 3, 30);
 const sha256 = text => createHash("sha256").update(text).digest("hex");
+assertHistoricalSource(beforeRoot, "4a4a4d68d0a0cf467f10a734a690606487acd327");
 const load = (root, path) => import(pathToFileURL(resolve(root, path)).href);
 const [afterSave, beforeSave, afterLogic, beforeLogic, afterPresent, beforePresent,
   afterSpace, beforeSpace, afterOrders, beforeOrders, empire, fleet] = await Promise.all([
@@ -69,13 +71,13 @@ assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "nativ
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
 assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
 const migratedFile = afterSave.importSave(fixture.save);
-assert.equal(migratedFile.revision, 11, "new reader must perform the real r8-to-r11 migration");
+assert.equal(migratedFile.revision, 12, "new reader must perform the real r8-to-r12 migration");
 const migrationFloor = fixture.ready.state.orders.nextJobId;
 const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
 const serialized = JSON.stringify(afterSave.serializeState(sourceState));
 const archivedSerialized = JSON.stringify(beforeSave.serializeState(beforeState));
-assertR8StatePreserved(afterSave.serializeState(sourceState), beforeSave.serializeState(beforeState), "archived/current strict readers", migrationFloor);
+assertR8StatePreserved(afterSave.serializeState(sourceState), beforeSave.serializeState(beforeState), "archived/current strict readers", migrationFloor, 0);
 for (let pass = 0; pass < 2; pass++) {
   assert.equal(JSON.stringify(beforeSave.serializeState(beforeLogic.tick(beforeState, 0))), archivedSerialized, "archived zero-time startup parity");
   assert.equal(JSON.stringify(afterSave.serializeState(afterLogic.tick(sourceState, 0))), serialized, "current zero-time startup parity");
@@ -285,16 +287,17 @@ const separateResults = [
 ];
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
 assert.equal(beforeSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-const expectedR11 = { ...fixture.ready, revision: 11, state: liftR8StateToR11(fixture.ready.state, migrationFloor) };
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR11, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and r11 envelope");
+const expectedR12 = { ...fixture.ready, revision: 12, state: liftR8StateToR12(fixture.ready.state, migrationFloor, 0) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR12, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r12 NPC metadata and r12 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
+  const witnessed = captureAdoptedSteps(beforeState, input => ({ state: beforeLogic.tick(input, delta) }), beforeSave.serializeState);
   assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
-    beforeSave.serializeState(beforeLogic.tick(state, delta)), `complete simulation state parity at ${delta}s`, migrationFloor);
+    beforeSave.serializeState(witnessed.result.state), `complete simulation state parity at ${delta}s`, migrationFloor, witnessed.npcElapsedSeconds);
 }
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r11 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r12 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age fixed-production-v1 NPC metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },

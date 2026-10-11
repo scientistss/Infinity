@@ -1,5 +1,6 @@
 import { readDemolitionJob, serializeDemolitionJob, rejectLegacyDemolitionFields, rejectMisplacedDemolitionFields, migrateLegacyDemolitionSlots, type SerializedDemolitionJob } from "./demolition-save";
 import { demolitionStateProblem } from "./demolition";
+import { readNpcEconomy, serializeNpcEconomy, rejectLegacyNpcEconomyFields, rejectMisplacedNpcEconomyFields, migrateLegacyNpcEconomy } from "./npc-economy-save";
 import { readTerraformerFields, readTerraformerGrantJobFloor, rejectLegacyTerraformerFields } from "./terraformer-save";
 import { terraformerStateProblem } from "./terraformer";
 import { readBuildingTemplates, serializeBuildingTemplates, migrateBuildingTemplates, rejectLegacyBuildingTemplateFields } from "./building-templates-save";
@@ -98,6 +99,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 }
 
 export interface SerializedState {
+  npcEconomy: GameState["npcEconomy"];
   terraformerGrantJobFloor: number;
   buildingTemplates: ReturnType<typeof serializeBuildingTemplates>;
   formations: ReturnType<typeof serializeFormations>;
@@ -148,7 +150,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r10 → r11 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r11 → r12 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -171,6 +173,7 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   return {
+    npcEconomy: serializeNpcEconomy(state.npcEconomy),
     terraformerGrantJobFloor: readTerraformerGrantJobFloor(state.terraformerGrantJobFloor, state.orders.nextJobId),
     buildingTemplates: serializeBuildingTemplates(state.buildingTemplates),
     formations: serializeFormations(state.formations),
@@ -207,9 +210,11 @@ export function deserializeState(raw: unknown): GameState {
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
 function readState(raw: unknown, legacyTerraformer: boolean): GameState {
+  rejectMisplacedNpcEconomyFields(raw);
   rejectMisplacedDemolitionFields(raw);
   if (!isRecord(raw)) throw new Error("存档状态格式不正确");
   const state = createInitialState();
+  state.npcEconomy = readNpcEconomy(Object.getOwnPropertyDescriptor(raw, "npcEconomy")?.value);
   if ("planet" in raw || "resources" in raw) throw new Error("存在旧版重复星球状态，未导入");
   if (!Array.isArray(raw.planets) || raw.planets.length < 1 || raw.planets.length > 100) throw new Error("星球列表必须包含 1–100 颗星球");
   state.planets = raw.planets.map(planet => readPlanet(planet, legacyTerraformer));
@@ -274,7 +279,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r11 or explicitly migrate same-schema r2–r10; never touch the current game. */
+/** Validate current v9/r12 or explicitly migrate same-schema r2–r11; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -292,6 +297,9 @@ export function importSave(json: string): SaveFile {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
   // These are historical facts, independent of the current output revision.
+  const legacyNpcEconomy = parsed.revision <= 11;
+  if (legacyNpcEconomy) rejectLegacyNpcEconomyFields(parsed);
+  else rejectMisplacedNpcEconomyFields(parsed, true);
   const legacyDemolition = parsed.revision <= 10;
   if (legacyDemolition) rejectLegacyDemolitionFields(parsed);
   else rejectMisplacedDemolitionFields(parsed, true);
@@ -323,6 +331,7 @@ export function importSave(json: string): SaveFile {
     parsed.state = migrateBuildingTemplates(parsed.state);
   }
   if (legacyDemolition) parsed.state = migrateLegacyDemolitionSlots(parsed.state);
+  if (legacyNpcEconomy) parsed.state = migrateLegacyNpcEconomy(parsed.state);
   if (typeof parsed.savedAt !== "number" || !Number.isFinite(parsed.savedAt)) {
     throw new Error("存档缺少有效的 savedAt");
   }

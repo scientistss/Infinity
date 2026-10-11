@@ -32,8 +32,17 @@ export function withResearch(state: GameState, levels: Partial<Record<ResearchId
   return { ...state, research: { ...state.research, levels: { ...state.research.levels, ...levels } } };
 }
 
+/** Remove only an independently verified exact r12 field from an explicit old-schema projection. */
+export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: number): void {
+  expect(Object.hasOwn(state, "npcEconomy")).toBe(true);
+  expect(Reflect.ownKeys(state.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
+  expect(state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: expectedElapsedSeconds });
+  delete state.npcEconomy;
+}
+
 /** Deliberate synthetic legacy-schema input, never evidence of a historical export. */
-export function stripSyntheticTerraformerMetadata(state: any): void {
+export function stripSyntheticTerraformerMetadata(state: any, expectedNpcAge: number): void {
+  stripVerifiedNpcMetadata(state, expectedNpcAge);
   // These older feature tests have no earned r10 rewards to erase.
   expect(Number.isSafeInteger(state.terraformerGrantJobFloor)).toBe(true);
   for (const planet of state.planets) {
@@ -49,7 +58,7 @@ export function stripSyntheticTerraformerMetadata(state: any): void {
 /** Validate the entire additive r10 ledger before comparing prior-schema fields. */
 export function expectTerraformerMigration<T extends { terraformerGrantJobFloor: number;
   planets: Array<{ id: string; fieldsMax: number; terraformerFields: { base: number; grantedLevels: number } }> }>(
-  actual: T, historical: any,
+  actual: T, historical: any, expectedNpcAge: number,
 ): T {
   // Pre-r5 identities are independently assigned in planet/build/ship/research order.
   const floor = historical.orders?.nextJobId ?? 1 + historical.planets.reduce((sum: number, planet: any) =>
@@ -61,6 +70,6 @@ export function expectTerraformerMigration<T extends { terraformerGrantJobFloor:
     expect(actual.planets[index]!.fieldsMax).toBe(historical.planets[index].fieldsMax);
   }
   const prior = structuredClone(actual);
-  stripSyntheticTerraformerMetadata(prior);
+  stripSyntheticTerraformerMetadata(prior, expectedNpcAge);
   return prior;
 }

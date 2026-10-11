@@ -6,6 +6,7 @@
  * This compressed engine execution is not native browser or continuous human play.
  */
 declare const process: { argv: string[]; env: Record<string, string | undefined>; stdout: { write(value: string): void }; stderr: { write(value: string): void }; exitCode?: number };
+import { assertNpcEconomy } from "./r12-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION } from "../src/game/content";
 import { quoteDemolition, commitDemolition, cancelDemolition } from "../src/game/demolition";
 import type { DemolitionJobRef } from "../src/game/demolition-state";
@@ -17,7 +18,7 @@ import { canEnqueue, enqueue } from "../src/game/queue";
 import { researchNetworkView } from "../src/game/research";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "../src/game/types";
-import { DEMOLITION_GOLDEN as GOLD, exactEvidence as exact, requireEvidence as check, projectR11NullToR10 } from "./demolition-fixture";
+import { DEMOLITION_GOLDEN as GOLD, exactEvidence as exact, requireEvidence as check, projectR12ZeroToR10 } from "./demolition-fixture";
 
 const HOME = GOLD.homeId, COLONY = GOLD.colonyId;
 const startedAt = new Date().toISOString(), hostStarted = performance.now();
@@ -43,6 +44,8 @@ function snapshot(s = state, legacy = false) {
 }
 function observe() {
   if (!ready) return;
+  assertNpcEconomy(state, Math.min(11900, 1 + elapsed), `${stage}: original second plus independently counted adopted live seconds`);
+  assertNpcEconomy(control, Math.min(11900, 1 + elapsed), `${stage}: independently counted no-demolition control age`);
   const now = serializeState(state), expected = serializeState(control);
   check(state.totalTime.toNumber() === GOLD.originGameSeconds + elapsed, "Only counted actual live seconds advance game time");
   // Full independent no-demolition trajectory retains RNG, all histories, terminal
@@ -172,13 +175,14 @@ async function loadOrigin() {
   }
   check(report.schema === "infinity-natural-research-network-journey-v1" && report.outcome.status === "passed" && report.source.sourceSha === GOLD.sourceSha && report.source.gitHead === GOLD.sourceSha && report.source.worktreeStatusPorcelain === "" && report.source.sourceScopeStatusPorcelain === "", "Prior source/report did not pass exact clean origin contract");
   const matches = report.milestones.filter((m: { name: string }) => m.name === GOLD.sourceMilestone); check(matches.length === 1, "Exact final serializer milestone missing/duplicated"); const m = matches[0];
-  check(m.gameSeconds === GOLD.sourceGameSeconds && m.strictRoundtrips === 2 && m.stateAdoptedFromReload && m.subsequentLiveTickObserved && m.firstSubsequentLiveTickAt === GOLD.originGameSeconds && m.save.schema === SAVE_SCHEMA && m.save.version === SAVE_VERSION && m.save.revision === 10 && SAVE_REVISION === 11 && m.save.savedAt === m.save.lastTickAt, "Original actual r10 serializer/reload/live-tick chain is incomplete");
+  check(m.gameSeconds === GOLD.sourceGameSeconds && m.strictRoundtrips === 2 && m.stateAdoptedFromReload && m.subsequentLiveTickObserved && m.firstSubsequentLiveTickAt === GOLD.originGameSeconds && m.save.schema === SAVE_SCHEMA && m.save.version === SAVE_VERSION && m.save.revision === 10 && SAVE_REVISION === 12 && m.save.savedAt === m.save.lastTickAt, "Original actual r10 serializer/reload/live-tick chain is incomplete");
   exact(JSON.parse(rawOrigin), m.save, "Literal original serializer bytes equal exact prior complete milestone save");
-  const migrated = importSave(rawOrigin); projectR11NullToR10(migrated.state, m.save.state);
-  exact({ ...migrated, revision: 10, state: m.save.state }, m.save, "Only revision/null fields added; original envelope clocks preserved");
+  const migrated = importSave(rawOrigin); projectR12ZeroToR10(migrated.state, m.save.state);
+  exact({ ...migrated, revision: 10, state: m.save.state }, m.save, "Only revision, exact zero NPC age and null fields added; original envelope clocks preserved");
   state = deserializeState(migrated.state); exact(serializeState(state), migrated.state, "Full migrated original state is strict-readable");
   initialOriginalContinuation = m.continuationSeconds + 1; originalFinalSnapshot = report.outcome.finalSnapshot;
   state = tick(state, 1, "live");
+  assertNpcEconomy(state, 1, "first actual original live tick advances migrated zero NPC age once");
   exact(snapshot(state, true), originalFinalSnapshot, "One actual original live tick recreates entire prior recorded final snapshot");
   check(state.activePlanetId === COLONY && Number(state.orders.nextJobId) === 202 && state.orders.nextTaskId === 17 && state.orders.nextWorkId === 3 && Number(state.stats.buildsCompleted) === 135, "Origin IDs/counters/selection differ from independent route");
   exact(money(home().resources), GOLD.originWallet, "Exact natural-origin wallet");
@@ -186,7 +190,7 @@ async function loadOrigin() {
   for (const r of RESOURCE_IDS) check(eco.gross[r] === GOLD.grossPerSecond[r] && eco.consumption[r] === 0, `Independent actual natural gross rate ${r}`);
   check(state.planets.length === 2 && state.planets.every(p => !p.demolition && !p.buildQueue.length && !p.shipyardQueue.length) && !state.research.queue.length && !state.fleets.length && !state.boosters.length, "Origin has unexpected competing work");
   initial = serializeState(state); control = deserializeState(initial); expectedManualActions = state.stats.manualActions; originAt = m.save.savedAt + 1000;
-  origin = { sourceSha: GOLD.sourceSha, reportSha256: hash, milestoneName: m.name, gameSeconds: m.gameSeconds, originalSave: m.save, originalSaveRaw: rawOrigin, originalSaveSha256: GOLD.originalSaveSha256, extraction: sliceMetadata, migration: { sourceRevision: 10, targetRevision: 11, addedPerPlanet: { demolition: null }, everyOldFieldPreserved: true }, replayedLiveSeconds: 1, finalSnapshotReproducedExactly: true, originalFinalSnapshot };
+  origin = { sourceSha: GOLD.sourceSha, reportSha256: hash, milestoneName: m.name, gameSeconds: m.gameSeconds, originalSave: m.save, originalSaveRaw: rawOrigin, originalSaveSha256: GOLD.originalSaveSha256, extraction: sliceMetadata, migration: { sourceRevision: 10, targetRevision: 12, addedNpcEconomy: { model: "fixed-production-v1", elapsedSeconds: 0 }, addedPerPlanet: { demolition: null }, everyOldFieldPreserved: true }, replayedLiveSeconds: 1, finalSnapshotReproducedExactly: true, originalFinalSnapshot };
   ready = true; checkpoint("origin");
 }
 let error: unknown = null;

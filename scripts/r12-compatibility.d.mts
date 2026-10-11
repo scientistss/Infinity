@@ -1,0 +1,13 @@
+export const CURRENT_REVISION: 12;
+export const NPC_MODEL: 'fixed-production-v1';
+export const NPC_MAX_SECONDS: 11900;
+export function expectedNpcEconomy(elapsedSeconds: number): { model: 'fixed-production-v1'; elapsedSeconds: number };
+export function advanceExpectedNpcAge(priorAge: number, adoptedSegmentsSeconds: number[]): number;
+export function assertNpcEconomy(actual: unknown, elapsedSeconds: number, label: string): true;
+export function projectVerifiedNpcEconomy(actual: unknown, elapsedSeconds: number, label: string): Record<string, any>;
+export function liftR11StateToR12(state: unknown, elapsedSeconds: number): any;
+export function liftR10StateToR12(state: unknown, elapsedSeconds: number): any;
+export function liftR8StateToR12(state: unknown, floor: number, elapsedSeconds: number): any;
+export function assertTerraformerMetadata(actual: unknown, historical: unknown, floor: number, label: string, elapsedSeconds: number): any;
+export function assertR8StatePreserved(actual: unknown, historical: unknown, label: string, floor: number, elapsedSeconds: number): void;
+export function assertHistoricalSource(root: string, sourceSha: string): string;

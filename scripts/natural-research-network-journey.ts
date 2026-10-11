@@ -30,6 +30,7 @@ import { createOrderTask } from "../src/game/orders";
 import { usedFields } from "../src/game/planet";
 import { canEnqueue, enqueue } from "../src/game/queue";
 import { canEnqueueResearch, enqueueResearch, researchNetworkView, researchSecondsFor } from "../src/game/research";
+import { assertNpcEconomy, liftR10StateToR12 } from "./r12-compatibility.mjs";
 import { deserializeState, exportSave, importSave, serializeState, type SerializedState } from "../src/game/save";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "../src/game/types";
 
@@ -71,7 +72,7 @@ interface PaidProof {
   kind: "building" | "research"; target: string; targetLevel: number; paid: OrderMoney; totalSeconds: number;
 }
 let state!: GameState, initial!: SerializedState;
-let stateInitialized = false, stage = "verify-origin", elapsed = 0, originGameSeconds = 0, originSavedAt = 0;
+let stateInitialized = false, stage = "verify-origin", elapsed = 0, originGameSeconds = 0, originSavedAt = 0, originNpcAge = 0;
 let firstNewJobId = 0, finiteTaskId: number | null = null, finiteJobId: number | null = null;
 let finitePaidAt: number | null = null, finiteCompletedAt: number | null = null;
 let postPaymentProductionOnlyTicks = 0;
@@ -192,6 +193,7 @@ function preserve(): void {
   check(state.protocols.slots.every(slot => slot.card === null), "a protocol was installed");
 }
 function observe(): void {
+  assertNpcEconomy(state, Math.min(11900, originNpcAge + elapsed), "source-owned NPC age plus counted adopted one-second continuation");
   preserve();
   const live = currentJobs();
   check(new Set(live.map(j => j.jobId)).size === live.length, "duplicate live paid identity");
@@ -385,26 +387,28 @@ function paymentTotal(category?: string): OrderMoney {
   return { metal: String(sums.metal), crystal: String(sums.crystal), deuterium: String(sums.deuterium) };
 }
 
-/** The workflow's fixed pre-IRN source is r10; current-source handoffs are r11.
+/** The workflow's fixed pre-IRN source is r10; current-source handoffs are r12.
  * Build the entire expected migrated envelope independently. Never erase source
  * fields to make a comparison pass, and never admit live demolition as origin.
  */
 export function readNaturalResearchOrigin(original: OriginSave, sourceSha: string) {
-  check(original.schema === SAVE_SCHEMA && original.version === SAVE_VERSION && SAVE_REVISION === 11,
+  check(original.schema === SAVE_SCHEMA && original.version === SAVE_VERSION && SAVE_REVISION === 12,
     "origin schema/version or current revision differs");
   const historical = original.revision === 10;
   check(historical ? sourceSha === "4afa5331d6e54509a643572570dc3cd194c78ebf" : original.revision === SAVE_REVISION,
-    "only the exact pinned pre-IRN r10 source or an unchanged current r11 origin is supported");
+    "only the exact pinned pre-IRN r10 source or an unchanged current r12 origin is supported");
   check(Array.isArray(original.state.planets), "origin planet list missing");
   if (historical) for (const planet of original.state.planets) check(!Object.hasOwn(planet, "demolition"), "r10 source already contains a forbidden demolition field");
   else for (const planet of original.state.planets) check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "current origin has missing or competing demolition authority");
-  const expected = historical ? { ...original, revision: SAVE_REVISION, state: { ...original.state,
-    planets: original.state.planets.map(planet => ({ ...planet, demolition: null })) } } : structuredClone(original);
+  const expected = historical ? { ...original, revision: SAVE_REVISION, state: liftR10StateToR12(original.state, 0) } : structuredClone(original);
+  // For a true current handoff, the unchanged source envelope owns its saved age.
+  // For a genuine old source, migration is a pure zero-time initialization.
+  assertNpcEconomy(expected.state, historical ? 0 : original.state.npcEconomy.elapsedSeconds, "independent original handoff NPC metadata");
   const imported = importSave(JSON.stringify(original)), candidate = deserializeState(imported.state);
-  exact(imported, expected, "origin entire envelope equals only the independently allowed revision/null additions");
+  exact(imported, expected, "origin entire envelope equals only the independently allowed revision, zero-age NPC and null additions");
   exact(serializeState(candidate), expected.state, "origin entire strict reload equals independently expected state");
   check(candidate.planets.every(planet => planet.demolition === null), "origin contains competing demolition work");
-  return { imported, candidate, migration: historical ? "r10→r11: revision plus one explicit null demolition slot per planet; every prior field preserved" : "r11 unchanged complete envelope and state" };
+  return { imported, candidate, migration: historical ? "r10→r12: revision plus exact zero-age fixed-production-v1 NPC state and one explicit null demolition slot per planet; every prior field preserved" : "r12 unchanged complete envelope and state" };
 }
 
 async function loadOrigin(): Promise<void> {
@@ -443,8 +447,8 @@ async function loadOrigin(): Promise<void> {
   const old = found[0]!;
   check(old.strictRoundtrips === 2 && old.stateAdoptedFromReload && old.subsequentLiveTickObserved
     && typeof old.firstSubsequentLiveTickAt === "number" && old.firstSubsequentLiveTickAt > old.gameSeconds
-    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && (old.save.revision === 10 || old.save.revision === SAVE_REVISION) && SAVE_REVISION === 11,
-    "origin milestone lacks strict live reload evidence or a supported r10/r11 envelope");
+    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && (old.save.revision === 10 || old.save.revision === SAVE_REVISION) && SAVE_REVISION === 12,
+    "origin milestone lacks strict live reload evidence or a supported r10/r12 envelope");
   check(Number.isSafeInteger(old.gameSeconds) && old.gameSeconds > 0 && Number.isSafeInteger(old.save.savedAt) && old.save.lastTickAt === old.save.savedAt,
     "origin game time or save envelope clocks are invalid");
   origin = { sourceSha: expectedSource, gitHead: report.source.gitHead, reportPath: args.get("--report"), reportSha256: hash,
@@ -452,6 +456,7 @@ async function loadOrigin(): Promise<void> {
     sourceWorktreeStatusPorcelain: report.source.worktreeStatusPorcelain, sourceScopeStatusPorcelain: report.source.sourceScopeStatusPorcelain,
     sourceBinding: "Caller-supplied digest and SHA, matched to raw report bytes and both embedded SHA fields. This does not by itself claim CI success.",
     originalSave: old.save };
+  originNpcAge = old.save.revision === 10 ? 0 : old.save.state.npcEconomy.elapsedSeconds;
   const { candidate, migration } = readNaturalResearchOrigin(old.save, expectedSource);
   origin.migration = migration;
   const home = candidate.planets.find(p => p.id === HOME), colony = candidate.planets.find(p => p.id === COLONY);

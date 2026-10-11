@@ -3,6 +3,7 @@
  * Helpers are also used by unit tests and the domain journey.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
+import { assertNpcEconomy, projectVerifiedNpcEconomy } from "./r12-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { clearSlot, equipCard, refreshUnlocks, toggleSlot, unlockedSlotCount } from "../src/automation/engine";
 import { big } from "../src/game/decimal";
@@ -46,6 +47,10 @@ export function projectR11NullToR10(current: unknown, old: unknown): unknown {
   exactEvidence(projection, old, "r10→r11 migration preserved every original state field");
   return projection;
 }
+/** Pure r10 migration only: zero NPC age is proven before the frozen r11 null-slot adapter. */
+export function projectR12ZeroToR10(current: unknown, old: unknown): unknown {
+  return projectR11NullToR10(projectVerifiedNpcEconomy(current, 0, "r10→r12 pure migration"), old);
+}
 export const DEMOLITION_GOLDEN = {
   homeId: "homeworld", colonyId: "colony-1", building: "metal_storage",
   sourceSha: "ac3cce98403bea1e7162bcb4092e4cfeeb448a9a",
@@ -70,7 +75,8 @@ export const DEMOLITION_MILESTONES = ["origin", "selectedHome", "previewDismisse
  */
 export function syntheticDemolitionBoundaries(epoch: number, naturalPaid: ReturnType<typeof serializeState>) {
   const expected: Record<string, ReturnType<typeof serializeState>> = {}, saves: Record<string, ReturnType<typeof importSave>> = {};
-  const put = (key: string, value: GameState, elapsed: number) => {
+  const put = (key: string, value: GameState, elapsed: number, expectedNpcAge = elapsed) => {
+    assertNpcEconomy(value, expectedNpcAge, `${key}: independently accounted synthetic trajectory`);
     const prior = serializeState(value), save = importSave(exportSave(value, epoch + elapsed * 1000));
     exactEvidence(prior, save.state, `${key}: synthetic oracle strict serializer`);
     const restored = deserializeState(save.state); exactEvidence(serializeState(restored), prior, `${key}: synthetic oracle strict adopted reload`);
@@ -106,10 +112,12 @@ export function syntheticDemolitionBoundaries(epoch: number, naturalPaid: Return
     requireEvidence(unlockedSlotCount(state) === 2 && activePlanet(state).buildings.robotics_factory === 2 && (mode === "Off" ? state.protocols.slots[1]!.card?.enabled === false : state.protocols.slots[1]!.card === null), "Ordinary real rebuild cannot revive explicitly disabled/cleared locked card");
   }
   let paid = deserializeState(naturalPaid);
-  paid = put("naturalCurvaturePaid", paid, 0);
+  // firstPaid follows exactly the one adopted original live second; manual actions consume no time.
+  assertNpcEconomy(naturalPaid, 1, "natural firstPaid handoff age");
+  paid = put("naturalCurvaturePaid", paid, 0, 1);
   const evaluation = evaluatePrestige(paid); requireEvidence(evaluation.gain.gte(1), "The unchanged naturally earned paid handoff must actually qualify for prestige");
   const confirmation = prestigeConfirmation(paid, evaluation);
-  put("naturalCurvatureReset", prestige(paid), 0);
+  put("naturalCurvatureReset", prestige(paid), 0, 1);
   return { classification: "Explicit synthetic boundary fixtures, separate from natural source and economic loop. Robot setup seeds robot2/computer0, three resources10000, manualClicks100 and two auto-collect cards through equip APIs, slot1 off/slot2 on, then settles ordinary zero-time achievements before saving. Those setup values are not earned. The separate curvature branch uses the unchanged actual natural paid handoff, whose existing lifetime already qualifies; no eligibility injection.",
     robot: { base: saves.syntheticRobotBase, golden: { fromLevel: 2, toLevel: 1, computerLevel: 0, paid: { metal: "400", crystal: "120", deuterium: "200" }, rebuildPaid: { metal: "800", crystal: "240", deuterium: "400" }, seconds: 1, rebuildSeconds: 1, jobId: 1, rebuildJobId: 2, relockedSlots: [2] } },
     prestige: { base: saves.naturalCurvaturePaid, confirmation, classification: "Unchanged actual natural firstPaid handoff, separate from the continuous economic loop; no synthetic eligibility or wallet changes." }, saves, expected };
@@ -134,7 +142,8 @@ async function main(): Promise<void> {
   for (const key of DEMOLITION_MILESTONES) {
     const matches = report.milestones.filter((row: { name: string }) => row.name === key);
     requireEvidence(matches.length === 1, `Missing/duplicate milestone ${key}`); const row = matches[0];
-    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 11 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
+    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 12 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
+    assertNpcEconomy(row.save.state, Math.min(11900, 1 + row.continuationSeconds), `${key}: one original adopted second plus counted natural continuation`);
     const parsed = importSave(JSON.stringify(row.save)), state = deserializeState(parsed.state);
     exactEvidence(parsed, row.save, `${key}: entire strict envelope unchanged`);
     exactEvidence(serializeState(state), row.save.state, `${key}: entire strict state unchanged`);
@@ -144,12 +153,12 @@ async function main(): Promise<void> {
   const source = report.origin.originalSave;
   requireEvidence(source.revision === 10 && source.savedAt === source.lastTickAt, "Source raw envelope must stay unchanged r10");
   const imported = importSave(JSON.stringify(source));
-  projectR11NullToR10(imported.state, source.state);
+  projectR12ZeroToR10(imported.state, source.state);
   exactEvidence({ ...imported, revision: 10, state: source.state }, source, "Migration preserves every envelope field except revision");
   const synthetic = syntheticDemolitionBoundaries(report.milestones.find((row: { name: string }) => row.name === "origin").save.savedAt, expected.firstPaid!);
   Object.assign(expected, synthetic.expected);
   process.stdout.write(JSON.stringify({ schema: "infinity-demolition-browser-fixture-v1", key: STORAGE_KEY, homeId: DEMOLITION_GOLDEN.homeId, colonyId: DEMOLITION_GOLDEN.colonyId,
-    description: "Unchanged green r10 serializer envelope, explicit additive r11 migration, one original live tick, then one natural cancel/re-pay/reload/demolish/ordinary-rebuild loop. Four-width views are layout evidence, not four economic loops.",
+    description: "Unchanged green r10 serializer envelope, explicit zero-age r12 migration, one original live tick, then one natural cancel/re-pay/reload/demolish/ordinary-rebuild loop. Four-width views are layout evidence, not four economic loops.",
     source: { reportSha256: hash, sourceSha: expectedSha, gitHead: report.source.gitHead, sourceScopeStatusPorcelain: report.source.sourceScopeStatusPorcelain, oracleSourceScopeStatusPorcelain: sourceScope },
     origin: report.origin, originalSave: source, originalSaveRaw: report.origin.originalSaveRaw, importedSave: imported, base: report.milestones.find((row: { name: string }) => row.name === "origin").save,
     golden: DEMOLITION_GOLDEN, naturalMilestones: milestones, expected, synthetic, events: report.events, outcome: report.outcome,

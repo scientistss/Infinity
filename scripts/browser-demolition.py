@@ -1092,7 +1092,7 @@ try:
 
         begin_case('suite integrity')
         check('no uncaught app JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('actual production release is expected v9/r11', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 11)
+        check('actual production release is expected v9/r12', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 12)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

@@ -1,4 +1,6 @@
 /** Compare real old and new rule engines. Usage: node --import tsx scripts/check-original-parity.mjs /path/to/69eca71 */
+import { projectVerifiedNpcEconomy, advanceExpectedNpcAge , assertHistoricalSource } from "./r12-compatibility.mjs";
+import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -15,12 +17,13 @@ import { big } from "../src/game/decimal.ts";
 
 const root = process.argv[2];
 if (!root) throw new Error("请提供已核对的 69eca71 源码目录");
+assertHistoricalSource(root, "69eca7107980cce3c4c24ce4736a91993c051fbd");
 const load = (f) => import(pathToFileURL(resolve(root, `src/${f}.ts`)).href);
 const [oldState,oldSave,oldLogic,oldQueue,oldResearch,oldYard,oldEngine,oldArcade] = await Promise.all([
   "game/state","game/save","game/logic","game/queue","game/research","game/shipyard","automation/engine","game/arcade",
 ].map(load));
-function project(current) {
-  const s = nowSave.serializeState(current);
+function project(current, expectedNpcAge) {
+  const s = projectVerifiedNpcEconomy(nowSave.serializeState(current), expectedNpcAge, "original complete-state trajectory");
   const { terraformerGrantJobFloor: _terraformerGrantJobFloor, buildingTemplates: _buildingTemplates, planets, activePlanetId: _active, deepSpace: _deep, universe: _universe, fleets: _fleets, messages: _messages, nextFleetId: _nextFleetId, orders: _orders, researchTemplates: _researchTemplates, formations: _formations, ...empire } = s;
   assert.equal(planets[0].demolition, null, "original single-world trajectory has no new demolition authority");
   assert.ok(Object.hasOwn(planets[0], "demolition"), "current slot is explicit");
@@ -33,7 +36,7 @@ function project(current) {
 }
 let checked=0;
 for(let seed=1;seed<=16;seed++) {
-  let old=oldState.createInitialState(), current=nowState.createInitialState(), expectedGrantFloor=1;
+  let old=oldState.createInitialState(), current=nowState.createInitialState(), expectedGrantFloor=1, expectedNpcAge=0;
   for(const [s,p] of [[old,old.planet],[current,activePlanet(current)]]) {
     Object.assign(p.buildings, {metal_mine:seed,crystal_mine:Math.max(0,seed-2),deuterium_synth:Math.max(0,seed-4),solar_plant:seed+3,robotics_factory:2,research_lab:4,shipyard:3});
     const res={metal:big(2e6),crystal:big(1e6),deuterium:big(3e5)};
@@ -41,13 +44,17 @@ for(let seed=1;seed<=16;seed++) {
     s.arcade.seed=seed*991;s.manualClicks=100;
     Object.assign(s.research.levels,{combustion_drive:2,energy_tech:3,astrophysics:1,computer_tech:2});
   }
-  const check=()=>{assert.equal(current.terraformerGrantJobFloor,expectedGrantFloor,"fixed starting grant floor, reset only by successful prestige");assert.equal(current.planets.length,1);assert.deepEqual(activePlanet(current).terraformerFields,{base:old.planet.fieldsMax,grantedLevels:0},"all new metadata is independently asserted before prior-field projection");assert.deepEqual(current.buildingTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent building intentions");assert.deepEqual(current.formations, {nextFormationId:1,entries:[]}, "baseline must not invent fleet formations");assert.deepEqual(current.researchTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent research intentions");assert.equal(current.orders.tasks.length, 0, "baseline must not create plans");assert.equal(current.orders.nextWorkId, 1, "baseline must not create logistics work authorizations");assert.equal(current.orders.accumulator, 0, "idle plans must not alter old timing");assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
-  old=oldLogic.tick(old,0.1);current=nowLogic.tick(current,0.1);check();
+  const check=()=>{assert.equal(current.terraformerGrantJobFloor,expectedGrantFloor,"fixed starting grant floor, reset only by successful prestige");assert.equal(current.planets.length,1);assert.deepEqual(activePlanet(current).terraformerFields,{base:old.planet.fieldsMax,grantedLevels:0},"all new metadata is independently asserted before prior-field projection");assert.deepEqual(current.buildingTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent building intentions");assert.deepEqual(current.formations, {nextFormationId:1,entries:[]}, "baseline must not invent fleet formations");assert.deepEqual(current.researchTemplates, {nextTemplateId:1,templates:[]}, "baseline must not invent research intentions");assert.equal(current.orders.tasks.length, 0, "baseline must not create plans");assert.equal(current.orders.nextWorkId, 1, "baseline must not create logistics work authorizations");assert.equal(current.orders.accumulator, 0, "idle plans must not alter old timing");assert.equal(current.arcade.autoBatch, null, "baseline must never arm ring automation");assert.deepEqual(project(current,expectedNpcAge),oldSave.serializeState(old),`seed ${seed}, check ${checked}`);checked++;};
+  const advanceOld = (seconds, mode = "live") => {
+    const witnessed = captureAdoptedSteps(old, s => ({ state: oldLogic.tick(s, seconds, mode) }), oldSave.serializeState);
+    expectedNpcAge = advanceExpectedNpcAge(expectedNpcAge, witnessed.adoptedSegmentsSeconds); old = witnessed.result.state;
+  };
+  advanceOld(0.1);current=nowLogic.tick(current,0.1);check();
   old=oldQueue.enqueue(old,"metal_mine","manual").state;current=nowQueue.enqueue(current,"metal_mine","manual").state;check();
   old=oldResearch.enqueueResearch(old,"computer_tech","manual").state;current=nowResearch.enqueueResearch(current,"computer_tech","manual").state;check();
   old=oldYard.orderUnits(old,"small_cargo",3,"manual").state;current=nowYard.orderUnits(current,"small_cargo",3,"manual").state;check();
   old=oldEngine.equipCard(old,0,"auto_collect").state;current=nowEngine.equipCard(current,0,"auto_collect").state;
-  for(const dt of [0.25,1,2.75,59.5,600,1800]) {old=oldLogic.tick(old,dt,"offline");current=nowLogic.tick(current,dt,"offline");check();}
+  for(const dt of [0.25,1,2.75,59.5,600,1800]) {advanceOld(dt,"offline");current=nowLogic.tick(current,dt,"offline");check();}
   old=oldArcade.revealAll(old,"manual").state;current=nowArcade.revealAll(current,"manual").state;check();
   const launchesBefore=old.stats.launches;
   assert.equal(current.orders.nextJobId,4,"exactly the three explicit ordinary payments issued IDs");

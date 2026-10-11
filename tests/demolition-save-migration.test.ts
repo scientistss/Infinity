@@ -11,10 +11,10 @@ function row(id: string) {
   return found;
 }
 function lifted(old: any) {
-  return { ...old, revision: 11, state: { ...old.state, planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
+  return { ...old, revision: 12, state: { ...old.state, npcEconomy: { model: "fixed-production-v1", elapsedSeconds: 0 }, planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null })) } };
 }
-function assertOnlyNullSlots(actual: any, old: any) {
-  expect(actual.revision).toBe(11);
+function assertOnlyMigrationMetadata(actual: any, old: any) {
+  expect(actual.revision).toBe(12);
   for (const planet of actual.state.planets) {
     expect(Object.hasOwn(planet, "demolition")).toBe(true);
     expect(planet.demolition).toBeNull();
@@ -57,16 +57,16 @@ describe("fixed ac3 r10 old-reader oracle", () => {
       for (const planet of JSON.parse(fixture.raw).state.planets) expect(planet).not.toHaveProperty("demolition");
     }
   });
-  it.each(fixedR10.rows)("only adds null slots to full fixed-r10 semantics: $id", fixture => {
+  it.each(fixedR10.rows)("only adds null slots and zero NPC age to full fixed-r10 semantics: $id", fixture => {
     const restored = importSave(fixture.raw);
-    assertOnlyNullSlots(restored, fixture.oldReaderOutput);
+    assertOnlyMigrationMetadata(restored, fixture.oldReaderOutput);
     expect(importSave(JSON.stringify(restored))).toEqual(restored);
     expect(serializeState(deserializeState(restored.state))).toEqual(restored.state);
   });
   it.each(fixedR10.legacyInputs)("matches fixed-r10 reader of preserved true r9 input: $id", fixture => {
     const old = JSON.parse(fixture.fixedR10Raw);
     expect(old.revision).toBe(10);
-    assertOnlyNullSlots(importSave(fixture.raw), old);
+    assertOnlyMigrationMetadata(importSave(fixture.raw), old);
   });
   it("retains genuine earned grants, original mixed floor, ID gaps and exhausted counter", () => {
     const earned = importSave(row("G10a-earned-grant").raw).state;
@@ -83,7 +83,7 @@ describe("fixed ac3 r10 old-reader oracle", () => {
   });
   it("does not retroactively reject legacy overfull planets, ordinary target order, or hidden levels", () => {
     const fixture = row("O10-ordinary-legacy-overfull"), restored = importSave(fixture.raw);
-    assertOnlyNullSlots(restored, fixture.oldReaderOutput);
+    assertOnlyMigrationMetadata(restored, fixture.oldReaderOutput);
     expect(restored.state.planets[0]!.fieldsMax).toBe(5);
     expect(restored.state.planets[0]!.buildQueue.map(job => job.targetLevel)).toEqual([27, 23]);
   });
@@ -120,8 +120,8 @@ describe("all-envelope legacy demolition smuggling", () => {
   });
 });
 
-describe("r11 migration and import raw-byte protection", () => {
-  it("backs up exact genuine r10 bytes before the verified r11 write and explains retained grants", () => {
+describe("r12 migration and import raw-byte protection", () => {
+  it("backs up exact genuine r10 bytes before the verified r12 write and explains retained grants", () => {
     const fixture = row("G10a-earned-grant"), store = new Store(fixture.raw);
     const session = new SaveSession(store, fixture.oldReaderOutput.lastTickAt);
     expect(session.mode).toBe("ready");
@@ -129,7 +129,7 @@ describe("r11 migration and import raw-byte protection", () => {
     const written = JSON.parse(store.values.get(STORAGE_KEY)!);
     expect(written.savedAt).toBe(fixture.oldReaderOutput.lastTickAt);
     // SaveSession stamps its verified write time; pure import clock preservation is tested above.
-    assertOnlyNullSlots({ ...written, savedAt: fixture.oldReaderOutput.savedAt }, fixture.oldReaderOutput);
+    assertOnlyMigrationMetadata({ ...written, savedAt: fixture.oldReaderOutput.savedAt }, fixture.oldReaderOutput);
     const backupWrite = store.events.indexOf(`write:${BACKUP_KEY}`), primaryWrite = store.events.indexOf(`write:${STORAGE_KEY}`);
     expect(primaryWrite).toBeGreaterThan(backupWrite);
     expect(store.events.slice(backupWrite + 1, primaryWrite)).toContain(`read:${BACKUP_KEY}`);
@@ -144,7 +144,7 @@ describe("r11 migration and import raw-byte protection", () => {
     expect(serializeState(session.loaded.state)).toEqual(lifted(fixture.oldReaderOutput).state);
     expect(session.export(session.loaded.state)).toEqual({ raw: fixture.raw, protected: true });
     expect(session.save(session.loaded.state).ok).toBe(false);
-    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(11);
+    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(12);
     else if (fault === "concurrent") expect(store.values.get(STORAGE_KEY)).toBe("other tab owns this slot");
     else expect(store.values.get(STORAGE_KEY)).toBe(fixture.raw);
     if (fault.startsWith("backup") || fault === "concurrent") expect(store.events).not.toContain(`write:${STORAGE_KEY}`);

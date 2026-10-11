@@ -19,6 +19,9 @@ SPEC.loader.exec_module(RING)
 R10 = 'function na(e){return{terraformerGrantJobFloor:Np(e.terraformerGrantJobFloor,e.orders.nextJobId),buildingTemplates:jg(e.buildingTemplates),formations:Gh(e.formations),researchTemplates:Dg(e.researchTemplates),orders:ng(e.orders),planets:e.planets.map(Hb),activePlanetId:e.activePlanetId,deepSpace:structuredClone(e.deepSpace),universe:{...e.universe},fleets:Kg(e.fleets),messages:e.messages.map(t=>({...t})),nextFleetId:e.nextFleetId,research:ty(e.research),darkMatter:js(e.darkMatter),items:{...e.items},boosters:e.boosters.map(t=>({...t})),arcade:of(e.arcade),lifetime:Di(e.lifetime),warpCores:js(e.warpCores),curvature:{...e.curvature},totalTime:js(e.totalTime),manualClicks:e.manualClicks,seenEnergyShortage:e.seenEnergyShortage,hasPrestiged:e.hasPrestiged,unlockedCards:e.unlockedCards.slice(),protocols:py(e.protocols),unlocked:e.unlocked.slice(),stats:{...e.stats},offlineBonusHours:e.offlineBonusHours}}'
 FLOOR = 'terraformerGrantJobFloor:Np(e.terraformerGrantJobFloor,e.orders.nextJobId),'
 R9 = R10.replace(FLOOR, '')
+# Explicit current shape built from the frozen old specimen, not from current output.
+NPC = 'npcEconomy:npcSave(e.npcEconomy),'
+R12 = R10.replace('{return{', '{return{' + NPC)
 # Exact handler-entry excerpts, including the entire recovery guard and original
 # state binding. R10 is from the same 4afa asset above. R11 is from failed 52e7ed8
 # asset index-DgNH2cNb.js: 634564 bytes, SHA-256
@@ -106,6 +109,42 @@ class ProductionSerializerTests(unittest.TestCase):
         self.assertEqual(matches[0].group('name'), name)
         self.assertEqual(matches[0].group('state'), state)
         return matches[0]
+
+
+    def test_r12_exact_first_npc_call_and_unchanged_complete_historical_shape(self):
+        self.assertEqual(self.assert_unique(R12).group(), R12)
+        for old, new in (
+            ('e.npcEconomy', 'x.npcEconomy'),
+            ('e.npcEconomy', 'e.npcEconomy=other'),
+            ('npcSave(e.npcEconomy)', 'npcSave(e.npcEconomy,other)'),
+            ('npcSave(e.npcEconomy)', '(sideEffect(),npcSave(e.npcEconomy))'),
+            (NPC, NPC + NPC), (NPC, 'npcEconomy:e.npcEconomy,'),
+            (FLOOR, ''),
+            ('offlineBonusHours:e.offlineBonusHours', 'offlineBonusHours:e.offlineBonusHours,extra:true'),
+            ('{return{', '{sideEffect();return{'),
+        ):
+            with self.subTest(old=old, new=new):
+                self.assertEqual(RING.production_serializers(R12.replace(old, new)), [])
+        moved = R12.replace(NPC, '').replace(FLOOR, FLOOR + NPC)
+        self.assertEqual(RING.production_serializers(moved), [])
+        for text in (R12 * 2, R12 + R10, R12 + R9):
+            self.assertEqual(len(RING.production_serializers(text)), 2)
+
+    def test_r12_every_old_mutation_rejected_with_npc_prefix_retained(self):
+        for before, after in (
+            ('e.terraformerGrantJobFloor', 'x.terraformerGrantJobFloor'),
+            ('e.orders.nextJobId', 'x.orders.nextJobId'),
+            ('e.buildingTemplates', 'x.buildingTemplates'),
+            ('e.planets.map', 'x.planets.map'),
+            ('e.deepSpace', 'x.deepSpace'),
+            ('...e.stats', '...x.stats'),
+            ('e.unlocked.slice()', 'e.unlocked.splice(0)'),
+            ('t=>({...t})', 't=>({...e})'),
+            ('buildingTemplates:jg(e.buildingTemplates),', ''),
+            ('totalTime:js(e.totalTime)', 'totalTime:wrong(e.totalTime)'),
+        ):
+            with self.subTest(before=before):
+                self.assertEqual(RING.production_serializers(R12.replace(before, after)), [])
 
     def test_exact_failed_r10_complete_function(self):
         self.assertEqual(self.assert_unique(R10).group(), R10)

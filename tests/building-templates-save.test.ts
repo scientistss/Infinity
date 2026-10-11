@@ -1,4 +1,4 @@
-import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
+import { stripSyntheticTerraformerMetadata, stripVerifiedNpcMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import archivedR8 from "./fixtures/building-templates-r8.json";
 import { BUILDING_IDS } from "../src/data/buildings";
@@ -157,7 +157,7 @@ const money = (metal = "0", crystal = "0", deuterium = "0") => ({ metal, crystal
 /** Synthetic boundary fixture; actual source-generated r8 evidence lives in check-order-migration.mjs. */
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7 | 8): any {
   const value = file();
-  value.revision = revision; stripSyntheticTerraformerMetadata(value.state);
+  value.revision = revision; stripSyntheticTerraformerMetadata(value.state, 0);
   delete value.state.buildingTemplates;
   if (revision < 8) delete value.state.formations;
   if (revision < 7) delete value.state.researchTemplates;
@@ -212,7 +212,7 @@ describe("r9 additive migration boundaries", () => {
     expect(imported.state.orders.tasks).toEqual([]);
     if (revision >= 7) expect(imported.state.researchTemplates).toEqual(source.state.researchTemplates);
     if (revision === 8) {
-      const { buildingTemplates: _templates, ...projection } = expectTerraformerMigration(imported.state, source.state);
+      const { buildingTemplates: _templates, ...projection } = expectTerraformerMigration(imported.state, source.state, 0);
       expect(projection).toEqual(source.state);
     }
     expect(read(imported)).toEqual(imported);
@@ -237,7 +237,7 @@ describe("r9 additive migration boundaries", () => {
   });
   it("preserves every r8 formation origin, research intent, paid identity, counter and timer", () => {
     const source = paidR8(), before = structuredClone(source), migrated = read(source);
-    const { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(source).toEqual(before);
@@ -258,7 +258,7 @@ describe("r9 additive migration boundaries", () => {
     expect(session.mode).toBe("ready");
     expect(store.getItem(BACKUP_KEY)).toBe(raw);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
-    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(projection).toEqual(source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.notice).toContain("已有命名编成与计划来源完整保留");
@@ -279,7 +279,7 @@ describe("r9 additive migration boundaries", () => {
     const session = new SaveSession(store, NOW + 5000);
     expect(session.mode).toBe("protected");
     expect(session.loaded.appliedSeconds).toBe(0);
-    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(projection).toEqual(source.state);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.export(session.loaded.state, NOW)).toEqual({ raw, protected: true });
@@ -350,7 +350,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(source.state.research.queue[0].source).toBe("plan");
     expect(source.state.orders.tasks[0].transport.trips[0].phase.kind).toBe(phase);
     expect(source.state.fleets).toHaveLength(1);
-    const migrated = read(source), { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state);
+    const migrated = read(source), { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(source).toEqual(before);
@@ -365,7 +365,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(session.mode).toBe("ready");
     expect(store.getItem(BACKUP_KEY)).toBe(raw);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
-    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
   });
@@ -375,11 +375,36 @@ describe("pinned source-generated r8 migration", () => {
     const session = new SaveSession(store, source.lastTickAt + 5000);
     expect(session.mode).toBe("protected");
     expect(session.loaded.appliedSeconds).toBe(0);
-    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state);
+    const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(projection).toEqual(source.state);
     expect(session.export(session.loaded.state)).toEqual({ raw, protected: true });
     expect(store.getItem(STORAGE_KEY)).toBe(raw);
     expect(session.save(session.loaded.state)).toMatchObject({ ok: false });
+  });
+});
+
+
+describe("strict synthetic legacy NPC projection", () => {
+  it("removes only the exact independently expected metadata and preserves all prior data", () => {
+    const before = file(), state = structuredClone(before.state);
+    stripVerifiedNpcMetadata(state, 0);
+    const { npcEconomy: _npc, ...prior } = before.state;
+    expect(state).toEqual(prior);
+    expect(before.state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: 0 });
+  });
+  it.each([
+    ["wrong age", { model: "fixed-production-v1", elapsedSeconds: 1 }],
+    ["wrong model", { model: "future-production", elapsedSeconds: 0 }],
+    ["extra field", { model: "fixed-production-v1", elapsedSeconds: 0, stock: 0 }],
+    ["missing age", { model: "fixed-production-v1" }],
+    ["null metadata", null],
+  ])("refuses %s before deleting any field", (_label, metadata) => {
+    const state = { npcEconomy: metadata, prior: { resources: "untouched" } }, before = structuredClone(state);
+    expect(() => stripVerifiedNpcMetadata(state, 0)).toThrow();
+    expect(state).toEqual(before);
+  });
+  it("refuses a missing NPC object rather than treating it as already projected", () => {
+    expect(() => stripVerifiedNpcMetadata({ prior: 1 }, 0)).toThrow();
   });
 });

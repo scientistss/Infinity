@@ -8,7 +8,8 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import * as current from '../src/game/save.ts';
-import {assertR8StatePreserved, liftR8StateToR11} from './r11-compatibility.mjs';
+import { prepareRenderClock } from './prepare-r12-render-clock.mjs';
+import {assertR8StatePreserved, liftR8StateToR12, assertHistoricalSource } from './r12-compatibility.mjs';
 const args=process.argv.slice(2);
 const option=name=>{const index=args.indexOf(name);assert.ok(index>=0&&args[index+1],`Provide ${name}`);return args[index+1];};
 const root=resolve(option('--r8-source')),path=resolve(option('--fixture'));
@@ -17,6 +18,7 @@ const sourceSha='4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b';
 for(const [name,digest] of Object.entries({state:'ac6960a0b337a53a78e946bb158146c1505b4fda539d6b7497ae2a1f0292d83e',save:'de4caa2c4e88ea94b8f9ce5b360e1a64e7aa7c30539dc653402a444cec8a9965'})) {
   assert.equal(sha(readFileSync(resolve(root,`src/game/${name}.ts`))),digest,`actual ${sourceSha} ${name} source`);
 }
+assertHistoricalSource(root, "4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b");
 const old=await import(pathToFileURL(resolve(root,'src/game/save.ts')).href);
 const fixture=JSON.parse(readFileSync(path,'utf8'));
 assert.equal(Object.hasOwn(fixture,'pairedNative'),false,'prepare a fresh original fixture, not a previous adapter result');
@@ -30,16 +32,17 @@ assert.deepEqual(old.serializeState(oldState),ready.state,'archived reader prese
 const raw=old.exportSave(oldState,ready.savedAt,ready.lastTickAt);
 assert.deepEqual(JSON.parse(raw),ready,'actual archived native export preserves the whole envelope');
 const migrated=current.importSave(raw);
-assert.equal(migrated.revision,11);
+assert.equal(migrated.revision,12);
 const migrationFloor=ready.state.orders.nextJobId;
-assertR8StatePreserved(migrated.state,ready.state,'real fixture migration',migrationFloor);
+assertR8StatePreserved(migrated.state,ready.state,'real fixture migration',migrationFloor,0);
 const afterSave=current.exportSave(current.deserializeState(migrated.state),ready.savedAt,ready.lastTickAt);
-assert.equal(afterSave,JSON.stringify({...ready,revision:11,state:liftR8StateToR11(ready.state,migrationFloor)},null,2),'native r11 export differs only by revision, exact empty library and independently checked grant ledger');
+assert.equal(afterSave,JSON.stringify({...ready,revision:12,state:liftR8StateToR12(ready.state,migrationFloor,0)},null,2),'native r12 export differs only by revision, exact empty library and independently checked grant ledger');
 assert.deepEqual(current.importSave(afterSave),migrated,'current native input is strict-reader stable');
-process.stdout.write(JSON.stringify({...fixture,pairedNative:{
-  sourceSha,sourceRevision:8,currentRevision:11,
+const npcAdoptedTime = fixture.traces && fixture.expected ? await prepareRenderClock(root,fixture) : undefined;
+process.stdout.write(JSON.stringify({...fixture,...(npcAdoptedTime ? {npcAdoptedTime} : {}),pairedNative:{
+  sourceSha,sourceRevision:8,currentRevision:12,
   generatedBy:'actual archived r8 strict reader/exportSave, then actual current importSave/exportSave',
   sourceFixtureSha256:sha(sourceRaw),beforeSave:raw,beforeSha256:sha(raw),afterSha256:sha(afterSave),commonR8StateSha256:sha(JSON.stringify(ready.state)),afterSave,
-  stateRule:'Every source-r8 value, scalar type and array position is preserved. The current input adds only empty buildingTemplates, the fixed migration floor, zero-grant planet ledgers, explicit null demolition slots and envelope revision 11.',
+  stateRule:'Every source-r8 value, scalar type and array position is preserved. The current input adds only empty buildingTemplates, the fixed migration floor, zero-grant planet ledgers, explicit null demolition slots and explicit zero-age fixed-production-v1 NPC metadata and envelope revision 12.',
   capacityScope:'Fresh isolated current-version origins, two native copies for replacement. Does not establish capacity for a previously migrated origin with an additional historical backup.',
 }},null,2)+'\n');

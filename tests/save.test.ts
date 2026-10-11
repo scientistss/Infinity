@@ -141,7 +141,7 @@ function legacyFile(revision: 2 | 3) {
   state.arcade.seed = 819;
   for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
   const file = JSON.parse(exportSave(state, 123));
-  file.revision = revision; stripSyntheticTerraformerMetadata(file.state);
+  file.revision = revision; stripSyntheticTerraformerMetadata(file.state, 0);
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;
@@ -177,7 +177,7 @@ describe("r4 ring save boundary", () => {
     expect(autoBatch).toBeNull();
     expect(arcade.runs.map(run => run.id)).toEqual([1, 2, 3]);
     expect({ ...arcade, runs: arcade.runs.map(({ id: _id, ...run }) => run) }).toEqual(original);
-    expect(expectTerraformerMigration(migrated.state, file.state).planets).toEqual(file.state.planets);
+    expect(expectTerraformerMigration(migrated.state, file.state, 0).planets).toEqual(file.state.planets);
     expect(migrated.state.lifetime).toEqual(file.state.lifetime);
     expect(migrated.state.fleets).toEqual(file.state.fleets);
     if (revision === 3) expect(migrated.state.deepSpace).toEqual(file.state.deepSpace);

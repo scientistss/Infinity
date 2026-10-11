@@ -52,7 +52,7 @@ function queueFile() {
 }
 function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
-  file.revision = revision; stripSyntheticTerraformerMetadata(file.state);
+  file.revision = revision; stripSyntheticTerraformerMetadata(file.state, 0);
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;
@@ -205,7 +205,7 @@ describe("deterministic r2/r3/r4 paid queue migration", () => {
     expect(file).toEqual(original);
     expect(read(file)).toEqual(first);
     expect(first.state.orders).toEqual({ ...createOrderState(), nextJobId: 6 });
-    expectTerraformerMigration(first.state, file.state);
+    expectTerraformerMigration(first.state, file.state, 0);
     const ids: number[] = [];
     for (let index = 0; index < first.state.planets.length; index++) {
       const planet = first.state.planets[index]!, old = file.state.planets[index];

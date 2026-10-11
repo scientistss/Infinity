@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
+import {captureAdoptedSteps} from './capture-adopted-steps.mjs';
 export const DEPENDENCIES={
   breakInfinity:{version:'2.2.0',commonSha256:'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06',esmSha256:'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},
   padEnd:{version:'1.0.2',entrySha256:'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'},
@@ -37,11 +38,15 @@ export async function oracle(root, raw, constructorNow) {
   const source=JSON.parse(raw);assert.equal(source.revision,10);assert.equal(source.savedAt,source.lastTickAt);
   const read=save.importSave(raw);
   const gapMilliseconds=constructorNow-source.lastTickAt;
-  const result=offline.catchUp(save.deserializeState(read.state),gapMilliseconds/1000);
+  const adopted=captureAdoptedSteps(save.deserializeState(read.state),
+    state=>offline.catchUp(state,gapMilliseconds/1000), save.serializeState);
+  const result=adopted.result;
   return {schema:'infinity-fixed-r10-startup-oracle-v1',sourceSha:SOURCE_SHA,dependencyIdentity:dependencyBytes,
     inputRawSha256:createHash('sha256').update(raw).digest('hex'),sourceSavedAt:source.savedAt,
     sourceLastTickAt:source.lastTickAt,constructorNow,gapMilliseconds,
     appliedSeconds:result.appliedSeconds,capSeconds:result.capSeconds,capped:result.capped,
+    adoptedSegmentsSeconds:adopted.adoptedSegmentsSeconds,npcElapsedSeconds:adopted.npcElapsedSeconds,
+    adoptedTimeObservation:adopted.observation,
     state:save.serializeState(result.state)};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

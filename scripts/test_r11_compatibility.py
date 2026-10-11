@@ -146,5 +146,162 @@ class R11CompatibilityTests(unittest.TestCase):
             oracle.project_verified_r11_metadata(actual, source, grant_job_floor=floor)
 
 
+class R12CompatibilityTests(unittest.TestCase):
+    def setUp(self):
+        import r12_compatibility
+        self.oracle = r12_compatibility
+        self.source = oracle.lift_r10_state_to_r11(EVIDENCE['rows'][2]['oldReaderOutput']['state'])
+
+    def test_frozen_r11_helpers_remain_byte_identical(self):
+        for path, digest in (
+            ('scripts/r11_compatibility.py', '3113b688e216c4362dfd2bfec94049e80c8ae45859d552c2e1c8e756687cabe0'),
+            ('scripts/r11-compatibility.mjs', '467c89f474be57446addcb89079701c8c4504cd28cc9358bc702d27ce7d7066e'),
+        ):
+            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest)
+
+    def test_pure_migration_adds_exact_first_zero_age_field_and_preserves_every_prior_value(self):
+        for row in EVIDENCE['rows']:
+            with self.subTest(row=row['id']):
+                old = row['oldReaderOutput']['state']
+                source = oracle.lift_r10_state_to_r11(old)
+                actual = self.oracle.lift_r11_state_to_r12(source)
+                self.assertEqual(list(actual), ['npcEconomy', *source])
+                self.assertEqual(actual['npcEconomy'], {'model': 'fixed-production-v1', 'elapsedSeconds': 0})
+                self.assertTrue(oracle.exact_json(self.oracle.project_verified_npc_metadata(actual, npc_elapsed=0), source))
+                self.assertTrue(oracle.exact_json(actual, self.oracle.lift_r10_state_to_r12(old)))
+
+    def test_genuine_ca5_r11_sources_keep_paid_demolition_grants_and_all_old_values(self):
+        evidence = json.loads((ROOT / 'tests/fixtures/npc-economy-r11.json').read_text())
+        self.assertEqual(evidence['sourceSha'], 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b')
+        self.assertEqual(evidence['sourceRevision'], 11)
+        self.assertEqual(evidence['schema'], 'infinity-npc-r11-source-fixtures-v1')
+        self.assertGreaterEqual(len(evidence['rows']), 4)
+        paid = False
+        for row in evidence['rows']:
+            with self.subTest(row=row['id']):
+                self.assertEqual(hashlib.sha256(row['raw'].encode()).hexdigest(), row['rawSha256'])
+                self.assertEqual(hashlib.sha256(row['oldReaderRaw'].encode()).hexdigest(), row['oldReaderSha256'])
+                self.assertTrue(oracle.exact_json(json.loads(row['oldReaderRaw']), row['oldReaderOutput']))
+                original = row['oldReaderOutput']
+                self.assertEqual(original['revision'], 11)
+                source = original['state']; frozen = copy.deepcopy(source)
+                current = self.oracle.lift_r11_state_to_r12(source)
+                self.assertTrue(oracle.exact_json(self.oracle.project_verified_npc_metadata(current,npc_elapsed=0),source))
+                self.assertEqual(source,frozen)
+                self.assertEqual(current['npcEconomy'],{'model':'fixed-production-v1','elapsedSeconds':0})
+                if any(planet['demolition'] is not None for planet in source['planets']):
+                    paid = True
+                    self.assertGreater(sum(planet['terraformerFields']['grantedLevels'] for planet in source['planets']),0)
+                    self.assertEqual(current['planets'],source['planets'])
+                    self.assertEqual(current['orders'],source['orders'])
+                    self.assertNotEqual(source['totalTime'],'0')
+        self.assertTrue(paid,'True old paid partial demolition plus earned grants must be covered')
+
+    def test_adopted_age_is_mandatory_for_projection_and_exact_for_nonzero_samples(self):
+        for age in (0, 0.125, 1, 61, 7200, 11899.999, 11900):
+            with self.subTest(age=age):
+                current = self.oracle.lift_r11_state_to_r12(self.source, npc_elapsed=age)
+                self.assertTrue(oracle.exact_json(self.oracle.project_verified_npc_metadata(current, npc_elapsed=age), self.source))
+                with self.assertRaises(TypeError):
+                    self.oracle.project_verified_npc_metadata(current)
+                if age:
+                    with self.assertRaises(AssertionError):
+                        self.oracle.project_verified_npc_metadata(current, npc_elapsed=0)
+
+    def test_missing_extra_wrong_model_nonfinite_nonnumeric_and_wrong_age_are_rejected(self):
+        values = [None, [], {}, False, 0, '0',
+                  {'model': 'fixed-production-v1'},
+                  {'model': 'fixed-production-v1', 'elapsedSeconds': 0, 'extra': False},
+                  {'model': 'wrong', 'elapsedSeconds': 0}]
+        values += [{'model': 'fixed-production-v1', 'elapsedSeconds': age}
+                   for age in (None, False, True, '0', -1, 0.000000000000001, 11901, float('nan'), float('inf'))]
+        for npc in values:
+            current = self.oracle.lift_r11_state_to_r12(self.source)
+            current['npcEconomy'] = npc
+            with self.subTest(npc=npc), self.assertRaises(AssertionError):
+                self.oracle.project_verified_npc_metadata(current, npc_elapsed=0)
+        with self.assertRaises(AssertionError):
+            self.oracle.project_verified_npc_metadata(self.source, npc_elapsed=0)
+
+    def test_old_state_changes_and_unknown_fields_cannot_be_projected_away(self):
+        current = self.oracle.lift_r11_state_to_r12(self.source)
+        current['planets'][0]['resources']['metal'] = 'forged'
+        current['unrelated'] = [False, 'must remain']
+        projected = self.oracle.project_verified_npc_metadata(current, npc_elapsed=0)
+        self.assertEqual(projected['planets'][0]['resources']['metal'], 'forged')
+        self.assertEqual(projected['unrelated'], [False, 'must remain'])
+        self.assertFalse(oracle.exact_json(projected, self.source))
+        self.assertNotEqual(current['planets'][0]['resources'], self.source['planets'][0]['resources'])
+
+    def test_old_shape_cannot_already_contain_npc_and_expected_age_must_be_bounded_number(self):
+        for npc in (None, {}, {'model': 'fixed-production-v1', 'elapsedSeconds': 0}):
+            with self.subTest(npc=npc), self.assertRaises(AssertionError):
+                self.oracle.lift_r11_state_to_r12({**self.source, 'npcEconomy': npc})
+        for age in (False, True, None, '0', -1, 11901, float('nan'), float('inf')):
+            with self.subTest(age=age), self.assertRaises(AssertionError):
+                self.oracle.lift_r11_state_to_r12(self.source, npc_elapsed=age)
+
+
+    def test_witnessed_segment_fold_is_ordered_exact_bounded_and_accepts_noop_zero(self):
+        self.assertEqual(self.oracle.npc_elapsed_from_segments([]), 0)
+        self.assertEqual(self.oracle.npc_elapsed_from_segments([0, 0.125, 0]), 0.125)
+        self.assertEqual(self.oracle.npc_elapsed_from_segments([0.1, 0.2]), 0.30000000000000004)
+        self.assertNotEqual(self.oracle.npc_elapsed_from_segments([0.1, 0.2]), 0.3)
+        self.assertEqual(self.oracle.npc_elapsed_from_segments([7200, 10000, 1]), 11900)
+        for invalid in (None, (), {}, [False], [True], ['0'], [-1], [float('nan')], [float('inf')]):
+            with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                self.oracle.npc_elapsed_from_segments(invalid)
+
+    def test_render_witness_uses_fixed_old_source_and_never_reads_candidate_age(self):
+        import ast
+        script = ROOT / 'scripts/browser-render-scheduling.py'
+        tree = ast.parse(script.read_text())
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'expected_npc_elapsed')
+        fixtures = {'expected': {'base.initial': {}, 'fractional': {}}, 'npcAdoptedTime': {
+            'sourceSha': '4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b',
+            'observation': 'old-totalTime-add; full unobserved old-state equivalence verified',
+            'traces': {
+                'base.initial': {'adoptedSegmentsSeconds': [], 'npcElapsedSeconds': 0, 'oldObservedAndUnobservedStateEqual': True},
+                'fractional': {'adoptedSegmentsSeconds': [0.1, 0.2], 'npcElapsedSeconds': 0.30000000000000004, 'oldObservedAndUnobservedStateEqual': True},
+            }}}
+        ns = {'fixtures': fixtures, 'npc_elapsed_from_segments': self.oracle.npc_elapsed_from_segments}
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(script),'exec'),ns)
+        self.assertEqual(ns['expected_npc_elapsed']('base.initial'), 0)
+        self.assertEqual(ns['expected_npc_elapsed']('fractional'), 0.30000000000000004)
+        for mutate in (
+            lambda f: f['npcAdoptedTime'].update(sourceSha='candidate'),
+            lambda f: f['npcAdoptedTime'].update(observation='candidate NPC age'),
+            lambda f: f['npcAdoptedTime']['traces']['fractional'].update(npcElapsedSeconds=0.3),
+            lambda f: f['npcAdoptedTime']['traces']['fractional'].update(oldObservedAndUnobservedStateEqual=False),
+            lambda f: f['npcAdoptedTime']['traces']['fractional'].update(adoptedSegmentsSeconds=[-1]),
+            lambda f: f['npcAdoptedTime']['traces'].pop('base.initial'),
+        ):
+            changed = copy.deepcopy(fixtures); mutate(changed); ns['fixtures'] = changed
+            with self.assertRaises(AssertionError):
+                ns['expected_npc_elapsed']('fractional')
+        ns['fixtures'] = copy.deepcopy(fixtures)
+        ns['fixtures']['npcAdoptedTime']['traces']['base.initial'].update(adoptedSegmentsSeconds=[1],npcElapsedSeconds=1)
+        with self.assertRaises(AssertionError):
+            ns['expected_npc_elapsed']('base.initial')
+
+    def test_r8_r9_projection_composes_without_loosening_prior_floor_and_slot_proofs(self):
+        source9 = json.loads(EVIDENCE['legacyInputs'][0]['raw'])['state']
+        for revision in (8, 9):
+            source = copy.deepcopy(source9)
+            if revision == 8:
+                del source['buildingTemplates']
+            floor = source['orders']['nextJobId']
+            actual = self.oracle.lift_legacy_state_to_r12(source, source_revision=revision, grant_job_floor=floor)
+            projected = self.oracle.project_verified_r12_metadata(actual, source, grant_job_floor=floor, npc_elapsed=0)
+            expected = source if revision == 9 else {'buildingTemplates': {'nextTemplateId': 1, 'templates': []}, **source}
+            self.assertTrue(oracle.exact_json(projected, expected))
+            for mutate in (lambda s: s.update(terraformerGrantJobFloor=floor+1),
+                           lambda s: s['planets'][0].update(demolition={}),
+                           lambda s: s['npcEconomy'].update(elapsedSeconds=1)):
+                bad = copy.deepcopy(actual); mutate(bad)
+                with self.assertRaises(AssertionError):
+                    self.oracle.project_verified_r12_metadata(bad, source, grant_job_floor=floor, npc_elapsed=0)
+
+
 if __name__ == '__main__':
     unittest.main()

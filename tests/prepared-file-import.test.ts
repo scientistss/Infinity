@@ -163,7 +163,7 @@ describe("read-only file preparation", () => {
 
   it("reports the file's original revision without rewriting a supported migration", async () => {
     const legacy = JSON.parse(raw(91));
-    legacy.revision = 7; stripSyntheticTerraformerMetadata(legacy.state);
+    legacy.revision = 7; stripSyntheticTerraformerMetadata(legacy.state, 0);
     delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy), store = new MemoryStore(), session = new SaveSession(store, NOW);

@@ -4,6 +4,7 @@ import { createBuildingTemplateState } from "./building-template-state";
 import { createResearchTemplateState } from "./research-template-state";
 import { createDeepState } from "./deep-state";
 import { homeCoordinates } from "./galaxy";
+import { createNpcEconomyState } from "./npc-economy";
 import { emptyCurvature } from "../prestige/tree";
 import { big } from "./decimal";
 import { STARTING_RESOURCES } from "./content";
@@ -76,6 +77,7 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat
     buildingTemplates: createBuildingTemplateState(),
     planets: [{ ...createPlanet(HOMEWORLD_ID, homeCoordinates(worldSeed)), resources: startingResources() }],
     universe: {seed: worldSeed, layout: "ring-v1"},
+    npcEconomy: createNpcEconomyState(),
     fleets: [], messages: [], nextFleetId: 1,
     deepSpace: createDeepState(worldSeed),
     activePlanetId: HOMEWORLD_ID,

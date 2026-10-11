@@ -22,7 +22,7 @@ function file(): any {
 function read(value: any) { return importSave(JSON.stringify(value)); }
 function legacy(revision: 2 | 3 | 4 | 5 | 6): any {
   const value = JSON.parse(exportSave(createInitialState(71), 1000));
-  value.revision = revision; stripSyntheticTerraformerMetadata(value.state);
+  value.revision = revision; stripSyntheticTerraformerMetadata(value.state, 0);
   delete value.state.buildingTemplates;
   delete value.state.researchTemplates;
   delete value.state.formations;
@@ -132,7 +132,7 @@ describe("r7 additive migration boundaries", () => {
     expect(imported.state.researchTemplates).toEqual(createResearchTemplateState());
     expect(imported.state.orders.tasks).toEqual([]);
     if (revision === 6) {
-      const { researchTemplates: _templates, buildingTemplates, formations, ...projection } = expectTerraformerMigration(imported.state, source.state);
+      const { researchTemplates: _templates, buildingTemplates, formations, ...projection } = expectTerraformerMigration(imported.state, source.state, 0);
       expect(buildingTemplates).toEqual({ nextTemplateId: 1, templates: [] });
       expect(formations).toEqual({ nextFormationId: 1, entries: [] });
       expect(projection).toEqual(source.state);

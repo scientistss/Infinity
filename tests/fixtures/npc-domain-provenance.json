@@ -1,0 +1,270 @@
+{
+  "schema": "infinity-ring-protection-npc-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "ca5ef0c769856f2c4c8925e76a5c7d322822fe1b",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    }
+  ],
+  "referenceStatus": "Exact NPC fixed-production-v1 source adoption atop verified ca5 r11. This manifest is not a native, CI or release acceptance claim.",
+  "scope": "Every production src path, file mode, before/after byte, complete deterministic Git patch and individual hunk is bound. The complete original protected domain and ring-critical scopes remain protected.",
+  "historicalInvariant": "The r10, IRN and demolition manifests remain byte-identical and are checked on their own exact prior sources. The candidate is never substituted into an earlier adoption.",
+  "approvedDelta": "One bounded global NPC economy age, strict r12 zero-age legacy migration, adopted-segment tick advancement, curvature preservation and immutable real-arrival NPC scout reports. Fleet list timestamps above 1e12 retain the existing schema bound and append true Decimal time plus an explicit display-limit notice. No NPC spending, combat, trade or player economic transfer is added.",
+  "productionPaths": [
+    "src"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactRingCriticalDeltaPaths": [],
+  "changedPaths": [
+    {
+      "path": "src/game/content.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "7dcf0d72a5f7d57bf2e57863a5b452182db793070166ad9dda05e5fe0dfd6f34"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "f19ba0412b2ce18560a614fb1ad860108c2cea66e3c57a614b66eb627590f7ea"
+      },
+      "patchSha256": "1baeee63f310681fa81a5d94dec86bcacfb7d3ac25ad2b182322903e59de769c",
+      "hunks": [
+        {
+          "header": "@@ -26,13 +26,13 @@ export interface ResourceDef {",
+          "sha256": "0aa232ee71fc3e8ed3bed01d44ac5462714e028c670d3c538f3d79fdabccd2c2"
+        }
+      ]
+    },
+    {
+      "path": "src/game/fleet.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "0565a48057c7358b5674e8c1667de2b63d6200bd8eeecb7c6fb3c40f8dfef968"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "bc41ea15316e614883bb17d97ec831e3c5344bfffd5b836e9c159401b656fd91"
+      },
+      "patchSha256": "f75cc4336e593e417a21eb1cbab6ca2b0554d3a0d3387d1345d30e2ca5ec3550",
+      "hunks": [
+        {
+          "header": "@@ -11,6 +11,7 @@ import { RESOURCE_IDS, type GameState, type ResourceAmounts } from \"./types\";",
+          "sha256": "fb1818e0f6709491211b4189fe1e8bf72791bb3de1161fac2dbe0e23639d1301"
+        },
+        {
+          "header": "@@ -164,7 +165,12 @@ export function advanceFleets(state: GameState, seconds: number): GameState {",
+          "sha256": "bd6b0579b447d0d8e8bd3faa5771e32893c80846ace1c89d4914182c92ff34b8"
+        },
+        {
+          "header": "@@ -271,9 +277,9 @@ export function resolveFleetArrivals(state: GameState): GameState {",
+          "sha256": "bbb2771c88a12a51164d417249aad2ca7e5f2e3e857451ac3ab2d5fb10cd6569"
+        }
+      ]
+    },
+    {
+      "path": "src/game/logic.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "65b8b78cc142544160782e7b59be3766f9d282b4a24d9b6191cab3ce3fde47c3"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "3c106e02dc71ebc58b2583bedfe747906a5302b38fa04ffd72d81869d800186e"
+      },
+      "patchSha256": "827bf68ef48500fce86209ceff368c07832af09392b49fae8f87d56fb5b3776b",
+      "hunks": [
+        {
+          "header": "@@ -3,6 +3,7 @@ import { validDemolitionSeconds } from \"./demolition-state\";",
+          "sha256": "b5e174aca0d26e627fcbbbf6cd7b2a1eca4a19014eee47db1b510f54902c0859"
+        },
+        {
+          "header": "@@ -99,7 +100,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = \"live",
+          "sha256": "80d3934a2dd70593978a5778dd29704f2b081bf5cd4a87c13367a31276b17812"
+        },
+        {
+          "header": "@@ -323,6 +326,8 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {",
+          "sha256": "2f0a85219e3d555028938a2d5d9c2260adc6d8635ea9e2610c905df046e7405a"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-economy-save.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "331a83b444e47539909a794a02c08b33427cf264a9dfb8d31e0316af73fd65a6"
+      },
+      "patchSha256": "d16c9d97dc587b99b118d4152ddac5aaf5993cfce8f9a6dd675920c4a8bcf4f4",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,58 @@",
+          "sha256": "06219affa994389f7c5166c52c7a009dbc7c4cea2cbc736f874e8f0b2cfb3a72"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-economy.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "b831e53b7c258f66bcc8c0a55d5a7192c0a6185c0c84fc11d6c8f20d9ae25137"
+      },
+      "patchSha256": "98560210a8c060b1d68c60ba680e8a35d47c90a26b30c53cbe6b4d03141f754a",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,97 @@",
+          "sha256": "ca1565f5765bde0f3edeffb0b69f29fb6623f977d0bde79a35fc8fb9410f863c"
+        }
+      ]
+    },
+    {
+      "path": "src/game/npc-scout.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "433d5086c6a51a4efa26afacff2f03fc574727ca2899f9ba59bc11a862e15d2d"
+      },
+      "patchSha256": "1cdcb475aa2fcbdc42acc57ea95d9337e715f88aa7b1df54e2fb245b289ffa8f",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,24 @@",
+          "sha256": "a0479967c5de1f98cd3e7b9370f74972480cac1de62a8ed8bd2e34523e3589dc"
+        }
+      ]
+    },
+    {
+      "path": "src/game/save-session.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "1be9cf61570d3b517ece7207f8dfe31eee16be05ddbfa9bc7eea4807f3de6d93"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "7bebc67cc026f6ed9e13557a21aa5e0bbb5d0cbb0db51919ea18e8b017ba48d3"
+      },
+      "patchSha256": "e269840ed2e9ee4eaab50960d54db75b05667def1b57b212cf09748c4d6fff8d",
+      "hunks": [
+        {
+          "header": "@@ -72,6 +72,7 @@ export class SaveSession {",
+          "sha256": "3282720d954b3773687e2c97b8f9672cf12a2c075d23e7758dcdbd2acffecfc4"
+        }
+      ]
+    },
+    {
+      "path": "src/game/save.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "f5c13cc80f76b974eba0891c17fcf29d65eb6270bf57d0709634e80be4613b01"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "1beb92a4fda131aebe04973c2c9a4247bdb65052b2376e97c890124efaa4fa21"
+      },
+      "patchSha256": "8d2c4af35d76f868fcc072e434b3e5fc26ce9caa52399b916806c1f1f39aad77",
+      "hunks": [
+        {
+          "header": "@@ -1,5 +1,6 @@",
+          "sha256": "db0dbf4e5b0f028067d36d468e52438eccdbbb230cf54da06f263be1e2475c2a"
+        },
+        {
+          "header": "@@ -98,6 +99,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {",
+          "sha256": "439ab30494e2395bb9da829bb904c943c5a20eeba2c2a4382af6285031777318"
+        },
+        {
+          "header": "@@ -148,7 +150,7 @@ export interface SaveFile {",
+          "sha256": "effade01c17be2b2bddfb2f6e9cd836d4e4a7e3c3ab0c3d5eb3d77182648a27d"
+        },
+        {
+          "header": "@@ -171,6 +173,7 @@ export function outdatedSaveNotice(version: number): string {",
+          "sha256": "b0bf3798cdc3a47413a88e6beac23551cd7b189ee065c0d83509da97ebaf5ffb"
+        },
+        {
+          "header": "@@ -207,9 +210,11 @@ export function deserializeState(raw: unknown): GameState {",
+          "sha256": "3b03814672c1efae43421f9a242d9cef916090e85a791c217237367624cd702a"
+        },
+        {
+          "header": "@@ -274,7 +279,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt =",
+          "sha256": "18fbc5ce65cf7a5c2448cb99f4a578323dd62990511278197fc21a9885d24c17"
+        },
+        {
+          "header": "@@ -292,6 +297,9 @@ export function importSave(json: string): SaveFile {",
+          "sha256": "5b2adede4ec3872aedd700080d62548fe1af4286c750e83ca61379e57283ddb3"
+        },
+        {
+          "header": "@@ -323,6 +331,7 @@ export function importSave(json: string): SaveFile {",
+          "sha256": "0bf96e9bcb348e55a32836ca6444239f08281782728ddff0f57fbe70cf266a74"
+        }
+      ]
+    },
+    {
+      "path": "src/game/state.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "2b79c173282eb114408db2fe21a3bc8f9c3cf43762a967ce9c07dd33707c9de7"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "2c7d36f676ab088d8c1872ad29e29ba5cfda7c3b2c8bb1fcb23b3dab3fcbeb57"
+      },
+      "patchSha256": "dc0b963932a19fb5ed51d762b2234ab6296869124020f44c159cd743c6acd09b",
+      "hunks": [
+        {
+          "header": "@@ -4,6 +4,7 @@ import { createBuildingTemplateState } from \"./building-template-state\";",
+          "sha256": "56c7a938c851740e15d712788e9f6395249c710c0076adc804e127aefb4530a4"
+        },
+        {
+          "header": "@@ -76,6 +77,7 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat",
+          "sha256": "4faa55ba534e4491066c4d984faf6baf24c28db3ead501c3a24eb8c9ebc71c37"
+        }
+      ]
+    },
+    {
+      "path": "src/game/types.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "1574a44ede6a96e2f1c00048949b39f9f0a62f9d975df00b8f3ec5462302e194"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "2887a2ddb82d701ba114ef3a2ab0ed0c5a90eb6d608a7429002f8bc87f24605b"
+      },
+      "patchSha256": "3ba0c84730f148669c3dc2a315c02ba61968a0fd8e5d52933a29b88d8ef30dc9",
+      "hunks": [
+        {
+          "header": "@@ -5,6 +5,7 @@ import type { BuildingTemplateState } from \"./building-template-state\";",
+          "sha256": "1d64eaa493a7466f34276ee65b827d0cd48ca286195096ed37e6b7951d0bb686"
+        },
+        {
+          "header": "@@ -103,6 +104,8 @@ export interface GameState {",
+          "sha256": "8d2f1d0c275010d884c379c50bc6c39dcbb40722fa394ff906a13868409029d3"
+        }
+      ]
+    }
+  ]
+}

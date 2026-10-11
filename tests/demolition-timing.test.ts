@@ -20,10 +20,14 @@ function runFrames(state: GameState, seconds: number, hz: number): GameState {
   for (let i = 0; i < seconds * hz; i++) state = tick(state, 1 / hz);
   return state;
 }
-function withoutNumericalIntegration(state: GameState): unknown {
+function withoutNumericalIntegration(state: GameState, expectedNpcAge: number): unknown {
   const saved = serializeState(state);
+  // Independently known adopted duration is checked before masking only numeric age.
+  expect(Reflect.ownKeys(saved.npcEconomy).sort()).toEqual(["elapsedSeconds", "model"]);
+  expect(saved.npcEconomy.model).toBe("fixed-production-v1");
+  expect(Math.abs(saved.npcEconomy.elapsedSeconds - expectedNpcAge)).toBeLessThanOrEqual(1e-9);
   // These are accumulated numerical integration values, separately bounded below.
-  return { ...saved, totalTime: null, protocols: { ...saved.protocols, accumulator: null }, arcade: { ...saved.arcade, beaconAccumulator: null },
+  return { ...saved, npcEconomy: { ...saved.npcEconomy, elapsedSeconds: null }, totalTime: null, protocols: { ...saved.protocols, accumulator: null }, arcade: { ...saved.arcade, beaconAccumulator: null },
     planets: saved.planets.map(p => ({ ...p, resources: null })), lifetime: null };
 }
 
@@ -39,11 +43,12 @@ describe("demolition actual event integration and persisted fractional timers", 
     const initial = paid(), longLog = emptyTickLog(), long = tick(initial, 20, "live", longLog);
     for (const hz of [30, 60, 120, 240]) {
       const short = runFrames(initial, 20, hz);
-      expect(withoutNumericalIntegration(short)).toEqual(withoutNumericalIntegration(long));
+      expect(withoutNumericalIntegration(short, 20)).toEqual(withoutNumericalIntegration(long, 20));
       expect(Math.abs(short.totalTime.toNumber() - long.totalTime.toNumber())).toBeLessThan(1e-9);
       expect(Math.abs(short.protocols.accumulator - long.protocols.accumulator)).toBeLessThan(1e-9);
     }
     const offline = catchUp(initial, 20);
+    expect(offline.state.npcEconomy).toEqual({ model: "fixed-production-v1", elapsedSeconds: 20 });
     expect(activePlanet(offline.state).demolition).toBeNull(); expect(activePlanet(offline.state).buildings.metal_storage).toBe(8); expect(offline.completedBuilds).toEqual([]);
   });
   it("fractional partial reload uses saved total and remaining, not current accelerators or ion", () => {

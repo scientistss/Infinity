@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--url', default='http://127.0.0.1:4173/Infinity/')
 parser.add_argument('--fixture', default='accounted-clock-review-save.json')
 parser.add_argument('--session-fixture', default=None,
-                    help='Optional existing actual-source r2-r9 save-session fixture for migration clock checks')
+                    help='Optional existing actual-source r2-r11 save-session fixture for migration clock checks')
 parser.add_argument('--output', default='accounted-clock-evidence')
 parser.add_argument('--chromium', default=None)
 args = parser.parse_args()
@@ -375,21 +375,31 @@ def run_cases():
     for which,cap in (('mixed',7200),('cap8',28800)):
         case=f'controlled {cap//3600}h cap consumes full raw frame gap'
         context,page=boot(which); raw_gap=(cap+3600)*1000
+        check('cap fixture starts at independently fixed zero NPC age',saved(page)['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':0})
         for delta in (15000,15000,15000,raw_gap-45000):
             advance(page,delta); timer(page)
             check('unadvanced autosave never claims simulation time', saved(page)['lastTickAt']==EPOCH)
+            check('hidden autosave never advances NPC age',saved(page)['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':0})
         frame(page); value=saved(page)
         same_state(value,which+'.capped'); envelope(value,raw_gap,raw_gap)
+        if which=='cap8':
+            check('actual 8-hour adopted catch-up saturates NPC age at exact 11900',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
         reload_at(page,1000); value=export(page,which+'-cap-reload1')
         same_state(value,which+'.capped.reload1'); envelope(value,raw_gap+1000,raw_gap+1000)
+        if which=='cap8':
+            check('reload after consumed 8-hour gap preserves exact saturated NPC age once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
         audit(page); context.close()
 
         case=f'compatible startup {cap//3600}h cap also consumes full raw load gap'
         context,page=boot(which)
         reload_at(page,raw_gap); value=save(page)
         same_state(value,which+'.capped'); envelope(value,raw_gap,raw_gap)
+        if which=='cap8':
+            check('actual 8-hour adopted catch-up saturates NPC age at exact 11900',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
         reload_at(page,1000); value=export(page,which+'-startup-cap-reload1')
         same_state(value,which+'.capped.reload1'); envelope(value,raw_gap+1000,raw_gap+1000)
+        if which=='cap8':
+            check('reload after consumed 8-hour gap preserves exact saturated NPC age once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':11900})
         audit(page); context.close()
 
     for seconds in (4.999,5,29.999,30):
@@ -656,13 +666,14 @@ def run_cases():
 
     if args.session_fixture:
         legacy=json.loads(Path(args.session_fixture).read_text())
-        for revision in range(2,11):
+        for revision in range(2,12):
             case=f'actual-source r{revision} startup migration accounts through sampled wall'
             source=next(row for row in legacy['legacySources'] if row['revision']==revision)
             check('legacy fixture uses actual released serializer',source['generatedBy']=='actual source-revision createInitialState/exportSave')
             context,page=boot(value=legacy['legacy'][str(revision)],wall=61000)
             value=saved(page); envelope(value,61000,61000)
             check('successful migration includes full 61-second startup catch-up',value['state']['totalTime']=='61')
+            check('NPC migration adopts exactly the same 61 seconds once',value['state']['npcEconomy']=={'model':'fixed-production-v1','elapsedSeconds':61})
             backup=json.loads(raw(page,BACKUP)); check('migration backs up actual old-revision source',backup['revision']==revision and backup['lastTickAt']==EPOCH)
             audit(page); context.close()
         case='actual-source migration write fault freezes source and raw export'
