@@ -1,0 +1,92 @@
+name: Attribute exact NPC startup and save CPU
+on:
+  push:
+    branches: ['codex/infinity-npc-save-profile-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: npc-save-profile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GAME_SOURCE_SHA: a8454529ee5abf8d915fee7f4cc1c5d77d6a8ef7
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate unchanged fixture and attribution preparation
+        run: |
+          npx tsc --noEmit
+          python -m unittest discover -s scripts -p test_npc_pressure_preparation.py -v
+          python -m unittest discover -s scripts -p test_npc_save_profile_preparation.py -v
+      - name: Build exact production source and unchanged full-load fixture
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/npc-save-profile-game" "$GAME_SOURCE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/npc-save-profile-game/node_modules"
+          test "$(git -C "$RUNNER_TEMP/npc-save-profile-game" rev-parse HEAD)" = "$GAME_SOURCE_SHA"
+          test "$(git rev-parse HEAD:src)" = "$(git rev-parse "$GAME_SOURCE_SHA:src")"
+          (cd "$RUNNER_TEMP/npc-save-profile-game" && GITHUB_SHA="$GAME_SOURCE_SHA" GITHUB_REF_NAME=codex/infinity-rebuild-npc-orbital-20261011 npm run build) > npc-save-profile-game-build.log 2>&1
+          node --import tsx scripts/npc-pressure-fixture.ts npc-save-profile-fixtures "$GAME_SOURCE_SHA" > npc-save-profile-fixture-build.json
+          FIXTURE_HASH="$(sha256sum npc-save-profile-fixtures/fixtures.json | cut -d' ' -f1)"
+          python scripts/browser-npc-save-profile.py --preflight --fixture npc-save-profile-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-save-profile-game" > npc-save-profile-preflight.json
+      - name: Build optional hidden sourcemaps outside served dist
+        run: |
+          set -euo pipefail
+          # The served production dist is never replaced. The Python reader will
+          # disable mapping if any sidecar JS differs from the measured JS bytes.
+          if (cd "$RUNNER_TEMP/npc-save-profile-game" && npx vite build --sourcemap hidden --outDir .cache/npc-profile-map) > npc-save-profile-map-build.log 2>&1; then
+            cp -a "$RUNNER_TEMP/npc-save-profile-game/.cache/npc-profile-map" npc-save-profile-map-build
+          else
+            echo 'Optional sidecar build failed; retain unmapped generated positions.' >> npc-save-profile-map-build.log
+          fi
+      - name: Official headed Chrome prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Profile one true startup and one trusted Save
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/npc-save-profile-game" && npm run preview -- --host 127.0.0.1 --port 4180) > npc-save-profile-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4180/Infinity/release.json > /tmp/npc-save-profile-ready.json; then READY=1; break; fi
+            sleep 0.5
+          done
+          test "$READY" = 1
+          FIXTURE_HASH="$(sha256sum npc-save-profile-fixtures/fixtures.json | cut -d' ' -f1)"
+          xvfb-run -a python scripts/browser-npc-save-profile.py --url http://127.0.0.1:4180/Infinity/ --fixture npc-save-profile-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-save-profile-game" --map-root "$RUNNER_TEMP/npc-save-profile-game/.cache/npc-profile-map" --output npc-save-profile-evidence
+      - name: Archive separate exact game and measurement sources
+        if: always()
+        run: |
+          git archive --format=zip --output=npc-save-profile-measurement-source.zip "$GITHUB_SHA"
+          git archive --format=zip --output=npc-save-profile-game-source.zip "$GAME_SOURCE_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npc-save-profile-${{ github.sha }}
+          path: |
+            npc-save-profile-game-build.log
+            npc-save-profile-map-build.log
+            npc-save-profile-map-build
+            npc-save-profile-fixture-build.json
+            npc-save-profile-preflight.json
+            npc-save-profile-preview.log
+            npc-save-profile-fixtures
+            npc-save-profile-evidence
+            npc-save-profile-measurement-source.zip
+            npc-save-profile-game-source.zip
+          retention-days: 7
+          if-no-files-found: error
