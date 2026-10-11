@@ -442,6 +442,34 @@ try {
     base: JSON.parse(abandonmentRaw), baseRaw: abandonmentRaw,
     confirmation: "放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。\n该星球不足 1 的待结算权益也将丢失：金属 0.25。", expected: abandonmentExpected };
 
+  stage = "branch-synthetic-report-source-identity";
+  const identityInput = structuredClone(finalRow.save.state);
+  const identityColony = identityInput.planets.find((p: RecordValue) => p.id === "colony-1")!;
+  const identityReceipt = identityInput.npcBattles.reports.find((r: RecordValue) => r.fleetId === 8)!;
+  const previousColonyName = identityColony.name;
+  exact("report identity boundary starts with genuine delivered home report", [identityReceipt.originId, identityReceipt.delivery], ["homeworld", "delivered"]);
+  identityColony.name = "远航殖民地 <星光 & 北岸> 测试";
+  identityReceipt.originId = "colony-1";
+  const identityRaw = exportSave(deserializeState(identityInput), finalRow.save.savedAt, finalRow.save.lastTickAt);
+  const identityBase = importSave(identityRaw), identityState = deserializeState(identityBase.state);
+  exact("only enumerated report identity edits survive complete strict readback", serializeState(identityState), identityInput);
+  const identityReverted: RecordValue = structuredClone(identityBase.state);
+  identityReverted.planets.find((p: RecordValue) => p.id === "colony-1")!.name = previousColonyName;
+  identityReverted.npcBattles.reports.find((r: RecordValue) => r.fleetId === 8)!.originId = "homeworld";
+  exact("identity fixture does not alter any other natural field", identityReverted, finalRow.save.state);
+  const identityAbandoned = abandonColony(identityState, "colony-1");
+  check("terminal report does not prevent lawful colony abandonment", identityAbandoned.ok);
+  const identityExpected = { ...identityInput, planets: identityInput.planets.filter((p: RecordValue) => p.id !== "colony-1"),
+    deepSpace: { ...identityInput.deepSpace, offers: identityInput.deepSpace.offers.filter((o: RecordValue) => o.planetId !== "colony-1") } };
+  exact("missing source preserves the full immutable report and all other state", serializeState(identityAbandoned.state), identityExpected);
+  exact("identity abandonment does not mutate its complete source", serializeState(identityState), identityInput);
+  exact("missing-source report survives strict save reload", importSave(exportSave(identityAbandoned.state, finalRow.save.savedAt, finalRow.save.lastTickAt)).state, identityExpected);
+  branches.reportIdentity = { classification: "EXPLICIT SYNTHETIC UI BOUNDARY: genuine natural final31, only colony-1 name and delivered report8 originId are replaced as enumerated. This is not a naturally fought colony battle or a native rename action. No resource, score, technology, ship, time, combat, loot, delivery or remainder change. Actual abandonment then makes that report source unavailable.",
+    syntheticChanges: [{ path: "planets[colony-1].name", before: previousColonyName, after: identityColony.name },
+      { path: "npcBattles.reports[8].originId", before: "homeworld", after: "colony-1" }],
+    reportId: 8, base: identityBase, baseRaw: identityRaw,
+    confirmation: "放弃这颗殖民地？其资源、建筑、舰船和本地队列将永久丢失。", expected: identityExpected };
+
   stage = "branch-synthetic-landed-limit-dock-retry";
   const preDockRow = milestones.find(m => m.name === "attack8-live-loop-4")!;
   const blockedInput = structuredClone(preDockRow.save.state);
@@ -497,7 +525,7 @@ const expected = Object.fromEntries(milestones.map(m => [m.name, m.save.state]))
 const report = { schema: "infinity-npc-attack-natural-route-v2", source: source!, key: STORAGE_KEY, homeId: "homeworld", colonyId: "colony-1",
   description: "Exact public eef r12 66-second two-scout save → real r13 scout6 → paid weapons1 and six built LF → draw7 permanent loss → win8 loot/return → production/rescout9 → empty10 collection. Independent LF combat/loot plus exact pinned eef whole-state legacy control.",
   origin: original!, originalSave: original! ? JSON.parse(original!.raw) : null, originalSaveRaw: original?.raw, base: milestones[0]?.save,
-  importedSave: milestones[0]?.save, provenance: { scope: "Natural main and non-synthetic forks only; branches.abandon and branches.blockedRetry enumerate all authorized synthetic changes", syntheticBranches: ["abandon", "blockedRetry"], injectedGameState: false, noWalletTechnologyShipClockInjection: true, originalR12RawSha256: RAW_SHA, legacyOracleSource: PIN, oracleStateNeverAdoptedByCandidate: true },
+  importedSave: milestones[0]?.save, provenance: { scope: "Natural main and non-synthetic forks only; branches.abandon, branches.blockedRetry and branches.reportIdentity enumerate all synthetic changes", syntheticBranches: ["abandon", "blockedRetry", "reportIdentity"], injectedGameState: false, noWalletTechnologyShipClockInjection: true, originalR12RawSha256: RAW_SHA, legacyOracleSource: PIN, oracleStateNeverAdoptedByCandidate: true },
   literalGoldens: { originalTotalTime: 25876, originalNpcStock: [830, 415, 66], weaponsCost: [800, 200, 0], eachThreeFighterCost: [9000, 3000, 0], lightFighterSeconds: .96, distance: 1025, duration: DURATION, attack7Seed: 1037330552, attack8Seed: 1344031299, draw7: battle(7, 4, 4), win8: battle(8, 6, 2), winCapacity: 420, finalFighters: 6 },
   moneyWitnesses, remainderGoldens: JSON.parse(String(readFileSync(new URL("../tests/fixtures/npc-attack-independent-goldens.json", import.meta.url)))).remainderGoldens, remainderOracle: "Independent fixed256-place BigInt grid; old eef Decimal represents candidate values only. Five-term conservation is proven for each exact-event fuel/loot settlement. Bounded greatest-candidate enumeration is independently implemented and cross-checked with frozen literal amount goldens; no production remainder helper imports.",
   reloadSchedule: { name: nativeSchedule ? "native-four-reload-oracle" : "frequent-reload-regression", mode: RELOAD_SCHEDULE,

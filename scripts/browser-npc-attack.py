@@ -1022,8 +1022,8 @@ def full_report():
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR12SaveSha256': fixtures['origin']['rawSha256'],
         'oracleReloadSchedule': fixtures.get('reloadSchedule'), 'observedMainReloadCheckpoints': main_reload_checkpoints,
-        'classification': 'Unedited public eef r12 66s two-scout save imported through the native file picker; complete r13 paid action/tick tape replay. Explicit native Storage fault wrappers and DOM mutation probes are separate branches. The two enumerated synthetic boundary fixtures change only colony metal right to 0.25 or landed LF count to 1e15; neither is part of the natural main.',
-        'responsiveScope': '320/390/768/1440 actual frozen report glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only, with route/clear/form/report four-width witnesses at real milestones.',
+        'classification': 'Unedited public eef r12 66s two-scout save imported through the native file picker; complete r13 paid action/tick tape replay. Explicit native Storage fault wrappers and DOM mutation probes are separate branches. The three enumerated synthetic boundary fixtures separately change colony metal right to 0.25, landed LF count to 1e15, or colony name plus delivered report8 originId. None is part of the natural main; the identity fixture is not a native rename action or natural colony battle.',
+        'responsiveScope': '320/390/768/1440 CLOSED compact summaries before detail expansion, actual frozen full-detail glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only, with route/clear/form/report four-width witnesses at real milestones.',
         'timing': timing_report(), 'oracle': 'Natural-main serialized fields equal pinned eef legacy engine plus independent NPC LF combat, loot, FNV, wallet, event and exact-decimal oracle. Curvature and abandonment have independent whole-state branch checks. Other boundary envelopes are real current-engine executions with separately asserted ownership, money and combat invariants. No game globals or source injection. Natural main is never economically patched; the explicitly synthetic branch fields are enumerated separately.',
         'nativeBoundary': 'Browser storage/file/dialog/HTTP are native. Date/performance/RAF timestamps are controlled. Fault-only Storage wrappers are explicit. This runner is not a genuine unmodified-clock background-throttling test.',
         'boundsSeconds': {'worker': 900, 'supervisor': 910}, 'checks': checks,
@@ -1211,12 +1211,141 @@ def cargo_draft_witness(page):
 
 
 report_glyph_proofs = set()
+compact_report_proofs = set()
+COMPACT_REPORT_HOOKS = {
+    'outcome': '.npc-report-result', 'route': '.npc-report-route',
+    'lossText': '.npc-report-losses', 'lootText': '.npc-report-loot',
+    'delivery': '.npc-report-delivery', 'timeText': '.npc-report-time',
+    'roundText': '.npc-report-round-count',
+}
+COMPACT_BLOCKED_TEXT = '入港校验未通过，幸存舰船与货物仍在舰队。调整原出发星球库存或舰船数量后，请到舰队页重试入港。'
+
+
+def compact_report_expected(receipt, state):
+    """Independent literal oracle for this suite's LF-only, ordinary-time receipts.
+
+    No production presenter, label registry, current wallet or current technology
+    supplies a historical fact. Current planets supply only the origin identity.
+    Unsupported fixture classes fail closed rather than borrowing app formatting.
+    """
+    battle = receipt['battle']
+    before, after = battle['attackerBefore'], battle['attackerAfter']
+    if not (set(before) | set(after)) <= {'light_fighter'}:
+        raise AssertionError('Compact native oracle requires literal LF-only receipt')
+    loss = before.get('light_fighter', 0) - after.get('light_fighter', 0)
+    if type(loss) is not int or loss < 0:
+        raise AssertionError('Compact native oracle requires nonnegative permanent loss')
+    at = Fraction(str(receipt['at']))
+    if not 0 <= at <= 10 ** 12:
+        raise AssertionError('Compact native oracle requires ordinary nonnegative game time')
+    seconds = at.numerator // at.denominator
+    days, day_seconds = divmod(seconds, 86400)
+    hours, hour_seconds = divmod(day_seconds, 3600)
+    minutes, secs = divmod(hour_seconds, 60)
+    duration = (f'{days} 天 {hours} 小时' if days else f'{hours} 小时 {minutes} 分' if hours
+                else f'{minutes} 分 {secs} 秒' if minutes else f'{secs} 秒')
+    def coordinates(value):
+        return ':'.join(str(value[key]) for key in ('galaxy', 'system', 'position'))
+    origin = next((world for world in state['planets'] if world['id'] == receipt['originId']), None)
+    source = f'{origin["name"]} [{coordinates(origin["coordinates"])}]' if origin else '原出发星球已不可用'
+    delivery = {'delivered': '已入港', 'destroyed': '全损', 'forfeited': '已丢弃'}.get(receipt['delivery'])
+    if delivery is None:
+        fleet = next((fleet for fleet in state['fleets'] if fleet['id'] == receipt['fleetId'] and fleet['mission'] == 'attack'), {})
+        phase = fleet.get('npcAttack', {}).get('phase', {})
+        delivery = ('入港受阻' if phase.get('dockBlocked') else '战后返航') if phase.get('kind') == 'returning' and phase.get('reason') == 'battle' else '交付状态不可确认'
+    empty = not battle['rounds'] and all(count == 0 for count in battle['defenderBefore'].values())
+    outcome = '无驻军收集' if empty else {'attacker': '胜', 'defender': '败', 'draw': '平'}[battle['winner']]
+    loot = receipt['loot']
+    if len(loot) != 3 or any(type(value) is not int or value < 0 for value in loot):
+        raise AssertionError('Compact native oracle requires exact nonnegative integer loaded loot')
+    return {'outcome': outcome, 'route': source + ' → [' + coordinates(receipt['target']) + ']',
+        'lossText': f'我方永久损失：{loss} 艘',
+        'lootText': f'实际装载：金属 {loot[0]} · 晶体 {loot[1]} · 重氢 {loot[2]}',
+        'delivery': delivery, 'timeText': '游戏时间 ' + duration, 'roundText': f'{len(battle["rounds"])} 回合'}
+
+
+def store_compact_screenshot(directory, data):
+    """Deduplicate only byte-identical PNGs; every capture keeps a witness row."""
+    digest = hashlib.sha256(data).hexdigest()
+    path = directory / f'native-closed-{digest}.png'
+    existed = path.exists()
+    if existed:
+        if path.read_bytes() != data:
+            raise AssertionError('Content-addressed compact screenshot bytes differ')
+    else:
+        path.write_bytes(data)
+    return {'file': path.name, 'sha256': digest, 'byteLength': len(data),
+            'identicalBytesAlreadyStored': existed}
+
+
+def closed_report_text(page, selector, receipt, wanted):
+    node = page.locator(selector)
+    summary = selector + ' > summary'
+    if node.evaluate('(e)=>e.open'):
+        native_scroll_to(page, summary)
+        page.locator(summary).focus(); page.locator(summary).press('Enter'); advance(page)
+    check('compact report is actually closed before any summary assertion', not node.evaluate('(e)=>e.open'))
+    actual = {}
+    for field, hook in COMPACT_REPORT_HOOKS.items():
+        leaf = page.locator(summary + ' ' + hook)
+        expect(leaf).to_have_count(1)
+        actual[field] = leaf.inner_text()
+    check('closed compact fields equal independent receipt facts and current origin identity', actual == wanted,
+          {'fleetId': receipt['fleetId'], 'expected': wanted, 'actual': actual})
+    check('closed compact report retains its exact receipt identifier',
+          page.locator(summary + ' .npc-report-id').inner_text() == '#' + str(receipt['fleetId']))
+    warning = page.locator(summary + ' .npc-report-blocked')
+    expect(warning).to_have_count(1)
+    blocked = wanted['delivery'] == '入港受阻'
+    check('closed blocked hint is exact and appears only for the currently blocked receipt',
+          warning.inner_text() == (COMPACT_BLOCKED_TEXT if blocked else '')
+          and warning.evaluate('(e)=>e.hidden') is (not blocked))
+    expect(page.locator(selector + ' > div')).not_to_be_visible()
+    expect(page.locator(selector + ' > details[data-npc-rounds]')).not_to_be_visible()
+
+
+def inspect_closed_report(page, selector, receipt, expected, label, widths=None):
+    wanted = compact_report_expected(receipt, expected)
+    signature = json.dumps(wanted, ensure_ascii=False, sort_keys=True)
+    original_width = page.viewport_size['width']
+    # One four-width witness per distinct displayed receipt state. Later exact
+    # text assertions are not described as fresh screenshot/geometry evidence.
+    pending = [width for width in (widths or (320, 390, 768, 1440))
+               if (receipt['fleetId'], width, signature) not in compact_report_proofs]
+    for width in pending or [original_width]:
+        if page.viewport_size['width'] != width:
+            page.set_viewport_size({'width': width, 'height': 1100}); advance(page)
+        closed_report_text(page, selector, receipt, wanted)
+        if width not in pending:
+            continue
+        summary = selector + ' > summary'
+        native_scroll_to(page, summary)
+        geometry = visibility(page, [summary])
+        check('closed summary fits viewport with all five real unobstructed hit points',
+              len(geometry['targets']) == 1 and all(row['visible'] and row['contained']
+              and len(row['points']) == 5 and all(point['unoccluded'] for point in row['points'])
+              for row in geometry['targets']), geometry)
+        selectors = [summary + ' ' + hook for hook in COMPACT_REPORT_HOOKS.values()]
+        selectors += [summary + ' .npc-report-id', summary + ' .npc-report-details-hint']
+        if wanted['delivery'] == '入港受阻':
+            selectors.append(summary + ' .npc-report-blocked')
+        glyphs = text_leaf_visibility(page, selectors)
+        check('every CLOSED summary glyph is visible, unoccluded and inside viewport and ancestor clips',
+              len(glyphs['leaves']) == len(selectors) and all(leaf['passed'] for leaf in glyphs['leaves']), glyphs)
+        check('closed compact report has no document-level horizontal overflow',
+              page.evaluate('document.scrollingElement.scrollWidth <= innerWidth'))
+        check('summary remains closed at its actual screenshot geometry', not page.locator(selector).evaluate('(e)=>e.open'))
+        page.evaluate('Promise.all([...document.images].filter(i=>i.getClientRects().length).map(i=>i.decode().catch(()=>null)))')
+        image = store_compact_screenshot(out, page.screenshot(full_page=False, timeout=7000))
+        evidence.append({'case': case, 'kind': 'compact-closed-summary', 'label': label,
+            'fleetId': receipt['fleetId'], 'width': width, 'expected': wanted, **image}); flush()
+        compact_report_proofs.add((receipt['fleetId'], width, signature))
+    if page.viewport_size['width'] != original_width:
+        page.set_viewport_size({'width': original_width, 'height': 1100}); advance(page)
 
 
 def report_body_glyphs(page, selector, receipt, label, width):
-    proof_key = (receipt['fleetId'], width)
-    if proof_key in report_glyph_proofs:
-        return
+    proof_key = (width, json.dumps({key: value for key, value in receipt.items() if key != 'delivery'}, sort_keys=True))
     battle = receipt['battle']
     def count(value):
         # The natural main deliberately fights only LF; unsupported fleets fail
@@ -1235,6 +1364,8 @@ def report_body_glyphs(page, selector, receipt, label, width):
     ]
     check('all five historical report paragraphs match independent literal text',
           page.locator(selector + ' > div > p').all_inner_texts() == expected_body)
+    if proof_key in report_glyph_proofs:
+        return
     for index in range(1, 6):
         leaf = selector + f' > div > p:nth-child({index})'
         snapshot_control(page, leaf, f'{label}-{receipt["fleetId"]}-{width}-body-{index}', capture=index in (2, 4))
@@ -1256,15 +1387,18 @@ def report_body_glyphs(page, selector, receipt, label, width):
     report_glyph_proofs.add(proof_key)
 
 
-def inspect_reports(page, expected, label, four_widths=False):
+def inspect_reports(page, expected, label, four_widths=False, report_ids=None):
     before = save(page); tab(page, 'messages')
     reports = expected['npcBattles']['reports']
     for receipt in reports:
+        if report_ids is not None and receipt['fleetId'] not in report_ids:
+            continue
         tab(page, 'messages')
         selector = f'#npc-battle-reports details[data-npc-report="{receipt["fleetId"]}"]'
         node = page.locator(selector); expect(node).to_have_count(1)
         summary = selector + ' > summary'
         widths = (320, 390, 768, 1440) if four_widths else (page.viewport_size['width'],)
+        inspect_closed_report(page, selector, receipt, expected, label)
         for width in widths:
             page.set_viewport_size({'width': width, 'height': 1100}); advance(page)
             native_scroll_to(page, summary); page.locator(summary).focus(); page.locator(summary).press('Enter'); advance(page)
@@ -1339,7 +1473,7 @@ def native_tape(page):
                 cargo_draft_witness(page); draft_done = True
             if actual['npcBattles']['reports']:
                 first_delivered = not report_widths_done and any(r['delivery'] == 'delivered' for r in actual['npcBattles']['reports'])
-                inspect_reports(page, actual, 'native-' + name, four_widths=first_delivered or name in ('win8-loot-delivered-once', 'empty10-zero-round-loot-delivered'))
+                inspect_reports(page, fixtures['expected'][name], 'native-' + name, four_widths=first_delivered or name in ('win8-loot-delivered-once', 'empty10-zero-round-loot-delivered'))
                 report_widths_done = report_widths_done or first_delivered
             for fleet in actual['fleets']:
                 if fleet.get('npcAttack', {}).get('phase', {}).get('dockBlocked'):
@@ -1513,6 +1647,10 @@ def blocked_retry_boundary():
         for _ in range(branch['advanceToBlocked']):
             advance(page, 1000)
         whole_state('actual-blocked-arrival-' + str(width), save(page), branch['blocked'])
+        tab(page, 'messages')
+        blocked_receipt = next(receipt for receipt in branch['blocked']['npcBattles']['reports'] if receipt['fleetId'] == 8)
+        inspect_closed_report(page, '#npc-battle-reports details[data-npc-report="8"]', blocked_receipt,
+                              branch['blocked'], 'native-blocked-retry', widths=(width,))
         tab(page, 'fleet'); button = '[data-space="npc-retry-dock"][data-fleet="8"]'
         expect(page.locator(button)).to_be_enabled()
         snapshot_control(page, button, f'native-{width}-blocked-dock-retry')
@@ -1534,6 +1672,64 @@ def blocked_retry_boundary():
         old_button.evaluate('(element)=>element.click()'); advance(page)
         whole_state('retired-retry-node-cannot-credit-twice-' + str(width), save(page), branch['expected'])
         record(page, 'native-' + str(width) + '-synthetic-blocked-release-and-retry'); context.close()
+
+
+def report_identity_boundary():
+    branch = fixtures['branches']['reportIdentity']
+    natural = fixtures['naturalMilestones']['empty10-zero-round-loot-delivered']
+    wanted = copy.deepcopy(natural['save']['state'])
+    colony = planet(wanted, COLONY)
+    changes = [{'path': 'planets[colony-1].name', 'before': colony['name'],
+                'after': '远航殖民地 <星光 & 北岸> 测试'},
+               {'path': 'npcBattles.reports[8].originId', 'before': HOME, 'after': COLONY}]
+    check('report identity fixture explicitly discloses only the two independent synthetic UI edits',
+          branch['reportId'] == 8 and exact_json(branch['syntheticChanges'], changes))
+    colony['name'] = changes[0]['after']
+    receipt = next(row for row in wanted['npcBattles']['reports'] if row['fleetId'] == 8)
+    check('synthetic identity fixture starts with a genuinely terminal homeworld report',
+          receipt['originId'] == HOME and receipt['delivery'] == 'delivered')
+    receipt['originId'] = COLONY
+    whole_state('independent-explicit-report-identity-input', branch['base']['state'], wanted)
+    missing = copy.deepcopy(wanted)
+    missing['planets'] = [world for world in missing['planets'] if world['id'] != COLONY]
+    missing['deepSpace']['offers'] = [offer for offer in missing['deepSpace']['offers'] if offer['planetId'] != COLONY]
+    whole_state('independent-report-identity-abandonment-output', branch['expected'], missing)
+    begin_case('explicit synthetic report source identity import then lawful native abandonment')
+    context, page = boot(natural['save']['savedAt'], initial_raw=natural['raw'])
+    import_save(page, branch['base'], 'synthetic-report-identity', original_raw=branch['baseRaw'])
+    inspect_reports(page, wanted, 'synthetic-current-report-origin', four_widths=True, report_ids={8})
+    tab(page, 'fleet')
+    exact_confirmation(page, '[data-space="abandon"][data-planet="colony-1"]',
+                       branch['confirmation'], True, 'report-identity-abandon-accept')
+    actual = save(page)
+    whole_state('native-abandon-removes-only-identity-colony-and-offers', actual, missing)
+    check('native missing-source transition retains the exact complete immutable receipt collection',
+          exact_json(actual['npcBattles'], wanted['npcBattles']))
+    inspect_reports(page, missing, 'synthetic-missing-report-origin', four_widths=True, report_ids={8})
+    record(page, 'native-synthetic-report-identity-abandoned'); context.close()
+
+
+def verify_compact_report_coverage():
+    captures = [row for row in evidence if row.get('kind') == 'compact-closed-summary']
+    for fleet_id, outcome in ((7, '平'), (8, '胜'), (10, '无驻军收集')):
+        for delivery in ('战后返航', '已入港'):
+            for width in (320, 390, 768, 1440):
+                check('natural closed compact matrix covers exact receipt outcome/delivery/width',
+                      any(row['fleetId'] == fleet_id and row['width'] == width
+                          and row['label'].startswith('native-') and row['label'] != 'native-blocked-retry'
+                          and row['expected']['outcome'] == outcome and row['expected']['delivery'] == delivery
+                          for row in captures), {'fleetId': fleet_id, 'outcome': outcome, 'delivery': delivery, 'width': width})
+    for label, delivery in (('native-blocked-retry', '入港受阻'),
+                            ('synthetic-current-report-origin', '已入港'), ('synthetic-missing-report-origin', '已入港')):
+        for width in (320, 390, 768, 1440):
+            check('separate closed compact boundaries retain four-width evidence',
+                  any(row['label'] == label and row['fleetId'] == 8 and row['width'] == width
+                      and row['expected']['delivery'] == delivery for row in captures), {'label': label, 'width': width})
+    for row in captures:
+        image = (out / row['file']).read_bytes()
+        check('each compact capture references its actual exact content-addressed screenshot bytes',
+              len(image) == row['byteLength'] and hashlib.sha256(image).hexdigest() == row['sha256']
+              and row['file'] == 'native-closed-' + row['sha256'] + '.png', row)
 
 
 def old_node_witnesses():
@@ -1632,8 +1828,9 @@ try:
         context, page = boot(fixtures['originalSave']['savedAt'])
         import_save(page, fixtures['originalSave'], 'public-eef-r12-final66', original_raw=fixtures['originalSaveRaw'], expected=fixtures['importedSave'])
         native_tape(page); record(page, 'native-final-full-loop'); context.close()
-        same_time_boundaries(); recall_and_offline(); simultaneous_arrivals(); remainder_reset_boundaries(); blocked_retry_boundary(); old_node_witnesses(); storage_faults(); migration_backup_faults(); cross_tab()
+        same_time_boundaries(); recall_and_offline(); simultaneous_arrivals(); remainder_reset_boundaries(); blocked_retry_boundary(); report_identity_boundary(); old_node_witnesses(); storage_faults(); migration_backup_faults(); cross_tab()
         begin_case('suite integrity')
+        verify_compact_report_coverage()
         check('no actual app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
         check('served release exact v9/r13', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 13)
         completed = True; browser.close(); flush(full=True, final=True)

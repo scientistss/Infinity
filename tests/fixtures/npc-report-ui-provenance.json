@@ -1,0 +1,121 @@
+{
+  "schema": "infinity-ring-protection-npc-report-ui-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "7554c662e3ac1f27876a60d8aa706e5d4a4dcd52",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    }
+  ],
+  "referenceStatus": "Exact compact report UI source adoption atop independently sealed 7554 attack source. This source seal is not native, CI or release acceptance.",
+  "scope": "All production paths, modes, before/after bytes, complete deterministic Git patches and individual hunks are bound. All five historical manifests and every domain and ring-critical byte remain unchanged.",
+  "approvedDelta": "Compact NPC battle report summaries and optional details, implemented only in the panel, presenter and stylesheet. No game rules, persistence, economy, save schema or combat source changes.",
+  "productionPaths": [
+    "src"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "changedPaths": [
+    {
+      "path": "src/space.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "37e8935fd2e2a44d631600037a226e529db26e4ce15397aae6054991bfe1592a"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "84eae9a4ae5f0ae0c9eefedf931fd04d32609d33373930a5e0ea23813ec0aef5"
+      },
+      "patchSha256": "e75788af7e28feea0351ca610005c0b8c22fb2bb3ad2e18b3d675e6f4132e137",
+      "hunks": [
+        {
+          "header": "@@ -43,3 +43,30 @@",
+          "sha256": "00adf0c279a55eba9d6010718f0a7e842ab18080245851435a7e902e15826ce4"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-battle-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "89fd314e7c99b957c61897957ef4b988a1cb53ccc7a900d580042746c18c935d"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "41f47a5e1486318f1bd9ff0ced61c6c200ff97b2436217fb7123fb508529591d"
+      },
+      "patchSha256": "2f7f4e1f9505ec5da55bb97e8a25d78c5d45fed95e6cecf8fdaf72ed036f5923",
+      "hunks": [
+        {
+          "header": "@@ -8,12 +8,29 @@ export function npcBattlePanelHtml(): string {",
+          "sha256": "a9de041ba7c06d8c6790ff3f2530e2406b9c2869b82af45df02450b15ebbc116"
+        },
+        {
+          "header": "@@ -46,15 +63,27 @@ export function installNpcBattlePanel(root: HTMLElement) {",
+          "sha256": "8827b9189a8535ffd1730423407a01a5c8269013a689cdd5fc009842f412476d"
+        },
+        {
+          "header": "@@ -64,7 +93,7 @@ export function installNpcBattlePanel(root: HTMLElement) {",
+          "sha256": "f0af127081338663ab7e62e52a9ea972525c22cf9ad7e04b9420e8b50b81a5c5"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-battle-present.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "dc5959811b1663d80cd2e555dd491d4e8f790d2e430f7e6e61d2039a910e95b7"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "70581be076a5aaa960c56025b458cfbd09a475ed5e1ac9543696516257241eda"
+      },
+      "patchSha256": "db4432c6a40ca01afb139b7d9b5edf5b5c34fc5e03086c70016e7f765fb5df65",
+      "hunks": [
+        {
+          "header": "@@ -1,4 +1,6 @@",
+          "sha256": "1d4938384b082235b19e5e8452683e56dfaab1a8edab80eed892dc0541ca5ab1"
+        },
+        {
+          "header": "@@ -29,17 +31,29 @@ export function npcBattleRounds(report: NpcBattleReceipt) {",
+          "sha256": "bd26ddc65851fad988931530ea3f7099bd0fda227df1a833ebef58ee449468d4"
+        }
+      ]
+    }
+  ]
+}

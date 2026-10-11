@@ -43,3 +43,30 @@
 .space-panel .npc-resource-remainder summary:focus-visible { outline:2px solid var(--good); outline-offset:3px; }
 .space-panel .npc-resource-remainder p { margin:.4rem 0; line-height:1.6; font-size:.8rem; }
 .space-panel .npc-remainder-exact { font-variant-numeric:tabular-nums; }
+
+/* Compact NPC receipt summaries; native disclosures retain the exact audit data. */
+.space-panel .npc-battle-report { display:block; padding:0; }
+.space-panel .npc-battle-report > summary { display:block; position:relative; min-height:44px; padding:.7rem .7rem .7rem 1.65rem; list-style:none; }
+.space-panel .npc-battle-report > summary::-webkit-details-marker { display:none; }
+.space-panel .npc-battle-report > summary::before { content:"▸"; position:absolute; left:.65rem; top:.7rem; color:var(--muted); }
+.space-panel .npc-battle-report[open] > summary::before { content:"▾"; }
+.space-panel .npc-battle-report[open] > summary { border-bottom:1px solid var(--line); }
+.space-panel .npc-battle-report summary:focus-visible,.space-panel .npc-battle-report .space-table-scroll:focus-visible { outline:2px solid var(--good); outline-offset:3px; }
+.space-panel .npc-report-summary { display:grid; gap:.35rem; min-width:0; font-size:.85rem; }
+.space-panel .npc-report-summary span { min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.space-panel .npc-report-heading,.space-panel .npc-report-footer { display:flex; align-items:center; flex-wrap:wrap; gap:.3rem .65rem; }
+.space-panel .npc-report-result { color:var(--good); font-size:.95rem; font-weight:700; }
+.space-panel .npc-battle-report[data-outcome="败"] .npc-report-result { color:var(--danger); }
+.space-panel .npc-battle-report[data-outcome="平"] .npc-report-result { color:var(--gold); }
+.space-panel .npc-report-delivery { padding:0 .4rem; border:1px solid var(--line-strong); border-radius:3px; color:var(--muted); font-size:.78rem; }
+.space-panel .npc-report-route { display:block; color:var(--ink); }
+.space-panel .npc-report-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); gap:.2rem .75rem; }
+.space-panel .npc-report-losses,.space-panel .npc-report-loot { display:block; }
+.space-panel .npc-report-footer { color:var(--muted); font-size:.75rem; font-variant-numeric:tabular-nums; }
+.space-panel .npc-report-details-hint { margin-left:auto; color:var(--ink); text-decoration:underline; text-underline-offset:3px; }
+.space-panel .npc-report-blocked { padding:.45rem .55rem; border-left:2px solid var(--gold); background:var(--gold-soft); color:var(--gold); }
+.space-panel .npc-battle-report[data-delivery="入港受阻"] { border-color:var(--gold); }
+.space-panel .npc-battle-report[data-delivery="入港受阻"] .npc-report-delivery { border-color:var(--gold); color:var(--gold); }
+.space-panel .npc-report-details,.space-panel .npc-battle-report > details[data-npc-rounds] { margin:.6rem .7rem; min-width:0; max-width:100%; }
+.space-panel .npc-report-details p { margin:.3rem 0; }
+.space-panel .npc-battle-report > details[data-npc-rounds] > summary { padding:.35rem 0; min-height:44px; }

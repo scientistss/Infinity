@@ -22,6 +22,8 @@ Demolition has its own exact-file and exact-hunk adoption atop the verified IRN
 source. Neither shared-core path is removed from the original protected scope.
 NPC adoption separately binds every production path to verified ca5, retaining
 all earlier manifest bytes and each original native protection obligation.
+Compact report UI adoption composes the unchanged attack seal at exact 7554
+with three presentation-only files; every domain and ring byte stays fixed.
 """
 import argparse
 import hashlib
@@ -134,6 +136,17 @@ ATTACK_CHANGED_PATHS = (
 )
 ATTACK_RING_DELTAS = ()
 
+NPC_REPORT_UI_ADOPTION = '7554c662e3ac1f27876a60d8aa706e5d4a4dcd52'
+NPC_REPORT_UI_MANIFEST = 'tests/fixtures/npc-report-ui-provenance.json'
+# Frozen three-file presentation delta; all five historical seals remain unchanged.
+NPC_REPORT_UI_MANIFEST_SHA256 = '6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7'
+NPC_REPORT_UI_PRODUCTION_PATHS = ('src',)
+NPC_REPORT_UI_CHANGED_PATHS = (
+    'src/space.css',
+    'src/ui/npc-battle-panel.ts',
+    'src/ui/npc-battle-present.ts',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -237,6 +250,8 @@ def production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != NPC_REPORT_UI_ADOPTION and git('ls-tree', candidate, '--', NPC_REPORT_UI_MANIFEST):
+        return npc_report_ui_provenance(repository, candidate, git, check)
     if candidate != ATTACK_ADOPTION and git('ls-tree', candidate, '--', ATTACK_MANIFEST):
         return npc_attack_domain_provenance(repository, candidate, git, check)
     if candidate != NPC_ADOPTION and git('ls-tree', candidate, '--', NPC_MANIFEST):
@@ -526,6 +541,72 @@ def npc_attack_domain_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': ATTACK_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact NPC source adoption only; not native or CI acceptance. Every original protection, recovery, full-state and new NPC native assertion remains required.'}
+
+
+def npc_report_ui_provenance(repository, candidate, git, check):
+    """Compose the unchanged attack seal with only the frozen three-file UI delta."""
+    prior = npc_attack_domain_provenance(repository, NPC_REPORT_UI_ADOPTION, git, check)
+    check('compact NPC report UI starts at the exact independently sealed 7554 attack source',
+          prior['contract'] == 'exact-declared-npc-attack-semantic-delta'
+          and prior['candidateSourceSha'] == NPC_REPORT_UI_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC report UI path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256),
+                (ATTACK_MANIFEST, ATTACK_MANIFEST_SHA256)]
+    for path, digest in previous:
+        check('compact NPC report UI preserves every earlier manifest byte and mode: ' + path,
+              entry(candidate, path) == entry(NPC_REPORT_UI_ADOPTION, path)
+              == {'mode': '100644', 'sha256': digest})
+    raw = (repository / NPC_REPORT_UI_MANIFEST).read_bytes()
+    check('compact NPC report UI manifest has its fixed digest and exact committed ordinary-file bytes',
+          sha(raw) == NPC_REPORT_UI_MANIFEST_SHA256
+          and entry(candidate, NPC_REPORT_UI_MANIFEST) == {'mode': '100644', 'sha256': NPC_REPORT_UI_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + NPC_REPORT_UI_MANIFEST))
+    manifest = json.loads(raw)
+    check('compact NPC report UI pins 7554, all prior seals and the complete production and protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-report-ui-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == NPC_REPORT_UI_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(NPC_REPORT_UI_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactDomainDeltaPaths') == []
+          and manifest.get('exactRingCriticalDeltaPaths') == [])
+    delta = changed(NPC_REPORT_UI_ADOPTION, candidate, NPC_REPORT_UI_PRODUCTION_PATHS)
+    check('complete production tree differs from 7554 only at the exact three compact report UI files',
+          delta == list(NPC_REPORT_UI_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, NPC_REPORT_UI_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(NPC_REPORT_UI_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('each report UI mode, byte, full patch and hunk is exact and anchored in sealed 7554 bytes',
+          manifest.get('changedPaths') == rows)
+    check('compact NPC report UI preserves the entire domain and original ring-critical source scopes',
+          changed(NPC_REPORT_UI_ADOPTION, candidate, DOMAIN_PATHS) == []
+          and changed(NPC_REPORT_UI_ADOPTION, candidate, RING_CRITICAL_PATHS) == [])
+    return {'contract': 'exact-declared-npc-report-ui-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': NPC_REPORT_UI_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': NPC_REPORT_UI_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact compact NPC report UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):

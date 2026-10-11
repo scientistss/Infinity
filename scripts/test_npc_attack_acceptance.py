@@ -453,6 +453,221 @@ class NativeScrollGeometryContract(unittest.TestCase):
             self.assertNotIn(forbidden, self.source)
 
 
+class NativeCompactReportContract(unittest.TestCase):
+    """Exercise independent literal summary and capture contracts without a browser."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+        tree = ast.parse(cls.source)
+        names = {'compact_report_expected', 'store_compact_screenshot', 'inspect_closed_report', 'verify_compact_report_coverage'}
+        constants = {'COMPACT_REPORT_HOOKS', 'COMPACT_BLOCKED_TEXT'}
+        selected = ast.Module(body=[node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in names
+            or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in constants
+                for target in node.targets)], type_ignores=[])
+        cls.functions = {'Fraction': Fraction, 'hashlib': hashlib, 'json': json}
+        exec(compile(selected, '<offline-compact-report-contract>', 'exec'), cls.functions)
+
+    def fixture(self):
+        golden = json.loads((ROOT / 'tests/fixtures/npc-attack-independent-goldens.json').read_text())['draw7']
+        receipt = {'fleetId': 7, 'originId': 'colony-1', 'target': {'galaxy': 1, 'system': 56, 'position': 6},
+            'at': '25892.3997786282', 'delivery': 'returning', 'loot': [0, 0, 0], 'battle': golden}
+        state = {'activePlanetId': 'homeworld', 'planets': [
+            {'id': 'homeworld', 'name': '母星', 'coordinates': {'galaxy': 1, 'system': 56, 'position': 8}},
+            {'id': 'colony-1', 'name': '远航殖民地 <星光 & 北岸> 测试', 'coordinates': {'galaxy': 2, 'system': 3, 'position': 4}}],
+            'fleets': [{'id': 7, 'mission': 'attack', 'npcAttack': {'phase': {'kind': 'returning', 'reason': 'battle'}}}]}
+        return receipt, state
+
+    def expected(self, receipt, state):
+        return self.functions['compact_report_expected'](receipt, state)
+
+    def test_exact_draw_loss_uses_own_permanent_casualties_and_current_origin(self):
+        receipt, state = self.fixture()
+        self.assertEqual(self.expected(receipt, state), {'outcome': '平',
+            'route': '远航殖民地 <星光 & 北岸> 测试 [2:3:4] → [1:56:6]',
+            'lossText': '我方永久损失：1 艘', 'lootText': '实际装载：金属 0 · 晶体 0 · 重氢 0',
+            'delivery': '战后返航', 'timeText': '游戏时间 7 小时 11 分', 'roundText': '6 回合'})
+        # Two enemy casualties cannot substitute for the one actual own loss.
+        self.assertEqual(receipt['battle']['defenderBefore']['light_fighter'] - receipt['battle']['defenderAfter']['light_fighter'], 2)
+
+    def test_live_name_is_looked_up_again_and_missing_origin_never_uses_active_planet(self):
+        receipt, state = self.fixture(); frozen = copy.deepcopy(receipt)
+        state['planets'][1]['name'] = '同 ID 新名称'
+        self.assertEqual(self.expected(receipt, state)['route'], '同 ID 新名称 [2:3:4] → [1:56:6]')
+        state['planets'].pop()
+        self.assertEqual(self.expected(receipt, state)['route'], '原出发星球已不可用 → [1:56:6]')
+        self.assertEqual(receipt, frozen)
+
+    def test_win_zero_round_and_large_exact_loaded_amounts_are_not_wallet_or_capacity(self):
+        receipt, state = self.fixture()
+        receipt['battle'] = json.loads((ROOT / 'tests/fixtures/npc-attack-independent-goldens.json').read_text())['win8']
+        receipt['loot'] = [9007199254740991, 0, 23]
+        result = self.expected(receipt, state)
+        self.assertEqual(result['outcome'], '胜')
+        self.assertEqual(result['lossText'], '我方永久损失：0 艘')
+        self.assertEqual(result['lootText'], '实际装载：金属 9007199254740991 · 晶体 0 · 重氢 23')
+        receipt['battle'].update(rounds=[], defenderBefore={}, defenderAfter={})
+        self.assertEqual(self.expected(receipt, state)['outcome'], '无驻军收集')
+        self.assertEqual(self.expected(receipt, state)['roundText'], '0 回合')
+        receipt['battle']['defenderBefore'] = {'light_fighter': 1}
+        self.assertEqual(self.expected(receipt, state)['outcome'], '胜')
+        receipt['battle']['winner'] = 'defender'
+        self.assertEqual(self.expected(receipt, state)['outcome'], '败')
+
+    def test_delivery_uses_current_matching_attack_and_terminal_receipt_wins(self):
+        receipt, state = self.fixture()
+        phase = state['fleets'][0]['npcAttack']['phase']
+        phase['dockBlocked'] = True
+        self.assertEqual(self.expected(receipt, state)['delivery'], '入港受阻')
+        for delivery, text in [('delivered', '已入港'), ('destroyed', '全损'), ('forfeited', '已丢弃')]:
+            receipt['delivery'] = delivery
+            self.assertEqual(self.expected(receipt, state)['delivery'], text)
+        receipt['delivery'] = 'returning'
+        for mutation in ('wrong_id', 'wrong_mission', 'wrong_reason', 'missing_fleet'):
+            altered = copy.deepcopy(state)
+            if mutation == 'wrong_id': altered['fleets'][0]['id'] = 8
+            elif mutation == 'wrong_mission': altered['fleets'][0]['mission'] = 'scout'
+            elif mutation == 'wrong_reason': altered['fleets'][0]['npcAttack']['phase']['reason'] = 'recall'
+            else: altered['fleets'] = []
+            self.assertEqual(self.expected(receipt, altered)['delivery'], '交付状态不可确认')
+
+    def test_readable_time_is_independent_exact_floor_and_keeps_receipt_raw(self):
+        receipt, state = self.fixture()
+        for value, text in [('0', '0 秒'), ('59.999', '59 秒'), ('61.999', '1 分 1 秒'),
+                            ('3601.99', '1 小时 0 分'), ('90061.001', '1 天 1 小时')]:
+            receipt['at'] = value
+            self.assertEqual(self.expected(receipt, state)['timeText'], '游戏时间 ' + text)
+            self.assertEqual(receipt['at'], value)
+        for value in ('-1', '1000000000001'):
+            receipt['at'] = value
+            with self.assertRaises(AssertionError): self.expected(receipt, state)
+
+    def test_oracle_rejects_unsupported_fleets_invalid_loss_and_noninteger_loot(self):
+        for mutation in ('other_ship', 'negative_loss', 'float_loot', 'negative_loot', 'short_loot'):
+            receipt, state = self.fixture()
+            if mutation == 'other_ship': receipt['battle']['attackerBefore']['cruiser'] = 1
+            elif mutation == 'negative_loss': receipt['battle']['attackerAfter']['light_fighter'] = 5
+            elif mutation == 'float_loot': receipt['loot'][0] = 1.5
+            elif mutation == 'negative_loot': receipt['loot'][0] = -1
+            else: receipt['loot'].pop()
+            with self.assertRaises(AssertionError): self.expected(receipt, state)
+
+    def test_screenshot_dedup_requires_actual_identical_bytes_and_keeps_full_digest(self):
+        store = self.functions['store_compact_screenshot']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = store(root, b'exact PNG bytes')
+            self.assertFalse(first['identicalBytesAlreadyStored'])
+            second = store(root, b'exact PNG bytes')
+            self.assertTrue(second['identicalBytesAlreadyStored'])
+            self.assertEqual(first['file'], second['file'])
+            self.assertNotEqual(first['file'], store(root, b'different PNG bytes')['file'])
+            self.assertEqual(first['sha256'], hashlib.sha256(b'exact PNG bytes').hexdigest())
+            (root / first['file']).write_bytes(b'corrupted existing capture')
+            with self.assertRaises(AssertionError): store(root, b'exact PNG bytes')
+
+    def run_closed_matrix(self, clipped=False):
+        receipt, state = self.fixture(); captures, calls, rows = [], [], []
+        scope = dict(self.functions)
+        tree = ast.parse(self.source)
+        selected = ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+                                   and node.name == 'inspect_closed_report'], type_ignores=[])
+        class Page:
+            viewport_size = {'width': 1440, 'height': 1100}
+            def set_viewport_size(self, value): self.viewport_size = value
+            def locator(self, selector): return self
+            def evaluate(self, source): return False if 'e.open' in source else True
+            def screenshot(self, **kwargs):
+                captures.append(self.viewport_size['width']); return ('PNG-' + str(self.viewport_size['width'])).encode()
+        def check(name, passed, detail=None):
+            if not passed: raise AssertionError(name)
+        def text(_page, _selector, _receipt, wanted): calls.append((_page.viewport_size['width'], wanted))
+        def glyphs(_page, selectors): return {'leaves': [{'passed': not clipped} for _ in selectors]}
+        scope.update(compact_report_proofs=set(), closed_report_text=text, check=check, case='offline', evidence=rows,
+            advance=lambda *_: None, native_scroll_to=lambda *_: None, flush=lambda: None, out=Path('/unused'),
+            visibility=lambda *_: {'targets': [{'visible': True, 'contained': True, 'points': [{'unoccluded': True}] * 5}]},
+            text_leaf_visibility=glyphs, store_compact_screenshot=lambda _out, data: {'sha256': hashlib.sha256(data).hexdigest()})
+        exec(compile(selected, '<offline-closed-summary-sequence>', 'exec'), scope)
+        page = Page(); error = None
+        try:
+            scope['inspect_closed_report'](page, '#receipt', receipt, state, 'first')
+            scope['inspect_closed_report'](page, '#receipt', receipt, state, 'unchanged')
+            receipt['delivery'] = 'delivered'
+            scope['inspect_closed_report'](page, '#receipt', receipt, state, 'delivered')
+        except AssertionError as caught: error = str(caught)
+        return captures, calls, rows, page.viewport_size['width'], error
+
+    def test_distinct_returning_and_delivered_states_get_four_actual_captures(self):
+        captures, calls, rows, width, error = self.run_closed_matrix()
+        self.assertIsNone(error)
+        self.assertEqual(captures, [320, 390, 768, 1440] * 2)
+        self.assertEqual([width for width, _ in calls], [320, 390, 768, 1440, 1440, 320, 390, 768, 1440])
+        self.assertEqual(len(rows), 8)
+        self.assertEqual(width, 1440)
+        self.assertTrue(all(row['kind'] == 'compact-closed-summary' for row in rows))
+
+    def test_clipped_closed_text_fails_before_screenshot_or_coverage_record(self):
+        captures, calls, rows, _width, error = self.run_closed_matrix(clipped=True)
+        self.assertIn('every CLOSED summary glyph', error)
+        self.assertEqual(captures, [])
+        self.assertEqual(rows, [])
+
+    def test_final_matrix_gate_rejects_missing_state_wrong_scope_and_corrupt_capture(self):
+        tree = ast.parse(self.source)
+        selected = ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+            and node.name == 'verify_compact_report_coverage'], type_ignores=[])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); data = b'offline identical image bytes'
+            metadata = self.functions['store_compact_screenshot'](root, data)
+            rows = []
+            for fleet_id, outcome in ((7, '平'), (8, '胜'), (10, '无驻军收集')):
+                for delivery in ('战后返航', '已入港'):
+                    for width in (320, 390, 768, 1440):
+                        rows.append({'kind': 'compact-closed-summary', 'label': 'native-oracle-checkpoint',
+                            'fleetId': fleet_id, 'width': width, 'expected': {'outcome': outcome, 'delivery': delivery}, **metadata})
+            for label, delivery in (('native-blocked-retry', '入港受阻'),
+                                    ('synthetic-current-report-origin', '已入港'), ('synthetic-missing-report-origin', '已入港')):
+                for width in (320, 390, 768, 1440):
+                    rows.append({'kind': 'compact-closed-summary', 'label': label, 'fleetId': 8, 'width': width,
+                                 'expected': {'outcome': '胜', 'delivery': delivery}, **metadata})
+            def check(name, passed, detail=None):
+                if not passed: raise AssertionError(name)
+            scope = {'hashlib': hashlib, 'check': check, 'evidence': rows, 'out': root}
+            exec(compile(selected, '<offline-compact-matrix-gate>', 'exec'), scope)
+            scope['verify_compact_report_coverage']()
+            for mutation in ('missing_state', 'wrong_scope', 'missing_boundary', 'corrupt_bytes'):
+                altered = copy.deepcopy(rows); scope['evidence'] = altered
+                if mutation == 'missing_state': altered.pop(16)
+                elif mutation == 'wrong_scope': altered[0]['label'] = 'synthetic-replacement'
+                elif mutation == 'missing_boundary': altered.pop()
+                else: (root / metadata['file']).write_bytes(b'corrupt')
+                with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
+                    scope['verify_compact_report_coverage']()
+                (root / metadata['file']).write_bytes(data)
+
+    def test_native_closed_checks_precede_detail_open_and_keep_original_full_detail_proofs(self):
+        tree = ast.parse(self.source)
+        def body(name): return ast.get_source_segment(self.source, next(node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == name))
+        inspection = body('inspect_reports')
+        self.assertLess(inspection.index('inspect_closed_report('), inspection.index("press('Enter')"))
+        for text in ('report_body_glyphs(', 'snapshot_control(page, summary,', 'ordinary repaint retains keyed open report node'):
+            self.assertIn(text, inspection)
+        details = body('report_body_glyphs')
+        for text in ('all five historical report paragraphs', '实际游戏时间', 'Fraction(page.locator(leaf).inner_text())',
+                     'snapshot_control(page, leaf,', "if key != 'delivery'"):
+            self.assertIn(text, details)
+        self.assertLess(details.index('all five historical report paragraphs'), details.index('if proof_key in report_glyph_proofs'))
+        self.assertIn("inspect_reports(page, fixtures['expected'][name]", self.source)
+        boundary = body('report_identity_boundary')
+        for text in ('import_save(', 'exact_confirmation(', 'synthetic-current-report-origin',
+                     'synthetic-missing-report-origin', 'native-abandon-removes-only-identity-colony-and-offers'):
+            self.assertIn(text, boundary)
+        self.assertNotIn('rename', boundary)
+        self.assertIn('verify_compact_report_coverage()', self.source)
+
+
 class NativeJournalContract(unittest.TestCase):
     """Run the actual native recorder offline, never importing Playwright."""
 

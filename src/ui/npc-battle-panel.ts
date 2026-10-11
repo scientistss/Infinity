@@ -8,12 +8,29 @@ export function npcBattlePanelHtml(): string {
 export function installNpcBattlePanel(root: HTMLElement) {
   const list = root.querySelector<HTMLElement>("#npc-battle-reports")!;
   const panel = root.querySelector<HTMLElement>("#space-messages")!;
-  type Row = { node: HTMLDetailsElement; summary: HTMLElement; body: HTMLElement; rounds: HTMLDetailsElement; roundBody: HTMLElement; model: NpcBattleReportsView[number]; populated: boolean; roundsPopulated: boolean };
+  type SummaryFields = Record<"outcome" | "delivery" | "route" | "lossText" | "lootText" | "timeText" | "roundText", HTMLElement>;
+  type Row = { node: HTMLDetailsElement; summary: HTMLElement; fields: SummaryFields; blocked: HTMLElement; body: HTMLElement; rounds: HTMLDetailsElement; roundBody: HTMLElement; model: NpcBattleReportsView[number]; populated: boolean; roundsPopulated: boolean };
   const rows = new Map<number, Row>();
   let pending: number | null = null;
-  const visible = () => !panel.hidden && !document.hidden && root.isConnected && list.isConnected && root.contains(list);
+  const visible = () => !panel.hidden && !document.hidden && root.isConnected && panel.isConnected && list.isConnected && root.contains(panel) && panel.contains(list);
+  const currentRow = (row: Row) => rows.get(row.model.id) === row && row.node.parentElement === list;
+  function span(className: string, text = "") {
+    const node = document.createElement("span"); node.className = className; node.textContent = text; return node;
+  }
+  function updateSummary(row: Row) {
+    for (const key of Object.keys(row.fields) as (keyof SummaryFields)[]) {
+      const node = row.fields[key], text = row.model[key];
+      if (node.textContent !== text) node.textContent = text;
+    }
+    if (row.node.dataset.outcome !== row.model.outcome) row.node.dataset.outcome = row.model.outcome;
+    if (row.node.dataset.delivery !== row.model.delivery) row.node.dataset.delivery = row.model.delivery;
+    const hidden = row.model.delivery !== "入港受阻";
+    const notice = hidden ? "" : "入港校验未通过，幸存舰船与货物仍在舰队。调整原出发星球库存或舰船数量后，请到舰队页重试入港。";
+    if (row.blocked.textContent !== notice) row.blocked.textContent = notice;
+    if (row.blocked.hidden !== hidden) row.blocked.hidden = hidden;
+  }
   function populate(row: Row) {
-    if (!visible() || !row.node.open || rows.get(row.model.id) !== row) return;
+    if (!visible() || !row.node.open || !currentRow(row)) return;
     if (!row.populated) {
       for (const value of Object.values(npcBattleDetails(row.model.report))) {
         const p = document.createElement("p"); p.textContent = value; row.body.append(p);
@@ -46,15 +63,27 @@ export function installNpcBattlePanel(root: HTMLElement) {
       if (!row) {
         const node = document.createElement("details"); node.className = "ov-card npc-battle-report"; node.dataset.npcReport = String(model.id);
         const summary = document.createElement("summary"), body = document.createElement("div"), rounds = document.createElement("details"), roundSummary = document.createElement("summary"), roundBody = document.createElement("div");
+        const content = span("npc-report-summary"), heading = span("npc-report-heading"), facts = span("npc-report-facts"), footer = span("npc-report-footer");
+        const fields: SummaryFields = {
+          outcome: span("npc-report-result"), delivery: span("npc-report-delivery"), route: span("npc-report-route"),
+          lossText: span("npc-report-losses"), lootText: span("npc-report-loot"), timeText: span("npc-report-time"), roundText: span("npc-report-round-count"),
+        };
+        const blocked = span("npc-report-blocked");
+        blocked.hidden = true;
+        heading.append(fields.outcome, fields.delivery);
+        facts.append(fields.lossText, fields.lootText);
+        footer.append(fields.timeText, fields.roundText, span("npc-report-id", `#${model.id}`), span("npc-report-details-hint", "查看详情"));
+        content.append(heading, fields.route, facts, blocked, footer); summary.append(content);
+        body.className = "npc-report-details";
         rounds.dataset.npcRounds = String(model.id); roundSummary.textContent = "逐回合数据";
         roundBody.className = "space-table-scroll"; roundBody.tabIndex = 0; roundBody.setAttribute("role", "region"); roundBody.setAttribute("aria-label", "战斗回合数据，可横向滚动");
         rounds.append(roundSummary, roundBody); node.append(summary, body, rounds);
-        row = { node, summary, body, rounds, roundBody, model, populated: false, roundsPopulated: false }; rows.set(model.id, row);
+        row = { node, summary, fields, blocked, body, rounds, roundBody, model, populated: false, roundsPopulated: false }; rows.set(model.id, row);
         const owned = row;
         node.addEventListener("toggle", () => populate(owned)); rounds.addEventListener("toggle", () => populate(owned));
       }
       row.model = model;
-      if (row.summary.textContent !== model.summary) row.summary.textContent = model.summary;
+      updateSummary(row);
       const next: Element | null = previous ? previous.nextElementSibling : list.firstElementChild;
       if (next !== row.node) list.insertBefore(row.node, next);
       previous = row.node;
@@ -64,7 +93,7 @@ export function installNpcBattlePanel(root: HTMLElement) {
   }
   return {
     update,
-    focus(id: number) { pending = id; const row = rows.get(id); if (row && visible()) { row.node.open = true; row.summary.focus(); row.node.scrollIntoView({ block: "nearest" }); populate(row); pending = null; } },
+    focus(id: number) { pending = id; const row = rows.get(id); if (row && visible() && currentRow(row)) { row.node.open = true; row.summary.focus(); row.node.scrollIntoView({ block: "nearest" }); populate(row); pending = null; } },
     invalidate() { rows.clear(); list.replaceChildren(); pending = null; },
   };
 }

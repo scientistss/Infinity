@@ -1,4 +1,6 @@
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
+import { big } from "../game/decimal";
+import { formatPlayed } from "../game/format";
 import { coordinateKey } from "../game/galaxy";
 import type { NpcBattleReceipt } from "../game/npc-attack-state";
 import type { GameState } from "../game/types";
@@ -29,17 +31,29 @@ export function npcBattleRounds(report: NpcBattleReceipt) {
   }));
 }
 
-/** Only delivery is live; all combat facts remain the immutable receipt snapshot. */
+/** Origin identity is current, delivery is live; combat facts remain the immutable receipt. */
 export function npcBattleReportsView(state: GameState) {
-  const returning = state.npcBattles.reports.some(report => report.delivery === "returning");
+  const reports = state.npcBattles.reports;
+  if (!reports.length) return [];
+  const origins = new Map(state.planets.map(planet => [planet.id, planet]));
+  const returning = reports.some(report => report.delivery === "returning");
   const live = new Map(returning ? state.fleets.filter(fleet => fleet.mission === "attack").map(fleet => [fleet.id, fleet]) : []);
-  return state.npcBattles.reports.slice().reverse().map(report => {
+  return reports.slice().reverse().map(report => {
     const fleet = live.get(report.fleetId), phase = fleet?.npcAttack?.phase;
     const delivery = report.delivery === "delivered" ? "已入港" : report.delivery === "destroyed" ? "全损" : report.delivery === "forfeited" ? "已丢弃"
       : phase?.kind === "returning" && phase.reason === "battle" ? phase.dockBlocked ? "入港受阻" : "战后返航" : "交付状态不可确认";
     const undefended = report.battle.rounds.length === 0 && Object.values(report.battle.defenderBefore).every(value => !value);
     const outcome = undefended ? "无驻军收集" : report.battle.winner === "attacker" ? "胜" : report.battle.winner === "defender" ? "败" : "平";
-    return { id: report.fleetId, summary: `#${report.fleetId} · [${coordinateKey(report.target)}] · ${outcome} · ${report.battle.rounds.length} 回合 · ${delivery}`, delivery, report };
+    const origin = origins.get(report.originId);
+    const route = `${origin ? `${origin.name} [${coordinateKey(origin.coordinates)}]` : "原出发星球已不可用"} → [${coordinateKey(report.target)}]`;
+    const lostShips = SHIP_IDS.reduce((total, id) => id === "solar_satellite" ? total
+      : total + (report.battle.attackerBefore[id] ?? 0) - (report.battle.attackerAfter[id] ?? 0), 0);
+    const lossText = `我方永久损失：${lostShips} 艘`;
+    const lootText = `实际装载：${npcLootText(report.loot)}`;
+    const timeText = `游戏时间 ${formatPlayed(big(report.at))}`;
+    const roundText = `${report.battle.rounds.length} 回合`;
+    const summary = `#${report.fleetId} · ${outcome} · ${roundText} · ${delivery} · ${route} · ${lossText} · ${lootText} · ${timeText}`;
+    return { id: report.fleetId, outcome, route, lossText, lootText, timeText, roundText, summary, delivery, report };
   });
 }
 export type NpcBattleReportsView = ReturnType<typeof npcBattleReportsView>;

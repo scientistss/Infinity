@@ -537,20 +537,215 @@ class NpcAttackSourceContractTests(unittest.TestCase):
         self.assertRegex(production.ATTACK_MANIFEST_SHA256,r'^[0-9a-f]{64}$')
         raw=(ROOT/production.ATTACK_MANIFEST).read_bytes()
         self.assertEqual(digest(raw),production.ATTACK_MANIFEST_SHA256)
-        tracked=subprocess.check_output(['git','diff','--name-only','--no-renames',production.ATTACK_ADOPTION,'--',*production.ATTACK_PRODUCTION_PATHS],cwd=ROOT).decode().splitlines()
-        untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard','--',*production.ATTACK_PRODUCTION_PATHS],cwd=ROOT).decode().splitlines()
-        self.assertEqual(sorted(set(tracked+untracked)),list(production.ATTACK_CHANGED_PATHS))
-        edits={}
+        self.assertEqual(self.git('show', production.NPC_REPORT_UI_ADOPTION + ':' + production.ATTACK_MANIFEST), raw)
+        tracked = self.git('diff', '--name-only', '--no-renames', production.ATTACK_ADOPTION,
+                           production.NPC_REPORT_UI_ADOPTION, '--', *production.ATTACK_PRODUCTION_PATHS).decode().splitlines()
+        self.assertEqual(tracked, list(production.ATTACK_CHANGED_PATHS))
+        # The attack seal belongs to exact 7554 forever, never to successor UI bytes.
+        edits = {}
         for path in production.ATTACK_CHANGED_PATHS:
-            local=ROOT/path
-            if not local.exists() and not local.is_symlink(): edits[path]=None; continue
-            self.assertFalse(local.is_symlink());self.assertTrue(local.is_file())
-            edits[path]=('100755' if local.stat().st_mode&stat.S_IXUSR else '100644',local.read_bytes())
+            entry = self.git('ls-tree', production.NPC_REPORT_UI_ADOPTION, '--', path).decode().split()
+            self.assertEqual(entry[1], 'blob')
+            edits[path] = (entry[0], self.git('show', production.NPC_REPORT_UI_ADOPTION + ':' + path))
         edits[production.ATTACK_MANIFEST]=('100644',raw)
         (self.view/production.ATTACK_MANIFEST).write_bytes(raw)
         result=self.evaluate(self.make(production.ATTACK_ADOPTION,edits),ring=production)
         self.assertEqual(result['contract'],'exact-declared-npc-attack-semantic-delta')
         self.assertEqual(result['previousProvenance']['candidateSourceSha'],production.ATTACK_ADOPTION)
+
+
+class NpcReportUiSourceContractTests(unittest.TestCase):
+    setUpClass = classmethod(DemolitionSourceContractTests.setUpClass.__func__)
+    tearDownClass = classmethod(DemolitionSourceContractTests.tearDownClass.__func__)
+    git = classmethod(DemolitionSourceContractTests.git.__func__)
+    make = DemolitionSourceContractTests.make
+    entry = DemolitionSourceContractTests.entry
+    evaluate = DemolitionSourceContractTests.evaluate
+    reject = DemolitionSourceContractTests.reject
+
+    def setUp(self):
+        self.ring = module()
+        self.reference = self.ring.NPC_REPORT_UI_ADOPTION
+        self.view = self.tmp / 'npc-report-ui-view'
+        self.previous = [
+            (self.ring.DOMAIN_MANIFEST, self.ring.DOMAIN_MANIFEST_SHA256),
+            (self.ring.IRN_MANIFEST, self.ring.IRN_MANIFEST_SHA256),
+            (self.ring.DEMOLITION_MANIFEST, self.ring.DEMOLITION_MANIFEST_SHA256),
+            (self.ring.NPC_MANIFEST, self.ring.NPC_MANIFEST_SHA256),
+            (self.ring.ATTACK_MANIFEST, self.ring.ATTACK_MANIFEST_SHA256),
+        ]
+        for path, _ in self.previous:
+            local = self.view / path
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_bytes(self.git('show', self.reference + ':' + path))
+        self.approved = {path: ('100644', self.git('show', self.reference + ':' + path)
+                               + b'\n/* exact compact report UI unit adoption */\n')
+                         for path in self.ring.NPC_REPORT_UI_CHANGED_PATHS}
+        provisional = self.make(self.reference, self.approved)
+        rows = []
+        for path in sorted(self.approved):
+            patch = self.ring.source_delta_patch(self.git, self.reference, provisional, path)
+            rows.append({'path': path, 'before': self.entry(self.reference, path),
+                         'after': self.entry(provisional, path), 'patchSha256': digest(patch),
+                         'hunks': self.ring.source_delta_hunks(patch)})
+        self.manifest = {
+            'schema': 'infinity-ring-protection-npc-report-ui-provenance-v1',
+            'historicalBaselineSha': self.ring.BASELINE, 'previousAdoptionSourceSha': self.reference,
+            'previousManifests': [{'path': path, 'sha256': value} for path, value in self.previous],
+            'productionPaths': list(self.ring.NPC_REPORT_UI_PRODUCTION_PATHS),
+            'domainPaths': list(self.ring.DOMAIN_PATHS),
+            'originalRingCriticalPaths': list(self.ring.RING_CRITICAL_PATHS),
+            'exactDomainDeltaPaths': [], 'exactRingCriticalDeltaPaths': [], 'changedPaths': rows,
+        }
+        self.raw = (json.dumps(self.manifest, indent=2) + '\n').encode()
+        self.ring.NPC_REPORT_UI_MANIFEST_SHA256 = digest(self.raw)
+        self.manifest_path = self.ring.NPC_REPORT_UI_MANIFEST
+        (self.view / self.manifest_path).write_bytes(self.raw)
+        self.candidate = self.make(provisional, {self.manifest_path: ('100644', self.raw)})
+
+    def test_composed_ui_seal_revalidates_exact_7554_and_every_historical_contract(self):
+        result = self.evaluate()
+        self.assertEqual(result['contract'], 'exact-declared-npc-report-ui-delta')
+        self.assertEqual(result['previousAdoptionSourceSha'], '7554c662e3ac1f27876a60d8aa706e5d4a4dcd52')
+        previous = result['previousProvenance']
+        self.assertEqual(previous['contract'], 'exact-declared-npc-attack-semantic-delta')
+        self.assertEqual(previous['candidateSourceSha'], self.reference)
+        self.assertEqual(previous['previousProvenance']['contract'], 'exact-declared-npc-semantic-delta')
+        self.assertEqual(self.evaluate(self.reference)['contract'], 'exact-declared-npc-attack-semantic-delta')
+        self.assertIn('not native or CI acceptance', result['verificationScope'])
+        self.assertFalse(result['historicalDomainByteIdentity'])
+        with self.assertRaises(AssertionError):
+            self.evaluate(ring=module())
+        # The new seal cannot replace or bypass the independently pinned attack proof.
+        self.ring.ATTACK_MANIFEST_SHA256 = '0' * 64
+        self.reject(self.candidate)
+
+    def test_report_ui_unknown_production_paths_bytes_modes_deletions_and_reversions_are_rejected(self):
+        for path, (mode, content) in self.approved.items():
+            for option in (None, (mode, content + b'\n'), ('100755', content), ('120000', content),
+                           ('100644', self.git('show', self.reference + ':' + path))):
+                with self.subTest(path=path, option=option and option[0]):
+                    self.reject(self.make(self.candidate, {path: option}))
+        for directory in ('src', 'src/game', 'src/core', 'src/data', 'src/automation', 'src/ui', 'src/other'):
+            with self.subTest(directory=directory):
+                self.reject(self.make(self.candidate, {directory + '/unapproved.ts': ('100644', b'// unapproved\n')}))
+        for path in ('src/main.ts', 'src/game/save-session.ts', 'src/game/arcade.ts', 'src/data/arcade.ts',
+                     'src/data/protocol-cards.ts', 'src/data/ring-art.json', 'src/core/offline.ts',
+                     'src/automation/engine.ts', *(p for p in self.ring.RING_CRITICAL_PATHS if p.startswith('src/ui/'))):
+            original = self.git('show', self.reference + ':' + path)
+            for option in (None, ('100644', original + b'\n'), ('100755', original)):
+                with self.subTest(path=path, option=option and option[0]):
+                    self.reject(self.make(self.candidate, {path: option}))
+
+    def test_all_five_historical_manifests_retain_exact_local_and_candidate_bytes_and_modes(self):
+        historical_paths = [path for path, _ in self.previous]
+        self.assertEqual(subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', self.reference,
+                                                   '--', *historical_paths], cwd=ROOT), b'')
+        for path, expected in self.previous:
+            original = self.git('show', self.reference + ':' + path)
+            self.assertEqual(digest(original), expected)
+            self.assertEqual((ROOT / path).read_bytes(), original)
+            for option in (None, ('100644', original + b'\n'), ('100755', original), ('120000', original)):
+                with self.subTest(path=path, option=option and option[0]):
+                    self.reject(self.make(self.candidate, {path: option}))
+            local = self.view / path
+            local.write_bytes(original + b'\n')
+            self.reject(self.candidate)
+            local.write_bytes(original)
+
+    def test_report_ui_manifest_requires_exact_local_and_committed_ordinary_file_bytes(self):
+        for option in (None, ('100644', self.raw + b'\n'), ('100755', self.raw), ('120000', self.raw)):
+            self.reject(self.make(self.candidate, {self.manifest_path: option}))
+        local = self.view / self.manifest_path
+        local.write_bytes(self.raw + b'\n')
+        self.reject(self.candidate)
+        local.unlink()
+        self.reject(self.candidate)
+
+    def test_report_ui_scope_anchor_all_file_records_patches_and_hunks_are_checked_beyond_digest(self):
+        mutations = [
+            lambda m: m.update(schema='wrong'), lambda m: m.update(historicalBaselineSha=self.candidate),
+            lambda m: m.update(previousAdoptionSourceSha=self.candidate),
+            lambda m: m.update(productionPaths=['src/ui']), lambda m: m.update(domainPaths=['src/game']),
+            lambda m: m.update(originalRingCriticalPaths=[]), lambda m: m.update(exactDomainDeltaPaths=['src/game']),
+            lambda m: m.update(exactRingCriticalDeltaPaths=['src/ui/ring-model.ts']),
+            lambda m: m['previousManifests'].pop(),
+            lambda m: m['previousManifests'][-1].update(sha256='0' * 64),
+            lambda m: m['changedPaths'].pop(), lambda m: m['changedPaths'].reverse(),
+            lambda m: m['changedPaths'][0].update(path='src/unapproved.ts'),
+            lambda m: m['changedPaths'][0]['before'].update(sha256='0' * 64),
+            lambda m: m['changedPaths'][0]['before'].update(mode='100755'),
+            lambda m: m['changedPaths'][0]['after'].update(sha256='0' * 64),
+            lambda m: m['changedPaths'][0]['after'].update(mode='100755'),
+            lambda m: m['changedPaths'][0].update(patchSha256='0' * 64),
+            lambda m: m['changedPaths'][0]['hunks'].pop(),
+            lambda m: m['changedPaths'][0]['hunks'].append(copy.deepcopy(m['changedPaths'][0]['hunks'][0])),
+            lambda m: m['changedPaths'][0]['hunks'][0].update(header='@@ wrong @@'),
+            lambda m: m['changedPaths'][0]['hunks'][0].update(sha256='0' * 64),
+        ]
+        for index, mutate in enumerate(mutations):
+            manifest = copy.deepcopy(self.manifest)
+            mutate(manifest)
+            raw = (json.dumps(manifest, indent=2) + '\n').encode()
+            self.ring.NPC_REPORT_UI_MANIFEST_SHA256 = digest(raw)
+            (self.view / self.manifest_path).write_bytes(raw)
+            with self.subTest(index=index):
+                self.reject(self.make(self.candidate, {self.manifest_path: ('100644', raw)}))
+
+    def test_whole_domain_and_ring_scopes_stay_fixed_even_beyond_the_exact_ui_file_gate(self):
+        for path in ('src/game/save.ts', 'src/ui/ring-model.ts'):
+            content = self.git('show', self.reference + ':' + path) + b'\n// forbidden protected change\n'
+            candidate = self.make(self.candidate, {path: ('100644', content)})
+            manifest = copy.deepcopy(self.manifest)
+            patch = self.ring.source_delta_patch(self.git, self.reference, candidate, path)
+            manifest['changedPaths'].append({'path': path, 'before': self.entry(self.reference, path),
+                                            'after': self.entry(candidate, path), 'patchSha256': digest(patch),
+                                            'hunks': self.ring.source_delta_hunks(patch)})
+            manifest['changedPaths'].sort(key=lambda row: row['path'])
+            raw = (json.dumps(manifest, indent=2) + '\n').encode()
+            # Synthetic test overrides reach the separate full protected-scope assertion.
+            self.ring.NPC_REPORT_UI_CHANGED_PATHS = tuple(row['path'] for row in manifest['changedPaths'])
+            self.ring.NPC_REPORT_UI_MANIFEST_SHA256 = digest(raw)
+            (self.view / self.manifest_path).write_bytes(raw)
+            with self.subTest(path=path), self.assertRaisesRegex(AssertionError, 'preserves the entire domain'):
+                self.evaluate(self.make(candidate, {self.manifest_path: ('100644', raw)}))
+
+    def test_new_dispatch_only_prepends_ui_branch_and_preserves_every_old_function(self):
+        before = ast.parse(self.git('show', self.reference + ':scripts/browser-ring-protection.py').decode())
+        after = ast.parse(SCRIPT.read_text())
+        functions = lambda tree: {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        old, new = functions(before), functions(after)
+        dump = lambda node: ast.dump(node, include_attributes=False)
+        self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])], ['synchronized_domain_provenance'])
+        old_dispatch, new_dispatch = old['synchronized_domain_provenance'], copy.deepcopy(new['synchronized_domain_provenance'])
+        branch = new_dispatch.body.pop(1)
+        self.assertIn('npc_report_ui_provenance', ast.unparse(branch))
+        self.assertEqual(dump(old_dispatch), dump(new_dispatch))
+        self.assertEqual(module().ATTACK_MANIFEST_SHA256, '66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918')
+        self.assertEqual(module().NPC_REPORT_UI_CHANGED_PATHS,
+                         ('src/space.css', 'src/ui/npc-battle-panel.ts', 'src/ui/npc-battle-present.ts'))
+
+    def test_final_current_report_ui_sources_match_the_composed_immutable_seal(self):
+        production = module()
+        self.assertRegex(production.NPC_REPORT_UI_MANIFEST_SHA256, r'^[0-9a-f]{64}$')
+        raw = (ROOT / production.NPC_REPORT_UI_MANIFEST).read_bytes()
+        self.assertEqual(digest(raw), production.NPC_REPORT_UI_MANIFEST_SHA256)
+        tracked = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', self.reference,
+                                           '--', *production.NPC_REPORT_UI_PRODUCTION_PATHS], cwd=ROOT).decode().splitlines()
+        untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard',
+                                             '--', *production.NPC_REPORT_UI_PRODUCTION_PATHS], cwd=ROOT).decode().splitlines()
+        self.assertEqual(sorted(set(tracked + untracked)), list(production.NPC_REPORT_UI_CHANGED_PATHS))
+        edits = {}
+        for path in production.NPC_REPORT_UI_CHANGED_PATHS:
+            local = ROOT / path
+            self.assertFalse(local.is_symlink())
+            self.assertTrue(local.is_file())
+            edits[path] = ('100755' if local.stat().st_mode & stat.S_IXUSR else '100644', local.read_bytes())
+        edits[production.NPC_REPORT_UI_MANIFEST] = ('100644', raw)
+        (self.view / production.NPC_REPORT_UI_MANIFEST).write_bytes(raw)
+        result = self.evaluate(self.make(self.reference, edits), ring=production)
+        self.assertEqual(result['contract'], 'exact-declared-npc-report-ui-delta')
+        self.assertEqual(result['previousProvenance']['candidateSourceSha'], production.NPC_REPORT_UI_ADOPTION)
 
 
 if __name__ == '__main__':
