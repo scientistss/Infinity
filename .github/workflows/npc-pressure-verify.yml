@@ -1,0 +1,78 @@
+name: Measure exact NPC orbital pressure
+on:
+  push:
+    branches: ['codex/infinity-npc-pressure-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: npc-pressure-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GAME_SOURCE_SHA: a8454529ee5abf8d915fee7f4cc1c5d77d6a8ef7
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate measurement preparation without a browser
+        run: |
+          npx tsc --noEmit
+          python -m unittest discover -s scripts -p test_npc_pressure_preparation.py -v
+      - name: Build only the exact game source
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/npc-pressure-game" "$GAME_SOURCE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/npc-pressure-game/node_modules"
+          test "$(git -C "$RUNNER_TEMP/npc-pressure-game" rev-parse HEAD)" = "$GAME_SOURCE_SHA"
+          test "$(git rev-parse HEAD:src)" = "$(git rev-parse "$GAME_SOURCE_SHA:src")"
+          (cd "$RUNNER_TEMP/npc-pressure-game" && GITHUB_SHA="$GAME_SOURCE_SHA" GITHUB_REF_NAME=codex/infinity-rebuild-npc-orbital-20261011 npm run build) > npc-pressure-game-build.log 2>&1
+          node --import tsx scripts/npc-pressure-fixture.ts npc-pressure-fixtures "$GAME_SOURCE_SHA" > npc-pressure-fixture-build.json
+          FIXTURE_HASH="$(sha256sum npc-pressure-fixtures/fixtures.json | cut -d' ' -f1)"
+          python scripts/browser-npc-pressure.py --preflight --fixture npc-pressure-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-game" > npc-pressure-preflight.json
+      - name: Official native browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Measure alternating sparse and full NPC workloads with native clocks
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/npc-pressure-game" && npm run preview -- --host 127.0.0.1 --port 4180) > npc-pressure-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4180/Infinity/release.json > /tmp/npc-pressure-release-ready.json; then READY=1; break; fi
+            sleep 0.5
+          done
+          test "$READY" = 1
+          FIXTURE_HASH="$(sha256sum npc-pressure-fixtures/fixtures.json | cut -d' ' -f1)"
+          xvfb-run -a python scripts/browser-npc-pressure.py --url http://127.0.0.1:4180/Infinity/ --fixture npc-pressure-fixtures/fixtures.json --expected-fixture-sha256 "$FIXTURE_HASH" --expected-sha "$GAME_SOURCE_SHA" --source-root "$RUNNER_TEMP/npc-pressure-game" --output npc-pressure-evidence
+      - name: Archive separate game and measurement sources
+        if: always()
+        run: |
+          git archive --format=zip --output=npc-pressure-measurement-source.zip "$GITHUB_SHA"
+          git archive --format=zip --output=npc-pressure-game-source.zip "$GAME_SOURCE_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npc-pressure-${{ github.sha }}
+          path: |
+            npc-pressure-game-build.log
+            npc-pressure-fixture-build.json
+            npc-pressure-preflight.json
+            npc-pressure-preview.log
+            npc-pressure-fixtures
+            npc-pressure-evidence
+            npc-pressure-measurement-source.zip
+            npc-pressure-game-source.zip
+          retention-days: 7
+          if-no-files-found: error
