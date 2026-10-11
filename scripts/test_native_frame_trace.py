@@ -1,7 +1,15 @@
-"""Python-only observer contracts. No Node, browser, network or acceptance claim."""
+"""Python-only observer contracts. No Node, browser, network or acceptance claim.
+
+The local dist is checked when present. Additional frozen CI dist directories can
+be checked with INFINITY_NATIVE_TRACE_RELEASES (os.pathsep-separated paths); their
+complete asset bytes must agree with each release manifest before preparation.
+"""
 from copy import deepcopy
 import hashlib
 import json
+import os
+from pathlib import Path
+import re
 import unittest
 
 import native_frame_trace as trace
@@ -15,6 +23,30 @@ FRAME = ('function frame(e){const t=clock.gapSeconds(e);if(ge.mode!=="ready"){re
          'else if(t>0){const n=j.unlocked;j=tick(j,t),observe(),clock.account(e);'
          'const r=bannerFor(j.unlocked.filter(i=>!n.includes(i)));r&&(banner=r)}'
          'render(!1,e),window.requestAnimationFrame(frame)}')
+# Explicit r13 shape, retaining the entire original branches and final paint/RAF.
+PROTECTED_FRAME = (
+    'function frame(e){const t=clock.gapSeconds(e);if(ge.mode!=="ready"){render(!1,e),'
+    'window.requestAnimationFrame(frame);return}const source=j;try{if(t>=back){'
+    'const n=catchup(j,t);j=n.state,observe(),clock.account(e),'
+    'n.appliedSeconds>=modal&&(pending=n);const r=bannerFor(n.newAchievementIds);'
+    'r&&(banner=r),persist("已追赶后台进度",!0)}else if(t>0){const n=j.unlocked;'
+    'j=tick(j,t),observe(),clock.account(e);'
+    'const r=bannerFor(j.unlocked.filter(i=>!n.includes(i)));r&&(banner=r)}}'
+    'catch(error){if(!(error instanceof SettlementError))throw error;protect(error,source)}'
+    'render(!1,e),window.requestAnimationFrame(frame)}')
+PROTECT = ('function protect(e,t){j=t,ge.freezeSimulation(e),status=ge.message,notice=ge.notice,'
+           'view.invalidateOrderAuthority(),view.observeContexts(j,!1,ge.message),scheduler.invalidate()}')
+SETTLEMENT_ERROR = (
+    'class SettlementError extends Error{constructor(t){'
+    'super(`NPC 结算异常，当前候选未采用：${t instanceof Error?t.message:String(t)}`,{cause:t}),'
+    'this.name="NpcSettlementError"}}')
+FREEZE = (
+    'freezeSimulation(t){return this.mode!=="ready"?this.blocked():'
+    '(this.protectedRaw??(this.protectedRaw=this.expectedRaw??null),'
+    'this.mode="protected",this.notice=protectionNotice,'
+    'this.message=`结算异常，当前候选未采用：${t instanceof Error?t.message:"未知错误"}。${protectionNotice}`,'
+    'this.cancelPendingImport(),{ok:!1,code:"protected",message:this.message})}')
+CANCEL = 'cancelPendingImport(){this.intent+=1,this.preparation+=1}'
 SAVE = ('saveCurrent(t,n,r){if(this.mode!=="ready")return this.blocked();let i;'
         'try{i=this.prepare(t,n,r)}catch(s){return this.invalid(s)}'
         'const o=this.writeCandidate(i,!1);return o.ok&&(this.intent+=1),o}')
@@ -32,6 +64,8 @@ SOURCE = ('// Astral character proves CDP UTF-16 column accounting: 🛰\n' + R1
           '(status!==n||notice!==r||ge.mode!==i)&&scheduler.invalidate(),'
           'view.observeContexts(j,ge.mode==="ready",ge.message)}' +
           'function sampleClock(){return{wallAt:Date.now(),frameAt:performance.now()}}' + HANDLER_R11 + '}')
+PROTECTED_SOURCE = (SOURCE.replace(FRAME, PROTECTED_FRAME).replace(SAVE, FREEZE + SAVE + CANCEL) +
+                    SETTLEMENT_ERROR + PROTECT)
 URL = 'https://example.invalid/Infinity/assets/index-native.js'
 
 
@@ -41,9 +75,9 @@ def plan(source=SOURCE):
 
 
 class FakeCDP:
-    def __init__(self):
+    def __init__(self, source=SOURCE):
         self.handlers, self.calls = {}, []
-        self.source = SOURCE
+        self.source = source
         self.early = False
 
     def on(self, name, callback):
@@ -115,6 +149,139 @@ class StructureTests(unittest.TestCase):
         self.assertNotIn('Date.now', ''.join(probe.payload for probe in p.probes))
         self.assertNotIn('performance.now', ''.join(probe.payload for probe in p.probes))
 
+    def test_complete_protected_shape_preserves_all_original_probe_statements_and_payloads(self):
+        def observations(p):
+            return [(probe.kind, probe.payload, p.source[probe.start:probe.end]) for probe in p.probes]
+        self.assertEqual(observations(plan(PROTECTED_SOURCE)), observations(plan()))
+
+    def test_protected_identifiers_can_change_but_must_not_shadow_guard_dependencies(self):
+        renamed = PROTECTED_SOURCE
+        for before, after in [('frame', '$frame'), ('source', '$snapshot'), ('SettlementError', '$NpcError'),
+                              ('protect', '$protect'), ('clock', '$clock'), ('view', '$view'),
+                              ('scheduler', '$scheduler')]:
+            renamed = re.sub(r'(?<![\w$])' + re.escape(before) + r'(?![\w$])', lambda _: after, renamed)
+        self.assertEqual(len(plan(renamed).probes), 8)
+        for dependency in ('clock', 'catchup', 'tick', 'render', 'observe', 'persist', 'bannerFor',
+                           'back', 'modal', 'banner', 'SettlementError', 'protect', 'error',
+                           'window', 'frame', 'pending'):
+            mutated = PROTECTED_FRAME.replace('source', dependency)
+            with self.subTest(shadow=dependency), self.assertRaisesRegex(AssertionError, 'shadow'):
+                plan(PROTECTED_SOURCE.replace(PROTECTED_FRAME, mutated))
+        for original, mutated in (
+            (PROTECTED_FRAME, PROTECTED_FRAME.replace('error', 'protect')),
+            (PROTECT, PROTECT.replace('protect(e,t)', 'protect(view,t)').replace('freezeSimulation(e)',
+                                                                                    'freezeSimulation(view)')),
+            (SETTLEMENT_ERROR, re.sub(r'\bt\b', 'Error', SETTLEMENT_ERROR)),
+            (SETTLEMENT_ERROR, re.sub(r'\bt\b', 'String', SETTLEMENT_ERROR)),
+            (FREEZE, re.sub(r'\bt\b', 'Error', FREEZE)),
+            (FREEZE, re.sub(r'\bt\b', 'protectionNotice', FREEZE)),
+        ):
+            with self.subTest(mutated=mutated), self.assertRaises(AssertionError):
+                plan(PROTECTED_SOURCE.replace(original, mutated))
+
+    def test_protection_helper_parameters_cannot_shadow_any_rollback_dependency(self):
+        # This helper accesses only these six outer bindings. Its error/source
+        # parameters must leave all six intact, including after a consistent rename.
+        for parameter in ('e', 't'):
+            for dependency in ('j', 'ge', 'status', 'notice', 'view', 'scheduler'):
+                mutated = re.sub(r'\b' + parameter + r'\b', dependency, PROTECT)
+                with self.subTest(parameter=parameter, shadow=dependency), self.assertRaisesRegex(AssertionError, 'shadow'):
+                    plan(PROTECTED_SOURCE.replace(PROTECT, mutated))
+
+    def test_guard_names_cannot_alias_frame_parameters_locals_or_registered_callback(self):
+        # Changing the outer guard names can introduce shadowing even when the
+        # snapshot/catch variable declarations themselves are unchanged.
+        for guard in ('SettlementError', 'protect'):
+            for dependency in ('e', 't', 'source', 'error', 'frame', 'window', 'Error', 'String'):
+                mutated = re.sub(r'\b' + guard + r'\b', dependency, PROTECTED_SOURCE)
+                with self.subTest(guard=guard, shadow=dependency), self.assertRaises(AssertionError):
+                    plan(mutated)
+        with self.assertRaises(AssertionError):
+            plan(re.sub(r'\bSettlementError\b', 'protect', PROTECTED_SOURCE))
+
+    def test_available_complete_release_bundles_are_prepared_offline(self):
+        local = Path(__file__).resolve().parents[1] / 'dist'
+        roots = ([local] if (local / 'release.json').is_file() else [])
+        roots.extend(Path(value) for value in os.environ.get('INFINITY_NATIVE_TRACE_RELEASES', '').split(os.pathsep)
+                     if value)
+        if not roots:
+            self.skipTest('no complete local release; literal grammar contracts still run')
+        for root in roots:
+            with self.subTest(release=str(root)):
+                manifest = json.loads((root / 'release.json').read_text(encoding='utf-8'))
+                assets = [(name, digest) for name, digest in manifest['files'].items()
+                          if name.startswith('assets/') and name.endswith('.js')]
+                self.assertEqual(len(assets), 1, 'exactly one production JavaScript release asset required')
+                name, digest = assets[0]
+                data = (root / name).read_bytes()
+                self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+                p = trace.prepare_plan('https://example.invalid/Infinity/' + name, data, digest)
+                self.assertEqual(p.http_bytes, data)
+                self.assertEqual(p.source.encode('utf-8'), data)
+                self.assertEqual(len(p.probes), 8)
+
+    def test_protected_frame_catch_snapshot_and_extra_opcodes_fail_closed(self):
+        replacements = [
+            ('const source=j;', 'const source=other;'), ('const source=j;', ''),
+            ('const source=j;try{', 'const source=j;mutate();try{'),
+            ('const source=j;', 'const source=j;clock.account(e);'),
+            ('if(!(error instanceof SettlementError))throw error;', ''),
+            ('if(!(error instanceof SettlementError))', 'if(error instanceof SettlementError)'),
+            ('error instanceof SettlementError', 'error instanceof Error'),
+            ('throw error;', 'throw source;'), ('throw error;', 'return;'),
+            ('protect(error,source)', 'protect(error,j)'), ('protect(error,source)', 'protect(source,error)'),
+            ('protect(error,source)', 'protect(error,source),clock.account(e)'),
+            ('protect(error,source)', 'protect(error,source);mutate()'),
+            ('}}catch(error)', '}}finally{mutate()}catch(error)'),
+            ('const source=j;', 'const e=j;'),
+            ('const source=j;', 'const protect=j;'),
+            ('catch(error){', 'catch(source){'),
+        ]
+        for before, after in replacements:
+            self.assertIn(before, PROTECTED_FRAME)
+            with self.subTest(before=before, after=after), self.assertRaises(AssertionError):
+                plan(PROTECTED_SOURCE.replace(PROTECTED_FRAME, PROTECTED_FRAME.replace(before, after)))
+
+    def test_protected_helper_error_and_freeze_semantics_fail_closed_on_mutation(self):
+        replacements = [
+            ('j=t,ge.freezeSimulation(e)', 'j=e,ge.freezeSimulation(e)'),
+            ('j=t,ge.freezeSimulation(e)', 'ge.freezeSimulation(e),j=t'),
+            ('ge.freezeSimulation(e)', 'other.freezeSimulation(e)'),
+            ('status=ge.message', 'status=other.message'), ('notice=ge.notice', 'notice=other.notice'),
+            ('view.invalidateOrderAuthority(),', ''),
+            ('view.invalidateOrderAuthority()', 'other.invalidateOrderAuthority()'),
+            ('view.observeContexts(j,!1,ge.message)', 'view.observeContexts(j,!0,ge.message)'),
+            ('view.observeContexts(j,!1,ge.message)', 'view.observeContexts(t,!1,ge.message)'),
+            ('scheduler.invalidate()}', 'other.invalidate()}'),
+            ('function protect(e,t){j=t', 'function protect(e,j){j=j'),
+            ('function protect(e,t){j=t', 'function protect(ge,t){j=t'),
+            ('extends Error{', 'extends OtherError{'),
+            ('this.name="NpcSettlementError"', 'this.name="Error"'),
+            ('{cause:t}', '{cause:other}'),
+            ('this.protectedRaw=this.expectedRaw??null', 'this.protectedRaw=null'),
+            ('this.mode="protected"', 'this.mode="ready"'),
+            ('this.notice=protectionNotice', 'this.notice=other'),
+            ('this.cancelPendingImport(),{ok:!1', 'this.cancelPendingImport(),write(),{ok:!1'),
+            ('this.cancelPendingImport(),{ok:!1', '{ok:!1'),
+            ('this.intent+=1,this.preparation+=1', 'this.intent+=1'),
+        ]
+        for before, after in replacements:
+            self.assertIn(before, PROTECTED_SOURCE)
+            with self.subTest(before=before, after=after), self.assertRaises(AssertionError):
+                plan(PROTECTED_SOURCE.replace(before, after))
+
+    def test_legacy_protected_or_unknown_duplicate_declarations_fail_closed(self):
+        for source in (SOURCE, PROTECTED_SOURCE):
+            for extra in (FRAME, PROTECTED_FRAME, 'function frame(e){mutate()}',
+                          PROTECTED_FRAME.replace('throw error;', 'throw other;')):
+                with self.subTest(protected=source == PROTECTED_SOURCE, extra=extra), self.assertRaises(AssertionError):
+                    plan(source + extra)
+        for extra in (PROTECT, 'function protect(e,t){mutate()}', SETTLEMENT_ERROR,
+                      'class SettlementError extends Error{}', FREEZE,
+                      'freezeSimulation(e){mutate()}', CANCEL, 'cancelPendingImport(){mutate()}'):
+            with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                plan(PROTECTED_SOURCE + extra)
+
     def test_complete_http_hash_and_safe_exact_url_are_mandatory(self):
         for url, raw, digest in [('file:///asset.js', SOURCE.encode(), '0' * 64),
                                  (URL, SOURCE.encode(), '0' * 64),
@@ -138,10 +305,11 @@ class StructureTests(unittest.TestCase):
             ('world();const n=status', 'world();mutate();const n=status'),
             ('npcSave(e.npcEconomy)', 'npcSave(other.npcEconomy)'),
         ]
-        for before, after in replacements:
-            self.assertIn(before, SOURCE)
-            with self.subTest(before=before), self.assertRaises(AssertionError):
-                plan(SOURCE.replace(before, after))
+        for source in (SOURCE, PROTECTED_SOURCE):
+            for before, after in replacements:
+                self.assertIn(before, source)
+                with self.subTest(protected=source == PROTECTED_SOURCE, before=before), self.assertRaises(AssertionError):
+                    plan(source.replace(before, after))
 
     def test_duplicate_or_missing_original_structures_rejected(self):
         for extra in (FRAME, SAVE, R12, HANDLER_R11, 'window.requestAnimationFrame(other);window.setInterval'):
@@ -159,9 +327,9 @@ class StructureTests(unittest.TestCase):
 
 
 class ObserverTests(unittest.TestCase):
-    def observer(self):
-        cdp = FakeCDP()
-        observer = trace.NativeFrameTrace(cdp, plan())
+    def observer(self, source=SOURCE):
+        cdp = FakeCDP(source)
+        observer = trace.NativeFrameTrace(cdp, plan(source))
         observer.install()
         return cdp, observer
 
@@ -178,6 +346,69 @@ class ObserverTests(unittest.TestCase):
                 self.assertNotIn(forbidden, condition)
         with self.assertRaises(AssertionError):
             observer.install()
+
+    def test_protected_observer_is_read_only_and_never_fabricates_zero_or_positive_gap_frames(self):
+        cdp, observer = self.observer(PROTECTED_SOURCE)
+        self.assertEqual(observer.snapshot()['events'], [])
+        cdp.execute(observer)
+        observer.verify_executed(PROTECTED_SOURCE.encode())
+        self.assertEqual(observer.document_events(3), [])
+        # Synthetic CDP input tests the observer contract, not a native run.
+        rows = events()[:2] + [
+            {'kind': 'frame', 'now': 10.25, 'gapSeconds': 0, 'mode': 'ready', 'lastTickAtBefore': 1000},
+            {'kind': 'frame-end', 'now': 10.25, 'mode': 'ready', 'lastTickAt': 1000},
+        ] + events()[2:]
+        rows = [{**row, 'sequence': index, 'executionContextId': 3} for index, row in enumerate(rows)]
+        for event in rows:
+            cdp.record(observer, {key: value for key, value in event.items()
+                                  if key not in ('sequence', 'executionContextId')})
+        observed = observer.document_events(3)
+        self.assertEqual(observed, rows)
+        self.assertEqual([row['path'] for row in trace.replay_inputs(observed)['events']
+                          if row['kind'] == 'frame'], ['skip', 'tick', 'catchUp'])
+        conditions = [arguments['condition'] for method, arguments in cdp.calls
+                      if method == 'Debugger.setBreakpointByUrl']
+        self.assertEqual(len(conditions), 8)
+        for condition in conditions:
+            self.assertTrue(condition.endswith(')),false'))
+            for forbidden in ('freezeSimulation(', 'protect(', 'invalidateOrderAuthority(',
+                              'Date.now', 'performance.now', 'requestAnimationFrame(', 'setItem(',
+                              'gapSeconds(', '.account(', 'tick(', 'catchup(', 'cancelPendingImport('):
+                self.assertNotIn(forbidden, condition)
+
+    def test_protected_failure_is_retained_without_fake_clock_adoption_or_successful_replay(self):
+        cdp, observer = self.observer(PROTECTED_SOURCE)
+        cdp.execute(observer)
+        observer.verify_executed(PROTECTED_SOURCE.encode())
+        rows = events()[:3] + [
+            {'kind': 'frame-end', 'now': 20.5, 'mode': 'protected', 'lastTickAt': 1000},
+            {'kind': 'frame', 'now': 30.5, 'gapSeconds': .02025, 'mode': 'protected',
+             'lastTickAtBefore': 1000},
+        ]
+        rows = [{**row, 'sequence': index, 'executionContextId': 3} for index, row in enumerate(rows)]
+        for event in rows:
+            cdp.record(observer, {key: value for key, value in event.items()
+                                  if key not in ('sequence', 'executionContextId')})
+        self.assertEqual(observer.document_events(3), rows)
+        self.assertEqual(observer.snapshot()['events'][-1]['lastTickAtBefore'], 1000)
+        with self.assertRaisesRegex(AssertionError, 'observed ready mode'):
+            trace.replay_inputs(observer.document_events(3))
+        with self.assertRaisesRegex(AssertionError, 'observed ready mode'):
+            trace.to_replay_epoch(observer.document_events(3))
+
+    def test_protected_source_keeps_full_http_v8_and_resolved_statement_verification(self):
+        for change in ('http', 'v8', 'location'):
+            cdp, observer = self.observer(PROTECTED_SOURCE)
+            cdp.execute(observer)
+            data = PROTECTED_SOURCE.encode()
+            if change == 'http':
+                data += b'\n'
+            elif change == 'v8':
+                cdp.source += '\n'
+            else:
+                observer.resolutions[2]['location'].update(lineNumber=0, columnNumber=0)
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                observer.verify_executed(data)
 
     def test_actual_full_v8_source_and_unique_locations_required(self):
         cdp, observer = self.observer()

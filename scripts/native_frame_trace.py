@@ -108,23 +108,36 @@ def prepare_plan(url, http_bytes, release_sha256):
                           r')\);window\.setInterval', source, 'first application RAF registration')
     frame = registration.group('frame')
     F = re.escape(frame)
-    # Match the ENTIRE original frame. No injected calls/branches or shortened
-    # prefix can authorize a different simulation path.
-    frame_match = unique(
+    # Two explicit, COMPLETE frames are supported. The protected variant adds
+    # only the typed settlement guard around the identical original gap paths.
+    # A valid prefix, unknown duplicate definition or arbitrary catch body must
+    # never authorize a different simulation path.
+    unique(r'(?<![\w$])function ' + F + r'\(', source, 'single native frame declaration')
+    frame_prefix = (
         rf'function {F}\((?P<now>{ID})\)\{{const (?P<gap>{ID})={C}\.gapSeconds\((?P=now)\);'
         rf'(?P<start>if\({S}\.mode!=="ready"\))\{{(?P<render>{ID})\(!1,(?P=now)\),'
-        rf'window\.requestAnimationFrame\({F}\);return\}}'
+        rf'window\.requestAnimationFrame\({F}\);return\}}')
+    frame_paths = (
         rf'if\((?P=gap)>=(?P<threshold>{ID})\)\{{const (?P<result>{ID})=(?P<catchup>{ID})\({ST},(?P=gap)\);'
         rf'{ST}=(?P=result)\.state,(?P<observe>{ID})\(\),{C}\.account\((?P=now)\),'
-        rf'(?P=result)\.appliedSeconds>=(?P<modal>{ID})&&\({ID}=(?P=result)\);'
+        rf'(?P=result)\.appliedSeconds>=(?P<modal>{ID})&&\((?P<catchup_state>{ID})=(?P=result)\);'
         rf'const (?P<unlock>{ID})=(?P<banner_fn>{ID})\((?P=result)\.newAchievementIds\);'
         rf'(?P=unlock)&&\((?P<banner>{ID})=(?P=unlock)\),(?P<persist>{ID})\("已追赶后台进度",!0\)'
         rf'\}}else if\((?P=gap)>0\)\{{const (?P<before>{ID})={ST}\.unlocked;'
         rf'{ST}=(?P<tick>{ID})\({ST},(?P=gap)\),(?P=observe)\(\),{C}\.account\((?P=now)\);'
         rf'const (?P<live_unlock>{ID})=(?P=banner_fn)\({ST}\.unlocked\.filter\((?P<id>{ID})=>!'
-        rf'(?P=before)\.includes\((?P=id)\)\)\);(?P=live_unlock)&&\((?P=banner)=(?P=live_unlock)\)\}}'
-        rf'(?P<end>(?P=render)\(!1,(?P=now)\)),window\.requestAnimationFrame\({F}\)\}}',
-        source, 'complete original native frame')
+        rf'(?P=before)\.includes\((?P=id)\)\)\);(?P=live_unlock)&&\((?P=banner)=(?P=live_unlock)\)\}}')
+    frame_suffix = rf'(?P<end>(?P=render)\(!1,(?P=now)\)),window\.requestAnimationFrame\({F}\)\}}'
+    original_frame = frame_prefix + frame_paths + frame_suffix
+    protected_frame = (
+        frame_prefix + rf'const (?P<source>{ID})={ST};try\{{' + frame_paths +
+        rf'\}}catch\((?P<error>{ID})\)\{{if\(!\((?P=error) instanceof (?P<error_class>{ID})\)\)'
+        rf'throw (?P=error);(?P<protect>{ID})\((?P=error),(?P=source)\)\}}' + frame_suffix)
+    frames = [match for grammar in (original_frame, protected_frame)
+              for match in re.finditer(grammar, source)]
+    require(len(frames) == 1,
+            f'complete original or protected native frame: expected one complete match, got {len(frames)}')
+    frame_match = frames[0]
     unique(r'const ' + ID + r'=(?:15e3|15000),' + re.escape(frame_match.group('threshold')) +
            r'=5,' + re.escape(frame_match.group('modal')) + r'=30,', source, 'fixed original frame thresholds')
     ctor = unique(r'class ' + re.escape(startup.group('session_class')) +
@@ -153,8 +166,65 @@ def prepare_plan(url, http_bytes, release_sha256):
         rf'(?P=result)\.ok\?(?P=next)&&\({status}=(?P=next)\):'
         rf'\({status}=(?P=result)\.message,{notice}={S}\.notice\),'
         rf'\({status}!==(?P=before_status)\|\|{notice}!==(?P=before_notice)\|\|{S}\.mode!==(?P=before_mode)\)'
-        rf'&&{ID}\.invalidate\(\),{ID}\.observeContexts\({ST},{S}\.mode===\"ready\",{S}\.message\)\}}',
+        rf'&&(?P<scheduler>{ID})\.invalidate\(\),(?P<view>{ID})\.observeContexts\({ST},{S}\.mode===\"ready\",{S}\.message\)\}}',
         source, 'complete original persist wrapper')
+    if 'protect' in frame_match.groupdict():
+        protect = re.escape(frame_match.group('protect'))
+        error_class = re.escape(frame_match.group('error_class'))
+        require(frame_match.group('source') not in
+                {state, session, clock, frame, 'window', frame_match.group('now'), frame_match.group('gap'),
+                 frame_match.group('protect'), frame_match.group('error_class'),
+                 frame_match.group('render'), frame_match.group('catchup'), frame_match.group('tick'),
+                 frame_match.group('observe'), frame_match.group('persist'), frame_match.group('banner_fn'),
+                 frame_match.group('threshold'), frame_match.group('modal'), frame_match.group('banner'),
+                 frame_match.group('catchup_state')}
+                and frame_match.group('error') not in
+                {frame_match.group('source'), frame_match.group('protect'), frame_match.group('error_class')},
+                'settlement snapshot and catch bindings must not shadow their dependencies')
+        guard_names = {frame_match.group('protect'), frame_match.group('error_class')}
+        frame_bindings = {frame_match.group(key) for key in ('now', 'gap', 'source', 'error')}
+        require(len(guard_names) == 2 and
+                not (guard_names & (frame_bindings | {frame, 'window', 'Error', 'String'})),
+                'settlement error and helper names must not be shadowed by native frame bindings')
+        unique(r'(?<![\w$])function ' + protect + r'\(', source, 'single settlement protection declaration')
+        protection = unique(
+            rf'function {protect}\((?P<error>{ID}),(?P<source>{ID})\)\{{'
+            rf'{ST}=(?P=source),{S}\.freezeSimulation\((?P=error)\),'
+            rf'{status}={S}\.message,{notice}={S}\.notice,'
+            rf'{re.escape(persist.group("view"))}\.invalidateOrderAuthority\(\),'
+            rf'{re.escape(persist.group("view"))}\.observeContexts\({ST},!1,{S}\.message\),'
+            rf'{re.escape(persist.group("scheduler"))}\.invalidate\(\)\}}',
+            source, 'complete settlement rollback/freeze/authority-retirement helper')
+        require(protection.group('error') != protection.group('source') and
+                not ({protection.group('error'), protection.group('source')} &
+                     {state, session, startup.group('status'), startup.group('notice'),
+                      persist.group('view'), persist.group('scheduler')}),
+                'settlement protection parameters must not shadow rollback dependencies')
+        unique(r'(?<![\w$])class ' + error_class + r' ', source, 'single settlement error declaration')
+        settlement_error = unique(
+            rf'class {error_class} extends Error\{{constructor\((?P<cause>{ID})\)\{{'
+            rf'super\(`NPC 结算异常，当前候选未采用：\$\{{(?P=cause) instanceof Error\?'
+            rf'(?P=cause)\.message:String\((?P=cause)\)\}}`,\{{cause:(?P=cause)\}}\),'
+            r'this\.name="NpcSettlementError"\}\}', source, 'complete typed settlement error')
+        require(frame_match.group('error_class') not in {'Error', 'String'} and
+                settlement_error.group('cause') not in {'Error', 'String'},
+                'settlement error must retain the native Error/String bindings')
+        unique(r'(?<![\w$.])freezeSimulation\(', source, 'single simulation freeze method')
+        freeze = unique(
+            rf'freezeSimulation\((?P<error>{ID})\)\{{return this\.mode!=="ready"\?this\.blocked\(\):'
+            rf'\(this\.protectedRaw\?\?\(this\.protectedRaw=this\.expectedRaw\?\?null\),'
+            rf'this\.mode="protected",this\.notice=(?P<notice>{ID}),'
+            rf'this\.message=`结算异常，当前候选未采用：\$\{{(?P=error) instanceof Error\?'
+            rf'(?P=error)\.message:"未知错误"\}}。\$\{{(?P=notice)\}}`,this\.cancelPendingImport\(\),'
+            r'\{ok:!1,code:"protected",message:this\.message\}\)\}',
+            source, 'complete no-write simulation freeze')
+        require(read_end < freeze.start() < freeze.end() <= save.start(),
+                'simulation freeze must precede saveCurrent in the original session')
+        require(freeze.group('error') not in {'Error', freeze.group('notice')},
+                'simulation freeze parameter must not shadow Error or the protection notice')
+        unique(r'(?<![\w$.])cancelPendingImport\(\)\{', source, 'single pending-import retirement method')
+        unique(r'cancelPendingImport\(\)\{this\.intent\+=1,this\.preparation\+=1\}',
+               source, 'complete pending-import authority retirement')
     now, gap = frame_match.group('now'), frame_match.group('gap')
     state_json = f'{serializer}({state})'
     action_start = source.index('{', handler.start()) + 1
