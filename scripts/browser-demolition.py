@@ -600,7 +600,29 @@ def boot(epoch, width=1440):
     return context, page
 
 
-def import_save(page, value, label, original_raw=None, expected=None):
+def import_confirmation(value, progress):
+    return (f'已读取存档 v{value["version"]}/r{value["revision"]}。\n'
+            f'是否替换当前进度（{progress}）？\n'
+            '读取期间产生的变化也会被替换。保留当前已保存原件，写入校验成功后才采用。')
+
+
+def verify_conflict_refusal(before, after, status):
+    check('real conflict import reports refusal and the required cold-refresh recovery boundary',
+          status == '导入失败，当前进度未改动：检测到其他标签页修改了存档，已暂停写入。请先导出本页保留的原件，再刷新读取最新存档。', status)
+    check('refused conflict import preserves every current, legacy and backup byte', exact_json(before, after))
+
+
+def verify_recovery_storage(before, after, competing, restored):
+    check('new protected-session recovery adopts exactly the original complete saved bytes', after.get(KEY) == restored)
+    check('new protected-session recovery preserves every pre-existing noncurrent storage byte',
+          all(after.get(key) == value for key, value in before.items() if key != KEY))
+    added = set(after) - set(before)
+    backup = lambda key: key == KEY + '.backup' or key.startswith(KEY + '.backup.')
+    check('recovery only adds backup keys and preserves the exact malformed competing source',
+          all(backup(key) for key in added) and any(backup(key) and value == competing for key, value in after.items()))
+
+
+def import_save(page, value, label, original_raw=None, expected=None, expected_conflict=False, displayed_progress=None):
     check('native handoff retains exact original zero-gap clocks', value['savedAt'] == value['lastTickAt'] == page.evaluate('Date.now()'))
     text = original_raw if original_raw is not None else json.dumps(value, ensure_ascii=False)
     check('file bytes decode to complete intended envelope without patching', exact_json(json.loads(text), value))
@@ -608,21 +630,59 @@ def import_save(page, value, label, original_raw=None, expected=None):
     tab(page, 'save')
     if page.locator('[data-action="save"]').is_enabled():
         page.locator('[data-action="save"]').click()
-    before, count, dialogs = raw(page), page.evaluate('window.__demoFiles.length'), []
-    current = read(page); selected = planet(current, current['activePlanetId'])
-    progress = f'第 {current["stats"]["launches"] + 1} 轮，{len(current["planets"])} 颗星球，当前“{selected["name"]}”'
+    before, before_storage, count, dialogs = raw(page), storage(page), page.evaluate('window.__demoFiles.length'), []
+    if displayed_progress is None:
+        current = read(page); selected = planet(current, current['activePlanetId'])
+        displayed_progress = f'第 {current["stats"]["launches"] + 1} 轮，{len(current["planets"])} 颗星球，当前“{selected["name"]}”'
+    confirmation = import_confirmation(value, displayed_progress)
     def answer(dialog):
-        valid = dialog.type == 'confirm' and dialog.message.startswith(f'已读取存档 v{value["version"]}/r{value["revision"]}。') and f'是否替换当前进度（{progress}）？' in dialog.message and '读取期间产生的变化也会被替换' in dialog.message and '写入校验成功后才采用' in dialog.message
+        valid = dialog.type == 'confirm' and dialog.message == confirmation
         dialogs.append({'valid': valid, 'message': dialog.message}); dialog.accept() if valid else dialog.dismiss()
     page.once('dialog', answer)
     page.locator('[data-bind="import-file"]').set_input_files(str(path.resolve()))
-    expect(page.locator('[data-bind="status"]')).to_contain_text('已导入并存入本地')
+    expect(page.locator('[data-bind="status"]')).to_contain_text('导入失败，当前进度未改动' if expected_conflict else '已导入并存入本地')
     files = page.evaluate('window.__demoFiles')
     check('real file selection/native asynchronous read/one explicit native confirmation', len(dialogs) == 1 and dialogs[0]['valid'] and len(files) == count + 1 and files[-1] == {'trusted': True, 'name': path.name, 'size': path.stat().st_size, 'priorRaw': before}, dialogs)
+    if expected_conflict:
+        verify_conflict_refusal(before_storage, storage(page), page.locator('[data-bind="status"]').inner_text())
+        evidence.append({'case': case, 'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                         'classification': 'Real native file/confirmation rejected by the existing conflict session; never a successful recovery', 'nativeConfirmation': dialogs})
+        building_tab(page)
+        return
     wanted = expected if expected is not None else value
     whole_state('import-' + label, read(page), wanted['state'])
     check('entire adopted native envelope equals exact migration/unchanged handoff oracle', exact_json(json.loads(raw(page)), wanted))
     evidence.append({'case': case, 'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'classification': label, 'nativeConfirmation': dialogs})
+    building_tab(page)
+
+
+def reload_conflicted_source(page, competing):
+    # A conflict cannot be reset/imported away. Navigation creates a new session
+    # from the SAME malformed bytes, which must now enter protected placeholder.
+    before = storage(page)
+    check('conflict cold reload starts at zero saved gap without replacing the shared source',
+          raw(page) == competing and json.loads(competing)['lastTickAt'] == page.evaluate('Date.now()'))
+    capture = page_sources[page]; capture['cdp'].send('Debugger.enable'); capture['responses'].clear(); capture['executed'].clear()
+    response = page.reload(wait_until='networkidle')
+    check('conflict recovery boundary is an actual fresh HTTP200 document', response is not None and response.status == 200 and response.url == args.url)
+    verify_bundle(page); verify_document_response(response)
+    check('cold reload keeps every malformed current, legacy and backup byte unchanged', exact_json(storage(page), before))
+    check('cold reload destroys the prior document references rather than reviving its review', page.evaluate('typeof window.__demoRetained === "undefined"'))
+    expect(page.locator('[data-bind="notice"]')).to_contain_text('当前仅显示临时初始画面')
+    tab(page, 'overview')
+    placeholder = page.evaluate("""()=>({planet:document.querySelector('[data-bind="ov-planet"]').innerText,
+      played:document.querySelector('[data-bind="played"]').innerText,
+      options:[...document.querySelector('#planet-select').options].map(o=>({value:o.value,text:o.textContent})),
+      jobHidden:document.querySelector('#demolition-job').hidden,reviewHidden:document.querySelector('#demolition-review').hidden,
+      confirmations:document.querySelectorAll('[data-demolition-confirm]').length,cancellations:document.querySelectorAll('[data-cancel-demolition]').length})""")
+    check('fresh protected session displays only a frozen initial placeholder with no inherited authority',
+          placeholder == {'planet': '母星', 'played': '累计 0 秒', 'options': [{'value': 'homeworld', 'text': '母星'}],
+                          'jobHidden': True, 'reviewHidden': True, 'confirmations': 0, 'cancellations': 0}, placeholder)
+    tab(page, 'save')
+    protected_storage = storage(page)
+    trusted_click(page, '[data-action="save"]')
+    check('fresh protected placeholder native save still refuses to change any malformed current or backup byte',
+          exact_json(storage(page), protected_storage) and raw(page) == competing and '原件已保留并受保护' in page.locator('[data-bind="status"]').inner_text())
     building_tab(page)
 
 
@@ -914,14 +974,40 @@ try:
             force_retained(page, 'protected new demolition controls')
             export_protected(page, original, 'native-protected-' + ('paid' if paid_fault else 'review') + '-original.json')
             check('replay/export never overwrites competing raw bytes', raw(page) == competing)
-            # Recovery is a fresh actual file-selection/confirmation operation.
-            # It is deliberately the same complete state, so old consent cannot
-            # hide behind a different-world comparison.
-            import_save(page, handoff, 'explicit-native-recovery-' + ('paid' if paid_fault else 'review'))
-            check('recovery never re-enables the retained old confirm/cancel authority node', page.evaluate('window.__demoRetained[1].disabled'))
-            force_retained(page, 'recovery cannot resurrect stale review/cancel authority', indices=[1])
+            suffix = 'paid' if paid_fault else 'review'
+            import_save(page, handoff, 'expected-conflict-refusal-' + suffix, expected_conflict=True)
+            # The prior synthetic replay deliberately changed disabled=false;
+            # retired capabilities need not repaint that artificial old flag.
+            check('refused replacement keeps the same retired reference in the original document',
+                  page.evaluate('window.__demoRetained[1].ownerDocument === document'))
+            force_retained(page, 'refused conflict import never revives old document authority', indices=[1])
+            export_protected(page, original, 'native-conflict-refused-' + suffix + '-original.json')
+            before_close = storage(page); other.close()
+            check('closing the fault-writer tab changes no current, legacy or backup bytes', exact_json(storage(page), before_close))
+            trusted_click(page, '[data-action="save"]')
+            check('closed fault-writer does not restore old-session save authority', exact_json(storage(page), before_close) and '其他标签页' in page.locator('[data-bind="status"]').inner_text())
+            reload_conflicted_source(page, competing)
+            # The actual new session has loaded the same unreadable raw source.
+            # Its visible world is the initial placeholder, not read(page)'s two
+            # planets. Fresh explicit consent now describes that real boundary.
+            before_recovery = storage(page)
+            import_save(page, handoff, 'new-protected-session-native-recovery-' + suffix,
+                        displayed_progress='第 1 轮，1 颗星球，当前“母星”')
+            verify_recovery_storage(before_recovery, storage(page), competing, original)
+            check('fresh restored document has no old review, while saved paid work alone gets a new cancel control',
+                  page.locator('#demolition-review').is_hidden() and page.locator(CONFIRM).count() == 0 and
+                  (page.locator(CANCEL).count() == 1 and page.locator(CANCEL).is_enabled() if paid_fault else page.locator(CANCEL).count() == 0))
             whole_state('native-recovery-preserves-exact-world', save(page), baseline)
-            other.close(); context.close()
+            if paid_fault:
+                # This is a separate same-document, same-ID ready-session import
+                # retirement test. It does not pretend old DOM survived reload.
+                page.evaluate('(s)=>window.__demoRetained=[document.querySelector(s)]', CANCEL)
+                import_save(page, handoff, 'ready-same-world-paid-reimport-retires-current-cancel')
+                check('ready same-world reimport disables the actual retained prior cancellation node',
+                      page.evaluate('(s)=>window.__demoRetained[0].disabled && window.__demoRetained[0] !== document.querySelector(s)', CANCEL))
+                force_retained(page, 'ready same-world paid reimport cannot reuse retired cancellation')
+                whole_state('same-world-paid-reimport-never-refunds-or-changes-job-timer', save(page), baseline)
+            context.close()
         for kind in ('hidden-roundtrip', 'detach-confirm', 'detach-review', 'detach-cancel'):
             begin_case('explicit synthetic no-RAF stale DOM retirement: ' + kind)
             key = 'firstPaid' if kind == 'detach-cancel' else 'selectedHome'

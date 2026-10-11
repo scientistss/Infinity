@@ -17,7 +17,7 @@ from test_terraformer_native_preparation import TargetPage as OriginalTargetPage
 SCRIPT = Path(__file__).with_name('browser-demolition.py')
 SOURCE = SCRIPT.read_text(encoding='utf-8')
 TREE = ast.parse(SOURCE)
-NAMES = {'exact_json', 'native_scroll_to', 'capture_failure', 'capture_live_failure', 'wallet_transfer', 'wallet_golden', 'advance', 'wait_for_scroll_settled', 'responsive'}
+NAMES = {'exact_json', 'native_scroll_to', 'capture_failure', 'capture_live_failure', 'wallet_transfer', 'wallet_golden', 'advance', 'wait_for_scroll_settled', 'responsive', 'import_confirmation', 'verify_conflict_refusal', 'verify_recovery_storage'}
 
 
 def helpers():
@@ -311,6 +311,79 @@ class TransferProofTests(unittest.TestCase):
             with self.subTest(after=after):
                 with self.assertRaises(AssertionError):
                     self.namespace['wallet_transfer'](self.before, after, self.fee, 1, 'refund')
+
+
+class ConflictRecoveryPreparationTests(unittest.TestCase):
+    KEY = 'infinity.original-p4.save.v1'
+    STATUS = '导入失败，当前进度未改动：检测到其他标签页修改了存档，已暂停写入。请先导出本页保留的原件，再刷新读取最新存档。'
+
+    def setUp(self):
+        self.namespace = helpers()
+        def check(name, condition, detail=None):
+            if not condition:
+                raise AssertionError(name)
+        self.namespace.update(check=check, KEY=self.KEY)
+        self.competing, self.original = '{ "malformed": true }', '{ "complete": "original paid timer" }'
+        self.before = {self.KEY: self.competing, self.KEY + '.backup': 'older original bytes',
+                       'infinity.save.v1': 'legacy sentinel', 'infinity.ui.tab': 'facilities'}
+        self.after = {**self.before, self.KEY: self.original, self.KEY + '.backup.1': self.competing}
+
+    def test_real_conflict_refusal_requires_exact_reason_and_every_storage_byte(self):
+        refuse = self.namespace['verify_conflict_refusal']
+        refuse(self.before, copy.deepcopy(self.before), self.STATUS)
+        for key in self.before:
+            changed = copy.deepcopy(self.before); changed[key] += ' '
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'every current'):
+                refuse(self.before, changed, self.STATUS)
+        for wrong in ('已导入并存入本地', '导入失败，当前进度未改动', self.STATUS + ' '):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(AssertionError, 'cold-refresh'):
+                refuse(self.before, self.before, wrong)
+
+    def test_fresh_protected_recovery_preserves_malformed_source_as_exact_backup(self):
+        self.namespace['verify_recovery_storage'](self.before, self.after, self.competing, self.original)
+
+    def test_recovery_cannot_normalize_source_erase_old_backup_or_touch_legacy(self):
+        mutants = []
+        for key in (self.KEY, self.KEY + '.backup', 'infinity.save.v1', self.KEY + '.backup.1'):
+            value = copy.deepcopy(self.after); value[key] += ' '; mutants.append(value)
+        missing = copy.deepcopy(self.after); del missing[self.KEY + '.backup.1']; mutants.append(missing)
+        extra = copy.deepcopy(self.after); extra['unrelated-new-permission'] = 'enabled'; mutants.append(extra)
+        for value in mutants:
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                self.namespace['verify_recovery_storage'](self.before, value, self.competing, self.original)
+
+    def test_initial_placeholder_confirmation_does_not_claim_shared_corrupt_two_planet_world(self):
+        confirmation = self.namespace['import_confirmation']({'version': 9, 'revision': 11}, '第 1 轮，1 颗星球，当前“母星”')
+        self.assertEqual(confirmation, '已读取存档 v9/r11。\n是否替换当前进度（第 1 轮，1 颗星球，当前“母星”）？\n读取期间产生的变化也会被替换。保留当前已保存原件，写入校验成功后才采用。')
+        self.assertNotIn('2 颗星球', confirmation)
+        imported = next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'import_save')
+        guarded = next(node for node in imported.body if isinstance(node, ast.If) and ast.unparse(node.test) == 'displayed_progress is None')
+        self.assertIn('read(page)', ast.unparse(guarded))
+        self.assertIn('dialog.message == confirmation', ast.unparse(imported))
+
+    def test_conflict_rejection_precedes_real_reload_and_fresh_protected_import(self):
+        calls = sorted((node for node in ast.walk(TREE) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)), key=lambda node: node.lineno)
+        rejected = next(node for node in calls if node.func.id == 'import_save' and any(kw.arg == 'expected_conflict' and isinstance(kw.value, ast.Constant) and kw.value.value is True for kw in node.keywords))
+        reloaded = next(node for node in calls if node.func.id == 'reload_conflicted_source')
+        restored = next(node for node in calls if node.func.id == 'import_save' and any(kw.arg == 'displayed_progress' for kw in node.keywords))
+        self.assertLess(rejected.lineno, reloaded.lineno)
+        self.assertLess(reloaded.lineno, restored.lineno)
+        self.assertTrue(any(node.func.id == 'force_retained' and rejected.lineno < node.lineno < reloaded.lineno for node in calls))
+        reload_body = ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'reload_conflicted_source'))
+        for forbidden in ('setItem', 'removeItem', 'import_save(', 'save(page'):
+            self.assertNotIn(forbidden, reload_body)
+        self.assertIn('page.reload(', reload_body)
+        self.assertIn('verify_bundle(page)', reload_body)
+        self.assertIn('verify_document_response(response)', reload_body)
+        self.assertIn('exact_json(storage(page), before)', reload_body)
+        self.assertIn('typeof window.__demoRetained', reload_body)
+        self.assertIn('当前仅显示临时初始画面', reload_body)
+
+    def test_paid_same_document_reimport_separately_retires_its_actual_current_cancel(self):
+        self.assertIn('ready-same-world-paid-reimport-retires-current-cancel', SOURCE)
+        self.assertIn('window.__demoRetained[0].disabled && window.__demoRetained[0] !== document.querySelector(s)', SOURCE)
+        self.assertIn('same-world-paid-reimport-never-refunds-or-changes-job-timer', SOURCE)
+        self.assertNotIn("check('recovery never re-enables the retained old", SOURCE)
 
 
 class LiveFailureContractTests(unittest.TestCase):
