@@ -7,6 +7,7 @@ declare const process: { argv: string[]; stdout: { write(text: string): void } }
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { exactEvidence as exact, requireEvidence as check } from "./demolition-fixture";
+import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection";
 
 export const NPC_NATURAL_MILESTONES = [
   "origin-migrated-r11-age-zero", "selected-home", "research-paid-unfinished", "research-complete",
@@ -14,6 +15,10 @@ export const NPC_NATURAL_MILESTONES = [
   "first-probe-returned", "ordinary-wait-complete", "second-scout-outbound",
   "second-scout-halfway-native-free-strict-reload", "second-snapshot-returning", "final-returned-and-reloaded",
 ] as const;
+const ACTIVE_SCOUT_MILESTONES: Partial<Record<typeof NPC_NATURAL_MILESTONES[number], number>> = {
+  "first-scout-outbound": 4, "first-snapshot-returning": 4,
+  "second-scout-outbound": 5, "second-scout-halfway-native-free-strict-reload": 5, "second-snapshot-returning": 5,
+};
 
 async function main(): Promise<void> {
   const [{ readFileSync }, { createHash }, { execFileSync }] = await Promise.all([
@@ -57,6 +62,12 @@ async function main(): Promise<void> {
     exact(parsed, row.save, `${key}: strict complete envelope`);
     exact(serializeState(state), row.save.state, `${key}: full state roundtrip`);
     exact(exportSave(state, row.save.savedAt, row.save.lastTickAt), row.raw, `${key}: canonical exact output bytes`);
+    const scoutId = ACTIVE_SCOUT_MILESTONES[key];
+    exact(state.fleets.length, scoutId === undefined ? 0 : 1, `${key}: exact natural-route fleet count`);
+    if (scoutId !== undefined) {
+      exact(state.fleets[0].id, scoutId, `${key}: original paid scout identity`);
+      exact(state.fleets[0].ships, NPC_SCOUT_UI_SELECTION, `${key}: exact real UI ship selection, including legal zeros`);
+    }
     expected[key] = serializeState(state); milestones[key] = row;
   }
   exact(importedSave.state, expected["origin-migrated-r11-age-zero"], "First milestone is pure actual r11 migration");

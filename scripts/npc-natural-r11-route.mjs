@@ -21,6 +21,7 @@ import { SaveSession } from "../src/game/save-session.ts";
 import { STORAGE_KEY } from "../src/game/content.ts";
 import { createInitialState } from "../src/game/state.ts";
 import { prestigeConfirmation } from "../src/ui/prestige-preview-model.ts";
+import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
 const INPUT = resolve(REPO, "tests/fixtures/demolition-origin-r10-save.json");
@@ -215,7 +216,9 @@ function advance(seconds, name) {
     return log;
 }
 const target = { galaxy: 1, system: 56, position: 6 };
-const request = () => ({ mission: "scout", target, ships: { espionage_probe: 1 }, cargo: emptyCargo(), speedPercent: 100 });
+// Match the real UI request before quote/send, including all legal zero inputs.
+// sendFleet and the strict reader preserve these keys; never normalize results.
+const request = () => ({ mission: "scout", target, ships: { ...NPC_SCOUT_UI_SELECTION }, cargo: emptyCargo(), speedPercent: 100 });
 function dispatch(name, expectedId) {
     const before = serializeState(state), quote = quoteFlight(state, request());
     check(`${name}: real quote accepted`, quote.ok);
@@ -225,7 +228,8 @@ function dispatch(name, expectedId) {
     const result = payment(name, () => sendFleet(state, request()), { metal: 0, crystal: 0, deuterium: GOLD.fuelEachDispatch }, () => legacy.fleet.sendFleet(control, request()));
     equal(`${name}: real fleet ID`, result.fleetId, expectedId);
     const fleet = state.fleets.find(f => f.id === expectedId);
-    equal(`${name}: real locked outbound and empty cargo`, [fleet.duration, fleet.remaining, fleet.returning, fleet.elapsed, fleet.ships, RES.map(r => fleet.cargo[r].toString())], [1, 1, false, 0, { espionage_probe: 1 }, ["0", "0", "0"]]);
+    equal(`${name}: real locked outbound and empty cargo`, [fleet.duration, fleet.remaining, fleet.returning, fleet.elapsed, fleet.ships, RES.map(r => fleet.cargo[r].toString())], [1, 1, false, 0, NPC_SCOUT_UI_SELECTION, ["0", "0", "0"]]);
+    equal(`${name}: exactly one probe and twelve legal zero selections`, [Object.keys(fleet.ships).length, Object.values(fleet.ships).reduce((sum, count) => sum + count, 0), Object.values(fleet.ships).filter(count => count === 0).length, fleet.ships.espionage_probe], [13, 1, 12, 1]);
     equal(`${name}: probe removed from home availability`, activePlanet(state).units.espionage_probe, 0);
 }
 function arrival(id, observedElapsed) {
