@@ -210,7 +210,9 @@ class ClickObserverPreparationTests(unittest.TestCase):
     def setUp(self):
         self.selector = '[data-tab="fleet"]'
         self.row = {'trusted': True, 'enabled': True, 'selector': self.selector,
-                    'start': 100, 'firstRAF': 112, 'secondRAF': 128, 'postDispatchTaskAt': 104}
+                    'eventTimestamp': 99, 'captureStartAt': 100, 'postDispatchTaskAt': 104,
+                    'firstRafFrameTimestamp': 112, 'secondRafFrameTimestamp': 128,
+                    'firstRafCallbackAt': 113, 'secondRafCallbackAt': 129}
 
     def test_real_navigation_may_stop_bubbling_but_later_task_is_required(self):
         self.assertEqual(MODULE.qualify_click([self.row], self.selector), self.row)
@@ -221,9 +223,9 @@ class ClickObserverPreparationTests(unittest.TestCase):
     def test_save_import_still_requires_same_dispatch_storage_witness(self):
         with self.assertRaisesRegex(AssertionError, 'synchronous document-bubble'):
             MODULE.qualify_click([self.row], self.selector, storage=True)
-        self.row.update(dispatchCompleted=102, beforeRaw='{"value":1}', afterRaw='{"value":1}')
+        self.row.update(documentBubbleAt=102, beforeRaw='{"value":1}', afterRaw='{"value":1}')
         self.assertEqual(MODULE.qualify_click([self.row], self.selector, storage=True), self.row)
-        for key in ('dispatchCompleted', 'beforeRaw', 'afterRaw'):
+        for key in ('documentBubbleAt', 'beforeRaw', 'afterRaw'):
             broken = {name: value for name, value in self.row.items() if name != key}
             with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'synchronous document-bubble'):
                 MODULE.qualify_click([broken], self.selector, storage=True)
@@ -237,9 +239,91 @@ class ClickObserverPreparationTests(unittest.TestCase):
                 MODULE.qualify_click(rows, self.selector)
 
     def test_both_native_raf_observations_still_required(self):
-        for key, value in (('firstRAF', None), ('secondRAF', None), ('secondRAF', 100)):
+        for key, value in (('firstRafFrameTimestamp', None), ('secondRafFrameTimestamp', None),
+                           ('secondRafFrameTimestamp', 100), ('firstRafCallbackAt', None),
+                           ('secondRafCallbackAt', None), ('firstRafCallbackAt', 99), ('secondRafCallbackAt', 112)):
             with self.subTest(key=key, value=value), self.assertRaisesRegex(AssertionError, 'two native RAF'):
                 MODULE.qualify_click([{**self.row, key: value}], self.selector)
+
+    def test_frame_start_before_event_is_not_callback_entry_or_full_response(self):
+        # Golden double: the old event-to-second-frame value is only 45 ms,
+        # less than the 57.1 ms synchronous boundary, while actual entry is later.
+        row = {**self.row, 'eventTimestamp': 100, 'captureStartAt': 101, 'documentBubbleAt': 158.1,
+               'postDispatchTaskAt': 160, 'firstRafFrameTimestamp': 90, 'secondRafFrameTimestamp': 145,
+               'firstRafCallbackAt': 159, 'secondRafCallbackAt': 170,
+               'beforeRaw': '{ "value": 1 }\n', 'afterRaw': '{ "value": 2 }\n'}
+        self.assertIs(MODULE.qualify_click([row], self.selector, storage=True), row)
+        timing = MODULE.click_timing(row, browser_observed_at=172, host_elapsed_ms=85)
+        self.assertAlmostEqual(timing['captureToDocumentBubbleMs'], 57.1)
+        self.assertEqual(timing['eventToCaptureStartMs'], 1)
+        self.assertEqual(timing['eventToPostDispatchTaskMs'], 60)
+        self.assertEqual(timing['eventToFirstRafCallbackMs'], 59)
+        self.assertEqual(timing['eventToSecondRafCallbackMs'], 70)
+        self.assertEqual(timing['rafFrameTimestampIntervalMs'], 55)
+        self.assertEqual(timing['browserObservationAt'], 172)
+        self.assertEqual(timing['hostToRequiredWitnessObservationMs'], 85)
+        self.assertLess(row['secondRafFrameTimestamp'] - row['eventTimestamp'], timing['captureToDocumentBubbleMs'])
+        self.assertGreater(timing['eventToSecondRafCallbackMs'], timing['captureToDocumentBubbleMs'])
+        self.assertEqual(row['beforeRaw'], '{ "value": 1 }\n')
+        self.assertEqual(row['afterRaw'], '{ "value": 2 }\n')
+        self.assertNotIn('eventToSecondRafMs', timing)
+        self.assertNotIn('hostToSecondRafObservationMs', timing)
+        # Valid RAF arguments cannot excuse actual callback entry before the handler boundary.
+        with self.assertRaisesRegex(AssertionError, 'document-bubble boundary'):
+            MODULE.qualify_click([{**row, 'firstRafCallbackAt': 157}], self.selector, storage=True)
+
+    def test_timer_may_follow_either_raf_without_fabricating_a_bubble_boundary(self):
+        for timer in (104, 120, 135):
+            row = {**self.row, 'postDispatchTaskAt': timer}
+            with self.subTest(timer=timer):
+                MODULE.qualify_click([row], self.selector)
+                timing = MODULE.click_timing(row, browser_observed_at=140, host_elapsed_ms=50)
+                self.assertIsNone(timing['captureToDocumentBubbleMs'])
+                self.assertNotIn('documentBubbleAt', row)
+
+    def test_all_browser_timestamps_require_finite_nonnegative_numbers(self):
+        row = {**self.row, 'documentBubbleAt': 102}
+        for key in ('eventTimestamp', 'captureStartAt', 'postDispatchTaskAt', 'documentBubbleAt',
+                    'firstRafFrameTimestamp', 'secondRafFrameTimestamp', 'firstRafCallbackAt', 'secondRafCallbackAt'):
+            for value in (None, True, '100', -1, float('nan'), float('inf'), float('-inf')):
+                with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
+                    MODULE.qualify_click([{**row, key: value}], self.selector)
+
+    def test_capture_bubble_task_and_callback_order_cannot_be_inverted(self):
+        for update in ({'eventTimestamp': 101}, {'postDispatchTaskAt': 99},
+                       {'documentBubbleAt': 99}, {'documentBubbleAt': 105},
+                       {'documentBubbleAt': 114, 'postDispatchTaskAt': 120},
+                       {'firstRafFrameTimestamp': 114}, {'secondRafFrameTimestamp': 130}):
+            with self.subTest(update=update), self.assertRaises(AssertionError):
+                MODULE.qualify_click([{**self.row, **update}], self.selector)
+
+    def test_host_and_browser_observations_are_validated_in_separate_clocks(self):
+        for value in (None, False, '140', -1, float('nan'), float('inf'), float('-inf')):
+            with self.subTest(browser_observed_at=value), self.assertRaisesRegex(AssertionError, 'Browser observation'):
+                MODULE.click_timing(self.row, browser_observed_at=value, host_elapsed_ms=50)
+            with self.subTest(host_elapsed_ms=value), self.assertRaisesRegex(AssertionError, 'host observation'):
+                MODULE.click_timing(self.row, browser_observed_at=140, host_elapsed_ms=value)
+        for row, observed in ((self.row, 128), ({**self.row, 'postDispatchTaskAt': 135}, 130)):
+            with self.subTest(row=row, observed=observed), self.assertRaisesRegex(AssertionError, 'Browser observation'):
+                MODULE.click_timing(row, browser_observed_at=observed, host_elapsed_ms=50)
+
+    def test_native_probe_samples_now_inside_each_callback_before_frame_argument(self):
+        self.assertIn('requestAnimationFrame(first=>{row.firstRafCallbackAt=performance.now();row.firstRafFrameTimestamp=first;', MODULE.PROBE)
+        self.assertIn('requestAnimationFrame(second=>{row.secondRafCallbackAt=performance.now();row.secondRafFrameTimestamp=second;', MODULE.PROBE)
+        self.assertIn('const captureStartAt=performance.now();', MODULE.PROBE)
+        self.assertIn('row.documentBubbleAt=performance.now();', MODULE.PROBE)
+        source = SCRIPT.read_text()
+        self.assertIn('rows.at(-1).secondRafCallbackAt!==null', source)
+        self.assertNotIn("row['eventToSecondRafMs']", source)
+        self.assertIn("row['eventToSecondRafCallbackMs'] > ACTION_MS", source)
+        self.assertIn('None measures complete response or proves a completed paint.', source)
+
+    def test_report_distinguishes_flagged_cpu_windows_from_all_long_tasks_and_fixture_bytes(self):
+        source = SCRIPT.read_text()
+        self.assertIn('Long tasks overlapping CPU windows are flagged', source)
+        self.assertIn("run['allLongTasks'] = final['longTasks']", source)
+        self.assertIn('fixtureSha256 pins the original input fixture bytes.', source)
+        self.assertNotIn('All long tasks and actions', source)
 
     def test_runtime_evidence_written_before_click_gate_even_for_timeout(self):
         tree = ast.parse(SCRIPT.read_text())
@@ -247,10 +331,11 @@ class ClickObserverPreparationTests(unittest.TestCase):
         click = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'click')
         calls = [(node.lineno, node.func.id) for node in ast.walk(click)
                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                 and node.func.id in ('atomic_json', 'qualify_click', 'flush')]
+                 and node.func.id in ('atomic_json', 'qualify_click', 'click_timing', 'flush')]
         position = {name: line for line, name in calls}
         self.assertLess(position['atomic_json'], position['qualify_click'])
         self.assertLess(position['flush'], position['qualify_click'])
+        self.assertLess(position['atomic_json'], position['click_timing'])
         self.assertIn('action_error = error', ast.unparse(click))
         self.assertIn('observedClicks=rows', ast.unparse(click))
 

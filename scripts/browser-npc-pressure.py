@@ -194,16 +194,19 @@ PROBE = r'''(() => {
  if(p.supported.includes('event'))new PerformanceObserver(list=>{for(const e of list.getEntries())p.events.push({name:e.name,start:e.startTime,duration:e.duration,processingStart:e.processingStart,processingEnd:e.processingEnd,interactionId:e.interactionId});}).observe({type:'event',buffered:true,durationThreshold:16});
  document.addEventListener('visibilitychange',e=>p.visibility.push({at:performance.now(),state:document.visibilityState,trusted:e.isTrusted}));
  document.addEventListener('click',event=>{
+   const captureStartAt=performance.now();
    const button=event.target.closest?.('button'); if(!button)return;
    const row={trusted:event.isTrusted,target:button.dataset.tab||button.dataset.action||button.dataset.ring||button.id,
-     start:performance.now(),eventTimestamp:event.timeStamp,firstRAF:null,secondRAF:null};p.clicks.push(row);
+     captureStartAt,eventTimestamp:event.timeStamp,firstRafFrameTimestamp:null,secondRafFrameTimestamp:null,
+     firstRafCallbackAt:null,secondRafCallbackAt:null};p.clicks.push(row);
    if(armed&&button.matches(armed.selector)){eventRows.set(event,row);row.selector=armed.selector;row.wallAt=Date.now();row.enabled=!button.disabled;row.beforeStatus=document.querySelector('[data-bind="status"]')?.textContent;
      if(armed.storage)row.beforeRaw=localStorage.getItem(__KEY__);row.storage=armed.storage;armed=null;}
    // A real later timer task runs after this dispatch even if production navigation stops bubbling.
    setTimeout(()=>{row.postDispatchTaskAt=performance.now();},0);
-   requestAnimationFrame(first=>{row.firstRAF=first;requestAnimationFrame(second=>{row.secondRAF=second;});});
+   requestAnimationFrame(first=>{row.firstRafCallbackAt=performance.now();row.firstRafFrameTimestamp=first;
+     requestAnimationFrame(second=>{row.secondRafCallbackAt=performance.now();row.secondRafFrameTimestamp=second;});});
  },true);
- document.addEventListener('click',event=>{const row=eventRows.get(event);if(row){row.dispatchCompleted=performance.now();row.afterStatus=document.querySelector('[data-bind="status"]')?.textContent;
+ document.addEventListener('click',event=>{const row=eventRows.get(event);if(row){row.documentBubbleAt=performance.now();row.afterStatus=document.querySelector('[data-bind="status"]')?.textContent;
    if(row.storage)row.afterRaw=localStorage.getItem(__KEY__);}});
  const snapshot=()=>({now:performance.now(),wallAt:Date.now(),visibility:document.visibilityState,hidden:document.hidden,
    frameCount:p.frames.length,longTaskCount:p.longTasks.length,eventCount:p.events.length,clickCount:p.clicks.length,
@@ -218,21 +221,53 @@ PROBE = r'''(() => {
 })();'''
 
 
+def finite_nonnegative(value):
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+
 def qualify_click(rows, selector, storage=False):
     """Read-only evidence gates. Native navigation may intentionally stop bubbling."""
     require(len(rows) == 1, 'Expected exactly one native click, including unexpected nested clicks')
     row = rows[0]
     require(row.get('trusted') is True and row.get('enabled') is True and row.get('selector') == selector,
             'Expected one trusted enabled native click on the exact requested selector')
-    require(row.get('postDispatchTaskAt') is not None and row['postDispatchTaskAt'] >= row['start'],
+    require(all(finite_nonnegative(row.get(key)) for key in ('eventTimestamp', 'captureStartAt'))
+            and row['eventTimestamp'] <= row['captureStartAt'],
+            'Expected finite ordered event timestamp and capture entry time')
+    require(finite_nonnegative(row.get('postDispatchTaskAt')) and row['postDispatchTaskAt'] >= row['captureStartAt'],
             'Expected a subsequent native task to witness completed click dispatch')
-    require(row.get('firstRAF') is not None and row.get('secondRAF') is not None and row['secondRAF'] >= row['firstRAF'],
-            'Expected two native RAF observations after the click')
+    require(all(finite_nonnegative(row.get(key)) for key in ('firstRafFrameTimestamp', 'secondRafFrameTimestamp',
+                                                            'firstRafCallbackAt', 'secondRafCallbackAt'))
+            and row['captureStartAt'] <= row['firstRafCallbackAt'] <= row['secondRafCallbackAt']
+            and row['firstRafFrameTimestamp'] <= row['secondRafFrameTimestamp']
+            and row['firstRafFrameTimestamp'] <= row['firstRafCallbackAt']
+            and row['secondRafFrameTimestamp'] <= row['secondRafCallbackAt'],
+            'Expected two native RAF callbacks with finite ordered entry times and separate frame timestamps')
     if storage:
-        require(row.get('dispatchCompleted') is not None and row['dispatchCompleted'] >= row['start']
+        require(finite_nonnegative(row.get('documentBubbleAt'))
                 and isinstance(row.get('beforeRaw'), str) and isinstance(row.get('afterRaw'), str),
                 'Save/import requires its synchronous document-bubble storage witness')
+    if 'documentBubbleAt' in row:
+        require(finite_nonnegative(row['documentBubbleAt'])
+                and row['captureStartAt'] <= row['documentBubbleAt'] <= min(row['postDispatchTaskAt'], row['firstRafCallbackAt']),
+                'Synchronous document-bubble boundary must precede both later native callbacks')
+    # Timer tasks and RAF callbacks need not run in a fixed order relative to each other.
     return row
+
+
+def click_timing(row, browser_observed_at, host_elapsed_ms):
+    """Qualified callback/task observations, never full-response or paint latency."""
+    require(finite_nonnegative(browser_observed_at)
+            and browser_observed_at >= max(row['postDispatchTaskAt'], row['secondRafCallbackAt']),
+            'Browser observation must follow the native timer and second RAF callback')
+    require(finite_nonnegative(host_elapsed_ms), 'Expected finite nonnegative host observation duration')
+    return {'eventToCaptureStartMs': row['captureStartAt'] - row['eventTimestamp'],
+            'captureToDocumentBubbleMs': row['documentBubbleAt'] - row['captureStartAt'] if 'documentBubbleAt' in row else None,
+            'eventToPostDispatchTaskMs': row['postDispatchTaskAt'] - row['eventTimestamp'],
+            'eventToFirstRafCallbackMs': row['firstRafCallbackAt'] - row['eventTimestamp'],
+            'eventToSecondRafCallbackMs': row['secondRafCallbackAt'] - row['eventTimestamp'],
+            'rafFrameTimestampIntervalMs': row['secondRafFrameTimestamp'] - row['firstRafFrameTimestamp'],
+            'browserObservationAt': browser_observed_at, 'hostToRequiredWitnessObservationMs': host_elapsed_ms}
 
 
 def process_info(pid):
@@ -309,19 +344,28 @@ def supervise(args):
 def native_worker(args, fixture, envelopes):
     from playwright.sync_api import sync_playwright
     out = Path(args.output)
-    report = {'schema': 'infinity-npc-native-pressure-v1', 'completed': False, 'sourceSha': args.expected_sha,
+    report = {'schema': 'infinity-npc-native-pressure-v2', 'completed': False, 'sourceSha': args.expected_sha,
         'fixtureSha256': args.expected_fixture_sha256, 'fixtureSourceTreeSha': fixture['sourceTreeSha'],
         'productionSourceWorktree': source_identity(args.source_root, args.expected_sha, fixture),
         'fixture': {key: fixture[key] for key in ('synthetic', 'setup', 'expected', 'minimumRemainingSeconds')},
         'runs': [], 'errors': [], 'flags': [], 'phase': 'start', 'timing': {'sampleMs': SAMPLE_MS, 'repetitions': REPETITIONS, 'wholeBudgetSeconds': WHOLE_SECONDS},
+        'actionTimingSemantics': {
+            'browserClock': 'Native performance timeline milliseconds: eventTimestamp is event.timeStamp; captureStartAt, documentBubbleAt, postDispatchTaskAt and first/secondRafCallbackAt are performance.now() at their observer entry.',
+            'documentBubbleAt': 'Synchronous document-bubble observer after production handling; absent when navigation stops propagation. Save/import raw storage bytes are read within this same event.',
+            'postDispatchTaskAt': 'Later native timer task witnesses completed dispatch even when document bubble is not reached. Timer and RAF callbacks have no required relative order.',
+            'rafFrameTimestamps': 'first/secondRafFrameTimestamp are native RAF arguments, retained for their interval only. They can precede the click and are not callback entry times.',
+            'browserObservationAt': 'Browser snapshot time read after collecting the raw click witnesses.',
+            'hostToRequiredWitnessObservationMs': 'Separate host monotonic elapsed time from before Playwright click until the wait for both timer and second RAF callback returns; includes automation and polling overhead.',
+            'scope': 'Event-to-callback and capture-to-document-bubble intervals are separate observations. None measures complete response or proves a completed paint.'},
         'limits': ['Synthetic bounded saves; public-engine fixture transitions are preparation, never a natural gameplay journey.',
+            'fixtureSha256 pins the original input fixture bytes. Output fixture.json is a parsed-value copy serialized with a final newline, not the byte-pinned input.',
             'Same production r13 engine sparse-control versus pressure only. No old-source or r12 improvement claim; r12 cannot represent these attacks.',
             'Headed Google Chrome in GitHub Linux/Xvfb, one visible page at a time. Not mobile, OS-hidden, real-display, or hardware-compositor performance.',
-            'CDP ScriptDuration/TaskDuration are observed CPU metrics; requestAnimationFrame gaps are callback intervals, not FPS, CPU time, or completed paints.',
+            'CDP ScriptDuration/TaskDuration are observed CPU metrics; requestAnimationFrame gaps are native frame-timestamp intervals, not FPS, CPU time, or completed paints.',
             'Read-only RAF, Long Tasks and Event Timing observers add symmetric overhead; Event Timing reports only entries meeting the browser threshold (16ms requested).',
             'No profiler/Debugger active inside CPU windows. Native timers, autosaves, RAF, clocks and visibility remain unmodified.',
             'Hidden Fleet DOM node identity is observed; CPU differences do not identify the cost of an individual internal function.',
-            'No invented performance pass threshold. All long tasks and actions exceeding the requested 10-second responsiveness budget are flagged.',
+            'No invented performance pass threshold. Long tasks overlapping CPU windows are flagged; allLongTasks separately preserves all observed run entries, including startup and actions. Action observations exceeding the requested 10-second budget are flagged.',
             'This independent experiment does not replace mandatory formal native CI acceptance.']}
     atomic_json(out / 'fixture.json', fixture)
     started = time.monotonic()
@@ -342,7 +386,7 @@ def native_worker(args, fixture, envelopes):
         try:
             page.locator(selector).click(timeout=ACTION_MS)
             remaining = max(1, ACTION_MS - int((time.monotonic() - host) * 1000))
-            page.wait_for_function('(n)=>{const rows=window.__npcPressure.all().clicks;return rows.length>n && rows.at(-1).secondRAF!==null && rows.at(-1).postDispatchTaskAt!==undefined;}', arg=before, timeout=remaining)
+            page.wait_for_function('(n)=>{const rows=window.__npcPressure.all().clicks;return rows.length>n && rows.at(-1).secondRafCallbackAt!==null && rows.at(-1).postDispatchTaskAt!==undefined;}', arg=before, timeout=remaining)
         except Exception as error:
             action_error = error
             report['flags'].append({'kind': 'responsive-action-incomplete', 'run': run['id'], 'selector': selector, 'elapsedMs': (time.monotonic() - host) * 1000})
@@ -368,16 +412,16 @@ def native_worker(args, fixture, envelopes):
         if action_error is not None:
             raise action_error
         row = qualify_click(rows, selector, storage)
-        row['hostToSecondRafObservationMs'] = elapsed
-        row['eventToSecondRafMs'] = row['secondRAF'] - row['eventTimestamp']
-        row['dispatchBoundary'] = 'Synchronous document bubble' if row.get('dispatchCompleted') is not None else 'Subsequent native timer task; document bubble not observed'
+        row.update(click_timing(row, attempt['after']['now'], elapsed))
+        row['dispatchWitness'] = 'Synchronous document bubble and subsequent native timer task' if 'documentBubbleAt' in row else 'Subsequent native timer task; document bubble not observed'
         for key in ('beforeRaw', 'afterRaw'):
             if key in row:
                 raw = row.pop(key); row[key + 'Sha256'] = sha(raw or '')
                 row[key + 'Envelope'] = json.loads(raw)
         run['actions'].append(row)
-        if elapsed > ACTION_MS or row['eventToSecondRafMs'] > ACTION_MS:
-            report['flags'].append({'kind': 'responsive-action-over-10-seconds', 'run': run['id'], 'selector': selector, 'hostMs': elapsed, 'eventToSecondRafMs': row['eventToSecondRafMs']})
+        if elapsed > ACTION_MS or row['eventToSecondRafCallbackMs'] > ACTION_MS:
+            report['flags'].append({'kind': 'responsive-action-over-10-seconds', 'run': run['id'], 'selector': selector,
+                                    'hostToRequiredWitnessObservationMs': elapsed, 'eventToSecondRafCallbackMs': row['eventToSecondRafCallbackMs']})
         return row
     def tab(page, name, run):
         click(page, f'[data-tab="{name}"]', run)
