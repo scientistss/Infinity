@@ -92,7 +92,7 @@ class ObserverDouble {
   disconnect(){this.parents.clear();}takeRecords(){const records=this.records;this.records=[];return records;}
 }
 const asButton=(node:NodeDouble)=>node as unknown as HTMLButtonElement;
-function controlsFixture() {
+function controlsFixture(initialize = true) {
   const doc=new NodeDouble();doc.connectedRoot=true;const body=new NodeDouble();doc.append(body);const root=new NodeDouble("app");body.append(root);
   const make=(id:string,parent=root,value="",select=false)=>{const node=select?new SelectDouble(id):new NodeDouble(id);node.value=value;parent.append(node);return node;};
   const panel=make("space-fleet"),galaxy=make("space-galaxy"),list=make("space-fleets",panel);galaxy.hidden=true;
@@ -108,8 +108,37 @@ function controlsFixture() {
   const edit=(node:NodeDouble,value:string,type="input")=>{node.value=value;root.emit(type,node);};
   const paint=()=>controls.paint(fleetRules.quoteFlight(state,read()).ok);
   expect(fleetRules.quoteFlight(state,read()).ok,fleetRules.quoteFlight(state,read()).reason).toBe(true);
-  controls.observe(state,true,"");paint();
-  return {doc,body,root,panel,galaxy,list,mission,speed,ship,metal,crystal,deuterium,send,clear,status,state,actions,controls,edit,paint,read,make};
+  if (initialize) { controls.observe(state,true,"");paint(); }
+  return {doc,body,root,panel,galaxy,list,options,mission,speed,ship,metal,crystal,deuterium,send,clear,status,state,actions,controls,edit,paint,read,make};
+}
+// Count setter calls, including redundant same-value writes that would still
+// reach the DOM. These are work-count witnesses, not browser timing claims.
+function trackDomWrites(...nodes: NodeDouble[]) {
+  const writes = vi.fn();
+  for (const node of nodes) for (const property of ["hidden", "disabled", "readOnly", "textContent"] as const) {
+    let value = node[property];
+    Object.defineProperty(node, property, {
+      configurable: true, get: () => value,
+      set(next: typeof value) { writes(node.id, property, next); value = next; },
+    });
+  }
+  return writes;
+}
+function liveFleetFixture(kind: "recall" | "retry" = "recall", count = 4, renewDraft = true) {
+  const f = controlsFixture(), state = sendFleet(f.state, f.read()).state, original = state.fleets[0];
+  state.fleets = Array.from({ length: count }, (_, index) => ({
+    ...original, id: index + 1, remaining: kind === "recall" ? 1 : 0,
+    npcAttack: { ...original.npcAttack!, phase: kind === "recall" ? { kind: "outbound" as const } : { kind: "returning" as const, reason: "battle" as const, dockBlocked: true } },
+  }));
+  f.controls.observe(state, true, "");
+  if (renewDraft) f.edit(f.ship, "21");
+  const buttons = state.fleets.map(fleet => {
+    const button = f.make("", f.list); button.dataset.fleet = String(fleet.id);
+    f.controls.register(asButton(button), kind, button.dataset.fleet);
+    expect(button.disabled).toBe(false);
+    return button;
+  });
+  return { ...f, state, buttons };
 }
 beforeEach(()=>{ObserverDouble.instances=[];vi.stubGlobal("Element",NodeDouble);vi.stubGlobal("HTMLSelectElement",SelectDouble);vi.stubGlobal("MutationObserver",ObserverDouble);vi.stubGlobal("document",{hidden:false});});
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
@@ -172,5 +201,182 @@ describe("NPC ephemeral paid-action controls",()=>{
     f.controls.observe(state,true,"");const button=f.make("",f.list);button.dataset.fleet=String(fleet.id);f.controls.register(asButton(button),"retry",button.dataset.fleet);
     f.controls.fleetAction(asButton(button),"retry");expect(f.actions).toHaveLength(1);expect(f.controls.consume(f.actions[0],state)).toBe(true);
     state.fleets=[];expect(f.controls.consume(f.actions[0],state)).toBe(false);button.disabled=false;f.controls.fleetAction(asButton(button),"retry");expect(f.actions).toHaveLength(1);
+  });
+});
+
+
+describe("NPC observer bounded work and authority counterexamples", () => {
+  it.each([true, false])("synchronizes the first ready=%s observation even while hidden, without quoting", ready => {
+    const f = controlsFixture(false), quote = vi.spyOn(fleetRules, "quoteFlight");
+    f.panel.hidden = true; vi.stubGlobal("document", { hidden: true });
+    f.controls.observe(f.state, ready, "只读存档");
+    expect(f.options.hidden).toBe(false); expect(f.metal.readOnly).toBe(true); expect(f.clear.hidden).toBe(true);
+    expect(f.send.textContent).toBe("付费出征"); expect(f.send.disabled).toBe(true); expect(f.clear.disabled).toBe(!ready);
+    expect(f.status.textContent).toBe(ready ? "" : "只读存档；恢复后请重新确认攻击草稿。");
+    expect(quote).not.toHaveBeenCalled();
+    if (!ready) {
+      f.controls.observe(f.state, false, "新的保护原因");
+      expect(f.status.textContent).toContain("新的保护原因");
+    }
+  });
+
+  it.each([true, false])("builds one fresh index per observe for 64 live fleet buttons (renewed draft=%s)", renewDraft => {
+    const f = liveFleetFixture("recall", 64, renewDraft);
+    const iterate = vi.spyOn(f.state.fleets, Symbol.iterator), find = vi.spyOn(f.state.fleets, "find"), quote = vi.spyOn(fleetRules, "quoteFlight");
+    const writes = trackDomWrites(f.options, f.metal, f.crystal, f.deuterium, f.send, f.clear, f.status, ...f.buttons);
+    f.controls.observe(f.state, true, "");
+    expect(iterate).toHaveBeenCalledTimes(1); expect(find).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled();
+    f.state.fleets[63].remaining = 0;
+    f.controls.observe(f.state, true, "");
+    expect(iterate).toHaveBeenCalledTimes(2); expect(find).not.toHaveBeenCalled(); expect(quote).not.toHaveBeenCalled();
+    expect(f.buttons[63].disabled).toBe(true); expect(f.buttons.slice(0, 63).every(button => !button.disabled)).toBe(true);
+    expect(writes.mock.calls).toEqual([["", "disabled", true]]);
+  });
+
+  it.each(["none", "route", "retired", "removed"])("does not scan fleets with %s live fleet capabilities", situation => {
+    const f = liveFleetFixture("recall", situation === "none" || situation === "route" ? 0 : 4);
+    if (situation === "route") {
+      const route = f.make("", f.galaxy); route.dataset.coordinate = "1:56:6"; route.dataset.mission = "attack";
+      f.controls.register(asButton(route), "route", route.dataset.coordinate);
+    } else if (situation === "retired") {
+      f.controls.observe(f.state, false, "保护"); f.controls.observe(f.state, true, "");
+    } else if (situation === "removed") {
+      for (const button of f.buttons) f.list.remove(button);
+      f.controls.paint(false); // Flush the removal records using the ordinary intact guard.
+    }
+    const iterate = vi.spyOn(f.state.fleets, Symbol.iterator), find = vi.spyOn(f.state.fleets, "find");
+    f.controls.observe(f.state, true, ""); f.controls.observe(f.state, true, "");
+    expect(iterate).not.toHaveBeenCalled(); expect(find).not.toHaveBeenCalled();
+  });
+
+  it.each(["panel", "document"])("does no redundant DOM writes while %s is hidden and still repairs changed properties", hidden => {
+    const f = liveFleetFixture();
+    f.controls.observe(f.state, false, "保护");
+    if (hidden === "panel") f.panel.hidden = true; else vi.stubGlobal("document", { hidden: true });
+    const writes = trackDomWrites(f.options, f.metal, f.crystal, f.deuterium, f.send, f.clear, f.status, ...f.buttons);
+    const quote = vi.spyOn(fleetRules, "quoteFlight");
+    for (let i = 0; i < 10; i++) f.controls.observe(f.state, false, "保护");
+    expect(writes).not.toHaveBeenCalled(); expect(quote).not.toHaveBeenCalled();
+    f.send.disabled = false; f.buttons[0].disabled = false; f.options.hidden = true; f.metal.readOnly = false; f.send.textContent = "错误标题";
+    writes.mockClear(); f.controls.observe(f.state, false, "保护");
+    expect(f.send.disabled).toBe(true); expect(f.buttons[0].disabled).toBe(true); expect(f.options.hidden).toBe(false);
+    expect(f.metal.readOnly).toBe(true); expect(f.send.textContent).toBe("付费出征"); expect(writes).toHaveBeenCalledTimes(5);
+  });
+
+  it("skips same-value setters during repeated paint, input and mission synchronization", () => {
+    const f = controlsFixture(), writes = trackDomWrites(f.options, f.metal, f.crystal, f.deuterium, f.send, f.clear, f.status);
+    f.controls.paint(true); f.controls.paint(true); expect(writes).not.toHaveBeenCalled();
+    f.root.emit("input", f.ship); expect(writes.mock.calls).toEqual([["space-send", "disabled", true]]);
+    writes.mockClear(); f.root.emit("input", f.ship); expect(writes).not.toHaveBeenCalled();
+    f.edit(f.mission, "transport", "change"); expect(f.send.textContent).toBe("派遣舰队"); expect(f.options.hidden).toBe(true);
+    writes.mockClear(); f.root.emit("change", f.mission); expect(writes).not.toHaveBeenCalled();
+  });
+
+  it.each(["recall", "retry"] as const)("keeps first-match semantics for duplicate fleet IDs in %s", kind => {
+    const f = liveFleetFixture(kind, 1), first = f.state.fleets[0], button = f.buttons[0];
+    const ineligible = { ...first, mission: "transport" as const };
+    f.state.fleets = [first, ineligible];
+    f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(false);
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(1);
+    f.state.fleets = [ineligible, first];
+    f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(true);
+    button.disabled = false;
+    expect(f.controls.consume(f.actions[0], f.state)).toBe(false);
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(1);
+  });
+
+  it("does not give Map's NaN equality to malformed fleet keys", () => {
+    const f = liveFleetFixture("recall", 1), button = f.make("", f.list);
+    f.state.fleets[0].id = NaN; button.dataset.fleet = "NaN";
+    f.controls.register(asButton(button), "recall", "NaN");
+    button.disabled = false; f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(true);
+    button.disabled = false; f.controls.fleetAction(asButton(button), "recall"); expect(f.actions).toHaveLength(0);
+  });
+
+  it.each(["recall", "retry"] as const)("does not retain an observe index across %s actions, phase changes or array replacement", kind => {
+    const f = liveFleetFixture(kind, 1), button = f.buttons[0], original = f.state.fleets[0];
+    f.controls.observe(f.state, true, "");
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(1);
+    // Change the same object after issuance, without another observation.
+    if (kind === "recall") original.remaining = 0;
+    else Object.assign(original.npcAttack!.phase, { dockBlocked: false });
+    expect(f.controls.consume(f.actions[0], f.state)).toBe(false);
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(1);
+    original.remaining = kind === "recall" ? 1 : 0;
+    original.npcAttack = { ...original.npcAttack!, phase: kind === "recall" ? { kind: "outbound" } : { kind: "returning", reason: "battle", dockBlocked: true } };
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(2);
+    f.state.fleets = [];
+    expect(f.controls.consume(f.actions[1], f.state)).toBe(false);
+    f.controls.fleetAction(asButton(button), kind); expect(f.actions).toHaveLength(2);
+    f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(true);
+  });
+
+  it.each(["panel", "document"])("keeps hidden %s handlers and consumption closed while observing live phase changes", hidden => {
+    const f = liveFleetFixture(), button = f.buttons[0];
+    f.controls.fleetAction(asButton(button), "recall"); expect(f.actions).toHaveLength(1);
+    if (hidden === "panel") f.panel.hidden = true; else vi.stubGlobal("document", { hidden: true });
+    expect(f.controls.consume(f.actions[0], f.state)).toBe(false);
+    f.controls.fleetAction(asButton(button), "recall"); expect(f.actions).toHaveLength(1);
+    f.state.fleets[0].remaining = 0; f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(true);
+    f.state.fleets[0].remaining = 1; f.controls.observe(f.state, true, "");
+    // This fixture renewed its draft: the ordinary observe branch only disables.
+    // Same-epoch sync can re-enable a recovered phase; epoch retirement is separate.
+    expect(button.disabled).toBe(true);
+    f.panel.hidden = false; vi.stubGlobal("document", { hidden: false });
+    f.controls.fleetAction(asButton(button), "recall"); expect(f.actions).toHaveLength(1);
+  });
+
+  it.each(["visible", "panel-hidden", "document-hidden"].flatMap(visibility =>
+    ["seed", "origin", "protection", "same-seed-import"].map(change => ({ visibility, change })),
+  ))("cannot revive old buttons or issued actions after $change while $visibility", ({ visibility, change }) => {
+    const f = liveFleetFixture(), button = f.buttons[0], generation = f.controls.generation;
+    f.controls.fleetAction(asButton(button), "recall"); const old = f.actions[0];
+    if (visibility === "panel-hidden") f.panel.hidden = true;
+    else if (visibility === "document-hidden") vi.stubGlobal("document", { hidden: true });
+    // Observe every A→B→A transition while hidden, then challenge the old capability
+    // only after visibility is restored, so the hidden guard cannot mask revival.
+    if (change === "seed") {
+      const seed = f.state.universe.seed;
+      f.state.universe.seed++; f.controls.observe(f.state, true, "");
+      f.state.universe.seed = seed; f.controls.observe(f.state, true, "");
+    } else if (change === "origin") {
+      const planet = activePlanet(f.state), id = planet.id;
+      planet.id = "other-origin"; f.state.activePlanetId = planet.id; f.controls.observe(f.state, true, "");
+      planet.id = id; f.state.activePlanetId = id; f.controls.observe(f.state, true, "");
+    } else if (change === "protection") {
+      f.controls.observe(f.state, false, "保护"); f.controls.observe(f.state, true, "");
+    } else {
+      // Explicit import invalidation applies even with the same seed, IDs and object.
+      f.controls.invalidate(); f.controls.observe(f.state, true, "");
+    }
+    expect(f.controls.generation).toBeGreaterThan(generation); expect(button.disabled).toBe(true);
+    f.panel.hidden = false; vi.stubGlobal("document", { hidden: false });
+    f.edit(f.ship, "22"); f.controls.paint(true); button.disabled = false;
+    f.controls.register(asButton(button), "recall", button.dataset.fleet);
+    f.controls.fleetAction(asButton(button), "recall"); expect(f.actions).toHaveLength(1);
+    expect(f.controls.consume(old, f.state)).toBe(false);
+    f.controls.observe(f.state, true, ""); expect(button.disabled).toBe(true);
+    const fresh = f.make("", f.list); fresh.dataset.fleet = button.dataset.fleet;
+    f.controls.register(asButton(fresh), "recall", fresh.dataset.fleet);
+    f.controls.fleetAction(asButton(fresh), "recall"); expect(f.actions).toHaveLength(2);
+    expect(f.controls.consume(f.actions[1], f.state)).toBe(true);
+  });
+
+  it.each(["button", "wrapper", "panel", "body"])("flushes pending %s removal records before handlers and consume", removed => {
+    const f = liveFleetFixture(), button = f.buttons[0];
+    const wrapper = f.make("", f.list);
+    if (removed === "wrapper") {
+      // Use a newly registered node whose ancestor is already present at registration.
+      const nested = f.make("", wrapper); nested.dataset.fleet = button.dataset.fleet;
+      f.controls.register(asButton(nested), "recall", nested.dataset.fleet); f.buttons[0] = nested;
+    }
+    const target = f.buttons[0]; f.controls.fleetAction(asButton(target), "recall"); expect(f.actions).toHaveLength(1);
+    const node = removed === "button" ? target : removed === "wrapper" ? wrapper : removed === "panel" ? f.panel : f.body;
+    const parent = node.parentElement!; parent.remove(node); parent.append(node);
+    target.disabled = false;
+    expect(f.controls.consume(f.actions[0], f.state)).toBe(false);
+    target.disabled = false; f.controls.fleetAction(asButton(target), "recall"); expect(f.actions).toHaveLength(1);
+    f.controls.register(asButton(target), "recall", target.dataset.fleet);
+    f.controls.fleetAction(asButton(target), "recall"); expect(f.actions).toHaveLength(1);
   });
 });

@@ -1,7 +1,7 @@
 import { big } from "../game/decimal";
 import { activePlanet } from "../game/empire";
 import { npcAt } from "../game/galaxy";
-import { quoteFlight, type FleetRequest } from "../game/fleet";
+import { quoteFlight, type Fleet, type FleetRequest } from "../game/fleet";
 import type { GameState } from "../game/types";
 
 /** Ephemeral DOM authority. Neither datasets nor saved fleet IDs grant permission. */
@@ -10,6 +10,7 @@ export type NpcAttackUiAction =
   | { type: "send-fleet"; request: FleetRequest; npcAuthority: NpcActionAuthority }
   | { type: "recall-fleet" | "npc-retry-dock"; id: number; npcAuthority: NpcActionAuthority };
 type LiveCapability = { epoch: number; originId: string; kind: "route" | "recall" | "retry"; key: string; phase: string; retired: boolean };
+type FleetLookup = (id: number) => Fleet | undefined;
 type Issued = { action: NpcAttackUiAction; button: HTMLButtonElement; epoch: number; originId: string; draft: string; request: string | null };
 const draftRetired = "存档、来源或保护状态已改变；请实际修改攻击草稿，或重新从银河选择攻击目标。";
 
@@ -29,6 +30,9 @@ export function installNpcAttackControls(root: HTMLElement, readRequest: () => F
   const watched = new Set<Node>();
   const signature = () => JSON.stringify(inputs.map(input => input.value));
   const text = (node: HTMLElement, value: string) => { if (node.textContent !== value) node.textContent = value; };
+  const disabled = (node: HTMLButtonElement, value: boolean) => { if (node.disabled !== value) node.disabled = value; };
+  const hidden = (node: HTMLElement, value: boolean) => { if (node.hidden !== value) node.hidden = value; };
+  const findFleet: FleetLookup = id => state?.fleets.find(value => value.id === id);
   const isAttack = () => mission.value === "attack";
   function cargoHasContent() {
     // Inspect retained raw fields, even after a removed ancestor. Calling the
@@ -38,33 +42,33 @@ export function installNpcAttackControls(root: HTMLElement, readRequest: () => F
       return value.length >= 100 || !/^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value) || !big(value).eq(0);
     });
   }
-  function phaseOf(id: number) {
-    const fleet = state?.fleets.find(value => value.id === id), phase = fleet?.npcAttack?.phase;
+  function phaseOf(id: number, lookup: FleetLookup = findFleet) {
+    const fleet = lookup(id), phase = fleet?.npcAttack?.phase;
     return fleet?.mission === "attack" && phase ? { fleet, phase, key: JSON.stringify(phase) } : null;
   }
-  function liveEligible(button: HTMLButtonElement, cap: LiveCapability) {
+  function liveEligible(button: HTMLButtonElement, cap: LiveCapability, lookup: FleetLookup = findFleet) {
     if (!state || !writable || mountRetired || cap.retired || cap.epoch !== epoch || !button.isConnected || !root.contains(button)) return false;
     if (cap.kind === "route") {
       if (!galaxy.contains(button)) return false;
       const values = cap.key.split(":").map(Number);
       return !!npcAt(state, { galaxy: values[0]!, system: values[1]!, position: values[2]! });
     }
-    const actual = phaseOf(Number(cap.key));
+    const actual = phaseOf(Number(cap.key), lookup);
     return list.contains(button) && !!actual && actual.fleet.originId === cap.originId && actual.key === cap.phase
       && (cap.kind === "recall" ? actual.phase.kind === "outbound" && actual.fleet.remaining > 0
         : actual.phase.kind === "returning" && actual.phase.dockBlocked && actual.fleet.remaining === 0);
   }
-  function sync() {
-    const attack = isAttack(); options.hidden = !attack;
-    for (const input of cargo) input.readOnly = attack;
-    clear.hidden = !attack || !cargoHasContent();
-    clear.disabled = !writable || mountRetired || !state;
+  function sync(lookup: FleetLookup = findFleet) {
+    const attack = isAttack(); hidden(options, !attack);
+    for (const input of cargo) if (input.readOnly !== attack) input.readOnly = attack;
+    hidden(clear, !attack || !cargoHasContent());
+    disabled(clear, !writable || mountRetired || !state);
     if (attack) {
-      send.textContent = "付费出征";
-      send.disabled = !writable || mountRetired || !!retiredReason || !quoteOK || !state;
+      text(send, "付费出征");
+      disabled(send, !writable || mountRetired || !!retiredReason || !quoteOK || !state);
       text(status, mountRetired ? "攻击控件已被替换，请重新载入页面。" : retiredReason || (cargoHasContent() ? "攻击须空载；清空仅修改草稿。" : ""));
-    } else send.textContent = "派遣舰队";
-    for (const [button, cap] of live) button.disabled = !liveEligible(button, cap);
+    } else text(send, "派遣舰队");
+    for (const [button, cap] of live) disabled(button, !liveEligible(button, cap, lookup));
   }
   function watch(node: Node) {
     for (let parent = node.parentNode; parent; parent = parent.parentNode) if (!watched.has(parent)) { observer.observe(parent, { childList: true }); watched.add(parent); }
@@ -74,7 +78,7 @@ export function installNpcAttackControls(root: HTMLElement, readRequest: () => F
     for (const record of records) for (const removed of record.removedNodes) {
       if (!(removed instanceof Element)) continue;
       if (mounted.some(node => removed === node || removed.contains(node))) { mountRetired = true; issued = new WeakMap(); }
-      for (const [button, cap] of live) if (removed === button || removed.contains(button)) { cap.retired = true; button.disabled = true; live.delete(button); changed = true; }
+      for (const [button, cap] of live) if (removed === button || removed.contains(button)) { cap.retired = true; disabled(button, true); live.delete(button); changed = true; }
     }
     if (mountRetired) { observer.disconnect(); sync(); }
     else if (changed) { observer.disconnect(); watched.clear(); for (const node of mounted) watch(node); for (const button of live.keys()) watch(button); }
@@ -108,25 +112,38 @@ export function installNpcAttackControls(root: HTMLElement, readRequest: () => F
     retirePending() { issued = new WeakMap(); },
     paint(ok: boolean) { quoteOK = ok; intact(); sync(); },
     observe(next: GameState, ready: boolean, protection: string) {
+      // This index lives for this observation only. Action handlers always look
+      // up the latest fleet directly, including in-place state/phase changes.
+      let fleetIndex: Map<number, Fleet> | undefined;
+      const lookup: FleetLookup = id => {
+        // Map uses SameValueZero; find used === and never matched NaN.
+        if (Number.isNaN(id)) return undefined;
+        if (!fleetIndex) {
+          fleetIndex = new Map();
+          for (const fleet of next.fleets) if (!fleetIndex.has(fleet.id)) fleetIndex.set(fleet.id, fleet);
+        }
+        return fleetIndex.get(id);
+      };
+      const firstObservation = !observed;
       const key = `${next.universe.seed}:${next.stats.launches}`, nextOrigin = activePlanet(next).id;
       if (observed && (key !== worldKey || nextOrigin !== originId || writable !== ready)) {
         epoch++; issued = new WeakMap(); retiredReason = !ready ? `${protection || "存档受保护"}；恢复后请重新确认攻击草稿。` : draftRetired;
         lastDraft = signature();
-        for (const [button, cap] of live) { cap.retired = true; button.disabled = true; }
+        for (const [button, cap] of live) { cap.retired = true; disabled(button, true); }
       }
       if (!observed) lastDraft = signature();
       state = next; writable = ready; observed = true; worldKey = key; originId = nextOrigin;
       if (!ready) retiredReason = `${protection || "存档受保护"}；恢复后请重新确认攻击草稿。`;
       // No quoting, battle formatting or wallet observation on a skipped frame.
-      if (!ready || retiredReason || mountRetired) sync();
-      else for (const [button, cap] of live) if (!liveEligible(button, cap)) button.disabled = true;
+      if (firstObservation || !ready || retiredReason || mountRetired) sync(lookup);
+      else for (const [button, cap] of live) if (!liveEligible(button, cap, lookup)) disabled(button, true);
     },
     register(button: HTMLButtonElement, kind: LiveCapability["kind"], key: string) {
       intact();
       if (capabilities.has(button) || mountRetired || !state) return;
       const actual = kind === "route" ? null : phaseOf(Number(key));
       const cap: LiveCapability = { epoch, kind, key, originId: actual?.fleet.originId ?? originId, phase: actual?.key ?? "", retired: !writable };
-      capabilities.set(button, cap); live.set(button, cap); watch(button); button.disabled = !liveEligible(button, cap);
+      capabilities.set(button, cap); live.set(button, cap); watch(button); disabled(button, !liveEligible(button, cap));
     },
     route(button: HTMLButtonElement, navigate: () => void) {
       if (!intact() || galaxy.hidden || document.hidden || button.disabled) return;
@@ -166,7 +183,7 @@ export function installNpcAttackControls(root: HTMLElement, readRequest: () => F
     },
     invalidate() {
       epoch++; issued = new WeakMap(); lastDraft = signature(); retiredReason = draftRetired;
-      for (const [button, cap] of live) { cap.retired = true; button.disabled = true; }
+      for (const [button, cap] of live) { cap.retired = true; disabled(button, true); }
       state = null; quoteOK = false; sync();
     },
     get writable() { return writable; },
