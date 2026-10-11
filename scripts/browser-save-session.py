@@ -258,19 +258,122 @@ def prepare_r9_trace_plan(playwright):
 
 
 def start_r9_native_trace(page, plan):
-    trace = NativeFrameTrace(page.context.new_cdp_session(page), plan)
-    capture = {'trace': trace, 'responses': [], 'navigations': [], 'storage': observe_reload_storage(page)}
-    page.on('response', lambda response: capture['responses'].append(response)
-            if response.request.resource_type == 'script' else None)
+    cdp = page.context.new_cdp_session(page)
+    trace = NativeFrameTrace(cdp, plan)
+    capture = {'captureCase':case,'createdHostNanoseconds':time.time_ns(),'trace':trace,'responses':[],'allResponses':[],'requests':[],
+               'requestFailures':[],'pageErrors':[],'navigations':[],'networkEvents':[],
+               'storage':observe_reload_storage(page),
+               'preparation':{'scope':'r9 correctness only; not a performance measurement',
+                    'networkCacheDisabled':True,'installedBeforeGoto':True,
+                    'priorFailureCause':'025 navigation failure lacked status/count/redirect evidence; no cache cause is inferred'}}
+    def response_received(response):
+        capture['allResponses'].append(response)
+        if response.request.resource_type=='document':
+            capture['lastDocumentResponse'] = response
+        if response.request.resource_type=='script':
+            capture['responses'].append(response)
+    for event_name in ('requestWillBeSent','responseReceived','requestServedFromCache','loadingFailed'):
+        cdp.on('Network.'+event_name,lambda event,event_name=event_name:capture['networkEvents'].append({'eventName':event_name,'event':copy.deepcopy(event)}))
+    page.on('response',response_received)
+    page.on('request',lambda request:capture['requests'].append(request))
+    page.on('requestfailed',lambda request:capture['requestFailures'].append(request))
+    page.on('pageerror',lambda error:capture['pageErrors'].append(str(error)))
+    # Explicit fresh network preparation for this correctness trace, not a clock,
+    # storage, request route or production source replacement.
+    cdp.send('Network.enable')
+    cdp.send('Network.setCacheDisabled',{'cacheDisabled':True})
     trace.install()
     return capture
 
 
+def capture_r9_navigation_evidence(capture, response, *, scripts=None, suffix='before-assertion'):
+    """Preserve raw HTTP facts before checking them; diagnostics never repair IO."""
+    number = len(capture['navigations'])+1
+    capture_case = capture.get('captureCase',case)
+    prefix = f"r9-native-{hashlib.sha256(capture_case.encode()).hexdigest()[:12]}-navigation-{number}-{suffix}"
+    report = {'case':capture_case,'currentCase':case,'belongsToCurrentCase':capture_case==case,
+              'createdHostNanoseconds':capture.get('createdHostNanoseconds'),
+              'navigation':number,'preparation':capture.get('preparation'),
+              'priorVerifiedNavigations':copy.deepcopy(capture['navigations']),
+              'networkEvents':copy.deepcopy(capture.get('networkEvents',[])),
+              'captureErrors':[],'pageErrors':list(capture.get('pageErrors',[]))}
+    def attempt(label, operation):
+        try:
+            return operation()
+        except Exception as error:
+            report['captureErrors'].append({'part':label,'error':repr(error)})
+            return None
+    def request_metadata(request, label):
+        row = {}
+        for field in ('url','method','resource_type','headers','failure','timing'):
+            row[field] = attempt(label+'.'+field,lambda field=field:getattr(request,field))
+        return row
+    def response_metadata(item, label, *, body=False):
+        if item is None:
+            return {'missing':True}
+        row = {}
+        for field in ('status','status_text','url','headers','from_service_worker'):
+            row[field] = attempt(label+'.'+field,lambda field=field:getattr(item,field))
+        request = attempt(label+'.request',lambda:item.request)
+        if request is not None:
+            row['request'] = request_metadata(request,label+'.request')
+            chain, previous, seen = [], attempt(label+'.redirected_from',lambda:request.redirected_from), set()
+            while previous is not None and id(previous) not in seen:
+                seen.add(id(previous)); link = request_metadata(previous,label+'.redirect')
+                prior_response = attempt(label+'.redirect.response',previous.response)
+                if prior_response is not None:
+                    link['responseStatus'] = attempt(label+'.redirect.status',lambda:prior_response.status)
+                    link['responseURL'] = attempt(label+'.redirect.url',lambda:prior_response.url)
+                chain.append(link)
+                previous = attempt(label+'.redirect.parent',lambda:previous.redirected_from)
+            row['redirectChain'] = list(reversed(chain))
+        if body:
+            data = attempt(label+'.body',item.body)
+            if data is not None:
+                path = out / f'{prefix}-{label}.body'
+                attempt(label+'.write',lambda:path.write_bytes(data))
+                row['body'] = {'file':path.name,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+        return row
+    report['documentResponse'] = response_metadata(response,'document')
+    script_rows = list(capture['responses']) if scripts is None else scripts
+    report['scriptResponseCount'] = len(script_rows)
+    report['scriptResponses'] = [response_metadata(item,f'script-{index}') for index,item in enumerate(script_rows)]
+    report['pinnedScriptURL'] = capture['trace'].plan.url
+    report['matchingScriptResponseCount'] = sum(row.get('url')==capture['trace'].plan.url for row in report['scriptResponses'])
+    report['matchingCdpResponseCount'] = sum(row['eventName']=='responseReceived' and row['event'].get('response',{}).get('url')==capture['trace'].plan.url for row in report['networkEvents'])
+    report['allResponses'] = [response_metadata(item,f'response-{index}') for index,item in enumerate(list(capture.get('allResponses',[])))]
+    report['allRequests'] = [request_metadata(item,f'request-{index}') for index,item in enumerate(list(capture.get('requests',[])))]
+    report['failedRequests'] = [request_metadata(item,f'failed-request-{index}') for index,item in enumerate(list(capture.get('requestFailures',[])))]
+    report['capturePhase'] = 'HTTP metadata persisted before body or V8 reads'
+    report_path = out / f'{prefix}.json'
+    report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    for label,item,row in [('document',response,report['documentResponse']),*[
+            (f'script-{index}',item,report['scriptResponses'][index]) for index,item in enumerate(script_rows)]]:
+        if item is None:
+            continue
+        data = attempt(label+'.body',item.body)
+        if data is not None:
+            path = out / f'{prefix}-{label}.body'
+            attempt(label+'.write',lambda:path.write_bytes(data))
+            row['body'] = {'file':path.name,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+        report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    report['v8Trace'] = attempt('v8Trace',capture['trace'].snapshot)
+    report['parsedScripts'] = copy.deepcopy(getattr(capture['trace'],'scripts',[]))
+    report['resolvedProbes'] = copy.deepcopy(getattr(capture['trace'],'resolutions',[]))
+    report['capturePhase'] = 'Complete HTTP metadata, body attempts and V8 snapshot'
+    report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    return report
+
+
+
+
 def verify_r9_trace_navigation(capture, response):
+    capture['lastDocumentResponse'] = response
+    scripts = list(capture['responses'])
+    capture_r9_navigation_evidence(capture,response,scripts=scripts)
     check('actual native replay document matches exact pinned HTTP index bytes',
           response is not None and response.status == 200 and response.url == args.url
           and hashlib.sha256(response.body()).hexdigest() == native_release_metadata['files']['index.html'])
-    scripts = capture['responses']
     check('actual navigation loads exactly the single pinned production script', len(scripts) == 1
           and scripts[0].status == 200 and scripts[0].url == scripts[0].request.url == capture['trace'].plan.url)
     verified = capture['trace'].verify_executed(scripts[0].body())
@@ -279,6 +382,11 @@ def verify_r9_trace_navigation(capture, response):
         'scriptUrl':scripts[0].url,'scriptSha256':hashlib.sha256(scripts[0].body()).hexdigest(),
         'executedScripts':verified})
     capture['responses'] = []
+    capture['allResponses'] = []
+    capture['requests'] = []
+    capture['requestFailures'] = []
+    capture['pageErrors'] = []
+    capture['networkEvents'] = []
 
 
 def verify_r9_replay_result(original, request, result):
@@ -471,6 +579,7 @@ def capture_failure(error, page):
         except BaseException as capture_error:
             failure['captureErrors'].append({'artifact':label,'error':repr(capture_error)})
     if globals().get('active_native_trace') is not None:
+        attempt('native-navigation',lambda:capture_r9_navigation_evidence(active_native_trace,active_native_trace.get('lastDocumentResponse'),suffix='failure'))
         attempt('native-trace',lambda:(out/'failure-native-trace.json').write_text(json.dumps(active_native_trace['trace'].snapshot(),ensure_ascii=False,indent=2),encoding='utf-8'))
     if page is not None:
         for label,key in (('current',KEY),('backup',BACKUP)):
@@ -1286,6 +1395,7 @@ try:
             complete_r9_native_replay(page,native_capture,source_raw,committed_raw,row['name'],manual_after)
             check("native reload preserves the complete old building template library", exact_json(json.loads(raw(page))["state"]["buildingTemplates"], source["buildingTemplates"]))
             context.close()
+            active_native_trace = None
 
         classification = "HTTP / native Storage / actual r9 complete-world source / injected migration fault"
         for fault in ({"operation": "write", "target": "backup", "mode": "throw"},

@@ -324,21 +324,26 @@ class NativeReplayWiringTests(unittest.TestCase):
   from types import SimpleNamespace
   from urllib.parse import urljoin, urlparse
   self.SimpleNamespace=SimpleNamespace
+  self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
   def check(label,condition):
    if not condition:raise AssertionError(label)
   self.ns=dict(json=json,hashlib=hashlib,re=re,urljoin=urljoin,urlparse=urlparse,copy=copy,Path=Path,
                exact_json=exact_json,lift_r11_state_to_r12=lift_r11_state_to_r12,npc_elapsed_from_segments=npc_elapsed_from_segments,
-               CURRENT_REVISION=12,KEY='current',check=check,args=SimpleNamespace(url='https://example.invalid/Infinity/',expected_sha='a'*40))
-  names={'prepare_r9_trace_plan','verify_r9_trace_navigation','verify_r9_native_storage','verify_r9_native_readbacks','verify_r9_replay_result'}
+               CURRENT_REVISION=12,KEY='current',case='offline navigation test',out=Path(self.temp.name),check=check,args=SimpleNamespace(url='https://example.invalid/Infinity/',expected_sha='a'*40))
+  names={'prepare_r9_trace_plan','capture_r9_navigation_evidence','start_r9_native_trace','verify_r9_trace_navigation','verify_r9_native_storage','verify_r9_native_readbacks','verify_r9_replay_result'}
   nodes=[n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name in names]
   exec(compile(ast.Module(body=nodes,type_ignores=[]),'r9-wiring-helpers','exec'),self.ns)
 
  def http_fixture(self):
   base=self.ns['args'].url; html=b'<html>unmodified production</html>'; js=b'complete production source'
   release={'sourceSha':'a'*40,'saveRevision':12,'saveVersion':9,'files':{'index.html':hashlib.sha256(html).hexdigest(),'assets/index-test.js':hashlib.sha256(js).hexdigest()}}
+  self_outer=self
   class Response:
    status=200
-   def __init__(self,url,body):self.url=url;self.data=body
+   status_text='OK';headers={};from_service_worker=False
+   def __init__(self,url,body):
+    self.url=url;self.data=body
+    self.request=self_outer.SimpleNamespace(url=url,method='GET',resource_type='script' if url.endswith('.js') else 'document',headers={},failure=None,timing={},redirected_from=None)
    def body(self):return self.data
    def json(self):return json.loads(self.data)
   responses={base:Response(base,html),base+'assets/index-test.js':Response(base+'assets/index-test.js',js),base+'release.json':Response(base+'release.json',json.dumps(release).encode())}
@@ -379,12 +384,12 @@ class NativeReplayWiringTests(unittest.TestCase):
 
  def test_navigation_requires_real_script_response_and_executed_source_identity(self):
   playwright,responses,release=self.http_fixture();base=self.ns['args'].url
-  script=responses[base+'assets/index-test.js'];script.request=self.SimpleNamespace(url=script.url)
+  script=responses[base+'assets/index-test.js']
   self.ns['native_release_metadata']=release
   verified=[]
   def verify(body):
    self.assertEqual(body,b'complete production source');verified.append(body);return {'actual-script':{'executionContextId':8}}
-  trace=self.SimpleNamespace(plan=self.SimpleNamespace(url=script.url),verify_executed=verify)
+  trace=self.SimpleNamespace(plan=self.SimpleNamespace(url=script.url),verify_executed=verify,snapshot=lambda:{'events':[],'failures':[]})
   capture={'trace':trace,'responses':[script],'navigations':[]}
   self.ns['verify_r9_trace_navigation'](capture,responses[base]);self.assertEqual(len(verified),1)
   self.assertEqual(capture['responses'],[]);self.assertEqual(len(capture['navigations']),1)
@@ -392,6 +397,75 @@ class NativeReplayWiringTests(unittest.TestCase):
    with self.assertRaises(AssertionError):self.ns['verify_r9_trace_navigation']({'trace':trace,'responses':script_list,'navigations':[]},responses[base])
   script.data+=b' changed'
   with self.assertRaises(AssertionError):self.ns['verify_r9_trace_navigation']({'trace':trace,'responses':[script],'navigations':[]},responses[base])
+
+ def test_failed_navigation_retains_all_http_facts_body_redirects_cache_and_v8_before_original_assertion(self):
+  playwright,responses,release=self.http_fixture();base=self.ns['args'].url
+  script=responses[base+'assets/index-test.js'];script.status=304;script.status_text='Not Modified'
+  previous=self.SimpleNamespace(url=base+'redirect.js',method='GET',resource_type='script',headers={'accept':'*/*'},failure=None,timing={},redirected_from=None,response=lambda:self.SimpleNamespace(status=302,url=base+'redirect.js'))
+  script.request.redirected_from=previous
+  trace=self.SimpleNamespace(plan=self.SimpleNamespace(url=script.url),snapshot=lambda:{'events':[{'kind':'source-read'}],'failures':[]},scripts=[{'scriptId':'actual-second'}],resolutions=[{'breakpointId':'actual-probe'}])
+  capture={'trace':trace,'responses':[script],'navigations':[],'allResponses':[responses[base],script],
+           'requests':[script.request],'requestFailures':[],'pageErrors':['actual page error'],
+           'preparation':{'networkCacheDisabled':True},'networkEvents':[{'eventName':'responseReceived','event':{'response':{'url':script.url,'status':304,'fromDiskCache':True,'fromServiceWorker':False}}}]}
+  self.ns['native_release_metadata']=release
+  with self.assertRaisesRegex(AssertionError,'single pinned production script'):
+   self.ns['verify_r9_trace_navigation'](capture,responses[base])
+  paths=list(Path(self.temp.name).glob('*before-assertion.json'));self.assertEqual(len(paths),1)
+  report=json.loads(paths[0].read_text())
+  self.assertEqual(report['scriptResponseCount'],1);self.assertEqual(report['matchingScriptResponseCount'],1)
+  self.assertEqual(report['matchingCdpResponseCount'],1)
+  self.assertEqual(report['scriptResponses'][0]['status'],304)
+  self.assertEqual(report['scriptResponses'][0]['redirectChain'][0]['responseStatus'],302)
+  self.assertTrue(report['networkEvents'][0]['event']['response']['fromDiskCache'])
+  self.assertEqual(report['parsedScripts'],trace.scripts);self.assertEqual(report['resolvedProbes'],trace.resolutions)
+  self.assertEqual((Path(self.temp.name)/report['documentResponse']['body']['file']).read_bytes(),responses[base].body())
+  self.assertEqual(report['pageErrors'],['actual page error']);self.assertEqual(report['captureErrors'],[])
+
+ def test_diagnostic_body_failure_preserves_other_http_and_v8_evidence(self):
+  _,responses,_=self.http_fixture();base=self.ns['args'].url;script=responses[base+'assets/index-test.js']
+  def broken():
+   metadata=json.loads(next(Path(self.temp.name).glob('*before-assertion.json')).read_text())
+   self.assertEqual(metadata['scriptResponses'][0]['status'],200)
+   self.assertIn('before body or V8',metadata['capturePhase'])
+   raise RuntimeError('body unavailable')
+  script.body=broken
+  capture={'trace':self.SimpleNamespace(plan=self.SimpleNamespace(url=script.url),snapshot=lambda:{'failures':['observer failure']}),
+           'responses':[script],'navigations':[],'captureCase':'earlier r9 case'}
+  report=self.ns['capture_r9_navigation_evidence'](capture,responses[base])
+  self.assertEqual(report['scriptResponses'][0]['status'],200)
+  self.assertFalse(report['belongsToCurrentCase']);self.assertEqual(report['case'],'earlier r9 case')
+  self.assertEqual(report['v8Trace'],{'failures':['observer failure']})
+  self.assertEqual(report['captureErrors'][0]['part'],'script-0.body')
+  self.assertIn('body',report['documentResponse'])
+
+ def test_cold_cache_preparation_is_read_only_r9_scope_before_trace_install(self):
+  calls=[];listeners={};network={}
+  class CDP:
+   def send(self,name,arguments=None):calls.append((name,arguments));return {}
+   def on(self,name,callback):network[name]=callback
+  cdp=CDP()
+  class Trace:
+   def __init__(self,received,plan):self.cdp=received;self.plan=plan
+   def install(self):calls.append(('trace.install',None))
+  page=self.SimpleNamespace(context=self.SimpleNamespace(new_cdp_session=lambda page:cdp),on=lambda name,callback:listeners.update({name:callback}))
+  self.ns.update(NativeFrameTrace=Trace,observe_reload_storage=lambda page:{'events':[]},time=self.SimpleNamespace(time_ns=lambda:123))
+  capture=self.ns['start_r9_native_trace'](page,self.SimpleNamespace(url='https://example.invalid/pinned.js'))
+  self.assertEqual(calls,[('Network.enable',None),('Network.setCacheDisabled',{'cacheDisabled':True}),('trace.install',None)])
+  network['Network.responseReceived']({'response':{'fromDiskCache':False,'fromServiceWorker':False}})
+  self.assertEqual(capture['networkEvents'][0]['event']['response'],{'fromDiskCache':False,'fromServiceWorker':False})
+  self.assertTrue(capture['preparation']['installedBeforeGoto'])
+  self.assertEqual(capture['captureCase'],'offline navigation test');self.assertEqual(capture['createdHostNanoseconds'],123)
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='start_r9_native_trace')
+  for forbidden in ('route(', 'setItem', 'Date.now', 'requestAnimationFrame', 'setCPUThrottlingRate'):
+   self.assertNotIn(forbidden,ast.unparse(node))
+
+ def test_navigation_assertion_remains_exact_and_failure_guard_retains_navigation_snapshot(self):
+  node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='verify_r9_trace_navigation')
+  checks=[n for n in ast.walk(node) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='check']
+  self.assertEqual(ast.unparse(checks[1].args[1]),"len(scripts) == 1 and scripts[0].status == 200 and (scripts[0].url == scripts[0].request.url == capture['trace'].plan.url)")
+  text=ast.unparse(node);self.assertLess(text.index('capture_r9_navigation_evidence('),text.index('check('))
+  guard=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='capture_failure')
+  self.assertIn("attempt('native-navigation'",ast.unparse(guard));self.assertIn("suffix='failure'",ast.unparse(guard))
 
  def storage_fixture(self):
   epochs=[{'migrationRaw':'A','events':[{'kind':'save','raw':'B1'},{'kind':'save','raw':'B2'}]},
