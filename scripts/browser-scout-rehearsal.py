@@ -76,12 +76,97 @@ def load_shared_helpers():
              'exact_json', 'visibility', 'text_leaf_visibility', 'wait_for_scroll_settled',
              'native_scroll_to', 'scroll_region_state', 'scroll_region_plan', 'scroll_pointer_hits', 'horizontal_wheel_proven',
              'attach', 'verify_bundle', 'verify_document_response',
-             'select', 'trusted_click', 'input_number', 'snap', 'import_confirmation'}
+             'select', 'trusted_click', 'input_number', 'import_confirmation'}
     tree = ast.parse((ROOT / 'scripts/browser-npc-attack.py').read_text())
     selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
     if {node.name for node in selected} != names:
         raise RuntimeError('Shared native acceptance definitions changed; explicit review required')
     exec(compile(ast.Module(body=selected, type_ignores=[]), '<reviewed-native-helpers>', 'exec'), globals())
+
+
+# Playwright v1.57.0 screenshotter.ts L87-L101 and L191-L196: the default
+# caret='hide' writes inline caret-color on EVERY input, then restores it.
+# https://github.com/microsoft/playwright/blob/v1.57.0/packages/playwright-core/src/server/screenshotter.ts
+# Those real style mutations correctly retire this panel's input capability.
+# Keep the old shared helper and all production style/ABA guards unchanged.
+# This runner uses the supported caret='initial' option and records read-only
+# DOM identity/state before and after every capture. No private session access.
+REHEARSAL_CAPTURE_REFERENCES = r'''()=>{
+  const panel=document.querySelector('#npc-rehearsal-panel');
+  const nodes=panel?[panel,...panel.querySelectorAll('*')]:[];
+  const ancestors=[];
+  for(let parent=panel?.parentElement;parent;parent=parent.parentElement)ancestors.push(parent);
+  return {panel,nodes,ancestors};
+}'''
+REHEARSAL_CAPTURE_STATE = r'''refs=>{
+  const panel=document.querySelector('#npc-rehearsal-panel');
+  const nodes=panel?[panel,...panel.querySelectorAll('*')]:[];
+  const ancestors=[];
+  for(let parent=panel?.parentElement;parent;parent=parent.parentElement)ancestors.push(parent);
+  const same=(old,current)=>old.length===current.length&&old.every((node,index)=>node===current[index]);
+  const state=node=>{
+    const css=getComputedStyle(node);
+    return {tag:node.tagName,id:node.id,connected:node.isConnected,
+      style:node.getAttribute('style'),hidden:node.getAttribute('hidden'),ariaHidden:node.getAttribute('aria-hidden'),
+      display:css.display,visibility:css.visibility,opacity:css.opacity,
+      disabled:'disabled' in node?node.disabled:null,value:'value' in node?node.value:null,
+      open:'open' in node?node.open:null};
+  };
+  return {samePanel:refs.panel===panel,sameNodes:same(refs.nodes,nodes),sameAncestors:same(refs.ancestors,ancestors),
+    allOriginalNodesConnected:[...refs.nodes,...refs.ancestors].every(node=>node.isConnected),
+    panelPresent:panel!==null,panelHidden:panel?.hidden??null,panelHtml:panel?.innerHTML??null,
+    resultCount:panel?.querySelectorAll('#npc-rehearsal-results > details.npc-battle-report').length??0,
+    nodes:refs.nodes.map(state),ancestors:refs.ancestors.map(state)};
+}'''
+
+
+def dispose_capture_handles(*handles):
+    """Release read-only probes without replacing an in-flight browser failure."""
+    original_error=sys.exc_info()[0] is not None
+    cleanup_error=None
+    for handle in handles:
+        try:handle.dispose()
+        except BaseException as error:
+            if cleanup_error is None:cleanup_error=error
+    if cleanup_error is not None and not original_error:raise cleanup_error
+
+
+def snap(page, name):
+    """Capture with no caret-style writes; retain original nodes without DOM edits.
+    The witness is public DOM session evidence, not a private session-token read.
+    Persist the pre-state before capture, and final diagnostics even on failure.
+    """
+    page.evaluate('Promise.all([...document.images].filter(i=>i.getClientRects().length).map(i=>i.decode().catch(()=>null)))')
+    refs=page.evaluate_handle(REHEARSAL_CAPTURE_REFERENCES)
+    witness_path=out/(Path(name).stem+'-capture-witness.json')
+    witness={'schema':'infinity-scout-screenshot-witness-v1','case':case,'screenshot':name,
+             'caret':'initial','before':None,'after':None,'screenshotStatus':'not-attempted',
+             'boundary':'Read-only public DOM identity/styles/values/results; no private session token, no observer bypass.'}
+    try:
+        witness['before']=refs.evaluate(REHEARSAL_CAPTURE_STATE)
+        atomic_json(witness_path,witness)
+        path=out/name
+        try:
+            page.screenshot(path=str(path),full_page=False,timeout=7000,caret='initial')
+            witness['screenshotStatus']='captured'
+            evidence.append({'case':case,'file':name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+        except BaseException:
+            witness['screenshotStatus']='failed';witness['screenshotError']=traceback.format_exc()
+            raise
+        finally:
+            try:witness['after']=refs.evaluate(REHEARSAL_CAPTURE_STATE)
+            except BaseException:witness['afterReadError']=traceback.format_exc()
+            atomic_json(witness_path,witness)
+            reference={'kind':'screenshot-state-witness','case':case,'file':witness_path.name,
+                       'sha256':hashlib.sha256(witness_path.read_bytes()).hexdigest()}
+            evidence.append(reference);flush()
+        after=witness['after']
+        check(name+': screenshot preserves original panel controls result nodes and exact public state',
+              witness['before']==after and after is not None
+              and all(after[key] is True for key in ('panelPresent','samePanel','sameNodes','sameAncestors','allOriginalNodesConnected')),
+              reference)
+    finally:
+        dispose_capture_handles(refs)
 
 
 def reset_recorder():
@@ -250,7 +335,7 @@ def capture_live_failure(page):
             captures = (
                 ('failure-storage.json', lambda path: atomic_json(path, storage(page))),
                 ('failure.html', lambda path: path.write_text(page.content(), encoding='utf-8')),
-                ('failure.png', lambda path: page.screenshot(path=str(path), timeout=2000)),
+                ('failure.png', lambda path: page.screenshot(path=str(path), timeout=2000, caret='initial')),
             )
             for filename, capture in captures:
                 if expired:
@@ -506,6 +591,102 @@ def inspect_examples(page, width):
                 expose_round_cell(page,region,cell)
                 control_proof(page,cell,f'{width}-sample-{i}-round-{row}-column-{column}',capture=row==1,prepared=True)
         page.locator(selector + ' > summary').click(); advance(page)
+
+
+# An isolated native A/B, not part of the historical natural action tape.
+# This observer only reads input style mutations and keeps a bounded local log.
+# disconnect() below stops this diagnostic observer, never a production observer.
+SCREENSHOT_STYLE_PROBE = r'''()=>{
+  const inputs=[...document.querySelectorAll('#npc-rehearsal-panel input')];
+  const records=[];let overflow=false;
+  const collect=batch=>{for(const record of batch){
+    if(records.length>=64){overflow=true;continue;}
+    const node=record.target;
+    records.push({id:node.id,attribute:record.attributeName,oldStyle:record.oldValue,
+      currentStyle:node.getAttribute('style'),caret:node.style.getPropertyValue('caret-color'),
+      priority:node.style.getPropertyPriority('caret-color')});
+  }};
+  const observer=new MutationObserver(collect);
+  for(const input of inputs)observer.observe(input,{attributes:true,attributeOldValue:true,attributeFilter:['style']});
+  return {inputs:inputs.map(node=>node.id),records,observer,collect,overflow:()=>overflow};
+}'''
+
+
+def screenshot_caret_diagnostic():
+    """Two fresh identical contexts prove actual screenshot mutation/retirement.
+    Explicit hide is diagnostic only; acceptance pictures always keep initial.
+    """
+    row=next(r for r in fixtures['milestones'] if r['name']=='scout11-returned')
+    for caret in ('hide','initial'):
+        begin_case('EXPLICIT-INSTRUMENTATION-screenshot-caret-'+caret)
+        context,page=boot(row['raw']);succeeded=False
+        try:
+            open_report(page);run_six(page)
+            before_storage=storage(page);before_draft=draft_values(page)
+            refs=page.evaluate_handle(REHEARSAL_CAPTURE_REFERENCES)
+            probe=page.evaluate_handle(SCREENSHOT_STYLE_PROBE)
+            name='instrumentation-caret-'+caret
+            witness={'schema':'infinity-scout-caret-ab-v1','case':case,'caret':caret,
+                     'before':None,'after':None,'trace':None,'screenshotStatus':'not-attempted',
+                     'boundary':'Isolated screenshot instrumentation A/B on identical saved scout11 state; bounded read-only style observer; no production observer changes.'}
+            witness_path=out/(name+'.json')
+            try:
+                witness['before']=refs.evaluate(REHEARSAL_CAPTURE_STATE);atomic_json(witness_path,witness)
+                try:
+                    path=out/(name+'.png');page.screenshot(path=str(path),full_page=False,timeout=2000,caret=caret)
+                    witness['screenshotStatus']='captured'
+                    evidence.append({'case':case,'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+                except BaseException:
+                    witness['screenshotStatus']='failed';witness['screenshotError']=traceback.format_exc()
+                    raise
+                finally:
+                    try:
+                        witness['trace']=probe.evaluate('''probe=>{probe.collect(probe.observer.takeRecords());probe.observer.disconnect();
+                          return {inputs:probe.inputs,records:probe.records,overflow:probe.overflow()};}''')
+                    except BaseException:witness['traceReadError']=traceback.format_exc()
+                    try:witness['after']=refs.evaluate(REHEARSAL_CAPTURE_STATE)
+                    except BaseException:witness['afterReadError']=traceback.format_exc()
+                    atomic_json(witness_path,witness)
+                    reference={'kind':'screenshot-caret-ab','case':case,'file':witness_path.name,
+                               'sha256':hashlib.sha256(witness_path.read_bytes()).hexdigest()}
+                    evidence.append(reference);flush()
+            finally:
+                dispose_capture_handles(probe,refs)
+            trace=witness['trace'];before=witness['before'];after=witness['after']
+            check('isolated caret probe has complete before after and mutation evidence',
+                  before is not None and after is not None and trace is not None,reference)
+            expected_ids=['npc-rehearsal-ship-'+ship for ship in SHIPS]
+            check('isolated caret probe observes exactly all thirteen rehearsal inputs without log overflow',
+                  trace['inputs']==expected_ids and trace['overflow'] is False,reference)
+            check('isolated caret probe begins with three enabled original public samples',
+                  before['panelPresent'] and not before['panelHidden'] and before['sameNodes']
+                  and before['resultCount']==3
+                  and all(not node['disabled'] for node in before['nodes'] if node['id'] in ('npc-rehearsal-run','npc-rehearsal-fill')),
+                  reference)
+            if caret=='hide':
+                records=trace['records']
+                check('explicit caret hide writes transparent important and restores every rehearsal input style',
+                      {r['id'] for r in records}==set(expected_ids)
+                      and all(any(r['id']==ident and r['caret']=='transparent' and r['priority']=='important' for r in records)
+                              and any(r['id']==ident and 'caret-color: transparent' in (r['oldStyle'] or '') and r['caret']=='' for r in records)
+                              for ident in expected_ids),reference)
+                check('explicit caret hide retires authority and removes original review result nodes',
+                      after['samePanel'] and after['panelHidden'] and not after['sameNodes']
+                      and not after['allOriginalNodesConnected']
+                      and page.locator('#npc-rehearsal-results > details.npc-battle-report').count()==0
+                      and page.locator('#npc-rehearsal-fill').is_disabled(),reference)
+            else:
+                check('explicit caret initial has no input style mutations and retains exact panel controls and results',
+                      trace['records']==[] and before==after and after['allOriginalNodesConnected']
+                      and page.locator('#npc-rehearsal-results > details.npc-battle-report').count()==3
+                      and page.locator('#npc-rehearsal-fill').is_enabled(),reference)
+            storage_check('isolated screenshot '+caret+' changes no complete native storage bytes',page,before_storage)
+            unchanged_authority_draft(page,'isolated screenshot '+caret,before_draft)
+            whole_state('isolated screenshot '+caret+' leaves every economic field unchanged',save(page),row['expected'])
+            succeeded=True
+        finally:
+            # A failed active page must remain live for outer failure evidence.
+            if succeeded:context.close()
 
 
 def draft_values(page):
@@ -931,6 +1112,7 @@ def main():
     try:
         with sync_playwright() as p, live_failure_evidence():
             browser=p.chromium.launch(headless=True,**({'executable_path':args.chromium} if args.chromium else {}))
+            screenshot_caret_diagnostic()
             begin_case('natural-unedited-paid31-migration')
             context,page=boot(fixtures['origin']['raw'])
             backups=storage(page)

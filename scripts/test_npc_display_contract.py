@@ -3,6 +3,10 @@ import copy
 import unittest
 from npc_display_contract import *
 
+# Independent native r14 golden, copied from the retained failed CI capture.
+# Do not construct this witness from the implementation's expected constant.
+CAPTURED_DRAFT_NOTICE_HTML = '<p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden=""></p>'
+
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'messages':[{'id':'send-1','at':3,'text':'原有消息。','npcScoutSnapshot':None},{'id':'scout-2','at':60,'text':'原有侦察情报。','npcScoutSnapshot':None}]}
     def unit_panel(self,tab,side):
@@ -165,7 +169,7 @@ class NpcDisplayTests(unittest.TestCase):
             with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
     def fleet(self):
         options=copy.deepcopy(MISSION_OPTIONS);options.insert(4,['attack','NPC 轨道攻击']);text='\n'.join(label for _,label in options)
-        return {'tab':'fleet','text':'任务\n'+text+'\n原有在途舰队','inputs':[]},{'tab':'fleet','options':options,'selected':'colonize','selectText':text,'hiddenAttack':{'hidden':True,'html':ATTACK_OPTIONS_HTML,'quota':'','status':''},'rehearsalNotice':{'count':1,'html':DRAFT_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True},'clear':{'hidden':True,'text':'清空货物草稿','visible':False,'index':-1}}
+        return {'tab':'fleet','text':'任务\n'+text+'\n原有在途舰队','inputs':[]},{'tab':'fleet','options':options,'selected':'colonize','selectText':text,'hiddenAttack':{'hidden':True,'html':ATTACK_OPTIONS_HTML,'quota':'','status':''},'rehearsalNotice':{'count':1,'html':CAPTURED_DRAFT_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True},'clear':{'hidden':True,'text':'清空货物草稿','visible':False,'index':-1}}
     def test_exact_one_mission_option_with_no_other_text_change(self):
         snapshot,evidence=self.fleet();before=copy.deepcopy((snapshot,evidence));result=normalize_npc_display(snapshot,evidence,self.state(),'after')
         self.assertEqual(result['text'],'任务\n'+'\n'.join(label for _,label in MISSION_OPTIONS)+'\n原有在途舰队')
@@ -271,16 +275,75 @@ class NpcDisplayTests(unittest.TestCase):
         empty=self.copied_rows([]);self.assertEqual(assert_message_rows(empty,[]),(empty['html'],empty['text']))
         empty['html']+='<p hidden="">unknown</p>'
         with self.assertRaises(AssertionError):assert_message_rows(empty,[])
+    def test_current_native_draft_notice_golden_keeps_the_exact_contract(self):
+        self.assertEqual(DRAFT_NOTICE_HTML,CAPTURED_DRAFT_NOTICE_HTML)
+        snapshot,evidence=self.fleet();state=self.state();original=copy.deepcopy((snapshot,evidence,state))
+        result=normalize_npc_display(snapshot,evidence,state,'after')
+        self.assertEqual(result,{**snapshot,'text':'任务\n'+'\n'.join(label for _,label in MISSION_OPTIONS)+'\n原有在途舰队'})
+        self.assertEqual((snapshot,evidence,state),original)
     def test_fleet_rehearsal_draft_notice_is_only_exact_hidden_empty_addition(self):
-        for mutation in ('missing','count','html','hidden','visible','order'):
+        for mutation in ('missing','count','zero_count','boolean_count','html','old_class','missing_muted','extra_class',
+                         'wrong_tag','wrong_id','wrong_role','extra_attribute','nested','duplicate_html','missing_hidden',
+                         'hidden','visible','order','numeric_hidden','numeric_visible','numeric_order','extra_field','missing_field'):
             snapshot,evidence=self.fleet();notice=evidence['rehearsalNotice']
             if mutation=='missing':evidence['rehearsalNotice']=None
             if mutation=='count':notice['count']=2
+            if mutation=='zero_count':notice['count']=0
+            if mutation=='boolean_count':notice['count']=True
             if mutation=='html':notice['html']=notice['html'].replace('</p>','unapproved</p>')
+            if mutation=='old_class':notice['html']=notice['html'].replace('class="npc-rehearsal-draft-notice muted"','class="space-status"')
+            if mutation=='missing_muted':notice['html']=notice['html'].replace(' muted','')
+            if mutation=='extra_class':notice['html']=notice['html'].replace(' muted',' muted space-status')
+            if mutation=='wrong_tag':notice['html']=notice['html'].replace('<p ','<div ').replace('</p>','</div>')
+            if mutation=='wrong_id':notice['html']=notice['html'].replace('id="npc-rehearsal-draft-notice"','id="other"')
+            if mutation=='wrong_role':notice['html']=notice['html'].replace('role="status"','role="alert"')
+            if mutation=='extra_attribute':notice['html']=notice['html'].replace(' role=', ' data-other="unknown" role=')
+            if mutation=='nested':notice['html']=notice['html'].replace('</p>','<span hidden=""></span></p>')
+            if mutation=='duplicate_html':notice['html']*=2
+            if mutation=='missing_hidden':notice['html']=notice['html'].replace(' hidden=""','')
             if mutation=='hidden':notice['hidden']=False
             if mutation=='visible':notice['visible']=True
             if mutation=='order':notice['exactOrder']=False
+            if mutation=='numeric_hidden':notice['hidden']=1
+            if mutation=='numeric_visible':notice['visible']=0
+            if mutation=='numeric_order':notice['exactOrder']=1
+            if mutation=='extra_field':notice['unknown']=False
+            if mutation=='missing_field':del notice['exactOrder']
             with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+    def test_notice_repair_never_filters_any_original_control_or_unrelated_snapshot_field(self):
+        # A 33-control regression fixture probes every original position.
+        # Distinct sentinels are synthetic; real CI data is replayed separately.
+        snapshot,evidence=self.fleet();state=self.state()
+        snapshot['inputs']=[{'id':f'original-{n}','action':None,'type':'number','value':str(n),
+                            'disabled':False,'checked':False,'text':None} for n in range(33)]
+        snapshot['shared']={'status':'已保存到本地','amount-metal':'7.80e4'}
+        snapshot['unrelated']={'hiddenAttribute':'kept','timer':'3.20'}
+        original=copy.deepcopy((snapshot,evidence,state));expected=normalize_npc_display(snapshot,evidence,state,'after')
+        self.assertEqual((snapshot,evidence,state),original)
+        self.assertEqual(expected['inputs'],snapshot['inputs']);self.assertEqual(len(expected['inputs']),33)
+        self.assertIsNot(expected['inputs'],snapshot['inputs'])
+        for index in range(33):
+            for field,value in (('id','changed'),('action','changed'),('type','text'),('value','changed'),
+                                ('disabled',True),('checked',True),('text','changed')):
+                changed=copy.deepcopy(snapshot);changed['inputs'][index][field]=value
+                result=normalize_npc_display(changed,evidence,state,'after')
+                with self.subTest(index=index,field=field):
+                    self.assertNotEqual(result,expected)
+                    self.assertEqual(result['inputs'],changed['inputs'])
+        for mutation in ('text','shared','unrelated','missing_control','extra_control','reordered_controls'):
+            changed=copy.deepcopy(snapshot)
+            if mutation=='text':changed['text']+='\nother status'
+            if mutation=='shared':changed['shared']['amount-metal']='0'
+            if mutation=='unrelated':changed['unrelated']['hiddenAttribute']='changed'
+            if mutation=='missing_control':changed['inputs'].pop()
+            if mutation=='extra_control':changed['inputs'].append(copy.deepcopy(changed['inputs'][0]))
+            if mutation=='reordered_controls':changed['inputs'].reverse()
+            copied=copy.deepcopy(changed);result=normalize_npc_display(changed,evidence,state,'after')
+            with self.subTest(mutation=mutation):
+                self.assertNotEqual(result,expected);self.assertEqual(changed,copied)
+                self.assertEqual(result['inputs'],changed['inputs'])
+                self.assertEqual(result['shared'],changed['shared'])
+                self.assertEqual(result['unrelated'],changed['unrelated'])
     def test_new_dom_counts_and_booleans_are_not_interchangeable(self):
         snapshot,evidence=self.messages();evidence['messages']['count']=True
         with self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')

@@ -642,6 +642,262 @@ class StorageDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("'infinity.ui.tab':'fleet'",body)
 
 
+class ScreenshotNoninterferenceTests(unittest.TestCase):
+    def state(self):
+        return {'samePanel':True,'sameNodes':True,'sameAncestors':True,'allOriginalNodesConnected':True,
+                'panelPresent':True,'panelHidden':False,'resultCount':3,'panelHtml':'<input id="original"><details>three retained samples</details>',
+                'nodes':[{'id':'original','connected':True,'style':None,'hidden':None,'ariaHidden':None,
+                          'display':'block','visibility':'visible','opacity':'1','disabled':False,'value':'6','open':None}],
+                'ancestors':[{'id':'space-messages','connected':True,'style':None,'hidden':None}]}
+
+    def page(self,root,before,after,*,capture_error=None,read_error=None):
+        events=[];owner=self
+        class References:
+            reads=0
+            def evaluate(self,expression):
+                owner.assertEqual(expression,module.REHEARSAL_CAPTURE_STATE)
+                self.reads+=1;events.append('before' if self.reads==1 else 'after')
+                if self.reads>1 and read_error:raise RuntimeError(read_error)
+                return copy.deepcopy(before if self.reads==1 else after)
+            def dispose(self):events.append('dispose')
+        class Page:
+            def evaluate(self,expression):
+                owner.assertIn('i.decode()',expression);events.append('images')
+            def evaluate_handle(self,expression):
+                owner.assertEqual(expression,module.REHEARSAL_CAPTURE_REFERENCES);events.append('retain');return References()
+            def screenshot(self,*,path,full_page,timeout,caret):
+                witness=json.loads((root/'source-capture-witness.json').read_bytes())
+                owner.assertEqual(witness['before'],before);owner.assertIsNone(witness['after'])
+                owner.assertEqual(witness['screenshotStatus'],'not-attempted')
+                owner.assertEqual((full_page,timeout,caret),(False,7000,'initial'));events.append('screenshot')
+                if capture_error:raise RuntimeError(capture_error)
+                Path(path).write_bytes(b'offline-screenshot-only')
+        return Page(),events
+
+    def test_runner_owns_snap_after_loading_helpers_and_options_cover_every_screenshot(self):
+        own=module.snap;module.load_shared_helpers();self.assertIs(module.snap,own)
+        tree=ast.parse(SCRIPT.read_text())
+        calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='screenshot']
+        self.assertEqual(len(calls),3)
+        ordinary=[call for call in calls if any(k.arg=='caret' and isinstance(k.value,ast.Constant) for k in call.keywords)]
+        self.assertEqual(len(ordinary),2)
+        for call in ordinary:self.assertEqual(ast.literal_eval(next(k.value for k in call.keywords if k.arg=='caret')),'initial')
+        diagnostic=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='screenshot_caret_diagnostic')
+        self.assertIn("for caret in ('hide', 'initial'):",ast.unparse(diagnostic))
+        self.assertEqual(sum(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='screenshot' for n in ast.walk(diagnostic)),1)
+        helpers=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='load_shared_helpers')
+        self.assertNotIn("'snap'",ast.unparse(helpers))
+        self.assertEqual((ROOT/'scripts/browser-requirements.txt').read_text().splitlines()[0],'playwright==1.57.0')
+
+    def test_identical_original_dom_is_recorded_around_image_with_no_private_token_or_dom_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root);before=self.state();page,events=self.page(root,before,before)
+            m.snap(page,'source.png');os.close(m.journal.fd)
+            self.assertEqual(events,['images','retain','before','screenshot','after','dispose'])
+            self.assertEqual((m.passed_count,m.failed_count),(1,0))
+            witness=json.loads((root/'source-capture-witness.json').read_bytes())
+            self.assertEqual(witness['before'],witness['after']);self.assertEqual(witness['screenshotStatus'],'captured')
+            for reference in m.evidence:
+                self.assertEqual(reference['sha256'],hashlib.sha256((root/reference['file']).read_bytes()).hexdigest())
+            self.assertEqual(m.checks[-1]['detail'],m.evidence[-1])
+        for js in (module.REHEARSAL_CAPTURE_REFERENCES,module.REHEARSAL_CAPTURE_STATE):
+            for forbidden in ('setAttribute(', 'removeAttribute(', 'setProperty(', 'replaceChildren(', 'appendChild(',
+                              '.focus(', '.click(', 'MutationObserver', 'window.', 'session'):
+                self.assertNotIn(forbidden,js)
+        for required in ("getAttribute('style')",'getComputedStyle(node)','node.disabled','node.value',
+                         'panel?.hidden','panel?.innerHTML','same(refs.nodes,nodes)','node.isConnected'):
+            self.assertIn(required,module.REHEARSAL_CAPTURE_STATE)
+
+    def test_retirement_or_any_original_identity_style_value_or_result_change_fails(self):
+        mutations={
+            'panel_hidden':lambda d:d.update(panelHidden=True),
+            'panel_absent':lambda d:d.update(panelPresent=False),
+            'panel_replaced':lambda d:d.update(samePanel=False),
+            'result_replaced':lambda d:d.update(sameNodes=False),
+            'ancestor_replaced':lambda d:d.update(sameAncestors=False),
+            'original_detached':lambda d:d.update(allOriginalNodesConnected=False),
+            'results_cleared':lambda d:d.update(panelHtml=''),
+            'caret_style':lambda d:d['nodes'][0].update(style='caret-color: transparent !important;'),
+            'restored_style_attribute':lambda d:d['nodes'][0].update(style=''),
+            'input_zeroed':lambda d:d['nodes'][0].update(value='0'),
+            'input_disabled':lambda d:d['nodes'][0].update(disabled=True),
+            'ancestor_style':lambda d:d['ancestors'][0].update(style='display:none'),
+        }
+        for name,mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);m=RecorderLinearityTests().runner(root);before=self.state();after=copy.deepcopy(before);mutate(after)
+                page,events=self.page(root,before,after)
+                with self.assertRaisesRegex(AssertionError,'screenshot preserves original'):m.snap(page,'source.png')
+                os.close(m.journal.fd);self.assertEqual(events[-1],'dispose')
+                witness=json.loads((root/'source-capture-witness.json').read_bytes())
+                self.assertEqual(witness['before'],before);self.assertEqual(witness['after'],after)
+                self.assertEqual((m.passed_count,m.failed_count),(0,1))
+                self.assertEqual(m.evidence[-1]['sha256'],hashlib.sha256((root/m.evidence[-1]['file']).read_bytes()).hexdigest())
+
+    def test_missing_panel_before_and_after_never_vacuously_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root);state=self.state()
+            state.update(panelPresent=False,panelHidden=None,panelHtml=None,nodes=[],ancestors=[])
+            page,events=self.page(root,state,state)
+            with self.assertRaisesRegex(AssertionError,'screenshot preserves original'):m.snap(page,'source.png')
+            os.close(m.journal.fd);self.assertFalse(m.checks[-1]['passed']);self.assertEqual(events[-1],'dispose')
+
+    def test_probe_disposal_attempts_every_handle_and_never_masks_an_active_failure(self):
+        events=[]
+        def fail(name):
+            events.append(name);raise RuntimeError('cleanup '+name)
+        handles=[SimpleNamespace(dispose=lambda name=name:fail(name)) for name in ('probe','references')]
+        with self.assertRaisesRegex(ValueError,'original screenshot failure'):
+            try:raise ValueError('original screenshot failure')
+            finally:module.dispose_capture_handles(*handles)
+        self.assertEqual(events,['probe','references']);events.clear()
+        with self.assertRaisesRegex(RuntimeError,'cleanup probe'):module.dispose_capture_handles(*handles)
+        self.assertEqual(events,['probe','references'])
+
+    def test_screenshot_failure_keeps_original_error_and_both_available_dom_states(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root);state=self.state()
+            page,events=self.page(root,state,state,capture_error='native capture failed')
+            with self.assertRaisesRegex(RuntimeError,'native capture failed'):m.snap(page,'source.png')
+            os.close(m.journal.fd)
+            witness=json.loads((root/'source-capture-witness.json').read_bytes())
+            self.assertEqual(witness['screenshotStatus'],'failed');self.assertEqual(witness['after'],state)
+            self.assertIn('native capture failed',witness['screenshotError']);self.assertEqual(events[-1],'dispose')
+            self.assertEqual((m.passed_count,m.failed_count),(0,0))
+
+    def test_after_read_failure_is_durable_and_cannot_claim_noninterference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root);state=self.state()
+            page,events=self.page(root,state,state,read_error='read-only witness unavailable')
+            with self.assertRaisesRegex(AssertionError,'screenshot preserves original'):m.snap(page,'source.png')
+            os.close(m.journal.fd)
+            witness=json.loads((root/'source-capture-witness.json').read_bytes())
+            self.assertEqual(witness['before'],state);self.assertIsNone(witness['after'])
+            self.assertIn('read-only witness unavailable',witness['afterReadError']);self.assertEqual(events[-1],'dispose')
+            self.assertFalse(m.checks[-1]['passed'])
+
+    def test_production_style_guard_and_every_native_own_leaf_aba_negative_case_remain(self):
+        production=(ROOT/'src/ui/npc-rehearsal-panel.ts').read_text()
+        for required in ('record.attributeName === "style"','...fields.map(field => field.input)',
+                         'anchors.some(node => target === node || target.contains(node))) abandon()',
+                         'for (const node of mounted) watch(node)',
+                         'attributeFilter: ["hidden", "style", "aria-hidden"]'):
+            self.assertIn(required,production)
+        native=SCRIPT.read_text().split('def leaf_retirement_boundaries():',1)[1].split('def curvature_and_eviction():',1)[0]
+        for required in ("for attribute in ('hidden','style','aria-hidden')",'e.setAttribute(a',
+                         'e.removeAttribute(a)',"'#npc-rehearsal-ship-light_fighter'",
+                         'same-turn own leaf hide/restore permanently retires old review capability',
+                         "whole_state('leaf-'"):
+            self.assertIn(required,native)
+
+
+class ScreenshotCaretDiagnosticTests(unittest.TestCase):
+    def run_diagnostic(self,root,*,broken_trace=None,events=None):
+        m=RecorderLinearityTests().runner(root);events=[] if events is None else events;owner=self
+        expected={'economy':'unchanged','fleets':[],'messages':['retained scout11']}
+        class Probe:
+            def __init__(self,page):self.page=page
+            def evaluate(self,expression):
+                owner.assertIn('takeRecords()',expression);owner.assertIn('disconnect()',expression)
+                ids=['npc-rehearsal-ship-'+ship for ship in m.SHIPS]
+                records=[]
+                if self.page.caret=='hide':
+                    for ident in ids:
+                        records.extend([{'id':ident,'attribute':'style','oldStyle':None,'currentStyle':'caret-color: transparent !important;',
+                                         'caret':'transparent','priority':'important'},
+                                        {'id':ident,'attribute':'style','oldStyle':'caret-color: transparent !important;',
+                                         'currentStyle':'','caret':'','priority':''}])
+                if broken_trace=='no-hide-events':records=[]
+                if broken_trace=='initial-mutates' and self.page.caret=='initial':records=[{'id':ids[0],'caret':'transparent'}]
+                return {'inputs':ids,'records':records,'overflow':broken_trace=='overflow'}
+            def dispose(self):events.append(('probe-disposed',self.page.caret))
+        class References:
+            def __init__(self,page):self.page=page
+            def evaluate(self,expression):
+                owner.assertEqual(expression,m.REHEARSAL_CAPTURE_STATE)
+                value=ScreenshotNoninterferenceTests().state()
+                value['nodes']=[{'id':'npc-rehearsal-run','disabled':False},{'id':'npc-rehearsal-fill','disabled':False}]
+                if self.page.caret=='hide':value.update(panelHidden=True,sameNodes=False,allOriginalNodesConnected=False,resultCount=0,panelHtml='retired')
+                return value
+            def dispose(self):events.append(('references-disposed',self.page.caret))
+        class Page:
+            caret=None;closed=False
+            def evaluate_handle(self,expression):
+                return Probe(self) if expression==m.SCREENSHOT_STYLE_PROBE else References(self)
+            def evaluate(self,expression):return {'selected':['messages'],'visible':['messages']}
+            def screenshot(self,*,path,full_page,timeout,caret):
+                owner.assertEqual((full_page,timeout),(False,2000));owner.assertIn(caret,('hide','initial'));self.caret=caret
+                record=json.loads((root/('instrumentation-caret-'+caret+'.json')).read_bytes())
+                owner.assertFalse(record['before']['panelHidden']);owner.assertIsNone(record['after'])
+                events.append(('screenshot',caret));Path(path).write_bytes(b'offline-ab-only')
+            def locator(self,selector):
+                return SimpleNamespace(count=lambda:0 if self.caret=='hide' else 3,
+                                       is_disabled=lambda:self.caret=='hide',is_enabled=lambda:self.caret=='initial')
+        def boot(raw):
+            owner.assertEqual(raw,'same saved scout11 raw');page=Page();m.active_page=page;events.append(('boot',raw))
+            def close():page.closed=True;events.append(('closed',page.caret))
+            return SimpleNamespace(close=close),page
+        def open_report(page):
+            if broken_trace=='pre-witness':raise RuntimeError('open report failed before witness')
+        def capture_live_failure(page):
+            owner.assertFalse(page.closed);events.append(('live-failure',page.caret));return {'pageAvailable':True}
+        m.fixtures={'milestones':[{'name':'scout11-returned','raw':'same saved scout11 raw','expected':expected}]}
+        with patch.object(m,'boot',boot),patch.object(m,'open_report',open_report),patch.object(m,'run_six',lambda page:None), \
+             patch.object(m,'storage',return_value={'current':'exact raw','backup':'exact historical raw','infinity.ui.tab':'save'}), \
+             patch.object(m,'draft_values',return_value=AuthorityAtomicityTests().draft()),patch.object(m,'save',return_value=expected), \
+             patch.object(m,'capture_live_failure',capture_live_failure):
+            try:
+                with m.live_failure_evidence():m.screenshot_caret_diagnostic()
+            finally:os.close(m.journal.fd)
+        return m,events
+
+    def test_both_fresh_contexts_capture_trace_and_preserve_full_storage_draft_and_economic_oracles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m,events=self.run_diagnostic(root)
+            self.assertEqual([e for e in events if e[0]=='screenshot'],[('screenshot','hide'),('screenshot','initial')])
+            self.assertEqual(sum(e[0]=='boot' for e in events),2);self.assertEqual(sum(e[0]=='closed' for e in events),2)
+            for caret in ('hide','initial'):
+                record=json.loads((root/('instrumentation-caret-'+caret+'.json')).read_bytes())
+                self.assertEqual(record['caret'],caret);self.assertEqual(record['screenshotStatus'],'captured')
+                self.assertEqual(len(record['trace']['records']),26 if caret=='hide' else 0)
+                self.assertTrue(any('screenshot '+caret+' changes no complete native storage bytes'==check['name'].removeprefix('isolated ') for check in m.checks))
+                self.assertTrue(any('isolated screenshot '+caret+': complete ordinary draft unchanged' in check['name'] for check in m.checks))
+                self.assertTrue(any('isolated screenshot '+caret+' leaves every economic field unchanged' in check['name'] for check in m.checks))
+            self.assertEqual(m.failed_count,0)
+            for reference in m.evidence:
+                self.assertEqual(reference['sha256'],hashlib.sha256((root/reference['file']).read_bytes()).hexdigest())
+
+    def test_missing_hide_records_initial_mutation_and_trace_overflow_cannot_pass(self):
+        for broken in ('no-hide-events','initial-mutates','overflow'):
+            with self.subTest(broken=broken),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(AssertionError):self.run_diagnostic(Path(directory),broken_trace=broken)
+                self.assertTrue((Path(directory)/'instrumentation-caret-hide.json').exists())
+
+    def test_pre_witness_and_post_capture_failures_retain_live_page_for_outer_failure_evidence(self):
+        for broken,message,caret,closed in (('pre-witness','open report failed before witness',None,[]),
+                                           ('initial-mutates','explicit caret initial','initial',[('closed','hide')])):
+            with self.subTest(broken=broken),tempfile.TemporaryDirectory() as directory:
+                events=[]
+                with self.assertRaisesRegex((AssertionError,RuntimeError),message):
+                    self.run_diagnostic(Path(directory),broken_trace=broken,events=events)
+                self.assertEqual([event for event in events if event[0]=='closed'],closed)
+                self.assertEqual(events[-1],('live-failure',caret))
+                report=json.loads((Path(directory)/'report.json').read_bytes())
+                self.assertFalse(report['completed']);self.assertIn(message,report['failure'])
+
+    def test_probe_is_bounded_read_only_and_diagnostic_precedes_unchanged_natural_tape(self):
+        probe=module.SCREENSHOT_STYLE_PROBE
+        for forbidden in ('setAttribute(', 'removeAttribute(', 'setProperty(', 'replaceChildren(', 'window.'):
+            self.assertNotIn(forbidden,probe)
+        for required in ('records.length>=64',"attributeFilter:['style']",'attributeOldValue:true',
+                         "node.style.getPropertyValue('caret-color')",'oldStyle:record.oldValue'):
+            self.assertIn(required,probe)
+        source=SCRIPT.read_text();main=source.split('def main():',1)[1].split('def supervise():',1)[0]
+        self.assertLess(main.index('screenshot_caret_diagnostic()'),main.index("begin_case('natural-unedited-paid31-migration')"))
+        natural=source.split('def natural_rehearsal(page):',1)[1].split('def configure_scout',1)[0]
+        self.assertNotIn('screenshot_caret_diagnostic',natural)
+
+
 class LiveFailureDiagnosticsTests(unittest.TestCase):
     def test_failure_capture_occurs_before_outer_browser_teardown_and_original_error_survives(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -656,9 +912,10 @@ class LiveFailureDiagnosticsTests(unittest.TestCase):
                     self.assert_live();events.append('html');return '<html>actual failure</html>'
                 def assert_live(self):
                     if not life.live:raise AssertionError('Captured after teardown')
-                def screenshot(self,path,timeout):
+                def screenshot(self,path,timeout,caret):
                     self.assert_live();events.append('screenshot');Path(path).write_bytes(b'offline-png-stub')
                     if timeout!=2000:raise AssertionError('Screenshot was not bounded')
+                    if caret!='initial':raise AssertionError('Failure capture mutates caret styles')
             page=Page();m.active_page=page
             def storage(_):page.assert_live();events.append('storage');return {'all':'exact raw\n','infinity.ui.tab':'save'}
             with patch.object(m,'storage',storage):
@@ -682,7 +939,7 @@ class LiveFailureDiagnosticsTests(unittest.TestCase):
             root=Path(directory);m=RecorderLinearityTests().runner(root)
             class Page:
                 def content(self):raise RuntimeError('HTML unavailable')
-                def screenshot(self,path,timeout):Path(path).write_bytes(b'offline-png-stub')
+                def screenshot(self,path,timeout,caret):Path(path).write_bytes(b'offline-png-stub')
             with patch.object(m,'storage',return_value={'exact':'raw'}):result=m.capture_live_failure(Page())
             os.close(m.journal.fd)
             self.assertEqual([r['status'] for r in result['captures']],['captured','failed','captured'])
@@ -713,7 +970,7 @@ class LiveFailureDiagnosticsTests(unittest.TestCase):
                 root=Path(directory);m=RecorderLinearityTests().runner(root)
                 class Page:
                     def content(self):return '<html>failure</html>'
-                    def screenshot(self,path,timeout):Path(path).write_bytes(b'png-stub')
+                    def screenshot(self,path,timeout,caret):Path(path).write_bytes(b'png-stub')
                 with patch.object(m,'storage',return_value={'raw':'exact'}), \
                      patch.object(m.signal,'signal'), patch.object(m.signal,'setitimer') as timer, \
                      patch.object(m.signal,'getitimer',return_value=(previous,0)), \

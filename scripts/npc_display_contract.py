@@ -26,7 +26,8 @@ FLYING_SHIPS=[('small_cargo','小型运输舰'),('large_cargo','大型运输舰'
  ('heavy_fighter','重型战斗机'),('cruiser','巡洋舰'),('battleship','战列舰'),('battlecruiser','战列巡洋舰'),
  ('bomber','轰炸机'),('destroyer','毁灭者'),('deathstar','死星'),('recycler','回收船'),
  ('espionage_probe','间谍卫星'),('colony_ship','殖民船')]
-DRAFT_NOTICE_HTML='<p id="npc-rehearsal-draft-notice" class="space-status" role="status" hidden=""></p>'
+# The dedicated class must not join the shared .space-status renderer.
+DRAFT_NOTICE_HTML='<p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden=""></p>'
 
 
 def initial_rehearsal_html():
