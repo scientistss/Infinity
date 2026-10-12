@@ -30,7 +30,7 @@ class NativeGateTests(unittest.TestCase):
                  'attack12-actual-battle', 'attack12-return-delivered-once', 'scout13-after-real-battle', 'scout13-returned']
         rows = [{'name': name, 'raw': '{}', 'rawSha256': hashlib.sha256(b'{}').hexdigest(), 'expected': {}, 'reload': False} for name in names]
         rows[2].update(reload=True,expected={'fleets':[{'id':11,'returning':False,'remaining':.5,'duration':1}],'messages':[{'npcScoutSnapshot':None}]})
-        return {'schema':'infinity-scout-rehearsal-natural-route-v1',
+        return {'schema':'infinity-scout-rehearsal-natural-route-v1','key':'infinity.original-p4.save.v1',
             'source':{'sourceSha':'a'*40,'sourceScopeStatusPorcelain':'','oldSourceSha':module.SOURCE_PIN},
             'origin':{'historicalSourceSha':module.SOURCE_PIN,'rawSha256':module.RAW_PIN,'raw':original['raw']},
             'outcome':{'status':'passed','mainComplete':True},'checks':[{'passed':True}],
@@ -43,6 +43,14 @@ class NativeGateTests(unittest.TestCase):
 
     def test_no_mislabeled_dirty_or_incomplete_oracle(self):
         mutations = {
+            'missing_key':lambda d:d.pop('key'),
+            'wrong_key':lambda d:d.update(key='infinity.save.v1'),
+            'empty_key':lambda d:d.update(key=''),
+            'object_key':lambda d:d.update(key={'key':'infinity.original-p4.save.v1'}),
+            'list_key':lambda d:d.update(key=['infinity.original-p4.save.v1']),
+            'ui_preference_key':lambda d:d.update(key='infinity.ui.tab'),
+            'number_key':lambda d:d.update(key=42),
+            'null_key':lambda d:d.update(key=None),
             'dirty':lambda d:d['source'].update(sourceScopeStatusPorcelain=' M src/game/save.ts'),
             'different_sha':lambda d:d['source'].update(sourceSha='b'*40),
             'different_old_sha':lambda d:d['source'].update(oldSourceSha='b'*40),
@@ -79,10 +87,11 @@ class NativeGateTests(unittest.TestCase):
         self.assertIn('CI-only',result.stderr)
         self.assertNotIn('playwright',result.stderr)
 
-    def test_http_v8_release_identity_and_same_sha_both_jobs_are_required(self):
+    def test_http_v8_release_identity_and_same_sha_three_jobs_and_aggregate_are_required(self):
         source=SCRIPT.read_text();shared=(ROOT/'scripts/browser-npc-attack.py').read_text()
         for text in ('verify_bundle(page)','verify_document_response(response)','expected_report_sha256',
-                     "sourceScopeStatusPorcelain",'unchanged complete original job must both be green'):
+                     "sourceScopeStatusPorcelain",'All three independent jobs (verify, npc-orbital, scout-rehearsal)',
+                     'required-gates aggregate must be green for this exact source SHA.'):
             self.assertIn(text,source)
         for text in ('Debugger.getScriptSource','httpSha256','executedSourceSha256','releaseSha256'):
             self.assertIn(text,shared)
@@ -295,9 +304,9 @@ class AuthorityAtomicityTests(unittest.TestCase):
     def test_conflict_uses_blocked_save_and_protected_export_before_reload(self):
         source=SCRIPT.read_text()
         body=source[source.index("            # Genuine same-origin storage event"):source.index('def save_without_navigation')]
-        for text in ("storage(page) == {**before, KEY: competing_raw}",
+        for text in ("page, before, {**before, KEY: competing_raw}",
                      "trusted_click(page, '[data-action=\"save\"]')",
-                     "storage(page) == protected_disk",'with page.expect_download()',
+                     "page, protected_disk",'with page.expect_download()',
                      "protected_export.read_bytes() == before[KEY].encode()"):
             self.assertIn(text,body)
         self.assertLess(body.index('protected_export.read_bytes()'),body.index('page.reload('))
@@ -399,7 +408,7 @@ class RecorderLinearityTests(unittest.TestCase):
         m.args=SimpleNamespace(expected_sha='a'*40)
         m.fixture_sha256='b'*64;m.completed=False;m.case='offline-recorder';m.failure=None;m.performance_result=None
         m.checks=[];m.evidence=[];m.source_bindings=[];m.errors=[];m.failed_requests=[]
-        m.report_path=root/'report.json';m.progress_path=root/'progress.json';m.journal_path=root/'journal.jsonl'
+        m.out=root;m.active_page=None;m.report_path=root/'report.json';m.progress_path=root/'progress.json';m.journal_path=root/'journal.jsonl'
         m.journal=m.NativeCheckJournal(m.journal_path);m.last_progress_at=0;m.reset_recorder()
         return m
 
@@ -472,6 +481,266 @@ class RecorderLinearityTests(unittest.TestCase):
         self.assertLess(second[0],first[0]*2.2)
         self.assertLess(second[1],first[1]*2.1)
         self.assertGreater(second[0],first[0]*1.8)
+
+
+class StorageDiagnosticsTests(unittest.TestCase):
+    def baseline(self):
+        return {'infinity.ui.tab':'save', 'save-key':' {"wallet":31,"ids":[11],"rng":42}\n',
+                'save-key.backup':'historical raw\n', 'infinity.save.v1':'legacy sentinel'}
+
+    def run_comparison(self, root, before, actual, *, expected=None, initial_tab='save', dom=None, condition=True):
+        m = RecorderLinearityTests().runner(root)
+        dom = dom if dom is not None else {'selected':['messages'], 'visible':['messages']}
+        page = SimpleNamespace(evaluate=lambda expression:copy.deepcopy(dom))
+        with patch.object(m, 'storage', return_value=copy.deepcopy(actual)):
+            try:
+                m.storage_check('offline exact-storage boundary', page, before, expected,
+                                initial_tab=initial_tab, visible_tab='messages', condition=condition)
+            finally:
+                os.close(m.journal.fd)
+        return m
+
+    def test_unchanged_storage_does_not_rewrite_persisted_save_to_visible_space_tab(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);before=self.baseline();m=self.run_comparison(root,before,copy.deepcopy(before))
+            record=json.loads((root/'storage-comparison-00001.json').read_bytes())
+            self.assertEqual(record['before'],before);self.assertEqual(record['expected'],before)
+            self.assertEqual(record['actual'],before)
+            self.assertEqual(record['initialPreference'],{'present':True,'value':'save'})
+            self.assertEqual(record['domTabs'],{'selected':['messages'],'visible':['messages']})
+            self.assertEqual(record['changedFromBefore'],[])
+            entry=m.checks[-1]['detail'];self.assertEqual(entry['sha256'],hashlib.sha256((root/entry['file']).read_bytes()).hexdigest())
+            self.assertEqual((m.passed_count,m.failed_count),(1,0))
+
+    def test_every_raw_key_or_byte_mutation_fails_and_full_comparison_precedes_assertion(self):
+        mutations={
+            'save_wallet':lambda d:d.update({'save-key':d['save-key'].replace('31','32')}),
+            'save_rng':lambda d:d.update({'save-key':d['save-key'].replace('42','43')}),
+            'save_whitespace':lambda d:d.update({'save-key':d['save-key']+' '}),
+            'backup':lambda d:d.update({'save-key.backup':'changed historical raw'}),
+            'legacy':lambda d:d.update({'infinity.save.v1':'changed sentinel'}),
+            'visible_tab_substituted':lambda d:d.update({'infinity.ui.tab':'messages'}),
+            'extra_key':lambda d:d.update({'unrelated':'must also fail'}),
+            'deleted_key':lambda d:d.pop('save-key.backup'),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);before=self.baseline();actual=copy.deepcopy(before);mutate(actual)
+                with self.assertRaisesRegex(AssertionError,'offline exact-storage boundary'):
+                    self.run_comparison(root,before,actual)
+                record=json.loads((root/'storage-comparison-00001.json').read_bytes())
+                self.assertEqual(record['before'],before);self.assertEqual(record['expected'],before)
+                self.assertEqual(record['actual'],actual);self.assertTrue(record['differentFromExpected'])
+                entries=[json.loads(line)['entry'] for line in (root/'journal.jsonl').read_bytes().splitlines()]
+                failed=[entry['value']['record'] for entry in entries if entry['kind']=='check'][-1]
+                self.assertFalse(failed['passed'])
+                self.assertEqual(failed['detail']['sha256'],hashlib.sha256((root/failed['detail']['file']).read_bytes()).hexdigest())
+                self.assertEqual(before,self.baseline())
+
+    def test_full_raw_comparison_exists_when_failing_check_is_called(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root)
+            before=self.baseline();actual={**before,'save-key':'unexpected mutation'}
+            page=SimpleNamespace(evaluate=lambda _: {'selected':['messages'],'visible':['messages']})
+            original=m.check;observed=[]
+            def check(name,condition,detail=None):
+                record=json.loads((root/detail['file']).read_bytes())
+                self.assertEqual(record['before'],before);self.assertEqual(record['expected'],before)
+                self.assertEqual(record['actual'],actual);self.assertFalse(condition);observed.append(name)
+                original(name,condition,detail)
+            with patch.object(m,'storage',return_value=actual), patch.object(m,'check',check):
+                with self.assertRaisesRegex(AssertionError,'already persisted'):
+                    m.storage_check('already persisted',page,before,initial_tab='save',visible_tab='messages')
+            os.close(m.journal.fd);self.assertEqual(observed,['already persisted'])
+
+    def test_dom_read_failure_preserves_prior_full_raw_comparison_and_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root)
+            before=self.baseline();actual={**before,'save-key':'raw after failure'}
+            def evaluate(_):
+                record=json.loads((root/'storage-comparison-00001.json').read_bytes())
+                self.assertEqual(record['before'],before);self.assertEqual(record['expected'],before)
+                self.assertEqual(record['actual'],actual)
+                raise RuntimeError('DOM probe unavailable')
+            with patch.object(m,'storage',return_value=actual):
+                with self.assertRaisesRegex(RuntimeError,'DOM probe unavailable'):
+                    m.storage_check('DOM read fails',SimpleNamespace(evaluate=evaluate),before)
+            os.close(m.journal.fd)
+            record=json.loads((root/'storage-comparison-00001.json').read_bytes())
+            self.assertEqual(record['actual'],actual);self.assertIn('DOM probe unavailable',record['domReadError'])
+            self.assertEqual(m.evidence[-1]['sha256'],hashlib.sha256((root/m.evidence[-1]['file']).read_bytes()).hexdigest())
+            entries=[json.loads(line)['entry'] for line in m.journal_path.read_bytes().splitlines()]
+            self.assertTrue(any(e['kind']=='evidence' and e['value']['record']['kind']=='storage-comparison' for e in entries))
+
+    def test_initial_preference_missing_or_wrong_is_not_normalized_away(self):
+        for value in (None,'messages','fleet','overview'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                before=self.baseline()
+                if value is None:before.pop('infinity.ui.tab')
+                else:before['infinity.ui.tab']=value
+                with self.assertRaises(AssertionError):
+                    self.run_comparison(Path(directory),before,copy.deepcopy(before))
+                record=json.loads((Path(directory)/'storage-comparison-00001.json').read_bytes())
+                self.assertEqual(record['initialPreference'],{'present':value is not None,'value':value})
+                self.assertEqual(record['actual'],before)
+
+    def test_wrong_missing_or_extra_visible_dom_tab_blocks_even_when_storage_matches(self):
+        for dom in ({'selected':['fleet'],'visible':['fleet']},{'selected':['messages'],'visible':[]},
+                    {'selected':['messages'],'visible':['fleet','messages']},
+                    {'selected':[],'visible':['messages']}):
+            with self.subTest(dom=dom), tempfile.TemporaryDirectory() as directory:
+                before=self.baseline()
+                with self.assertRaises(AssertionError):self.run_comparison(Path(directory),before,before,dom=dom)
+                record=json.loads((Path(directory)/'storage-comparison-00001.json').read_bytes())
+                self.assertEqual(record['domTabs'],dom);self.assertEqual(record['before'],before)
+
+    def test_explicit_conflict_replacement_preserves_all_other_raw_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before=self.baseline();expected={**before,'save-key':'exact competing raw'}
+            m=self.run_comparison(Path(directory),before,expected,expected=expected)
+            record=json.loads((Path(directory)/'storage-comparison-00001.json').read_bytes())
+            self.assertEqual(record['changedFromBefore'],['save-key'])
+            self.assertEqual(record['differentFromExpected'],[]);self.assertTrue(m.checks[-1]['passed'])
+
+    def test_additional_authority_predicate_remains_mandatory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before=self.baseline()
+            with self.assertRaises(AssertionError):self.run_comparison(Path(directory),before,before,condition=False)
+            self.assertFalse(json.loads((Path(directory)/'storage-comparison-00001.json').read_bytes())['additionalCondition'])
+
+    def test_paid_completion_storage_baseline_precedes_fill(self):
+        body=SCRIPT.read_text().split('def keyboard_and_paid_completion():',1)[1].split('def leaf_retirement_boundaries():',1)[0]
+        self.assertIn("before=storage(page);trusted_click(page,'#npc-rehearsal-fill')",body)
+        self.assertIn("storage_check('fresh Fill after real completion is still unpaid', page, before)",body)
+
+    def test_report_metadata_requires_three_named_jobs_and_aggregate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            m=RecorderLinearityTests().runner(Path(directory));rule=m.metadata()['acceptanceRule'];os.close(m.journal.fd)
+            for job in ('verify','npc-orbital','scout-rehearsal','required-gates'):
+                self.assertIn(job,rule)
+            self.assertIn('exact source SHA',rule)
+            self.assertNotIn('both',rule)
+
+    def test_source_contract_distinguishes_dom_only_space_navigation_from_persisted_original_tab(self):
+        space=(ROOT/'src/ui/space-panel.ts').read_text();view=(ROOT/'src/ui/view.ts').read_text()
+        choose=space[space.index('  function choose('):space.index('  function number(')]
+        self.assertNotIn('localStorage',choose)
+        self.assertIn('p.hidden=p.dataset.tabPanel!==id',choose)
+        self.assertIn('b.setAttribute("aria-selected",String(active))',choose)
+        self.assertIn('if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}',space)
+        handler=space[space.index('  root.addEventListener("click",event=>{'):space.index('  const updateSpaceChrome=')]
+        self.assertTrue(handler.rstrip().endswith('},true);'))
+        self.assertIn('choose("fleet");transportLoad.edited();npcAttack.edited(true);',space)
+        original=view[view.index('function selectTab('):view.index('/** Research art')]
+        self.assertIn('localStorage.setItem(TAB_KEY, tab)',original)
+        self.assertIn('TABS.some((entry) => entry.id === id) ? id : DEFAULT_TAB',original)
+        body=SCRIPT.read_text().split('def natural_rehearsal(page):',1)[1].split('def configure_scout',1)[0]
+        self.assertIn("initial_tab='save', visible_tab='save'",body)
+        self.assertIn("initial_tab='save', visible_tab='messages'",body)
+        self.assertIn("initial_tab='save', visible_tab='fleet'",body)
+        self.assertNotIn("'infinity.ui.tab':'messages'",body)
+        self.assertNotIn("'infinity.ui.tab':'fleet'",body)
+
+
+class LiveFailureDiagnosticsTests(unittest.TestCase):
+    def test_failure_capture_occurs_before_outer_browser_teardown_and_original_error_survives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root);events=[]
+            class BrowserLifetime:
+                live=False
+                def __enter__(self):self.live=True;events.append('enter');return self
+                def __exit__(self,*_):self.live=False;events.append('teardown')
+            life=BrowserLifetime()
+            class Page:
+                def content(self):
+                    self.assert_live();events.append('html');return '<html>actual failure</html>'
+                def assert_live(self):
+                    if not life.live:raise AssertionError('Captured after teardown')
+                def screenshot(self,path,timeout):
+                    self.assert_live();events.append('screenshot');Path(path).write_bytes(b'offline-png-stub')
+                    if timeout!=2000:raise AssertionError('Screenshot was not bounded')
+            page=Page();m.active_page=page
+            def storage(_):page.assert_live();events.append('storage');return {'all':'exact raw\n','infinity.ui.tab':'save'}
+            with patch.object(m,'storage',storage):
+                with self.assertRaisesRegex(AssertionError,'original failure'):
+                    with life, m.live_failure_evidence():
+                        raise AssertionError('original failure')
+            os.close(m.journal.fd)
+            self.assertEqual(events,['enter','storage','html','screenshot','teardown'])
+            self.assertFalse(m.completed);self.assertIn('original failure',m.failure)
+            report=json.loads(m.report_path.read_bytes())
+            self.assertIn('original failure',report['failure'])
+            self.assertEqual(json.loads((root/'failure-storage.json').read_bytes()),{'all':'exact raw\n','infinity.ui.tab':'save'})
+            capture=json.loads((root/'failure-capture.json').read_bytes())
+            self.assertTrue(all(row['status']=='captured' for row in capture['captures']))
+            tree=ast.parse(SCRIPT.read_text());main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main')
+            contexts=[node for node in ast.walk(main) if isinstance(node,ast.With)]
+            self.assertTrue(any([ast.unparse(item.context_expr) for item in node.items]==['sync_playwright()', 'live_failure_evidence()'] for node in contexts))
+
+    def test_html_failure_does_not_discard_storage_or_prevent_screenshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root)
+            class Page:
+                def content(self):raise RuntimeError('HTML unavailable')
+                def screenshot(self,path,timeout):Path(path).write_bytes(b'offline-png-stub')
+            with patch.object(m,'storage',return_value={'exact':'raw'}):result=m.capture_live_failure(Page())
+            os.close(m.journal.fd)
+            self.assertEqual([r['status'] for r in result['captures']],['captured','failed','captured'])
+            self.assertEqual(json.loads((root/'failure-storage.json').read_bytes()),{'exact':'raw'})
+            self.assertIn('HTML unavailable',result['captures'][1]['error'])
+            self.assertTrue((root/'failure.png').exists())
+
+    def test_live_capture_bound_records_failure_and_skips_remaining_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root)
+            timer_handler=None
+            def set_handler(_signal,handler):
+                nonlocal timer_handler
+                timer_handler=handler
+            def storage(_):timer_handler(None,None)
+            with patch.object(m,'storage',storage), patch.object(m.signal,'signal',set_handler), \
+                 patch.object(m.signal,'setitimer') as timer, patch.object(m.signal,'getitimer',return_value=(0,0)):
+                result=m.capture_live_failure(object())
+            os.close(m.journal.fd)
+            self.assertEqual(timer.call_args_list[0].args,(m.signal.ITIMER_REAL,6))
+            self.assertTrue(result['boundExpired'])
+            self.assertEqual([r['status'] for r in result['captures']],['failed','not-attempted','not-attempted'])
+            self.assertIn('Six-second',result['captures'][0]['error'])
+
+    def test_existing_worker_timer_is_restored_and_expired_deadline_is_never_dropped(self):
+        for previous,elapsed,restored in ((20,.5,19.5),(.25,.5,.001)):
+            with self.subTest(previous=previous), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);m=RecorderLinearityTests().runner(root)
+                class Page:
+                    def content(self):return '<html>failure</html>'
+                    def screenshot(self,path,timeout):Path(path).write_bytes(b'png-stub')
+                with patch.object(m,'storage',return_value={'raw':'exact'}), \
+                     patch.object(m.signal,'signal'), patch.object(m.signal,'setitimer') as timer, \
+                     patch.object(m.signal,'getitimer',return_value=(previous,0)), \
+                     patch.object(m.time,'monotonic',side_effect=[100,100+elapsed]):
+                    result=m.capture_live_failure(Page())
+                os.close(m.journal.fd)
+                self.assertEqual(timer.call_args_list[0].args,(m.signal.ITIMER_REAL,min(6,previous)))
+                self.assertEqual(timer.call_args_list[-1].args,(m.signal.ITIMER_REAL,restored,0))
+                self.assertEqual(result['workerDeadlineElapsedDuringCapture'],elapsed>=previous)
+
+    def test_capture_error_does_not_replace_original_assertion_or_mark_passed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);m=RecorderLinearityTests().runner(root)
+            with patch.object(m,'capture_live_failure',side_effect=RuntimeError('capture failed')):
+                with self.assertRaisesRegex(AssertionError,'primary failure'):
+                    with m.live_failure_evidence():raise AssertionError('primary failure')
+            os.close(m.journal.fd)
+            report=json.loads(m.report_path.read_bytes())
+            self.assertFalse(report['completed']);self.assertIn('primary failure',report['failure'])
+            self.assertEqual(report['evidence'][-1]['kind'],'live-failure-capture-error')
+            self.assertIn('capture failed',report['evidence'][-1]['error'])
+
+    def test_absent_page_is_explicit_diagnostic_not_silently_swallowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            m=RecorderLinearityTests().runner(Path(directory));result=m.capture_live_failure(None);os.close(m.journal.fd)
+            self.assertFalse(result['pageAvailable']);self.assertEqual(result['captures'],[])
+            self.assertTrue((Path(directory)/'failure-capture.json').exists())
 
 
 if __name__=='__main__':unittest.main()

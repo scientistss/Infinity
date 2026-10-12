@@ -2,7 +2,8 @@
 Functional Date/performance/RAF timestamps are controlled and explicitly labeled.
 A separate isolated upper-bound context keeps native clocks UNMODIFIED and uses
 PerformanceObserver/performance.now/CDP metrics, never a CPU profiler. No paint claim.
-The unchanged complete legacy job and this independent job must both pass same SHA.
+All three independent jobs (verify, npc-orbital, scout-rehearsal) and the
+required-gates aggregate must pass for this exact source SHA.
 """
 import argparse
 import ast
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from fractions import Fraction
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -33,6 +35,7 @@ SHIPS = ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruise
 
 def valid_natural_report(value, expected_sha):
     if (value.get('schema') != 'infinity-scout-rehearsal-natural-route-v1'
+            or value.get('key') != 'infinity.original-p4.save.v1'
             or value.get('source', {}).get('sourceSha') != expected_sha
             or value.get('source', {}).get('sourceScopeStatusPorcelain') != ''
             or value.get('source', {}).get('oldSourceSha') != SOURCE_PIN
@@ -95,7 +98,7 @@ def metadata(full=False):
             'sourceBindingCount':len(source_bindings),'errorCount':len(errors),'failedRequestCount':len(failed_requests),
             'failure': failure, 'performance': performance_result,
             'classification': 'Natural main uses untouched paid31 historical raw and actual trusted controls. Explicit synthetic edge contexts are separate. Functional clocks are controlled. Timing context clocks are native and unmodified; no paint or background-throttling claim.',
-            'acceptanceRule': 'This independent native job and the unchanged complete original job must both be green for this exact source SHA.',
+            'acceptanceRule': 'All three independent jobs (verify, npc-orbital, scout-rehearsal) and the required-gates aggregate must be green for this exact source SHA.',
             'timing': {'hostElapsedSeconds': time.monotonic() - HOST_STARTED_MONOTONIC,
                        'workerBoundSeconds': 900, 'supervisorBoundSeconds': 910},
             'checkCount':len(checks),'evidenceCount':len(evidence),'passed':passed_count,'failed':failed_count}
@@ -176,6 +179,123 @@ def raw(page):
 
 def storage(page):
     return page.evaluate('Object.fromEntries(Object.keys(localStorage).sort().map(k=>[k,(window.__npcNativeRead?window.__npcNativeRead(k):localStorage.getItem(k))]))')
+
+
+def storage_check(name, page, before, expected=None, *, initial_tab=None, visible_tab=None, condition=True, detail=None):
+    """Persist every key and raw value before asserting; never normalize storage.
+    A DOM space tab is not the persisted original-view preference. Each caller
+    must state any exact expected write; omitted expected means no write at all.
+    """
+    actual = storage(page)
+    expected = before if expected is None else expected
+    def preference(value):
+        return {'present':'infinity.ui.tab' in value, 'value':value.get('infinity.ui.tab')}
+    def changed(left, right):
+        return [key for key in sorted(left.keys() | right.keys())
+                if (key in left) != (key in right) or left.get(key) != right.get(key)]
+    record = {'schema':'infinity-scout-storage-comparison-v1', 'case':case, 'name':name,
+        'before':before, 'expected':expected, 'actual':actual,
+        'initialPreference':preference(before), 'expectedPreference':preference(expected),
+        'actualPreference':preference(actual), 'requiredInitialPreference':initial_tab,
+        'domTabs':None, 'requiredVisibleTab':visible_tab,
+        'changedFromBefore':changed(before, actual), 'differentFromExpected':changed(expected, actual),
+        'additionalCondition':bool(condition), 'additionalDetail':detail,
+        'boundary':'Complete native localStorage keys and unmodified raw strings; no ignored keys or game-field exclusions.'}
+    path = out / f'storage-comparison-{len(checks)+1:05d}.json'
+    # This first atomic file survives even if the next read-only DOM probe fails.
+    atomic_json(path, record)
+    def reference():
+        return {'kind':'storage-comparison', 'case':case, 'name':name,
+                'file':path.name, 'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    try:
+        dom = page.evaluate('''()=>({
+          selected:[...document.querySelectorAll('[data-tab][aria-selected="true"]')].map(e=>e.dataset.tab).sort(),
+          visible:[...document.querySelectorAll('[data-tab-panel]')].filter(e=>!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden').map(e=>e.dataset.tabPanel).sort()
+        })''')
+    except BaseException:
+        record['domReadError'] = traceback.format_exc()
+        atomic_json(path, record); evidence.append(reference()); flush()
+        raise
+    record['domTabs'] = dom
+    atomic_json(path, record)
+    saved_reference = reference(); evidence.append(saved_reference)
+    check(name, actual == expected and condition
+          and (initial_tab is None or preference(before) == {'present':True,'value':initial_tab})
+          and (visible_tab is None or dom == {'selected':[visible_tab],'visible':[visible_tab]}),
+          {**saved_reference, 'changedFromBefore':record['changedFromBefore'],
+           'differentFromExpected':record['differentFromExpected'],
+           'initialPreference':record['initialPreference'], 'actualPreference':record['actualPreference'],
+           'domTabs':dom})
+
+
+def capture_live_failure(page):
+    """Best-effort independent captures, while Playwright is live, within 6 s.
+    Save storage first. A broken HTML or screenshot capture cannot hide it.
+    The outer supervisor still owns its unchanged 910-second process bound.
+    """
+    result = {'schema':'infinity-scout-live-failure-capture-v1', 'case':case,
+              'boundSeconds':6, 'pageAvailable':page is not None, 'captures':[]}
+    if page is not None:
+        expired = False
+        def timeout(*_):
+            nonlocal expired
+            expired = True
+            raise TimeoutError('Six-second live failure capture bound')
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+        signal.signal(signal.SIGALRM, timeout)
+        signal.setitimer(signal.ITIMER_REAL, min(6, previous_timer[0]) if previous_timer[0] else 6)
+        try:
+            captures = (
+                ('failure-storage.json', lambda path: atomic_json(path, storage(page))),
+                ('failure.html', lambda path: path.write_text(page.content(), encoding='utf-8')),
+                ('failure.png', lambda path: page.screenshot(path=str(path), timeout=2000)),
+            )
+            for filename, capture in captures:
+                if expired:
+                    result['captures'].append({'file':filename, 'status':'not-attempted', 'error':'Live capture bound expired'})
+                    continue
+                try:
+                    path = out / filename; capture(path)
+                    result['captures'].append({'file':filename, 'status':'captured',
+                        'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+                except BaseException as error:
+                    result['captures'].append({'file':filename, 'status':'failed',
+                        'error':f'{type(error).__name__}: {error}'})
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+            remaining = previous_timer[0] - (time.monotonic() - started)
+            result['workerDeadlineElapsedDuringCapture'] = bool(previous_timer[0] and remaining <= 0)
+            if previous_timer[0]:
+                # Never swallow the original worker deadline, even if it expired
+                # while best-effort diagnostics were running.
+                signal.setitimer(signal.ITIMER_REAL, max(.001, remaining), previous_timer[1])
+        result['boundExpired'] = expired
+    path = out / 'failure-capture.json'; atomic_json(path, result)
+    evidence.append({'kind':'live-failure-capture', 'case':case, 'file':path.name,
+                     'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+    return result
+
+
+@contextmanager
+def live_failure_evidence():
+    """Must be nested inside sync_playwright so exceptions capture before exit."""
+    global completed, failure
+    try:
+        yield
+    except BaseException:
+        completed = False; failure = traceback.format_exc()
+        # Make the original failure durable before any diagnostic browser call.
+        flush(full=True)
+        try:
+            capture_live_failure(active_page)
+        except BaseException as capture_error:
+            evidence.append({'kind':'live-failure-capture-error', 'case':case,
+                             'error':f'{type(capture_error).__name__}: {capture_error}'})
+        flush(full=True)
+        raise
 
 
 def whole_state(name, actual, expected):
@@ -398,6 +518,10 @@ def draft_values(page):
 
 def natural_rehearsal(page):
     before = save(page); disk_before = storage(page)
+    storage_check('rehearsal baseline has exact persisted save preference and visible Save tab',
+                  page, disk_before, initial_tab='save', visible_tab='save')
+    # space-panel choose() is DOM-only and intercepts native space-tab clicks
+    # before view.ts selectTab(). Every raw byte, including saved 'save', stays.
     # Separate ordinary DOM draft is deliberately dirty, with all13 and cargo.
     tab(page, 'fleet'); select(page, '#flight-mission', 'transport')
     for ship in SHIPS:
@@ -405,11 +529,20 @@ def natural_rehearsal(page):
     for resource in ('metal', 'crystal', 'deuterium'):
         input_number(page, '#cargo-' + resource, 7)
     dirty = draft_values(page)
-    open_report(page); check('open leaves every ordinary DOM draft field untouched', draft_values(page) == dirty)
-    run_six(page); check('Run leaves every ordinary DOM draft field untouched', draft_values(page) == dirty)
+    storage_check('ordinary dirty draft leaves every stored byte and saved preference unchanged',
+                  page, disk_before, initial_tab='save', visible_tab='fleet')
+    open_report(page)
+    storage_check('opening report leaves every stored byte and saved preference unchanged',
+                  page, disk_before, initial_tab='save', visible_tab='messages')
+    check('open leaves every ordinary DOM draft field untouched', draft_values(page) == dirty)
+    run_six(page)
+    storage_check('Run leaves every stored byte and saved preference unchanged',
+                  page, disk_before, initial_tab='save', visible_tab='messages')
+    check('Run leaves every ordinary DOM draft field untouched', draft_values(page) == dirty)
     trusted_click(page, '#npc-rehearsal-cancel')
     expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
-    check('Cancel leaves every progress byte untouched with exact messages-tab preference', storage(page) == {**disk_before, 'infinity.ui.tab':'messages'})
+    storage_check('Cancel leaves every stored byte and saved preference unchanged',
+                  page, disk_before, initial_tab='save', visible_tab='messages')
     whole_state('run-and-cancel-no-game-effects', save(page), before)
     for width in WIDTHS:
         page.set_viewport_size({'width': width, 'height': 1100}); advance(page)
@@ -417,19 +550,25 @@ def natural_rehearsal(page):
         control_proof(page, '#npc-rehearsal-run', f'{width}-explicit-run')
         control_proof(page, '#npc-rehearsal-fill', f'{width}-draft-fill')
         previous_bytes = storage(page)
+        storage_check('four-width review leaves every stored byte and saved preference unchanged',
+                      page, disk_before, initial_tab='save', visible_tab='messages')
         trusted_click(page, '#npc-rehearsal-fill')
         values = draft_values(page)
         check('Fill atomically replaces exactly mission/target/all13/speed/emptycargo', values == {
             'mission': 'attack', 'target': ['1','56','15'], 'speed': '100',
             'ships': [[ship, '6' if ship == 'light_fighter' else '0'] for ship in SHIPS], 'cargo': ['0','0','0']}, values)
-        check('Fill causes no payment/save/IDs/RNG/wallet/history write; only exact fleet-tab preference changes', storage(page) == {**previous_bytes, 'infinity.ui.tab':'fleet'})
+        storage_check('Fill causes no payment/save/IDs/RNG/wallet/history or saved-preference write',
+                      page, previous_bytes, initial_tab='save', visible_tab='fleet')
         for _ in range(3):advance(page)
         expect(page.locator('#npc-rehearsal-draft-notice')).to_have_text('仅已填入，尚未派遣或付款。请核对最新航程报价，再单独点击付费出征。')
-        check('unpaid draft notice survives later production chrome frames and stale global status',storage(page)=={**previous_bytes,'infinity.ui.tab':'fleet'})
+        storage_check('unpaid draft notice survives later production chrome frames and stale global status',
+                      page, previous_bytes, initial_tab='save', visible_tab='fleet')
         whole_state(f'{width}-draft-only-fullstate', save(page), before)
     page.set_viewport_size({'width': 1440, 'height': 1100}); advance(page)
     # Last explicit new review/fill is left armed for the separately recorded send.
     open_report(page); run_six(page); trusted_click(page, '#npc-rehearsal-fill')
+    storage_check('last explicit review and Fill retain every stored byte before separate paid send',
+                  page, disk_before, initial_tab='save', visible_tab='fleet')
 
 
 def configure_scout(page):
@@ -485,7 +624,7 @@ def import_file(page, text, accept, label):
     page.wait_for_timeout(100); advance(page)
     check('actual file read has exact expected confirmation once', len(dialogs) == 1 and dialogs[0]['valid'], dialogs)
     if accept: expect(page.locator('[data-bind="status"]')).to_contain_text('已导入并存入本地')
-    else: check('cancelled import retains every native storage byte', storage(page) == before)
+    else: storage_check('cancelled import retains every native storage byte', page, before)
     return before
 
 
@@ -505,21 +644,23 @@ def authority_boundaries():
         before = save_without_navigation(page); draft_before = draft_values(page)
         if kind == 'forged':
             page.locator('#npc-rehearsal-fill').evaluate('(e)=>e.click()'); advance(page)
-            check('untrusted synthetic Fill cannot change draft or state', exact_json(draft_values(page), draft_before) and storage(page) == before)
+            storage_check('untrusted synthetic Fill cannot change draft or state', page, before,
+                          condition=exact_json(draft_values(page), draft_before))
         elif kind in ('clone', 'detach', 'same-id-remount'):
             selector = '#npc-rehearsal-fill'
             page.locator(selector).evaluate('''(e,kind)=>{if(kind==='detach'){const p=e.parentNode,n=e.nextSibling;e.remove();p.insertBefore(e,n);}else{const c=e.cloneNode(true);e.replaceWith(c);}}''', kind)
             advance(page)
             node = page.locator(selector)
             if node.is_enabled(): node.click(); advance(page)
-            check('cloned detached or same-ID replacement cannot fill stale draft', exact_json(draft_values(page), draft_before) and storage(page) == before)
+            storage_check('cloned detached or same-ID replacement cannot fill stale draft', page, before,
+                          condition=exact_json(draft_values(page), draft_before))
         elif kind == 'planet':
             select(page, '#planet-select', 'colony-1'); expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
         elif kind == 'corrupt-import':
             tab(page,'save'); prior=storage(page); invalid=out/'explicit-corrupt-r14.json';invalid.write_text('{broken-current-envelope')
             page.locator('[data-bind="import-file"]').set_input_files(str(invalid))
             expect(page.locator('[data-bind="status"]')).to_contain_text('导入失败')
-            check('corrupt prepared import never adopts or alters raw/backups',storage(page)==prior)
+            storage_check('corrupt prepared import never adopts or alters raw/backups', page, prior)
             tab(page,'messages');expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
         elif kind in ('cancelled-import', 'same-world-import'):
             import_file(page, before_row['raw'], kind == 'same-world-import', kind)
@@ -535,20 +676,20 @@ def authority_boundaries():
             expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
             open_report(page); check('protected history stays readable but edits Run Fill disabled', page.locator('#npc-rehearsal-run').is_disabled() and page.locator('#npc-rehearsal-fill').is_disabled())
             unchanged_authority_draft(page, 'protected conflict', draft_before)
-            check('protected history reading preserves exact competing disk and all backups',
-                  storage(page) == {**before, KEY: competing_raw})
+            storage_check('protected history reading preserves exact competing disk and all backups',
+                          page, before, {**before, KEY: competing_raw})
             # A conflict must not save/adopt the local in-memory state. Exercise
             # the ordinary blocked Save, then export its exact protected source.
             tab(page, 'save'); protected_disk = storage(page)
             trusted_click(page, '[data-action="save"]')
-            check('ordinary Save stays blocked under conflict without disk/backups changes', storage(page) == protected_disk)
+            storage_check('ordinary Save stays blocked under conflict without disk/backups changes', page, protected_disk)
             with page.expect_download() as pending:
                 trusted_click(page, '[data-action="export"]')
             protected_export = out / 'authority-conflict-protected-original.json'
             pending.value.save_as(str(protected_export))
             check('conflict export is exact original protected bytes, never competing or freshly serialized state',
                   protected_export.read_bytes() == before[KEY].encode())
-            check('protected export does not modify disk or backups', storage(page) == protected_disk)
+            storage_check('protected export does not modify disk or backups', page, protected_disk)
             other.close();page.reload(wait_until='networkidle');advance(page);open_report(page)
             check('actual conflict refresh needs a fresh explicit review',page.locator('#npc-rehearsal-fill').is_disabled())
             run_six(page)
@@ -613,9 +754,9 @@ def keyboard_and_paid_completion():
     check('at least one actual paid completion retired review',retired>0)
     open_report(page);run_six(page)
     check('fresh explicit Run captures actual completed weapons2 and seven-stock bound','武器 2 / 护盾 5 / 装甲 0' in page.locator('#npc-rehearsal-results').inner_text() and page.locator('#npc-rehearsal-stock-light_fighter').inner_text()=='可用 7')
-    trusted_click(page,'#npc-rehearsal-fill');before=storage(page)
+    before=storage(page);trusted_click(page,'#npc-rehearsal-fill')
     for _ in range(3):advance(page)
-    check('fresh Fill after real completion is still unpaid',storage(page)==before)
+    storage_check('fresh Fill after real completion is still unpaid', page, before)
     trusted_click(page,'#space-send')
     whole_state('separate-fresh-send-after-completion',save(page),branch['sent']['expected'])
     context.close()
@@ -631,8 +772,8 @@ def leaf_retirement_boundaries():
             advance(page)
             fill=page.locator('#npc-rehearsal-fill')
             if fill.is_visible() and fill.is_enabled():fill.click();advance(page)
-            check('same-turn own leaf hide/restore permanently retires old review capability',
-                  draft_values(page)==draft and storage(page)==before and (page.locator('#npc-rehearsal-panel').is_hidden() or fill.is_disabled()))
+            storage_check('same-turn own leaf hide/restore permanently retires old review capability', page, before,
+                          condition=draft_values(page)==draft and (page.locator('#npc-rehearsal-panel').is_hidden() or fill.is_disabled()))
             unchanged_authority_draft(page, 'leaf-' + selector + '-' + attribute, draft)
             whole_state('leaf-' + selector + '-' + attribute + '-live-state', save(page), row['expected'])
             context.close()
@@ -788,7 +929,7 @@ def main():
     case='setup';journal=NativeCheckJournal(journal_path);last_progress_at=0;performance_result=None;reset_recorder()
     signal.signal(signal.SIGALRM,lambda *_: (_ for _ in ()).throw(TimeoutError('900-second native worker bound')));signal.alarm(900)
     try:
-        with sync_playwright() as p:
+        with sync_playwright() as p, live_failure_evidence():
             browser=p.chromium.launch(headless=True,**({'executable_path':args.chromium} if args.chromium else {}))
             begin_case('natural-unedited-paid31-migration')
             context,page=boot(fixtures['origin']['raw'])
@@ -800,14 +941,6 @@ def main():
             authority_boundaries();keyboard_and_paid_completion();leaf_retirement_boundaries();curvature_and_eviction();storage_boundaries();measured_upper_bound()
             check('no application error or failed native request',not errors and not failed_requests,{'errors':errors,'requests':failed_requests})
             completed=True;flush(full=True,final=True);browser.close()
-    except BaseException as error:
-        completed=False;failure=traceback.format_exc()
-        if active_page is not None:
-            try:
-                (out/'failure.html').write_text(active_page.content());active_page.screenshot(path=str(out/'failure.png'))
-                atomic_json(out/'failure-storage.json',storage(active_page))
-            except BaseException:pass
-        flush(full=True);raise error
     finally:
         signal.alarm(0)
 
