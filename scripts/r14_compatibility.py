@@ -63,11 +63,15 @@ def _messages(state, *, current):
 
 
 def lift_r13_state_to_r14(state):
-    """Add one explicit null per validated old message; preserve every old field."""
+    """Preserve old values with the r14 message order and one explicit null."""
     _messages(state, current=False)
     expected = deepcopy(state)
-    for message in expected['messages']:
-        message[SNAPSHOT_FIELD] = None
+    # The r14 message serializer has this explicit order, unlike older readers
+    # that preserve id/text/at. Validate first so rebuilding cannot erase fields.
+    expected['messages'] = [
+        {'id': message['id'], 'at': message['at'], 'text': message['text'], SNAPSHOT_FIELD: None}
+        for message in expected['messages']
+    ]
     return expected
 
 

@@ -884,6 +884,45 @@ def retired_fill_boundary(page, refs, *, same_node):
           and after['originalCardsDetached'] and after['resultsHidden'] and after['resultCount']==0,witness)
 
 
+FOREGROUND_STATE = r'''()=>({visibilityState:document.visibilityState,hidden:document.hidden,
+  hasFocus:document.hasFocus(),dateNow:Date.now(),performanceNow:performance.now()})'''
+
+
+def foreground_conflict_page(page):
+    """Activate the real original tab, never synthesize visibility or clock state.
+    Persist raw probes before each assertion and keep the final hashed witness
+    even if activation, readiness or a read fails. Ordinary geometry checks follow.
+    """
+    selector='article.space-message[data-message-id="scout-11"] button'
+    path=out/'authority-conflict-foreground.json'
+    witness={'schema':'infinity-scout-native-foreground-v1','case':case,'selector':selector,
+             'before':None,'after':None,'frame':None,'afterFrame':None,
+             'boundary':'Supported native bring_to_front and read-only visibility/focus/clock/frame probes; no synthetic visibility or clock changes.'}
+    atomic_json(path,witness)
+    try:
+        witness['before']=page.evaluate(FOREGROUND_STATE);atomic_json(path,witness)
+        page.bring_to_front()
+        witness['after']=page.evaluate(FOREGROUND_STATE);atomic_json(path,witness)
+        before,after=witness['before'],witness['after']
+        check('actual original tab is visible and focused with unchanged clocks before protected controls',
+              after['visibilityState']=='visible' and after['hidden'] is False and after['hasFocus'] is True
+              and all(after[key]==before[key] for key in ('dateNow','performanceNow')),copy.deepcopy(witness))
+        witness['frame']=page.evaluate('options=>window.__npcObserveFrame(options)',
+                                       {'selector':selector,'timeoutMs':250})
+        witness['afterFrame']=page.evaluate(FOREGROUND_STATE);atomic_json(path,witness)
+        frame,final=witness['frame'],witness['afterFrame']
+        timestamp=frame['nativeFrameTimestamp']
+        check('foreground preparation receives a fresh native frame without advancing the game clock',
+              frame['observerTimedOut'] is False and type(timestamp) in (int,float) and math.isfinite(timestamp)
+              and frame['nativeFrameSequence']>0 and frame['controlledElapsed']==before['performanceNow']
+              and frame['geometry']['rect'] is not None and final==after,copy.deepcopy(witness))
+    finally:
+        atomic_json(path,witness)
+        evidence.append({'kind':'native-foreground-witness','case':case,'file':path.name,
+                         'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+        flush()
+
+
 def authority_boundaries():
     before_row = next(r for r in fixtures['milestones'] if r['name'] == 'scout11-returned')
     for kind in ('forged', 'clone', 'detach', 'same-id-remount', 'planet', 'cancelled-import', 'corrupt-import', 'same-world-import', 'conflict'):
@@ -922,7 +961,12 @@ def authority_boundaries():
             competing = json.loads(before_row['raw']); competing['savedAt'] += 1
             competing_raw = json.dumps(competing,ensure_ascii=False)
             other.evaluate('([key,value])=>localStorage.setItem(key,value)', [KEY,competing_raw])
+            foreground_conflict_page(page)
             expect(page.locator('[data-bind="notice"]')).to_be_visible(); advance(page)
+            storage_events=page.evaluate('window.__npcStorage')
+            check('real trusted cross-tab storage event carries exact original and competing bytes',
+                  any(event['trusted'] is True and event['oldValue']==before[KEY]
+                      and event['newValue']==competing_raw for event in storage_events),storage_events)
             expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
             open_report(page); check('protected history stays readable but edits Run Fill disabled', page.locator('#npc-rehearsal-run').is_disabled() and page.locator('#npc-rehearsal-fill').is_disabled())
             unchanged_authority_draft(page, 'protected conflict', draft_before)

@@ -1,5 +1,7 @@
 """Offline independent null-slot contracts; no current production imports."""
 import copy
+import itertools
+import json
 import unittest
 import r13_compatibility as frozen
 from r14_compatibility import *
@@ -28,10 +30,54 @@ class R14Contracts(unittest.TestCase):
         self.assertEqual(self.old, before)
         self.assertEqual(CURRENT_REVISION, 14)
         for old, new in zip(before['messages'], current['messages']):
-            self.assertEqual(list(new), [*old, 'npcScoutSnapshot'])
+            self.assertEqual(list(new), ['id', 'at', 'text', 'npcScoutSnapshot'])
+            self.assertEqual({key: new[key] for key in old}, old)
             self.assertIsNone(new['npcScoutSnapshot'])
         current['npcEconomy']['sites']['1:2:3']['stock'][1] = 99
         self.assertEqual(self.old, before)
+
+    def test_all_historical_message_orders_have_exact_canonical_bytes(self):
+        # Fixed r9 includes id/text/at; the r14 message contract is id/at/text/null.
+        # Keep deliberately nonalphabetical unrelated fields and exact scalars.
+        for order in itertools.permutations(('id', 'at', 'text')):
+            first = {'id': 'dispatch-1', 'at': .1 + .2, 'text': '历史 🚀'}
+            old = {'z': {'paid': '500.001', 'clock': .1 + .2},
+                   'messages': [{key: first[key] for key in order},
+                                {'text': '', 'at': 1000000000000, 'id': 'return-2'}],
+                   'a': [False, None, '1e400']}
+            before_bytes = json.dumps(old, ensure_ascii=False, separators=(',', ':'))
+            current = lift_r13_state_to_r14(old)
+            with self.subTest(order=order):
+                self.assertEqual(json.dumps(current, ensure_ascii=False, separators=(',', ':')),
+                    '{"z":{"paid":"500.001","clock":0.30000000000000004},'
+                    '"messages":[{"id":"dispatch-1","at":0.30000000000000004,"text":"历史 🚀","npcScoutSnapshot":null},'
+                    '{"id":"return-2","at":1000000000000,"text":"","npcScoutSnapshot":null}],'
+                    '"a":[false,null,"1e400"]}')
+                self.assertEqual(json.dumps(old, ensure_ascii=False, separators=(',', ':')), before_bytes)
+                self.assertTrue(exact_json(project_verified_r14_scout_metadata(current), old))
+
+    def test_whole_envelope_golden_retains_order_clocks_and_empty_messages(self):
+        old = {'z': {'second': 2, 'first': 1}, 'messages': [], 'a': 'unchanged'}
+        envelope = {'schema': 'infinity-original-p4', 'revision': 14, 'version': 9,
+                    'savedAt': 1791776832876, 'lastTickAt': 1791776832876,
+                    'state': lift_r13_state_to_r14(old)}
+        self.assertEqual(json.dumps(envelope, separators=(',', ':')),
+            '{"schema":"infinity-original-p4","revision":14,"version":9,'
+            '"savedAt":1791776832876,"lastTickAt":1791776832876,'
+            '"state":{"z":{"second":2,"first":1},"messages":[],"a":"unchanged"}}')
+
+    def test_message_rebuild_rejects_unknown_missing_and_preexisting_snapshot_fields(self):
+        mutations = [lambda message: message.update(extra=None),
+                     lambda message: message.update(npcScoutSnapshot=None),
+                     lambda message: message.update(npcScoutSnapshot={'model': SNAPSHOT_MODEL})]
+        mutations.extend(lambda message, key=key: message.pop(key) for key in ('id', 'at', 'text'))
+        for mutate in mutations:
+            old = copy.deepcopy(self.old)
+            mutate(old['messages'][0])
+            before = copy.deepcopy(old)
+            with self.subTest(mutate=mutate), self.assertRaises(AssertionError):
+                lift_r13_state_to_r14(old)
+            self.assertEqual(old, before)
 
     def test_missing_nonnull_extra_and_misplaced_fields_never_project_away(self):
         good = lift_r13_state_to_r14(self.old)

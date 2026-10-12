@@ -313,6 +313,115 @@ class AuthorityAtomicityTests(unittest.TestCase):
         self.assertNotIn("whole_state('protected",body)
 
 
+class ConflictForegroundTests(unittest.TestCase):
+    def sample(self, foreground=True):
+        return {'visibilityState':'visible' if foreground else 'hidden','hidden':not foreground,
+                'hasFocus':foreground,'dateNow':1791616309000,'performanceNow':0}
+
+    def run_preparation(self,root,*,after=None,frame=None,final=None,failure=None,events=None):
+        m=RecorderLinearityTests().runner(root);events=[] if events is None else events;owner=self
+        before=self.sample(False);after=self.sample() if after is None else after
+        final=copy.deepcopy(after) if final is None else final
+        frame=({'nativeFrameSequence':13,'nativeFrameTimestamp':2050.7,'observerTimedOut':False,
+                'controlledElapsed':0,'geometry':{'rect':{'x':170,'y':-1538.3125,'width':144.5,'height':36.5}}}
+               if frame is None else frame)
+        states=iter([before,after,final]);path=root/'authority-conflict-foreground.json'
+        class Page:
+            def evaluate(self,expression,options=None):
+                if options is None:
+                    owner.assertEqual(expression,m.FOREGROUND_STATE)
+                    if failure=='after-read' and events==['read-state','bring-to-front']:
+                        raise RuntimeError('read-only foreground probe unavailable')
+                    events.append('read-state');return copy.deepcopy(next(states))
+                owner.assertEqual(expression,'options=>window.__npcObserveFrame(options)')
+                owner.assertEqual(options,{'selector':'article.space-message[data-message-id="scout-11"] button','timeoutMs':250})
+                events.append('native-frame');return copy.deepcopy(frame)
+            def bring_to_front(self):
+                owner.assertEqual(json.loads(path.read_bytes())['before'],before)
+                events.append('bring-to-front')
+                if failure=='activate':raise RuntimeError('native activation failed')
+        original=m.check
+        def check(name,condition,detail=None):
+            owner.assertEqual(json.loads(path.read_bytes()),detail)
+            events.append('assert');original(name,condition,detail)
+        with patch.object(m,'check',check):
+            try:m.foreground_conflict_page(Page())
+            finally:
+                os.close(m.journal.fd)
+                witness=json.loads(path.read_bytes());reference=m.evidence[-1]
+                owner.assertEqual(reference['kind'],'native-foreground-witness')
+                owner.assertEqual(reference['sha256'],hashlib.sha256(path.read_bytes()).hexdigest())
+                value,meta=m.replay_native_journal(m.journal_path)
+                owner.assertIsNone(meta['error']);owner.assertEqual(value['evidence'][-1],reference)
+        return m,witness,events
+
+    def test_real_activation_precedes_fresh_frame_and_each_assertion_has_persisted_raw_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            m,witness,events=self.run_preparation(Path(directory))
+            self.assertEqual(events,['read-state','bring-to-front','read-state','assert','native-frame','read-state','assert'])
+            self.assertEqual((m.passed_count,m.failed_count),(2,0))
+            self.assertEqual(witness['before'],self.sample(False));self.assertEqual(witness['after'],self.sample())
+            self.assertEqual(witness['afterFrame'],self.sample())
+            self.assertEqual(witness['frame']['controlledElapsed'],0)
+            self.assertIsNone(m.checks[0]['detail']['frame'])
+            self.assertIsNotNone(m.checks[1]['detail']['frame'])
+
+    def test_hidden_unfocused_or_changed_clock_cannot_reach_controls_or_frame_probe(self):
+        mutations={'visibilityState':'hidden','hidden':True,'hasFocus':False,'dateNow':1791616309001,'performanceNow':1}
+        for key,value in mutations.items():
+            with self.subTest(key=key),tempfile.TemporaryDirectory() as directory:
+                after={**self.sample(),key:value};events=[]
+                with self.assertRaisesRegex(AssertionError,'visible and focused with unchanged clocks'):
+                    self.run_preparation(Path(directory),after=after,events=events)
+                self.assertNotIn('native-frame',events)
+                witness=json.loads((Path(directory)/'authority-conflict-foreground.json').read_bytes())
+                self.assertEqual(witness['after'],after);self.assertIsNone(witness['frame'])
+
+    def test_stale_native_frame_missing_target_or_changed_final_state_fails_closed(self):
+        baseline={'nativeFrameSequence':13,'nativeFrameTimestamp':2050.7,'observerTimedOut':False,
+                  'controlledElapsed':0,'geometry':{'rect':{'x':170}}}
+        mutations=[('observerTimedOut',True),('nativeFrameTimestamp',None),('nativeFrameTimestamp',True),
+                   ('nativeFrameSequence',0),('controlledElapsed',1),('geometry',{'rect':None})]
+        for key,value in mutations:
+            with self.subTest(key=key,value=value),tempfile.TemporaryDirectory() as directory:
+                frame={**baseline,key:value}
+                with self.assertRaisesRegex(AssertionError,'fresh native frame'):
+                    self.run_preparation(Path(directory),frame=frame)
+                witness=json.loads((Path(directory)/'authority-conflict-foreground.json').read_bytes())
+                self.assertEqual(witness['frame'],frame);self.assertEqual(witness['afterFrame'],self.sample())
+        for key,value in {'visibilityState':'hidden','hidden':True,'hasFocus':False,'dateNow':1791616309001,'performanceNow':1}.items():
+            with self.subTest(final_key=key),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(AssertionError,'fresh native frame'):
+                    self.run_preparation(Path(directory),final={**self.sample(),key:value})
+
+    def test_activation_or_read_failure_keeps_preparation_witness(self):
+        for failure,error in [('activate','native activation failed'),('after-read','read-only foreground probe unavailable')]:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(RuntimeError,error):self.run_preparation(Path(directory),failure=failure)
+                witness=json.loads((Path(directory)/'authority-conflict-foreground.json').read_bytes())
+                self.assertEqual(witness['before'],self.sample(False));self.assertIsNone(witness['after'])
+
+    def test_only_extra_page_branch_prepares_original_before_advance_and_protected_controls(self):
+        source=SCRIPT.read_text();tree=ast.parse(source)
+        functions={node.name:node for node in tree.body if isinstance(node,ast.FunctionDef)}
+        page_creators=[name for name,node in functions.items() if any(isinstance(call,ast.Call)
+                       and isinstance(call.func,ast.Attribute) and call.func.attr=='new_page' for call in ast.walk(node))]
+        self.assertEqual(sorted(page_creators),['authority_boundaries','boot'])
+        body=source.split('# Genuine same-origin storage event',1)[1].split('def save_without_navigation',1)[0]
+        self.assertLess(body.index('other.evaluate('),body.index('foreground_conflict_page(page)'))
+        self.assertLess(body.index('foreground_conflict_page(page)'),body.index('advance(page)'))
+        self.assertLess(body.index('advance(page)'),body.index('open_report(page)'))
+        self.assertIn("page.evaluate('window.__npcStorage')",body)
+        for required in ("event['trusted'] is True","event['oldValue']==before[KEY]","event['newValue']==competing_raw",
+                         "page, before, {**before, KEY: competing_raw}","protected_export.read_bytes() == before[KEY].encode()"):
+            self.assertIn(required,body)
+        helper=ast.get_source_segment(source,functions['foreground_conflict_page'])
+        self.assertIn('page.bring_to_front()',helper)
+        for prohibited in ('__npcAdvance','dispatchEvent','Object.defineProperty','page.clock','wait_for_timeout','disconnect(','.click('):
+            self.assertNotIn(prohibited,helper)
+        self.assertNotIn('visibilityState=',source);self.assertNotIn('document.hidden=',source)
+
+
 class IndependentPresenterTests(unittest.TestCase):
     def fixture(self):
         snapshot={'model':'npc-scout-snapshot-v1','fleetId':11,'originId':'old-origin',
