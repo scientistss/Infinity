@@ -21,7 +21,7 @@ declare const process: {
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 const npcAdoptedSegmentsSeconds: number[] = [];
 let independentlyExpectedNpcWallet = expectedNpcEconomy();
-import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
 import { setProductionPct } from "../src/automation/engine";
 import type { BuildingId } from "../src/data/buildings";
 import type { ResearchId } from "../src/data/research";
@@ -462,7 +462,7 @@ async function loadOrigin(): Promise<void> {
     milestoneName: ORIGIN_MILESTONE, strictRoundtrips: old.strictRoundtrips, subsequentLiveTickObserved: old.subsequentLiveTickObserved,
     sourceBinding: "Pinned immutable CI report plus verified source artifact binding; the old report does not itself embed sourceSha.", originalSave: old.save };
   const migrated = importSave(JSON.stringify(old.save)); state = deserializeState(migrated.state); stateInitialized = true;
-  check(migrated.revision === 13 && SAVE_REVISION === 13 && SAVE_VERSION === 9, "formal r9-to-r13 migration is not active");
+  check(migrated.revision === 14 && SAVE_REVISION === 14 && SAVE_VERSION === 9, "formal r9-to-r14 migration is not active");
   check(migrated.savedAt === old.save.savedAt && migrated.lastTickAt === old.save.lastTickAt, "migration changed original envelope clocks");
   const projected = projectVerifiedNpcEconomy(serializeState(state), expectedNpcEconomy(), "pure r9 migration must not backfill historical NPC age or rights");
   delete projected.terraformerGrantJobFloor;
@@ -470,7 +470,7 @@ async function loadOrigin(): Promise<void> {
     check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "Old r9 migration must add only null demolition");
     delete planet.demolition; delete planet.terraformerFields;
   }
-  exact(old.save.state, projected, "r13 additive migration complete old-state projection");
+  exact(old.save.state, projected, "r14 additive migration complete old-state projection");
   const oldOrders = old.save.state.orders as { nextJobId: number };
   check(state.terraformerGrantJobFloor === oldOrders.nextJobId, "migration floor is not the historical nextJobId");
   for (const planet of state.planets) check(planet.terraformerFields.base === planet.fieldsMax && planet.terraformerFields.grantedLevels === 0,

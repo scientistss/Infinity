@@ -13,7 +13,7 @@ const json = (raw: unknown) => importSave(JSON.stringify(raw));
 
 describe("r13 exact NPC wallet persistence and historical r12 reader", () => {
   it("keeps the branch and storage key, and emits exactly one explicit age-zero object", () => {
-    expect(SAVE_REVISION).toBe(13);
+    expect(SAVE_REVISION).toBe(14);
     expect(SAVE_SCHEMA).toBe("infinity-original-p4");
     expect(STORAGE_KEY).toBe("infinity.original-p4.save.v1");
     const raw = current();
@@ -131,7 +131,7 @@ describe("r12 historical boundary and reserved marker", () => {
   it("requires current NPC data and rejects future, incompatible schema, and the other sector route", () => {
     const missing = current(); delete missing.state.npcEconomy;
     expect(() => json(missing)).toThrow(/NPC/);
-    const future = current(); future.revision = 14;
+    const future = current(); future.revision = 15;
     expect(() => json(future)).toThrow(/修订不兼容/);
     const incompatible = current(); incompatible.schema = "different-route";
     expect(() => json(incompatible)).toThrow(/分支/);

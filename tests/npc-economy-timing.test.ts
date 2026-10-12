@@ -186,7 +186,7 @@ describe("NPC adopted offline time and same-universe reset", () => {
     expect(evaluatePrestige(state).next).toBe(state);
     state.lifetime.metal = big(1e8);
     state.totalTime = big(123.5);
-    state.messages = [{ id: "historical-scout", at: 60.25, text: "Existing fixed historical snapshot" }];
+    state.messages = [{ id: "historical-scout", at: 60.25, text: "Existing fixed historical snapshot", npcScoutSnapshot: null }];
     const before = serializeState(state), preview = evaluatePrestige(state);
     expect(preview.gain.gt(0)).toBe(true);
     expect(serializeState(state)).toEqual(before);

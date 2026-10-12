@@ -22,7 +22,7 @@ function file(): any {
 function read(value: any) { return importSave(JSON.stringify(value)); }
 function legacy(revision: 2 | 3 | 4 | 5 | 6): any {
   const value = JSON.parse(exportSave(createInitialState(71), 1000));
-  value.revision = revision; stripSyntheticTerraformerMetadata(value.state, 0);
+  stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
   delete value.state.buildingTemplates;
   delete value.state.researchTemplates;
   delete value.state.formations;

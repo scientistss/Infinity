@@ -1,0 +1,14 @@
+import type { ExpectedNpcWallet } from './r13-compatibility.mjs';
+export { expectedNpcEconomy, advanceExpectedNpcWallet, expectedNpcFromR12Snapshot, expectedNpcBattles, assertNpcEconomy, expectedNpcResourceRemainder, assertZeroNpcResourceRemainders, assertHistoricalSource, NPC_MODEL, NPC_HORIZON } from './r13-compatibility.mjs';
+export type { ExpectedNpcWallet } from './r13-compatibility.mjs';
+export const CURRENT_REVISION: 14;
+export function liftR13StateToR14(state: any): any;
+export function projectVerifiedScoutSnapshots(state: unknown, expectedSnapshots: Map<string, unknown>, label: string): Record<string, any>;
+export function projectVerifiedNullScoutSnapshots(state: unknown, label: string): Record<string, any>;
+export function projectVerifiedNpcEconomy(state: unknown, wallet: ExpectedNpcWallet, label: string): Record<string, any>;
+export function liftR12StateToR14(state: any): any;
+export function liftR11StateToR14(state: unknown, wallet?: ExpectedNpcWallet): any;
+export function liftR10StateToR14(state: unknown, wallet?: ExpectedNpcWallet): any;
+export function liftR8StateToR14(state: unknown, floor: number, wallet?: ExpectedNpcWallet): any;
+export function assertTerraformerMetadata(actual: unknown, historical: unknown, floor: number, label: string, wallet?: ExpectedNpcWallet): any;
+export function assertR8StatePreserved(actual: unknown, historical: unknown, label: string, floor: number, wallet?: ExpectedNpcWallet): void;

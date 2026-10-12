@@ -1,3 +1,4 @@
+import { readNpcScoutMessages, rejectNpcScoutFields, validateNpcScoutReferences } from "./npc-scout-save";
 import { npcEconomySnapshot } from "./npc-economy";
 import { createNpcWalletContext, npcWalletFromSnapshot, readNpcWalletState } from "./npc-wallet";
 import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences } from "./npc-attack-state";
@@ -156,7 +157,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r12 → r13 are migrated. */
+/** Unsupported versions are protected; only same-schema v9 r2–r13 → r14 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -179,8 +180,11 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   // Validate before JSON can omit undefined/extras or turn nonfinite numbers into null.
+  rejectNpcScoutFields(state, false);
+  const messages = readNpcScoutMessages(state.messages);
   rejectNpcAttackFields(state, false);
   validateNpcAttackReferences(state);
+  validateNpcScoutReferences(state, messages);
   const npcContext = createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
   return {
     npcEconomy: readNpcWalletState(state.npcEconomy, npcContext),
@@ -194,7 +198,7 @@ export function serializeState(state: GameState): SerializedState {
     activePlanetId: state.activePlanetId,
     deepSpace: structuredClone(state.deepSpace),
     universe: { ...state.universe }, fleets: serializeFleets(state.fleets),
-    messages: state.messages.map(m=>({...m})), nextFleetId: state.nextFleetId,
+    messages, nextFleetId: state.nextFleetId,
     research: serializeResearch(state.research),
     darkMatter: bigToString(state.darkMatter),
     items: { ...state.items },
@@ -220,7 +224,8 @@ export function deserializeState(raw: unknown): GameState {
 }
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
-function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false): GameState {
+function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false, legacyNpcScout = false): GameState {
+  rejectNpcScoutFields(raw, legacyNpcScout);
   rejectNpcAttackFields(raw, legacyNpcAttack);
   rejectMisplacedNpcEconomyFields(raw);
   rejectMisplacedDemolitionFields(raw);
@@ -262,7 +267,7 @@ function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = f
   state.unlocked = readAchievements(raw.unlocked);
   state.stats = readStats(raw.stats);
   state.offlineBonusHours = Math.max(readBonusHours(raw.offlineBonusHours), offlineHoursFromTech(state));
-  Object.assign(state, readSpaceState(raw, state, !legacyNpcAttack));
+  Object.assign(state, readSpaceState(raw, state, !legacyNpcAttack, legacyNpcScout));
   state.deepSpace=readDeepState(raw.deepSpace,state);
   validateRingBatchReferences(state);
   validateOrderReferences(state);
@@ -283,6 +288,9 @@ function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = f
   state.npcBattles = legacyNpcAttack ? createNpcBattleState()
     : readNpcBattleState(Object.getOwnPropertyDescriptor(raw, "npcBattles")?.value, npcContext);
   validateNpcAttackReferences(state);
+  // Add only the null slot after the complete original source reader has succeeded.
+  if (legacyNpcScout) state.messages = state.messages.map(message => ({ ...message, npcScoutSnapshot: null }));
+  else validateNpcScoutReferences(state);
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
   return refreshUnlocks(markEnergyShortage(state));
 }
@@ -299,7 +307,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r13 or explicitly migrate same-schema r2–r12; never touch the current game. */
+/** Validate current v9/r14 or explicitly migrate same-schema r2–r13; never touch the current game. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -316,6 +324,9 @@ export function importSave(json: string): SaveFile {
   if (typeof parsed.revision !== "number" || !supportedRevisions.includes(parsed.revision)) {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
+  // The snapshot introduction is fixed at r14, regardless of any later output revision.
+  const legacyNpcScout = parsed.revision <= 13;
+  rejectNpcScoutFields(parsed, legacyNpcScout, true);
   // Reject r13-exclusive authority in the untouched source before any normalization.
   const legacyNpcAttack = parsed.revision <= 12;
   rejectNpcAttackFields(parsed, legacyNpcAttack, true);
@@ -366,7 +377,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack)),
+    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack, legacyNpcScout)),
   };
 }
 

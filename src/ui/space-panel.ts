@@ -1,5 +1,6 @@
 import { installNpcAttackControls, type NpcActionAuthority, type NpcAttackUiAction } from "./npc-attack-controls";
 import { installNpcBattlePanel, npcBattlePanelHtml } from "./npc-battle-panel";
+import { installNpcRehearsalPanel, npcRehearsalPanelHtml, NPC_REHEARSAL_FLYING_IDS, NPC_REHEARSAL_UNAVAILABLE, type NpcRehearsalDraft } from "./npc-rehearsal-panel";
 import { installExpansionNavigation } from "./expansion-navigation";
 import { installDemolitionPanel, type DemolitionUiAction } from "./demolition-panel";
 import { installProtocolSafety } from "./protocol-safety";
@@ -15,9 +16,11 @@ import type { OrderAction } from "../game/order-state";
 import { deepPanelHtml, installDeepPanel, type DeepAction } from "./deep-panel";
 import { mountView as mountOriginal, type UiAction as OriginalAction } from "./planet-selector";
 import { SPACE, wrap, coordinateKey, type Coordinates } from "../game/galaxy";
-import { emptyCargo, type FleetRequest, type Mission } from "../game/fleet";
+import { emptyCargo, quoteFlight, type FleetMessage, type FleetRequest, type Mission } from "../game/fleet";
 import { SHIP_IDS, unitById, type ShipId } from "../data/units";
 import { big } from "../game/decimal";
+import { activePlanet } from "../game/empire";
+import { formatDuration } from "../game/format";
 import { npcRemainderView, transportLoadView } from "./space-present";
 import { fillTransportCargo } from "./transport-load-model";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
@@ -29,6 +32,15 @@ function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {co
 function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.textContent!==value)n.textContent=value;}
 function html(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.dataset.signature!==value){n.innerHTML=value;n.dataset.signature=value;}}
 const entry=(label:string,id:string,min:number,max:number,value:number)=>`<label>${label}<input id="${id}" type="number" min="${min}" max="${max}" value="${value}" step="1" /></label>`;
+
+/** The mounted view and the focused DOM test use this same narrow renderer. */
+export function installSpaceChrome(root: HTMLElement, syncTabs: () => void) {
+  return function updateSpaceChrome(origin: string, status: string) {
+    syncTabs();
+    for (const node of root.querySelectorAll<HTMLElement>(".space-location")) if (node.textContent !== origin) node.textContent = origin;
+    for (const node of root.querySelectorAll<HTMLElement>(".space-status")) if (node.textContent !== status) node.textContent = status;
+  };
+}
 
 /** Only the pending-right text is patched; existing controls and open details survive ticks. */
 export function updateNpcRemainderDetail(row: HTMLElement, model: ReturnType<typeof npcRemainderView>): void {
@@ -145,6 +157,122 @@ export function installTransportLoadControls(root:HTMLElement,readRequest:()=>Fl
   };
 }
 
+/** The real-form handoff and message identity adapter. It owns no send action.
+ * A separate host token changes only on an explicitly adopted world. Ordinary
+ * immutable state objects and matching saved IDs never define that boundary. */
+export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: GameState) => void) {
+  const list = el(root, "#space-message-list"), fleetPanel = el(root, "#space-fleet");
+  const notice = el(root, "#npc-rehearsal-draft-notice");
+  const mission = el<HTMLSelectElement>(root, "#flight-mission"), speed = el<HTMLSelectElement>(root, "#flight-speed");
+  const targets = ["galaxy", "system", "position"].map(id => el<HTMLInputElement>(root, `#flight-${id}`));
+  const cargo = RESOURCE_IDS.map(id => el<HTMLInputElement>(root, `#cargo-${id}`));
+  const ships = NPC_REHEARSAL_FLYING_IDS.map(id => ({ id, node: el<HTMLInputElement>(root, `[data-ship="${id}"]`) }));
+  const mounted = [fleetPanel, notice, mission, speed, ...targets, ...cargo, ...ships.map(ship => ship.node)];
+  let state: GameState | null = null, writable = false, protection = "", world: object = {};
+  let previousOrigin = "", previousWritable: boolean | null = null, retiredMount = false;
+  let controller: ReturnType<typeof installNpcRehearsalPanel> | null = null;
+  const rows = new Map<FleetMessage, HTMLElement>();
+  const watched = new Set<Node>();
+  function removed(records: MutationRecord[]) {
+    for (const record of records) for (const node of record.removedNodes) {
+      if (node instanceof Element && mounted.some(control => node === control || node.contains(control))) {
+        retiredMount = true; controller?.invalidate("舰队草稿控件已被替换，请重新载入页面。"); observer.disconnect(); return;
+      }
+    }
+  }
+  const observer = new MutationObserver(removed);
+  for (const node of mounted) for (let parent = node.parentNode; parent; parent = parent.parentNode) if (!watched.has(parent)) {
+    watched.add(parent); observer.observe(parent, { childList: true });
+  }
+  function intact() {
+    removed(observer.takeRecords());
+    return !retiredMount && root.isConnected && mounted.every(node => node.isConnected && root.contains(node)
+      && (node.id ? root.querySelector(`#${node.id}`) === node : ships.some(ship => ship.node === node && root.querySelector(`[data-ship="${ship.id}"]`) === node)))
+      && root.querySelectorAll("[data-ship]").length === NPC_REHEARSAL_FLYING_IDS.length;
+  }
+  const request = (draft: NpcRehearsalDraft): FleetRequest => ({ mission: "attack", target: { ...draft.target }, ships: { ...draft.ships }, speedPercent: draft.speedPercent, cargo: emptyCargo() });
+  const clearNotice = () => { notice.hidden = true; notice.textContent = ""; };
+  function retire() { controller?.invalidate(); for (const row of rows.values()) row.remove(); rows.clear(); }
+  function observe(next: GameState, ready: boolean, reason: string) {
+    const nextOrigin = activePlanet(next).id;
+    if (state && (nextOrigin !== previousOrigin || ready !== previousWritable)) retire();
+    state = next; writable = ready; protection = reason; previousOrigin = nextOrigin; previousWritable = ready;
+    if (!controller) controller = installNpcRehearsalPanel(root, {
+      readContext() {
+        const current = state!, planet = activePlanet(current), levels = current.research.levels;
+        return { adoptedWorld: world, messages: current.messages, origin: { id: planet.id, name: planet.name, coordinates: planet.coordinates }, landedShips: planet.units,
+          completedTech: { weapons: levels.weapons_tech, shields: levels.shielding_tech, armour: levels.armour_tech }, completedHyperspaceLevel: levels.hyperspace_tech, writable, protectionReason: protection };
+      },
+      quoteAttack(draft) {
+        if (!state || !writable || activePlanet(state).id !== draft.originId || !intact()) return { ok: false, reason: protection || "当前星球、存档或舰队控件已改变。" };
+        const quote = quoteFlight(state, request(draft));
+        return { ok: quote.ok, reason: quote.reason };
+      },
+      fillDraft(draft, consume) {
+        // Cache every original node before consuming. Never discover/write a
+        // replacement node halfway through the transaction, and never dispatch.
+        const current = state, adopted = world;
+        if (!current || !writable || activePlanet(current).id !== draft.originId || !intact()) return { ok: false, reason: "舰队草稿或当前来源已改变，未填入。" };
+        const quote = quoteFlight(current, request(draft));
+        if (!quote.ok) return quote;
+        if (!consume() || state !== current || world !== adopted || !writable || activePlanet(current).id !== draft.originId || !intact()) return { ok: false, reason: "演练审阅已失效，未填入。" };
+        mission.value = "attack"; speed.value = String(draft.speedPercent);
+        targets[0]!.value = String(draft.target.galaxy); targets[1]!.value = String(draft.target.system); targets[2]!.value = String(draft.target.position);
+        for (const ship of ships) ship.node.value = String(draft.ships[ship.id]);
+        for (const field of cargo) field.value = "0";
+        afterFill(current);
+        notice.textContent = "仅已填入，尚未派遣或付款。请核对最新航程报价，再单独点击付费出征。"; notice.hidden = false;
+        return { ok: true, reason: "仅已填入，尚未派遣或付款。" };
+      },
+    });
+    controller.observe();
+    // Hidden message pages must not retain evicted typed history in a UI map.
+    const retained = new Set(next.messages);
+    for (const [message, row] of rows) if (!retained.has(message)) { row.remove(); rows.delete(message); }
+  }
+  function updateMessages() {
+    if (!state || !controller || el(root, "#space-messages").hidden || document.hidden) return;
+    const retained = new Set(state.messages);
+    for (const [message, row] of rows) if (!retained.has(message)) { row.remove(); rows.delete(message); }
+    // Empty placeholders are not capabilities and are removed only on transition.
+    if (state.messages.length && !rows.size) list.replaceChildren();
+    let previous: Element | null = null;
+    for (const message of state.messages.slice().reverse()) {
+      let row = rows.get(message);
+      if (!row) {
+        row = document.createElement("article"); row.className = "space-message";
+        const time = document.createElement("small"), body = document.createElement("p"), historical = document.createElement("p");
+        time.textContent = `游戏 ${formatDuration(Math.floor(message.at))}`; body.textContent = message.text; historical.className = "muted";
+        const snapshot = message.npcScoutSnapshot;
+        row.append(time, body);
+        if (snapshot || message.id.startsWith("scout-")) {
+          // The legacy ID is display classification only. It cannot create
+          // historical data, a rehearsal button, or any action authority.
+          row.dataset.messageId = message.id;
+          historical.textContent = snapshot ? `历史情报，之后可能变化 · 抵达时间 ${snapshot.observedAt} 秒 · ${snapshot.model}` : NPC_REHEARSAL_UNAVAILABLE;
+          row.append(historical);
+        }
+        rows.set(message, row);
+        const next: Element | null = previous ? previous.nextElementSibling : list.firstElementChild; list.insertBefore(row, next);
+        if (snapshot) { const button = document.createElement("button"); button.type = "button"; button.textContent = "打开历史侦察演练"; row.append(button); controller.registerReport(button, message); }
+      } else {
+        const next: Element | null = previous ? previous.nextElementSibling : list.firstElementChild;
+        if (next !== row) list.insertBefore(row, next);
+      }
+      previous = row;
+    }
+    if (!state.messages.length && list.textContent !== "尚无航行记录。") { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "尚无航行记录。"; list.replaceChildren(empty); }
+  }
+  for (const type of ["input", "change"]) root.addEventListener(type, event => {
+    if (mounted.includes(event.target as HTMLElement)) clearNotice();
+  });
+  return {
+    observe, updateMessages, retire, clearNotice,
+    close() { controller?.close(); },
+    adoptWorld() { retire(); world = {}; clearNotice(); },
+  };
+}
+
 /** Add new tabs without altering original template, stylesheet, card positions or assets. */
 export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   const original=mountOriginal(root,onAction);
@@ -161,7 +289,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <p class="muted">侦察查看抵达时的历史情报；攻击 NPC 轨道驻军可能永久损失舰船。第 16 位可派舰充能，也可回收战斗残骸。殖民地属性使用当前开发版生成曲线。</p>
   `)+make("fleet","舰队指挥",`
     <p id="space-slots" class="chip"></p>
-    <p id="formation-dispatch-source" class="muted" hidden></p>${formationsPanelHtml()}
+    <p id="formation-dispatch-source" class="muted" hidden></p><p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden></p>${formationsPanelHtml()}
     <div class="space-columns"><div class="ov-card"><h3>1 · 编成舰队</h3><div class="space-ships">${SHIP_IDS.filter(id=>id!=="solar_satellite").map(id=>`<label class="space-ship"><span>${unitById(id).nameZh}<small id="available-${id}"></small></span><input type="number" min="0" max="${SPACE.maxShips}" step="1" value="0" data-ship="${id}" aria-label="${unitById(id).nameZh}派遣数量" /></label>`).join("")}</div></div>
     <div class="ov-card"><h3>2 · 任务与航程</h3><div class="space-controls"><label>任务<select id="flight-mission"><option value="colonize">殖民</option><option value="transport">运输</option><option value="deploy">部署</option><option value="scout">侦察</option><option value="attack">NPC 轨道攻击</option><option value="charge">深空充能</option><option value="recycle">残骸回收</option></select></label><label>速度<select id="flight-speed">${[100,90,80,70,60,50,40,30,20,10].map(n=>`<option value="${n}">${n}%</option>`).join("")}</select></label></div>
     <div class="space-controls">${entry("目标银河","flight-galaxy",1,5,1)}${entry("恒星系","flight-system",1,100,50)}${entry("位置","flight-position",1,16,9)}</div>
@@ -174,7 +302,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
-  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-message-list"></div>${npcBattlePanelHtml()}`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()+buildingTemplatesPanelHtml()));
+  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-message-list"></div>${npcRehearsalPanelHtml()}${npcBattlePanelHtml()}`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()+buildingTemplatesPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
   const templatePanel=installResearchTemplatesPanel(root,onAction);
   const buildingTemplatePanel=installBuildingTemplatesPanel(root,onAction);
@@ -196,6 +324,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   let fleetButtons = new WeakMap<HTMLButtonElement, number>();
   function choose(id:string){
     npcAttack.retirePending();
+    if(id!=="messages")npcRehearsal.close();
     selected=id;for(const b of root.querySelectorAll<HTMLElement>("[data-tab]")){const active=b.dataset.tab===id;b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));}
     for(const p of root.querySelectorAll<HTMLElement>("[data-tab-panel]"))p.hidden=p.dataset.tabPanel!==id;
   }
@@ -208,11 +337,16 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   const transportLoad=installTransportLoadControls(root,request);
   const npcAttack=installNpcAttackControls(root,request,onAction);
   const npcBattle=installNpcBattlePanel(root);
-  function target(key:string,mission:string){const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");transportLoad.edited();npcAttack.edited();}
+  const npcRehearsal=installSpaceNpcRehearsal(root,current=>{
+    filledFormation=null;put(root,"#formation-dispatch-source","");el(root,"#formation-dispatch-source").hidden=true;
+    transportLoad.invalidate("已替换为空载攻击草稿。");transportLoad.observe(current,true,"");
+    choose("fleet");transportLoad.edited();npcAttack.edited(true);
+  });
+  function target(key:string,mission:string){npcRehearsal.clearNotice();const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");transportLoad.edited();npcAttack.edited();}
   root.addEventListener("click",event=>{
     const b=event.target instanceof Element?event.target.closest<HTMLButtonElement>("button"):null;if(!b||b.disabled)return;
     if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}
-    if(b.dataset.tab){npcAttack.retirePending();selected=null;return;}
+    if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();selected=null;return;}
     if(b.dataset.space){event.stopImmediatePropagation();const a=b.dataset.space;
       if(a==="prev"||a==="next"||a==="browse"||a==="home"){
         const g=number("browse-galaxy"),s=number("browse-system");
@@ -235,11 +369,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       if(a==="abandon")onAction({type:"abandon-colony",id:b.dataset.planet!});
     }
   },true);
-  function updateSpaceChrome(origin:string,status:string){
-    if(selected)choose(selected);
-    for(const n of root.querySelectorAll<HTMLElement>(".space-location"))if(n.textContent!==origin)n.textContent=origin;
-    for(const n of root.querySelectorAll<HTMLElement>(".space-status"))if(n.textContent!==status)n.textContent=status;
-  }
+  const updateSpaceChrome=installSpaceChrome(root,()=>{if(selected)choose(selected);});
   function updateSpaceGalaxy(model:SpaceGalaxyView){
     put(root,"#space-range",`${model.phase} · 种子 ${model.seed}`);
     const worlds=el(root,"#space-worlds");
@@ -281,7 +411,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   }
   function updateSpaceMessages(model:SpaceMessagesView){
     npcBattle.update(model.npcReports);
-    html(root,"#space-message-list",model.messages.length?model.messages.map(m=>`<article class="space-message"><small>${m.time}</small><p>${enc(m.text)}</p></article>`).join(""):'<p class="muted">尚无航行记录。</p>');
+    npcRehearsal.updateMessages();
   }
   return {...original, updateDeep, updateDemolition:demolitionPanel.update.bind(demolitionPanel), updateDemolitionOffline:demolitionPanel.updateOffline, completeDemolitionAction:demolitionPanel.complete, updateProtocolSafety:protocolSafety.update, updateOrders:orderPanel.update, updateResearchTemplates(state:GameState,writable:boolean){
       templatePanel.observe(state,writable);
@@ -293,11 +423,12 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
     }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean,protectionMessage:string){demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
-    fillFormationShips(formation:FleetFormation){for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();npcAttack.edited();},
-    invalidateOrderAuthority(){demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    observeContexts(state:GameState,writable:boolean,protectionMessage:string){demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);npcRehearsal.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
+    fillFormationShips(formation:FleetFormation){npcRehearsal.clearNotice();for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();npcAttack.edited();},
+    invalidateOrderAuthority(){npcRehearsal.retire();demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    retireNpcRehearsal:npcRehearsal.retire,adoptNpcRehearsalWorld:npcRehearsal.adoptWorld,
     consumeNpcAttackAction(action:UiAction,state:GameState){return "npcAuthority" in action&&!!action.npcAuthority&&npcAttack.consume(action as NpcAttackUiAction,state);},
-    completeNpcAttackSend:npcAttack.completeSend, retireNpcPending:npcAttack.retirePending,
+    completeNpcAttackSend(ok:boolean){npcAttack.completeSend(ok);if(ok)npcRehearsal.clearNotice();}, retireNpcPending:npcAttack.retirePending,
     readRequest:request, cursor:()=>({...cursor}),
     setOrigin(c:Coordinates){origin=c;if(!initialized){cursor={...c};el<HTMLInputElement>(root,"#browse-galaxy").value=String(c.galaxy);el<HTMLInputElement>(root,"#browse-system").value=String(c.system);initialized=true;}},
     updateSpace(value:SpaceView,status:string){

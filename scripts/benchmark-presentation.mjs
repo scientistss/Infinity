@@ -9,7 +9,7 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
-import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR13, assertHistoricalSource, assertZeroNpcResourceRemainders } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR14, assertHistoricalSource, assertZeroNpcResourceRemainders } from "./r14-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -71,7 +71,7 @@ assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "nativ
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
 assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
 const migratedFile = afterSave.importSave(fixture.save);
-assert.equal(migratedFile.revision, 13, "new reader must perform the real r8-to-r13 migration");
+assert.equal(migratedFile.revision, 14, "new reader must perform the real r8-to-r14 migration");
 const migrationFloor = fixture.ready.state.orders.nextJobId;
 const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
@@ -90,6 +90,10 @@ function deepFreeze(value, seen = new WeakSet()) {
 }
 // Both model versions receive the very same frozen object, not generated copies.
 const state = deepFreeze(sourceState);
+// Both native schemas are independently full-projection-equal above. The r8
+// serializer must receive its actual archived state: it retains unknown message
+// fields when handed a current runtime and would otherwise time/export r14 slots.
+const archivedState = deepFreeze(beforeState);
 const input = deepFreeze({ status: "", banner: null, notice: null, catchup: null });
 const cursor = deepFreeze({ ...empire.activePlanet(state).coordinates });
 const target = state.planets.find(world => world.id !== state.activePlanetId)?.coordinates;
@@ -321,15 +325,16 @@ for (const tab of ["facilities", "galaxy", "fleet", "messages", "orders"]) {
       tab === "orders" ? afterOrders.ordersView(state) : null]));
 }
 const separateResults = [
-  paired("serialization:exact-native-exportSave", () => beforeSave.exportSave(state, fixture.manifest.savedAt), () => afterSave.exportSave(state, fixture.manifest.savedAt), simulationSamples, 1),
+  paired("serialization:exact-native-exportSave", () => beforeSave.exportSave(archivedState, fixture.manifest.savedAt), () => afterSave.exportSave(state, fixture.manifest.savedAt), simulationSamples, 1),
   paired("strict-import:importSave-plus-deserializeState", () => beforeSave.deserializeState(beforeSave.importSave(fixture.save).state), () => afterSave.deserializeState(afterSave.importSave(fixture.save).state), simulationSamples, 1),
   paired("simulation:zero-time-startup", () => beforeLogic.tick(state, 0), () => afterLogic.tick(state, 0), simulationSamples, 1),
   paired("simulation:one-native-60Hz-sized-step", () => beforeLogic.tick(state, 1 / 60), () => afterLogic.tick(state, 1 / 60), simulationSamples, 1),
 ];
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
-assert.equal(beforeSave.exportSave(state, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-const expectedR13 = { ...fixture.ready, revision: 13, state: liftR8StateToR13(fixture.ready.state, migrationFloor, expectedNpcEconomy()) };
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR13, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r13 NPC metadata and r13 envelope");
+assert.equal(JSON.stringify(beforeSave.serializeState(archivedState)), archivedSerialized, "no measurement mutated the actual archived serialization input");
+assert.equal(beforeSave.exportSave(archivedState, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
+const expectedR14 = { ...fixture.ready, revision: 14, state: liftR8StateToR14(fixture.ready.state, migrationFloor, expectedNpcEconomy()) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR14, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r13 NPC metadata, explicit null scout snapshot slots and r14 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
   const witnessed = captureAdoptedSteps(beforeState, input => ({ state: beforeLogic.tick(input, delta) }), beforeSave.serializeState);
   assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
@@ -338,7 +343,7 @@ for (const delta of [0, 1 / 60, 0.125]) {
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time measurements on the identical frozen state from the real r8 strict-reader fixture after observed r13 migration; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time model measurements on the identical frozen current state from the real r8 strict-reader fixture after observed r14 migration; native serialization uses the separately frozen actual archived/current schemas, proven complete old-field equal, so the archived serializer cannot retain new message slots; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, and the exact waiting-research quote wording. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },

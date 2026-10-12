@@ -5,7 +5,7 @@
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
-import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy, type ExpectedNpcWallet } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy, type ExpectedNpcWallet } from "./r14-compatibility.mjs";
 import { equipCard } from "../src/automation/engine";
 import { catchUp, offlineCapSeconds } from "../src/core/offline";
 import { STORAGE_KEY } from "../src/game/content";

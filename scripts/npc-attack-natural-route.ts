@@ -15,6 +15,7 @@ import { retryNpcAttackDock } from "../src/game/npc-attack";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 import { STORAGE_KEY } from "../src/game/content";
+import { liftR13StateToR14 } from "./r14-compatibility.mjs";
 import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection";
 import type { GameState } from "../src/game/types";
 declare const process: { argv: string[]; version: string; exitCode?: number; stdout: { write(text: string): void } };
@@ -51,6 +52,8 @@ let stage = "source", elapsed = 0, startAt = 0, failure: string | null = null, m
 let state!: GameState;
 let control: any, old: RecordValue, npc: RecordValue, reports: RecordValue[] = [], attacks: RecordValue[] = [];
 let remainders: Record<string, Record<string, string>> = {};
+// Independently observed old-engine arrivals; never derived from candidate messages.
+const scoutSnapshots = new Map<string, RecordValue>();
 const moneyWitnesses: RecordValue[] = [];
 let original!: RecordValue;
 let source!: RecordValue;
@@ -97,15 +100,22 @@ function resourceOracleText() {
   const guard = g.light_fighter || g.heavy_fighter ? `轨道驻军：轻型战斗机 ${g.light_fighter}，重型战斗机 ${g.heavy_fighter}；驻军战斗科技 0` : "轨道驻军：已清空（无驻军）；驻军战斗科技 0";
   return `侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 ${control.totalTime.toNumber().toFixed(3)} 秒。${detail}。${guard}。历史快照不会随时间更新。`;
 }
+function independentMessages(messages: RecordValue[]) {
+  return messages.map((message: RecordValue) => {
+    const snapshot = scoutSnapshots.get(message.id) ?? null;
+    return { ...message, ...(snapshot ? { at: Math.min(1e12, old.decimal.big(snapshot.observedAt).toNumber()) } : {}), npcScoutSnapshot: snapshot ? structuredClone(snapshot) : null };
+  });
+}
 function shadowState() {
   const value = old.save.serializeState(control); value.npcEconomy = structuredClone(npc); value.npcBattles = { model: "npc-battle-receipts-v1", reports: structuredClone(reports) };
+  value.messages = independentMessages(value.messages);
   value.planets = value.planets.map((p: RecordValue) => ({ ...p, npcResourceRemainder: { ...remainders[p.id] } }));
   value.fleets = [...value.fleets, ...structuredClone(attacks)].sort((a: RecordValue, b: RecordValue) => a.id - b.id);
   return value;
 }
 function invariant() {
   exact("every state field equals independent NPC oracle + pinned eef legacy engine", serializeState(state), shadowState());
-  exact("old reports remain historical", state.messages.slice(0, original.state.messages.length), original.state.messages);
+  exact("old reports remain historical", state.messages.slice(0, original.state.messages.length), liftR13StateToR14(original.state).messages);
   exact("ring and deep RNG/loot unaffected", [state.arcade, state.deepSpace], [deserializeState(importSave(original.raw).state).arcade, deserializeState(importSave(original.raw).state).deepSpace]);
   check("no actual fixture injection", state.totalTime.gte(25876)); budget();
 }
@@ -253,8 +263,19 @@ function advance(seconds: number, name: string) {
       }
     }
     const messages = new Set(control.messages.map((m: RecordValue) => m.id));
+    const oldFleets = control.fleets;
     control = old.logic.tick(control, segment, "live"); npc.now = control.npcEconomy.elapsedSeconds;
-    for (const message of control.messages) if (message.id.startsWith("scout-") && !messages.has(message.id)) message.text = resourceOracleText();
+    for (const message of control.messages) if (message.id.startsWith("scout-") && !messages.has(message.id)) {
+      const fleetId = Number(message.id.slice(6)), fleet = oldFleets.find((f: RecordValue) => f.id === fleetId);
+      check("new independent typed observation requires a real old-engine outbound scout", fleet && fleet.mission === "scout" && !fleet.returning);
+      exact("independent observed scout target is the fixed natural NPC", fleet.target, TARGET);
+      check("one typed observation per actual old-engine scout arrival", !scoutSnapshots.has(message.id));
+      scoutSnapshots.set(message.id, { model: "npc-scout-snapshot-v1", fleetId, originId: fleet.originId, target: { ...TARGET },
+        observedAt: control.totalTime.toString(), stock: stock().map((value: number) => value === 0 ? 0 : value),
+        garrison: { ...(npc.sites[KEY]?.garrison ?? { light_fighter: 4, heavy_fighter: 0 }) },
+        defenderTech: { weapons: 0, shields: 0, armour: 0 } });
+      message.text = resourceOracleText();
+    }
     attacks = attacks.map(f => f.npcAttack.phase.dockBlocked ? f : ({ ...f, remaining: Math.max(0, f.remaining - segment), elapsed: f.elapsed + segment }));
     for (const f of [...attacks].filter(f => f.remaining === 0 && !f.npcAttack.phase.dockBlocked).sort((a, b) => a.id - b.id)) shadowArrival(f);
     left -= segment; if (segment === 0 && !attacks.some(f => f.remaining === 0)) continue;
@@ -355,7 +376,7 @@ try {
   npc = { model: "npc-wallet-garrison-v1", now: 0, baseline: { stock: [830, 415, 66], mark: 0 }, sites: {} };
   remainders = Object.fromEntries(original.state.planets.map((p: RecordValue) => [p.id, { metal: "0", crystal: "0", deuterium: "0" }]));
   exact("legacy source grants zero tail to every migrated planet only", state.planets.map(p => p.npcResourceRemainder), Object.values(remainders));
-  checkpoint("r12-final-migrated-r13");
+  checkpoint("r12-final-migrated-r14");
   check("weapons0 genuinely blocks attack without partial mutation", !quoteFlight(state, request("attack", 1)).ok && sendFleet(state, request("attack", 1)).state === state);
   scout("new-scout6-outbound"); advance(1, "new-scout6-arrival"); checkpoint("new-scout6-historical-garrison"); advance(1, "new-scout6-return"); checkpoint("new-scout6-returned");
   action("research", () => enqueueResearch(state, "weapons_tech", "manual"), () => old.research.enqueueResearch(control, "weapons_tech", "manual"), { tech: "weapons_tech" }); checkpoint("weapons1-paid-unfinished");
@@ -416,6 +437,7 @@ try {
   check("unaltered natural final owns earned nonzero rights", state.planets.some(p => RES.some(r => p.npcResourceRemainder[r] !== "0")));
   exact("curvature evaluation leaves complete natural source unchanged", serializeState(state), finalBefore);
   const oldEvaluation = old.logic.evaluatePrestige(control), curvatureExpected = old.save.serializeState(oldEvaluation.next);
+  curvatureExpected.messages = independentMessages(curvatureExpected.messages);
   curvatureExpected.npcEconomy = structuredClone(npc); curvatureExpected.npcBattles = { model: "npc-battle-receipts-v1", reports: structuredClone(reports) };
   curvatureExpected.planets = curvatureExpected.planets.map((p: RecordValue) => ({ ...p, npcResourceRemainder: { metal: "0", crystal: "0", deuterium: "0" } }));
   exact("curvature entire state equals pinned old evaluator plus independent retained NPC state and zero new rights", serializeState(evaluation.next), curvatureExpected);
@@ -523,7 +545,7 @@ try {
 } catch (error) { failure = error instanceof Error ? error.message : String(error); process.exitCode = 1; }
 const expected = Object.fromEntries(milestones.map(m => [m.name, m.save.state]));
 const report = { schema: "infinity-npc-attack-natural-route-v2", source: source!, key: STORAGE_KEY, homeId: "homeworld", colonyId: "colony-1",
-  description: "Exact public eef r12 66-second two-scout save → real r13 scout6 → paid weapons1 and six built LF → draw7 permanent loss → win8 loot/return → production/rescout9 → empty10 collection. Independent LF combat/loot plus exact pinned eef whole-state legacy control.",
+  description: "Exact public eef r12 66-second two-scout save → real r14 typed scout6 → paid weapons1 and six built LF → draw7 permanent loss → win8 loot/return → production/rescout9 → empty10 collection. Independent LF combat/loot plus exact pinned eef whole-state legacy control.",
   origin: original!, originalSave: original! ? JSON.parse(original!.raw) : null, originalSaveRaw: original?.raw, base: milestones[0]?.save,
   importedSave: milestones[0]?.save, provenance: { scope: "Natural main and non-synthetic forks only; branches.abandon, branches.blockedRetry and branches.reportIdentity enumerate all synthetic changes", syntheticBranches: ["abandon", "blockedRetry", "reportIdentity"], injectedGameState: false, noWalletTechnologyShipClockInjection: true, originalR12RawSha256: RAW_SHA, legacyOracleSource: PIN, oracleStateNeverAdoptedByCandidate: true },
   literalGoldens: { originalTotalTime: 25876, originalNpcStock: [830, 415, 66], weaponsCost: [800, 200, 0], eachThreeFighterCost: [9000, 3000, 0], lightFighterSeconds: .96, distance: 1025, duration: DURATION, attack7Seed: 1037330552, attack8Seed: 1344031299, draw7: battle(7, 4, 4), win8: battle(8, 6, 2), winCapacity: 420, finalFighters: 6 },

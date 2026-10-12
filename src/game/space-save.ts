@@ -1,3 +1,4 @@
+import { readNpcScoutMessages } from "./npc-scout-save";
 import { readNpcAttackContract } from "./npc-attack-state";
 import { DEEP } from "../data/deep-space";
 import { readCharge } from "./deep-save";
@@ -42,7 +43,7 @@ function cargo(x:unknown, precise=false): ResourceAmounts {
   return {metal:amount("metal"),crystal:amount("crystal"),deuterium:amount("deuterium")};
 }
 const R12_MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle"] as const;
-export function readSpaceState(raw: Record<string,unknown>,state: GameState, allowNpcAttack = true): Pick<GameState,"universe"|"fleets"|"messages"|"nextFleetId"> {
+export function readSpaceState(raw: Record<string,unknown>,state: GameState, allowNpcAttack = true, legacyNpcScout = false): Pick<GameState,"universe"|"fleets"|"messages"|"nextFleetId"> {
   if(!record(raw.universe) || raw.universe.layout !== "ring-v1") throw Error("缺少原版 P4 r2 宇宙数据，原存档未导入");
   const universe:Universe={seed:integer(raw.universe.seed,0,0xffffffff),layout:"ring-v1"};
   const coords=new Set(state.planets.map(p=>coordinateKey(p.coordinates)));
@@ -101,9 +102,9 @@ export function readSpaceState(raw: Record<string,unknown>,state: GameState, all
   }
   if(!Array.isArray(raw.messages) || raw.messages.length>SPACE.maxMessages) throw Error("舰队消息列表无效");
   const messageIds=new Set<string>();
-  const messages:FleetMessage[]=raw.messages.map((m:unknown)=>{
+  const messages = legacyNpcScout ? raw.messages.map((m:unknown)=>{
     if(!record(m) || typeof m.id!=="string" || m.id.length>100 || messageIds.has(m.id) || typeof m.text!=="string" || m.text.length>1000)throw Error("舰队消息无效");
     messageIds.add(m.id);return {id:m.id,text:m.text,at:seconds(m.at)};
-  });
+  }) as FleetMessage[] : readNpcScoutMessages(raw.messages);
   return {universe,fleets,messages,nextFleetId};
 }

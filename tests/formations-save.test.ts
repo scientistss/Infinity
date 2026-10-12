@@ -61,7 +61,7 @@ function appendHistory(value: any): any {
 }
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7): any {
   const value = revision >= 5 ? unpaidFile() : file();
-  value.revision = revision; stripSyntheticTerraformerMetadata(value.state, 0);
+  stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
   delete value.state.buildingTemplates;
   delete value.state.formations;
   for (const task of value.state.orders.tasks) delete task.formationOrigin;

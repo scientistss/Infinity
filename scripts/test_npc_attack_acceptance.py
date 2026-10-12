@@ -989,5 +989,75 @@ time.sleep(60)
                          json.dumps(archive, sort_keys=True, ensure_ascii=False))
         self.assertFalse(self.recover(worker_ok=False)['completed'])
 
+class R14ExistingNativeScoutContract(unittest.TestCase):
+    """Exercise copied Python arrival expectations without importing Playwright."""
+    @classmethod
+    def setUpClass(cls):
+        cls.economy = (ROOT / 'scripts/browser-npc-economy.py').read_text()
+        cls.attack = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+        tree = ast.parse(cls.economy)
+        selected = ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+            and node.name in ('independent_report', 'independent_scout_message', 'exact_json')], type_ignores=[])
+        cls.functions = {}
+        exec(compile(selected, '<offline-r14-arrival-contract>', 'exec'), cls.functions)
+
+    def test_current_only_revision_changes_keep_exact_legacy_origins(self):
+        for source, old_revision, origin_hash in ((self.attack, 12, '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'),
+              (self.economy, 11, 'd456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a')):
+            self.assertIn("fixtures['originalSave']['revision'] == " + str(old_revision), source)
+            self.assertIn("fixtures['base']['revision'] == 14", source)
+            self.assertIn("release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14", source)
+            self.assertIn(origin_hash, source)
+            self.assertIn("same = exact_json(actual, expected)", source)
+            self.assertNotIn("pop('npcScoutSnapshot'", source)
+        render = (ROOT / 'scripts/browser-render-scheduling.py').read_text()
+        self.assertIn('from r14_compatibility import', render)
+        self.assertIn('lift_legacy_state_to_r14(state, source_revision=8', render)
+        self.assertIn("seed['revision']==8", render)
+
+    def test_both_literal_arrivals_have_every_exact_typed_field(self):
+        for fleet_id, age, observed, stock in ((4, 3, '25813', [515, 257.5, 3]), (5, 65, '25875', [825, 412.5, 65])):
+            expected = {'id': f'scout-{fleet_id}', 'at': int(observed), 'text': self.functions['independent_report'](age),
+                'npcScoutSnapshot': {'model': 'npc-scout-snapshot-v1', 'fleetId': fleet_id, 'originId': 'homeworld',
+                    'target': {'galaxy': 1, 'system': 56, 'position': 6}, 'observedAt': observed, 'stock': stock,
+                    'garrison': {'light_fighter': 4, 'heavy_fighter': 0}, 'defenderTech': {'weapons': 0, 'shields': 0, 'armour': 0}}}
+            self.assertEqual(self.functions['independent_scout_message'](fleet_id, age), expected)
+        self.assertIn('exact_json(messages[0], independent_scout_message(fleet_id, age))', self.economy)
+
+    def test_no_snapshot_field_or_legacy_time_can_be_tolerated_or_omitted(self):
+        expected = self.functions['independent_scout_message'](4, 3)
+        changes = [('at',), ('id',), ('text',), ('npcScoutSnapshot',),
+            *[('npcScoutSnapshot', key) for key in expected['npcScoutSnapshot']],
+            *[('npcScoutSnapshot', 'target', key) for key in ('galaxy', 'system', 'position')],
+            *[('npcScoutSnapshot', 'garrison', key) for key in ('light_fighter', 'heavy_fighter')],
+            *[('npcScoutSnapshot', 'defenderTech', key) for key in ('weapons', 'shields', 'armour')]]
+        for keys in changes:
+            changed = copy.deepcopy(expected); parent = changed
+            for key in keys[:-1]: parent = parent[key]
+            parent[keys[-1]] = None
+            with self.subTest(path=keys): self.assertFalse(self.functions['exact_json'](changed, expected))
+        for at in (25813.00000001, True, '25813'):
+            changed = copy.deepcopy(expected); changed['at'] = at
+            self.assertFalse(self.functions['exact_json'](changed, expected))
+        changed = copy.deepcopy(expected); changed['npcScoutSnapshot']['unknown'] = 0
+        self.assertFalse(self.functions['exact_json'](changed, expected))
+
+    def test_arrival_goldens_cannot_accept_other_fleet_or_time(self):
+        for fleet_id, age in ((4, 65), (5, 3), (6, 3), (4, 3.00000001)):
+            with self.subTest(fleet_id=fleet_id, age=age), self.assertRaises(AssertionError):
+                self.functions['independent_scout_message'](fleet_id, age)
+
+    def test_existing_native_rows_are_exact_and_screenshot_selector_is_keyed(self):
+        for source in (self.economy, self.attack):
+            self.assertIn("assert_message_rows(evidence, state['messages'])", source)
+            self.assertIn('MESSAGE_ROWS_SAMPLE_JS', source)
+            self.assertIn('(320, 390, 768, 1440)', source)
+        self.assertIn('> p:first-of-type', self.economy)
+        self.assertIn('data-message-id=', self.economy)
+        self.assertNotIn('.space-message:nth-child(', self.economy)
+        self.assertIn("[{**m, 'npcScoutSnapshot': None} for m in branch['save']['state']['messages']]", self.economy)
+        self.assertIn("all(set(m) == {'id', 'at', 'text'}", self.economy)
+
+
 if __name__ == '__main__':
     unittest.main()

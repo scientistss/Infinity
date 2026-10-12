@@ -47,6 +47,8 @@ jobs:
           node --test scripts/test-r12-compatibility.mjs
           node --test scripts/test-r13-compatibility.mjs
           python -m unittest discover -s scripts -p 'test_r13_compatibility.py' -v
+          node --test scripts/test-r14-compatibility.mjs
+          python -m unittest discover -s scripts -p 'test_r14_compatibility.py' -v
           python -m unittest discover -s scripts -p 'test_npc_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_npc_attack_acceptance.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
@@ -96,6 +98,8 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/pre-npc-attack" eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc-attack/node_modules"
           node --import tsx "$RUNNER_TEMP/pre-npc-attack/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-npc" > npc-economy-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-scout-rehearsal" 7554c662e3ac1f27876a60d8aa706e5d4a4dcd52
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-scout-rehearsal/node_modules"
           node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-npc" > save-revision-report.json
           NPC_FIXTURE_DIR="$(mktemp -d /tmp/infinity-npc-fixture-reproduction.XXXXXX)"
           node --import tsx scripts/npc-economy-r11-fixture.mjs --source-root "$RUNNER_TEMP/pre-npc" --out "$NPC_FIXTURE_DIR/npc-economy-r11.json"
@@ -279,16 +283,17 @@ jobs:
             sleep 1
           done
           # Generate common inputs after every required HTTP service is ready.
-          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" > save-session-review-save.json
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-scout-rehearsal" > save-session-review-save.json
           # Independent quota/context gate runs first; all later browser and performance gates remain unchanged.
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
           R12_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc-attack" R12_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r13-r12-startup-oracle.mjs
+          R13_ORACLE_SOURCE="$RUNNER_TEMP/pre-scout-rehearsal" node --import tsx --test scripts/test-r14-r13-startup-oracle.mjs
           # Prioritize the new orbital UI gate; the complete SaveSession suite still follows in its own browser.
           python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-native-report.json --natural-report npc-attack-native-report.json --expected-report-sha256 "$(sha256sum npc-attack-native-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
-          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --expected-sha "$GITHUB_SHA"
+          python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --r13-source "$RUNNER_TEMP/pre-scout-rehearsal" --expected-sha "$GITHUB_SHA"
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.
@@ -450,5 +455,98 @@ jobs:
             render-scheduling-review-save.json
             render-scheduling-evidence
             presentation-performance-evidence
+          retention-days: 7
+          if-no-files-found: error
+
+  scout-rehearsal:
+    # This independent same-SHA job is mandatory in addition to verify above.
+    # It cannot publish a candidate on its own or borrow an older legacy result.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Strict original-source historical scout migrations
+        run: |
+          mkdir -p scout-rehearsal-source-evidence
+          python - <<'PYCODE'
+          import hashlib, io, json, os, subprocess, tarfile
+          from pathlib import Path
+          repo = Path.cwd()
+          fixture = json.loads((repo / 'tests/fixtures/npc-scout-legacy.json').read_text())
+          generated = fixture['generatedBy']
+          for path_key, hash_key in (('path', 'sha256'), ('preparationPath', 'preparationSha256')):
+              assert hashlib.sha256((repo / generated[path_key]).read_bytes()).hexdigest() == generated[hash_key]
+          # Original fixture generation preceded only the package release-label bump.
+          # Keep its actual historical metadata; prove dependency contents are identical.
+          original_lock = subprocess.check_output(['git', 'show', 'cc19bf5e1a459cf8e667ca55f4891ca9ffd25a71:package-lock.json'])
+          assert hashlib.sha256(original_lock).hexdigest() == generated['dependencyLockSha256']
+          before_lock = json.loads(original_lock)
+          after_lock = json.loads((repo / 'package-lock.json').read_text())
+          assert before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1'
+          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.22-alpha.1'
+          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.22-alpha.1'
+          assert before_lock == after_lock
+          roots = {}
+          for key, original in fixture['sourceBindings'].items():
+              binding = dict(original)
+              root = Path(os.environ['RUNNER_TEMP']) / ('scout-source-r' + key)
+              root.mkdir()
+              archive = subprocess.check_output(['git', 'archive', binding['sourceSha'], 'src', 'package.json', 'package-lock.json', 'tsconfig.json'])
+              with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+                  tar.extractall(root, filter='data')
+              (root / 'node_modules').symlink_to(repo / 'node_modules', target_is_directory=True)
+              for item in binding['sourceFiles']:
+                  data = (root / item['path']).read_bytes()
+                  assert hashlib.sha256(data).hexdigest() == item['sha256'], item['path']
+              binding['root'] = str(root)
+              roots[key] = binding
+          target = repo / 'scout-rehearsal-source-evidence' / 'historical-preparation.json'
+          target.write_text(json.dumps({'schema': 'infinity-scout-historical-preparation-v1', 'sourceBindings': roots}, indent=2) + '\n')
+          PYCODE
+          node --import tsx scripts/scout-historical-fixtures.mjs verify scout-rehearsal-source-evidence/historical-preparation.json > scout-rehearsal-source-evidence/historical-verification.json
+      - name: Paid scout, historical rehearsal, separate attack and second observation
+        run: |
+          node --import tsx scripts/scout-rehearsal-natural-route.ts --legacy-root "$RUNNER_TEMP/scout-source-r13" --output "$GITHUB_WORKSPACE/scout-rehearsal-source-evidence/natural-report.json"
+          sha256sum scout-rehearsal-source-evidence/natural-report.json > scout-rehearsal-source-evidence/natural-report.sha256.txt
+          python -m unittest discover -s scripts -p 'test_scout_rehearsal_acceptance.py' -v
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Native scout rehearsal, authority and four-width acceptance
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > scout-rehearsal-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          python scripts/browser-scout-rehearsal.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence
+      - name: Archive exact readable rehearsal source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > scout-rehearsal-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scout-rehearsal-${{ github.sha }}
+          path: |
+            dist
+            scout-rehearsal-source.zip
+            scout-rehearsal-source-evidence
+            scout-rehearsal-evidence
+            scout-rehearsal-preview.log
           retention-days: 7
           if-no-files-found: error

@@ -1,6 +1,6 @@
-/** Exact prior-engine segment witness and r13 full-state adoption, no browser clock changes. */
+/** Exact prior-engine segment witness and r14 full-state adoption, no browser clock changes. */
 import assert from 'node:assert/strict';
-import { expectedNpcEconomy, liftR11StateToR13 } from './r13-compatibility.mjs';
+import { expectedNpcEconomy, liftR11StateToR14 } from './r14-compatibility.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -51,7 +51,7 @@ for (const scenario of cases) for (const milliseconds of [-1000, 0, 1, 17, 381, 
   const result = currentCatchUp(currentSave.deserializeState(adopted.state), milliseconds / 1000);
   const actual = currentSave.serializeState(result.state), expected = source.save.serializeState(witness.result.state);
   if (scenario.revision === 10) for (const planet of expected.planets) planet.demolition = null;
-  const currentExpected = liftR11StateToR13(expected, expectedNpcEconomy(witness.adoptedSegmentsSeconds));
+  const currentExpected = liftR11StateToR14(expected, expectedNpcEconomy(witness.adoptedSegmentsSeconds));
   assert.deepEqual(actual, currentExpected, `${scenario.name}/${milliseconds}: full historical state and independently observed NPC age`);
   if (scenario.revision === 10) {
     const oracle = await r10Oracle(r10Root, raw, oldEnvelope.lastTickAt + milliseconds);
@@ -62,9 +62,9 @@ for (const scenario of cases) for (const milliseconds of [-1000, 0, 1, 17, 381, 
     segmentCount: witness.adoptedSegmentsSeconds.length, npcElapsedSeconds: witness.npcElapsedSeconds, fullStateEqual: true });
 }
 const fresh = currentSave.exportSave(currentSave.deserializeState(currentSave.importSave(fixture.rows[0].raw).state), 1791590400000);
-assert.equal(JSON.parse(fresh).revision, 13);
-assert.throws(() => r11.save.importSave(fresh), /修订不兼容/, 'Actual archived ca5 reader rejects actual new r13 output');
+assert.equal(JSON.parse(fresh).revision, 14);
+assert.throws(() => r11.save.importSave(fresh), /修订不兼容/, 'Actual archived ca5 reader rejects actual new r14 output');
 console.log(JSON.stringify({ schema: 'infinity-npc-adopted-clock-check-v1', sourcePins: pins,
-  cases: cases.length, comparisons: rows.length, actualOldReaderRejectsR13: true,
-  observation: 'Fixed old engine with/without read-only totalTime.add observer; exact entire state before r13 extension',
+  cases: cases.length, comparisons: rows.length, actualOldReaderRejectsR14: true,
+  observation: 'Fixed old engine with/without read-only totalTime.add observer; exact entire state before r14 extension',
   rows, result: 'passed' }, null, 2));

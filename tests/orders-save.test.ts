@@ -52,7 +52,7 @@ function queueFile() {
 }
 function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
-  file.revision = revision; stripSyntheticTerraformerMetadata(file.state, 0);
+  stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;

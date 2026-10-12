@@ -141,7 +141,7 @@ function legacyFile(revision: 2 | 3) {
   state.arcade.seed = 819;
   for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
   const file = JSON.parse(exportSave(state, 123));
-  file.revision = revision; stripSyntheticTerraformerMetadata(file.state, 0);
+  stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;

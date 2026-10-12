@@ -296,7 +296,7 @@ def run_cases():
     check('whole exported live state including RNG queues plans fleet counters and selection is unchanged', after == before)
     check('native export also performs no current-slot writes', not writes(page))
     note = page.locator('[data-tab-panel="save"] p').first.inner_text()
-    check('save documentation advertises current v9 r13 and r2-r11 migrations', 'v9 / r13' in note and 'r2–r12' in note)
+    check('save documentation advertises current v9 r14 and r2-r13 migrations', 'v9 / r14' in note and 'r2–r13' in note)
     record_audit(page); context.close()
 
     for row in fixtures['cases']:

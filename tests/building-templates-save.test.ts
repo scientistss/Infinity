@@ -1,4 +1,4 @@
-import { stripVerifiedNpcRemainders } from "./helpers";
+import { stripVerifiedNpcRemainders, stripVerifiedNullNpcScoutSnapshots } from "./helpers";
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { stripSyntheticTerraformerMetadata, stripVerifiedNpcMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
@@ -159,7 +159,7 @@ const money = (metal = "0", crystal = "0", deuterium = "0") => ({ metal, crystal
 /** Synthetic boundary fixture; actual source-generated r8 evidence lives in check-order-migration.mjs. */
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7 | 8): any {
   const value = file();
-  value.revision = revision; stripSyntheticTerraformerMetadata(value.state, 0);
+  stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
   delete value.state.buildingTemplates;
   if (revision < 8) delete value.state.formations;
   if (revision < 7) delete value.state.researchTemplates;
@@ -207,7 +207,7 @@ class MemoryStore implements KeyValueStore {
 }
 
 describe("r9 additive migration boundaries", () => {
-  it.each([2, 3, 4, 5, 6, 7, 8] as const)("adds only empty building intent after genuine r%d shape validation", revision => {
+  it.each([2, 3, 4, 5, 6, 7, 8] as const)("adds only empty building intent after synthetic r%d shape validation", revision => {
     const source = legacy(revision), original = structuredClone(source), imported = read(source);
     expect(source).toEqual(original);
     expect(imported.state.buildingTemplates).toEqual(createBuildingTemplateState());
@@ -388,11 +388,45 @@ describe("pinned source-generated r8 migration", () => {
 
 
 describe("strict synthetic legacy NPC projection", () => {
+  it("removes only explicit null scout slots while preserving the complete old message payload", () => {
+    const state = file().state;
+    state.messages = [
+      { id: "ordinary", at: 7.25, text: "原有消息 <保留>", npcScoutSnapshot: null },
+      { id: "scout-old", at: 9, text: "旧报告正文，不能追溯填充", npcScoutSnapshot: null },
+    ];
+    const original = structuredClone(state);
+    stripVerifiedNullNpcScoutSnapshots(state);
+    expect(state).toEqual({ ...original, messages: [
+      { id: "ordinary", at: 7.25, text: "原有消息 <保留>" },
+      { id: "scout-old", at: 9, text: "旧报告正文，不能追溯填充" },
+    ] });
+    expect(original.messages.every((message: any) => Object.hasOwn(message, "npcScoutSnapshot") && message.npcScoutSnapshot === null)).toBe(true);
+  });
+  it.each(["missing", "undefined", "false", "object", "inherited", "hidden", "accessor"])("rejects %s scout metadata before deleting any new fields", kind => {
+    const state = file().state;
+    const message: any = { id: "old-message", at: 7.25, text: "Preserved message", npcScoutSnapshot: null };
+    let reads = 0;
+    if (kind === "missing" || kind === "inherited") delete message.npcScoutSnapshot;
+    if (kind === "undefined") message.npcScoutSnapshot = undefined;
+    if (kind === "false") message.npcScoutSnapshot = false;
+    if (kind === "object") message.npcScoutSnapshot = { model: "npc-scout-snapshot-v1", observedAt: "10" };
+    if (kind === "inherited") Object.setPrototypeOf(message, { npcScoutSnapshot: null });
+    if (kind === "hidden") Object.defineProperty(message, "npcScoutSnapshot", { value: null, enumerable: false });
+    if (kind === "accessor") Object.defineProperty(message, "npcScoutSnapshot", { get() { reads++; throw Error("must not run"); } });
+    state.messages = [{ id: "first", at: 0, text: "Unchanged", npcScoutSnapshot: null }, message];
+    const beforeMessages = state.messages.map((value: any) => Object.getOwnPropertyDescriptors(value));
+    const beforeNpc = structuredClone({ npcEconomy: state.npcEconomy, npcBattles: state.npcBattles, planets: state.planets });
+    expect(() => stripVerifiedNullNpcScoutSnapshots(state)).toThrow();
+    expect(() => stripVerifiedNpcMetadata(state, 0)).toThrow();
+    expect(state.messages.map((value: any) => Object.getOwnPropertyDescriptors(value))).toEqual(beforeMessages);
+    expect({ npcEconomy: state.npcEconomy, npcBattles: state.npcBattles, planets: state.planets }).toEqual(beforeNpc);
+    expect(reads).toBe(0);
+  });
   it("removes only the exact independently expected metadata and preserves all prior data", () => {
     const before = file(), state = structuredClone(before.state);
     stripVerifiedNpcMetadata(state, 0);
     const { npcEconomy: _npc, npcBattles: _battles, ...prior } = before.state;
-    const oldProjection = structuredClone(prior); stripVerifiedNpcRemainders(oldProjection);
+    const oldProjection = structuredClone(prior); stripVerifiedNpcRemainders(oldProjection); stripVerifiedNullNpcScoutSnapshots(oldProjection);
     expect(state).toEqual(oldProjection);
     expect(before.state.npcEconomy).toEqual(expectedFreshNpcWallet());
     expect(before.state.npcBattles).toEqual(expectedEmptyNpcBattles());

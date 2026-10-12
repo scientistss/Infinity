@@ -5,7 +5,7 @@
  * or candidate NPC field supplies the independently replayed NPC wallet.
  */
 import assert from 'node:assert/strict';
-import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR13, projectVerifiedNpcEconomy } from './r13-compatibility.mjs';
+import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR14, projectVerifiedNpcEconomy } from './r14-compatibility.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -15,7 +15,7 @@ import { captureAdoptedSteps } from './capture-adopted-steps.mjs';
 
 export { DEPENDENCIES, SOURCE_SHA };
 export const TRACE_SCHEMA = 'infinity-native-frame-replay-input-v1';
-const RESULT_SCHEMA = 'infinity-fixed-r11-native-r13-replay-oracle-v1';
+const RESULT_SCHEMA = 'infinity-fixed-r11-native-r14-replay-oracle-v1';
 const RUNNER_ROOT = fileURLToPath(new URL('../', import.meta.url));
 
 const digest = text => createHash('sha256').update(text).digest('hex');
@@ -37,10 +37,10 @@ function milliseconds(value, where) {
 }
 function currentState(oldState, age) {
   assert.equal(Object.hasOwn(oldState, 'npcEconomy'), false, 'ca5 state must not contain current NPC data');
-  return liftR11StateToR13(oldState, age);
+  return liftR11StateToR14(oldState, age);
 }
 function currentEnvelope(oldEnvelope, age) {
-  return { ...oldEnvelope, revision: 13, state: currentState(oldEnvelope.state, age) };
+  return { ...oldEnvelope, revision: 14, state: currentState(oldEnvelope.state, age) };
 }
 function assertState(actual, oldState, age, where) {
   assert.deepEqual(actual, currentState(oldState, age), `${where}: complete current state equals independent ca5 state plus independently replayed NPC wallet`);
@@ -100,7 +100,7 @@ export async function replayNativeTrace(root, input) {
     const expectedOld = JSON.parse(save.exportSave(state, savedAt, lastTickAt));
     const actual = parsedRaw(raw, where), expected = currentEnvelope(expectedOld, age);
     assert.deepEqual(actual, expected, `${where}: complete saved envelope/state equals independent expected save`);
-    // Runtime r13 exportSave uses the same envelope/order as ca5, prepends the
+    // Runtime r14 exportSave uses the same envelope/order as ca5, prepends the
     // NPC fields to serializeState, appends zero rights to every planet, and emits JSON.stringify(file, null, 2).
     // Exact bytes are required for these observed runtime writes. This does not
     // canonicalize or constrain the historical source bytes/backup in any way.

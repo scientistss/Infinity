@@ -1,4 +1,4 @@
-/** Bounded natural NPC acceptance: immutable r10 → actual ca5 r11 export → r13 age0.
+/** Bounded natural NPC acceptance: immutable r10 → actual ca5 r11 export → r14 age0.
  * Every real action/tick has a byte-pinned ca5 control and independent money/stock goldens.
  * Preparation can be dirty; formal fixture rejects it. No native browser claim here.
  * node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root CA5 --output NEW.json
@@ -16,7 +16,8 @@ import { emptyTickLog, tick, evaluatePrestige, prestige } from "../src/game/logi
 import { emptyCargo, quoteFlight, resolveFleetArrivals, sendFleet } from "../src/game/fleet.ts";
 import { npcAt } from "../src/game/galaxy.ts";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save.ts";
-import { expectedNpcEconomy, advanceExpectedNpcWallet, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, projectVerifiedNpcEconomy as projectR13NpcEconomy } from "./r13-compatibility.mjs";
+import { liftR13StateToR14, projectVerifiedScoutSnapshots, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import { projectNpc } from "../src/game/npc-wallet.ts";
 import { npcWalletContext } from "../src/game/npc-attack.ts";
@@ -109,8 +110,10 @@ function withReferenceKeyOrder(reference, value) {
 function invariant() {
     const now = serializeState(state);
     equal(`${stage}: bounded NPC age counts only adopted current-version seconds`, now.npcEconomy, expectedWallet);
-    const projected=projectVerifiedNpcEconomy(now, expectedWallet, stage);
     const old=legacy.save.serializeState(control);
+    const expectedSnapshots = new Map(old.messages.filter(message => message.id === 'scout-4' || message.id === 'scout-5')
+      .map(message => [message.id, independentSnapshot(message.id === 'scout-4' ? 4 : 5, message.id === 'scout-4' ? 3 : 65)]));
+    const projected=projectR13NpcEconomy(projectVerifiedScoutSnapshots(now, expectedSnapshots, stage), expectedWallet, stage);
     projected.messages=projected.messages.map(message => {
       if (message.id !== 'scout-4' && message.id !== 'scout-5') return message;
       const arrivalAge = message.id === 'scout-4' ? 3 : 65, sourceMessage = old.messages.find(x => x.id === message.id);
@@ -247,10 +250,16 @@ function dispatch(name, expectedId) {
     equal(`${name}: probe removed from home availability`, activePlanet(state).units.espionage_probe, 0);
 }
 function independentReport(observedElapsed) { return `侦察报告 [1:56:6]：晨星共同体 56-6（NPC npc-1:56:6；派系：晨星共同体）。抵达时快照（数值保留3位小数）：游戏时间 ${(25810 + observedElapsed).toFixed(3)} 秒。金属 ${(500 + 5 * observedElapsed).toFixed(3)}/50000.000，固定产量 5.000/秒，生产中；晶体 ${(250 + 2.5 * observedElapsed).toFixed(3)}/30000.000，固定产量 2.500/秒，生产中；重氢 ${observedElapsed.toFixed(3)}/10000.000，固定产量 1.000/秒，生产中。轨道驻军：轻型战斗机 4，重型战斗机 0；驻军战斗科技 0。历史快照不会随时间更新。`; }
+function independentSnapshot(fleetId, observedElapsed) {
+    return { model: "npc-scout-snapshot-v1", fleetId, originId: "homeworld", target: { galaxy: 1, system: 56, position: 6 },
+      observedAt: String(GOLD.sourceGameSeconds + observedElapsed), stock: [500 + 5 * observedElapsed, 250 + 2.5 * observedElapsed, observedElapsed],
+      garrison: { light_fighter: 4, heavy_fighter: 0 }, defenderTech: { weapons: 0, shields: 0, armour: 0 } };
+}
 function arrival(id, observedElapsed) {
     const message = state.messages.find(m => m.id === `scout-${id}`);
     check(`arrival-${id}: exactly one static identity message`, state.messages.filter(m => m.id === `scout-${id}`).length === 1);
     const expectedText = independentReport(observedElapsed);
+    equal(`arrival-${id}: exact typed observation from independent literal arrival time/stock/garrison`, message?.npcScoutSnapshot, independentSnapshot(id, observedElapsed));
     equal(`arrival-${id}: full frozen independent snapshot text`,message?.text,expectedText);
     check(`arrival-${id}: stock snapshot is at adopted arrival age`,state.npcEconomy.now===observedElapsed);
     equal(`arrival-${id}: actual global timestamp`, message.at, GOLD.sourceGameSeconds + observedElapsed);
@@ -297,9 +306,9 @@ try {
     equal("actual ca5 export preserves original clocks",[r11.savedAt,r11.lastTickAt],[envelope.savedAt,envelope.lastTickAt]);
     check("actual ca5 r11 has no NPC state",!("npcEconomy" in r11.state));
     const imported = importSave(r11Raw), projected=projectVerifiedNpcEconomy(imported.state,expectedNpcEconomy(),'pure r11 migration zero rights');
-    equal("r11→r13 pure migration preserves every complete old state field",projected,r11.state);
-    equal("r11→r13 initial NPC age is zero regardless of old totalTime",imported.state.npcEconomy,expectedNpcEconomy());
-    equal("current strict import revision",imported.revision,13);
+    equal("r11→r14 pure migration preserves every complete old state field",projected,r11.state);
+    equal("r11→r14 initial NPC age is zero regardless of old totalTime",imported.state.npcEconomy,expectedNpcEconomy());
+    equal("current strict import revision",imported.revision,14);
     control=legacy.save.deserializeState(r11.state);
     state = deserializeState(imported.state);
     origin = serializeState(state);
@@ -366,7 +375,7 @@ try {
     for(const file of source.historicalProducer.sourceFiles)check("historical source unchanged: "+file.path,sha(readFileSync(resolve(LEGACY,file.path)))===file.sha256);
     legacyIdentityRaw=legacy.save.exportSave(control,originalAt+elapsed*1000,originalAt+elapsed*1000);
     const oldIdentity=importSave(legacyIdentityRaw);
-    equal("separate real ca5 identity-report branch migrates without rewriting either report",oldIdentity.state.messages,legacy.save.serializeState(control).messages);
+    equal("separate real ca5 identity-report branch migrates without rewriting either report",oldIdentity.state.messages,liftR13StateToR14(legacy.save.serializeState(control)).messages);
     equal("separate old identity branch starts age zero",oldIdentity.state.npcEconomy,expectedNpcEconomy());
     const final=milestones.find(m=>m.name==="final-returned-and-reloaded");
     const evaluation=evaluatePrestige(state);check("real naturally earned curvature eligibility",evaluation.next!==state && evaluation.gain.gte(1));

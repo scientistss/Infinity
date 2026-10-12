@@ -62,7 +62,7 @@ let notice = saveSession.notice;
 let status = saveSession.message;
 
 let state: GameState = loaded.state;
-let adoptedLaunches = state.stats.launches;
+let adoptedUniverse = state.universe;
 let catchup: OfflineCatchup | null = loaded.appliedSeconds >= BACKGROUND_NOTICE_SECONDS ? loaded : null;
 let banner: string | null = unlockBanner(loaded.newAchievementIds);
 
@@ -193,6 +193,9 @@ function render(urgent = true, now = performance.now()): void {
 }
 
 async function handleAction(action: UiAction): Promise<void> {
+  // Retirement precedes every dialog/await. Failed or cancelled replacement
+  // attempts preserve the real fleet draft, but cannot leave a deferred Fill.
+  if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) view.retireNpcRehearsal();
   saveSession.cancelPendingImport();
   const recoveryAction = ["save", "export", "export-legacy", "import-text", "import-file", "reset", "dismiss-notice", "dismiss-offline"].includes(action.type);
   if (saveSession.mode !== "ready" && !recoveryAction) {
@@ -467,6 +470,9 @@ async function handleAction(action: UiAction): Promise<void> {
     // replacement intent survives the read or authorizes overwriting new progress.
     const prepared = await saveSession.prepareFile(action.file);
     if (!saveSession.isCurrentPreparedFile(prepared) || (!prepared.ok && prepared.code === "stale")) return;
+    // The user may have opened a fresh review while the file was being read.
+    // Retire that review too before presenting this still-current result/dialog.
+    view.retireNpcRehearsal();
     if (!prepared.ok) {
       status = `导入失败，当前进度未改动：${prepared.message}`;
       notice = saveSession.notice;
@@ -522,8 +528,9 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
   paintedHeads = null;
   renderScheduler.reset();
   state = result.state;
+  view.adoptNpcRehearsalWorld();
   accountedClock.rebase(sample);
-  adoptedLaunches = state.stats.launches;
+  adoptedUniverse = state.universe;
   catchup = null;
   banner = null;
   notice = null;
@@ -531,15 +538,17 @@ function applyReplacement(result: ReplacementResult, action: "导入" | "重置"
   view.setTransferText(action === "导入" ? result.raw : "");
 }
 
-/** One adoption guard covers manual, protocol and offline curvature launches.
- * A cancelled or rejected launch leaves the generation untouched. */
+/** Ordinary transitions preserve the universe object; actual curvature builds
+ * a new one even with identical seed or numerically saturated launch counts.
+ * Import/reset also rotate the independent UI token explicitly above. */
 function observeWorldAdoption(): void {
-  if (state.stats.launches === adoptedLaunches) return;
+  if (state.universe === adoptedUniverse) return;
   saveSession.cancelPendingImport();
   view.invalidateOrderAuthority();
+  view.adoptNpcRehearsalWorld();
   paintedHeads = null;
   renderScheduler.reset();
-  adoptedLaunches = state.stats.launches;
+  adoptedUniverse = state.universe;
 }
 
 function persist(nextStatus?: string, background = false): void {

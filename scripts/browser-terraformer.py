@@ -727,7 +727,7 @@ try:
         other.close(); context.close()
         case = 'suite integrity'
         check('no uncaught JavaScript errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('version and current strict save release were verified', release_metadata['version'] == expected_package_version and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == fixtures['base']['revision'] == 13)
+        check('version and current strict save release were verified', release_metadata['version'] == expected_package_version and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == fixtures['base']['revision'] == 14)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

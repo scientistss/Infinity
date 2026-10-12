@@ -44,12 +44,15 @@ let curvature = clone(seeded);
 curvature.lifetime = {metal:big(1e10),crystal:big(0),deuterium:big(0)}; curvature.warpCores = big(10); curvature = tick(curvature,0);
 const automatic = equipCard(curvature,0,"auto_prestige");
 if (!automatic.state.protocols.slots[0]?.card || automatic.state.protocols.slots[0].card.action.kind !== "prestige") throw new Error("Synthetic auto-curvature card was not equipped");
-const variants = {base,seeded,paid,single,conflict,covered,inflight,curvature,automatic:automatic.state};
+const variants: Record<string, GameState> = {base,seeded,paid,single,conflict,covered,inflight,curvature,automatic:automatic.state};
 for (const [name,state] of Object.entries(variants)) {
   const restored = deserializeState(importSave(exportSave(state)).state);
   const next = deserializeState(importSave(exportSave(restored)).state);
   if (JSON.stringify(restored) !== JSON.stringify(next)) throw new Error(`${name}: strict reader roundtrip drift`);
   if (JSON.stringify(tick(restored,0)) !== JSON.stringify(restored)) throw new Error(`${name}: unsettled startup fixture`);
+  // Adopt the already-validated synthetic setup. The pinned r13 reader makes
+  // the identical hasPrestiged/unlockedCards normalization for gifted cores.
+  variants[name] = restored;
 }
 process.stdout.write(JSON.stringify({description:"Anonymous pre-funded synthetic two-planet named-formation fixtures, actual catalog prices, real paid queue and real dispatch API. Native HTTP and native Storage tests explicitly control Date/performance/RAF timestamps. These are labeled synthetic setups, not natural progression.",key:STORAGE_KEY,homeId:base.activePlanetId,colonyId:colony.id,colonyCoordinates:colony.coordinates,unitMilliseconds:unitSeconds(base,"light_fighter")*1000,
   ...Object.fromEntries(Object.entries(variants).map(([name,state]) => [name,JSON.parse(exportSave(state))])),

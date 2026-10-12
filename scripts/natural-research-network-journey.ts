@@ -31,7 +31,7 @@ import { usedFields } from "../src/game/planet";
 import { canEnqueue, enqueue } from "../src/game/queue";
 import { canEnqueueResearch, enqueueResearch, researchNetworkView, researchSecondsFor } from "../src/game/research";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
-import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, liftR10StateToR13 } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, liftR10StateToR14 } from "./r14-compatibility.mjs";
 import { deserializeState, exportSave, importSave, serializeState, type SerializedState } from "../src/game/save";
 import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "../src/game/types";
 
@@ -390,7 +390,7 @@ function paymentTotal(category?: string): OrderMoney {
   return { metal: String(sums.metal), crystal: String(sums.crystal), deuterium: String(sums.deuterium) };
 }
 
-/** The workflow's fixed pre-IRN source is r10; current-source handoffs are r13.
+/** The workflow's fixed pre-IRN source is r10; current-source handoffs are r14.
  * Build the entire expected migrated envelope independently. Never erase source
  * fields to make a comparison pass, and never admit live demolition as origin.
  */
@@ -403,15 +403,15 @@ function sourceOwnedNpcWallet(sourceState: OriginSave["state"]) {
 }
 
 export function readNaturalResearchOrigin(original: OriginSave, sourceSha: string) {
-  check(original.schema === SAVE_SCHEMA && original.version === SAVE_VERSION && SAVE_REVISION === 13,
+  check(original.schema === SAVE_SCHEMA && original.version === SAVE_VERSION && SAVE_REVISION === 14,
     "origin schema/version or current revision differs");
   const historical = original.revision === 10;
   check(historical ? sourceSha === "4afa5331d6e54509a643572570dc3cd194c78ebf" : original.revision === SAVE_REVISION,
-    "only the exact pinned pre-IRN r10 source or an unchanged current r13 origin is supported");
+    "only the exact pinned pre-IRN r10 source or an unchanged current r14 origin is supported");
   check(Array.isArray(original.state.planets), "origin planet list missing");
   if (historical) for (const planet of original.state.planets) check(!Object.hasOwn(planet, "demolition"), "r10 source already contains a forbidden demolition field");
   else for (const planet of original.state.planets) check(Object.hasOwn(planet, "demolition") && planet.demolition === null, "current origin has missing or competing demolition authority");
-  const expected = historical ? { ...original, revision: SAVE_REVISION, state: liftR10StateToR13(original.state, expectedNpcEconomy()) } : structuredClone(original);
+  const expected = historical ? { ...original, revision: SAVE_REVISION, state: liftR10StateToR14(original.state, expectedNpcEconomy()) } : structuredClone(original);
   // For a true current handoff, the unchanged source envelope owns its saved age.
   // For a genuine old source, migration is a pure zero-time initialization.
   assertNpcEconomy(expected.state, historical ? expectedNpcEconomy() : sourceOwnedNpcWallet(original.state), "independent original handoff NPC metadata");
@@ -419,7 +419,7 @@ export function readNaturalResearchOrigin(original: OriginSave, sourceSha: strin
   exact(imported, expected, "origin entire envelope equals only the independently allowed revision, zero-age NPC and null additions");
   exact(serializeState(candidate), expected.state, "origin entire strict reload equals independently expected state");
   check(candidate.planets.every(planet => planet.demolition === null), "origin contains competing demolition work");
-  return { imported, candidate, migration: historical ? "r10→r13: revision plus exact zero-age wallet/empty-receipt state and one explicit null demolition slot per planet; every prior field preserved" : "r13 unchanged complete envelope and state" };
+  return { imported, candidate, migration: historical ? "r10→r14: revision plus exact zero-age wallet/empty-receipt state and one explicit null demolition slot per planet and one explicit null scout snapshot slot per message; every prior field preserved" : "r14 unchanged complete envelope and state" };
 }
 
 async function loadOrigin(): Promise<void> {
@@ -458,8 +458,8 @@ async function loadOrigin(): Promise<void> {
   const old = found[0]!;
   check(old.strictRoundtrips === 2 && old.stateAdoptedFromReload && old.subsequentLiveTickObserved
     && typeof old.firstSubsequentLiveTickAt === "number" && old.firstSubsequentLiveTickAt > old.gameSeconds
-    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && (old.save.revision === 10 || old.save.revision === SAVE_REVISION) && SAVE_REVISION === 13,
-    "origin milestone lacks strict live reload evidence or a supported r10/r13 envelope");
+    && old.save.schema === SAVE_SCHEMA && old.save.version === SAVE_VERSION && (old.save.revision === 10 || old.save.revision === SAVE_REVISION) && SAVE_REVISION === 14,
+    "origin milestone lacks strict live reload evidence or a supported r10/r14 envelope");
   check(Number.isSafeInteger(old.gameSeconds) && old.gameSeconds > 0 && Number.isSafeInteger(old.save.savedAt) && old.save.lastTickAt === old.save.savedAt,
     "origin game time or save envelope clocks are invalid");
   origin = { sourceSha: expectedSource, gitHead: report.source.gitHead, reportPath: args.get("--report"), reportSha256: hash,

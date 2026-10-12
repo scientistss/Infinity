@@ -29,6 +29,12 @@ R12 = R10.replace('{return{', '{return{' + NPC)
 HANDLER_R10 = 'async function Qk(e){he.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(he.mode!=="ready"&&!t){ee=he.message,pi();return}const n=B,r=B.unlocked;'
 HANDLER_R11 = 'async function Z1(e){var i;ge.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(ge.mode!=="ready"&&!t){te=ge.message,$i();return}const n=j,r=j.unlocked;'
 
+# Exact index-DWoykfzY.js (730893 bytes), SHA-256 f22c0e6c1138c2cbac4b3be3dd8cf07c68c5de211ff6110b39ad85008d55015f.
+R14_CURRENT = 'function gl(e){sd(e,!1);const t=od(e.messages);du(e,!1),Kf(e),_h(e,t);const n=wa(e.universe.seed,ri,e.planets.map(r=>r.coordinates));return{npcEconomy:au(e.npcEconomy,n),npcBattles:cu(e.npcBattles,n),terraformerGrantJobFloor:Uh(e.terraformerGrantJobFloor,e.orders.nextJobId),buildingTemplates:fk(e.buildingTemplates),formations:V0(e.formations),researchTemplates:gk(e.researchTemplates),orders:lv(e.orders),planets:e.planets.map(y$),activePlanetId:e.activePlanetId,deepSpace:structuredClone(e.deepSpace),universe:{...e.universe},fleets:Ek(e.fleets),messages:t,nextFleetId:e.nextFleetId,research:M$(e.research),darkMatter:In(e.darkMatter),items:{...e.items},boosters:e.boosters.map(r=>({...r})),arcade:bg(e.arcade),lifetime:Ao(e.lifetime),warpCores:In(e.warpCores),curvature:{...e.curvature},totalTime:In(e.totalTime),manualClicks:e.manualClicks,seenEnergyShortage:e.seenEnergyShortage,hasPrestiged:e.hasPrestiged,unlockedCards:e.unlockedCards.slice(),protocols:B$(e.protocols),unlocked:e.unlocked.slice(),stats:{...e.stats},offlineBonusHours:e.offlineBonusHours}}'
+HANDLER_R14_CURRENT = 'async function Xx(e){var i;["import-text","import-file","reset","prestige"].includes(e.type)&&xe.retireNpcRehearsal(),Ee.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(Ee.mode!=="ready"&&!t){le=Ee.message,tr();return}const n=U,r=U.unlocked;'
+# Exact index-uJeA16cu.js (700817 bytes), SHA-256 dc8be0411492d1b63fd4d8a5be6561f7ddc062d50f2f9d47509f24d9b8ce13e2.
+R13_FIXED = 'function tl(e){Zc(e,!1),kf(e);const t=pa(e.universe.seed,Kr,e.planets.map(n=>n.coordinates));return{npcEconomy:Fc(e.npcEconomy,t),npcBattles:Dc(e.npcBattles,t),terraformerGrantJobFloor:ch(e.terraformerGrantJobFloor,e.orders.nextJobId),buildingTemplates:_v(e.buildingTemplates),formations:f0(e.formations),researchTemplates:Mv(e.researchTemplates),orders:E0(e.orders),planets:e.planets.map(Ak),activePlanetId:e.activePlanetId,deepSpace:structuredClone(e.deepSpace),universe:{...e.universe},fleets:jv(e.fleets),messages:e.messages.map(n=>({...n})),nextFleetId:e.nextFleetId,research:Uk(e.research),darkMatter:gn(e.darkMatter),items:{...e.items},boosters:e.boosters.map(n=>({...n})),arcade:qh(e.arcade),lifetime:go(e.lifetime),warpCores:gn(e.warpCores),curvature:{...e.curvature},totalTime:gn(e.totalTime),manualClicks:e.manualClicks,seenEnergyShortage:e.seenEnergyShortage,hasPrestiged:e.hasPrestiged,unlockedCards:e.unlockedCards.slice(),protocols:Yk(e.protocols),unlocked:e.unlocked.slice(),stats:{...e.stats},offlineBonusHours:e.offlineBonusHours}}'
+HANDLER_R13_FIXED = 'async function JE(e){var i;ge.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(ge.mode!=="ready"&&!t){re=ge.message,Qn();return}const n=q,r=q.unlocked;'
 
 class ProductionActionHandlerTests(unittest.TestCase):
     def assert_unique(self, text, name='Z1', action='e', session='ge', state='j'):
@@ -44,6 +50,30 @@ class ProductionActionHandlerTests(unittest.TestCase):
     def test_exact_failed_r11_entry_and_historical_r10_entry(self):
         self.assert_unique(HANDLER_R11)
         self.assert_unique(HANDLER_R10, 'Qk', 'e', 'he', 'B')
+
+    def test_exact_fixed_r13_and_actual_r14_handler_entries(self):
+        self.assert_unique(HANDLER_R13_FIXED, 'JE', 'e', 'ge', 'q')
+        self.assert_unique(HANDLER_R14_CURRENT, 'Xx', 'e', 'Ee', 'U')
+        for text in (HANDLER_R14_CURRENT * 2, HANDLER_R14_CURRENT + HANDLER_R13_FIXED,
+                     HANDLER_R14_CURRENT + HANDLER_R10):
+            self.assertEqual(len(RING.production_action_handlers(text)), 2)
+
+    def test_r14_retirement_admits_only_exact_actions_method_and_arguments(self):
+        for before, after in (
+            ('"import-text","import-file","reset","prestige"', '"import-text","reset","prestige"'),
+            ('"reset","prestige"', '"reset","prestige","save"'),
+            ('"import-text","import-file"', '"import-file","import-text"'),
+            ('includes(e.type)&&xe', 'includes(other.type)&&xe'),
+            ('&&xe.retireNpcRehearsal()', '||xe.retireNpcRehearsal()'),
+            ('retireNpcRehearsal()', 'retireNpcRehearsal(e)'),
+            ('retireNpcRehearsal()', 'sendFleet()'),
+            ('retireNpcRehearsal(),', 'retireNpcRehearsal(),sideEffect(),'),
+            ('var i;', 'var i=sideEffect();'),
+            ('Ee.cancelPendingImport();', 'Ee.cancelPendingImport();sideEffect();'),
+            ('const n=U,r=U.unlocked;', 'const n=U,r=other.unlocked;'),
+        ):
+            with self.subTest(before=before):
+                self.assertEqual(RING.production_action_handlers(HANDLER_R14_CURRENT.replace(before, after)), [])
 
     def test_only_uninitialized_var_identifier_list_is_optional(self):
         for declaration in ('', 'var a;', 'var a,b,$temp,_local;'):
@@ -93,7 +123,7 @@ class ProductionActionHandlerTests(unittest.TestCase):
                 self.assertEqual(RING.production_action_handlers(text), [])
 
     def test_breakpoint_position_remains_real_handler_entry(self):
-        for text in (HANDLER_R10, HANDLER_R11):
+        for text in (HANDLER_R10, HANDLER_R11, HANDLER_R13_FIXED, HANDLER_R14_CURRENT):
             match = RING.production_action_handlers(text)[0]
             position = text.index('{', match.start()) + 1
             self.assertTrue(text[position:].startswith(('var i;', 'he.cancelPendingImport();')))
@@ -110,6 +140,40 @@ class ProductionSerializerTests(unittest.TestCase):
         self.assertEqual(matches[0].group('state'), state)
         return matches[0]
 
+
+    def test_actual_r14_current_and_fixed_r13_complete_functions(self):
+        self.assertEqual(self.assert_unique(R14_CURRENT, 'gl').group(), R14_CURRENT)
+        self.assertEqual(self.assert_unique(R13_FIXED, 'tl').group(), R13_FIXED)
+        self.assertEqual(self.assert_unique(R14_CURRENT.replace('du(e,!1),Kf(e),_h(e,t);',
+                                                              'du(e,!1);Kf(e);_h(e,t);'), 'gl').group('messages'), 't')
+        for text in (R14_CURRENT * 2, R14_CURRENT + R13_FIXED, R14_CURRENT + R12, R14_CURRENT + R9):
+            self.assertEqual(len(RING.production_serializers(text)), 2)
+        changed = re.sub(r'(?<![\w$])e(?![\w$])', '$input', R14_CURRENT).replace('function gl(', 'function $serialize(')
+        self.assert_unique(changed, '$serialize', '$input')
+
+    def test_r14_all_validation_steps_and_exact_message_local_are_required(self):
+        for before, after in (
+            ('sd(e,!1);', ''), ('sd(e,!1)', 'sd(e,!0)'), ('sd(e,!1)', 'sd(other,!1)'),
+            ('const t=od(e.messages);', ''), ('od(e.messages)', 'od(other.messages)'),
+            ('od(e.messages)', 'od(e.messages,extra)'), ('od(e.messages)', '(sideEffect(),od(e.messages))'),
+            ('const t=', 'let t='), ('du(e,!1),', ''), ('du(e,!1)', 'du(e,!0)'),
+            ('Kf(e),', ''), ('Kf(e)', 'Kf(other)'), ('_h(e,t);', ''), ('_h(e,t)', '_h(e,other)'),
+            ('_h(e,t)', '_h(other,t)'), ('_h(e,t)', '_h(e,t,extra)'), ('_h(e,t);', '_h(e,t);sideEffect();'),
+            ('messages:t,', 'messages:e.messages,'), ('messages:t,', 'messages:od(e.messages),'),
+            ('messages:t,', 'messages:t.map(x=>({...x})),'), ('messages:t,', 'messages:(sideEffect(),t),'),
+            ('messages:t,', ''), ('ri,e.planets', '513,e.planets'), ('r=>r.coordinates', 'r=>e.coordinates'),
+            ('au(e.npcEconomy,n)', 'au(e.npcEconomy,t)'), ('cu(e.npcBattles,n)', 'cu(e.npcBattles,t)'),
+            ('e.terraformerGrantJobFloor', 'other.terraformerGrantJobFloor'), ('e.orders.nextJobId', 'other.orders.nextJobId'),
+            ('e.buildingTemplates', 'other.buildingTemplates'), ('e.deepSpace', 'other.deepSpace'),
+            ('r=>({...r})', 'r=>({...e})'), ('In(e.totalTime)', 'other(e.totalTime)'),
+            ('...e.stats', '...other.stats'), ('e.unlocked.slice()', 'e.unlocked.splice(0)'),
+            ('offlineBonusHours:e.offlineBonusHours', 'offlineBonusHours:e.offlineBonusHours,extra:true'),
+        ):
+            with self.subTest(before=before):
+                self.assertEqual(RING.production_serializers(R14_CURRENT.replace(before, after)), [])
+        for text in ('async ' + R14_CURRENT, 'not' + R14_CURRENT, R14_CURRENT[:-1],
+                     R14_CURRENT.replace('function gl(', 'function* gl(')):
+            self.assertEqual(RING.production_serializers(text), [])
 
     def test_r13_exact_wallet_receipt_validation_prefix_and_all_old_fields(self):
         prefix = 'validate(e,!1);crosslinks(e);const c=context(e.universe.seed,512,e.planets.map(p=>p.coordinates));return{npcEconomy:wallet(e.npcEconomy,c),npcBattles:battles(e.npcBattles,c),'

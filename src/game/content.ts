@@ -26,13 +26,13 @@ export interface ResourceDef {
  * v6 (P1): OGame buildings by level, build queue, storage caps, planet fields.
  * v7 (P2): research levels + research queue, dark matter, 12 protocol slots (design doc §4).
  * v8 (P3): planet.units (ships and defenses) and planet.shipyardQueue (design doc §17).
- * Unsupported versions remain protected. Same-schema v9 r2–r12 migrate to the current revision.
+ * Unsupported versions remain protected. Same-schema v9 r2–r13 migrate to the current revision.
  */
 export const SAVE_VERSION = 9;
-/** r13 adds strict mutable NPC wallets, permanent garrisons and orbital attack receipts. */
-export const SAVE_REVISION = 13;
+/** r14 adds strict typed historical snapshots to paid NPC scout messages. */
+export const SAVE_REVISION = 14;
 /** Compatibility is opt-in; raising the output revision alone never accepts a future schema. */
-export const SUPPORTED_SAVE_REVISIONS: readonly number[] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+export const SUPPORTED_SAVE_REVISIONS: readonly number[] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 export const SAVE_SCHEMA = "infinity-original-p4";
 /** Same key as v1 so existing browsers still find the save. Version lives inside the file. */
 export const STORAGE_KEY = "infinity.original-p4.save.v1";

@@ -179,7 +179,7 @@ describe("owned dock quarantine and receipt authority", () => {
     expect(phase(state)).toEqual({ kind: "outbound" });
   });
   it("does not use messages as delivery evidence", () => {
-    const before = dispatched(); before.messages = [{ id: "arrival-1", at: 0, text: "delivered" }];
+    const before = dispatched(); before.messages = [{ id: "arrival-1", at: 0, text: "delivered", npcScoutSnapshot: null }];
     expect(canPayCurrentWork(before, task(before))).toBe(false);
     const arrival = dueArrival(before); arrival.messages = [];
     expect(canPayCurrentWork(arrival, task(arrival))).toBe(true);

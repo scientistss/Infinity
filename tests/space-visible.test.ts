@@ -30,7 +30,7 @@ function fixture(): GameState {
   const result = sendFleet(state, {mission:"transport", target:colony.coordinates, ships:{small_cargo:2}, cargo:emptyCargo(), speedPercent:100});
   expect(result.ok).toBe(true);
   state = result.state;
-  state.messages.push({id:"visible-note", at:61, text:"<真实报告 & 返航>"});
+  state.messages.push({id:"visible-note", at:61, text:"<真实报告 & 返航>", npcScoutSnapshot: null});
   return state;
 }
 function request(state: GameState, charge = false): FleetRequest {

@@ -24,6 +24,8 @@ NPC adoption separately binds every production path to verified ca5, retaining
 all earlier manifest bytes and each original native protection obligation.
 Compact report UI adoption composes the unchanged attack seal at exact 7554
 with three presentation-only files; every domain and ring byte stays fixed.
+Scout/rehearsal adoption separately composes exact cc19 with r14 source bytes,
+complete patches and hunks; kernel/economy and all ring scope remain protected.
 """
 import argparse
 import hashlib
@@ -147,6 +149,46 @@ NPC_REPORT_UI_CHANGED_PATHS = (
     'src/ui/npc-battle-present.ts',
 )
 
+NPC_SCOUT_REHEARSAL_ADOPTION = 'cc19bf5e1a459cf8e667ca55f4891ca9ffd25a71'
+NPC_SCOUT_REHEARSAL_MANIFEST = 'tests/fixtures/npc-scout-rehearsal-provenance.json'
+# Frozen cc19-to-r14 source seal; later byte or mode changes require a new explicit adoption.
+NPC_SCOUT_REHEARSAL_MANIFEST_SHA256 = '5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a'
+NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS = ('src',)
+NPC_SCOUT_REHEARSAL_CHANGED_PATHS = (
+    'src/game/content.ts',
+    'src/game/fleet.ts',
+    'src/game/npc-attack.ts',
+    'src/game/npc-rehearsal.ts',
+    'src/game/npc-scout-save.ts',
+    'src/game/npc-scout-state.ts',
+    'src/game/npc-scout.ts',
+    'src/game/save.ts',
+    'src/game/space-save.ts',
+    'src/main.ts',
+    'src/ui/npc-rehearsal-panel.ts',
+    'src/ui/space-panel.ts',
+)
+NPC_SCOUT_REHEARSAL_DOMAIN_DELTAS = (
+    'src/game/content.ts',
+    'src/game/fleet.ts',
+    'src/game/npc-attack.ts',
+    'src/game/npc-rehearsal.ts',
+    'src/game/npc-scout-save.ts',
+    'src/game/npc-scout-state.ts',
+    'src/game/npc-scout.ts',
+    'src/game/save.ts',
+    'src/game/space-save.ts',
+)
+NPC_SCOUT_REHEARSAL_RING_DELTAS = ()
+NPC_SCOUT_REHEARSAL_UNCHANGED_PATHS = (
+    'src/core', 'src/data', 'src/automation',
+    'src/game/encounter-combat.ts', 'src/game/npc-battle.ts',
+    'src/game/npc-economy.ts', 'src/game/npc-economy-save.ts',
+    'src/game/npc-wallet.ts', 'src/game/npc-garrison.ts',
+    'src/game/npc-fuel.ts', 'src/game/npc-loot.ts',
+    'src/game/npc-transfer.ts', 'src/game/npc-remainder.ts',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -190,6 +232,9 @@ def production_action_handlers(text):
     pattern = (
         rf'(?<![\w$])async function (?P<name>{identifier})\((?P<action>{identifier})\)\{{'
         rf'(?:var {identifier}(?:,{identifier})*;)?'
+        # r14's sole retirement prefix adds no captures: native groups 1/2/3 stay name/action/session.
+        rf'(?:\["import-text","import-file","reset","prestige"\]'
+        rf'\.includes\((?P=action)\.type\)&&{identifier}\.retireNpcRehearsal\(\),)?'
         rf'(?P<session>{identifier})\.cancelPendingImport\(\);'
         rf'const (?P<recovery>{identifier})={recovery}\.includes\((?P=action)\.type\);'
         rf'if\((?P=session)\.mode!=="ready"&&!(?P=recovery)\)\{{'
@@ -245,11 +290,60 @@ def production_serializers(text):
               rf'|return\{{(?:(?:npcEconomy:{identifier}\({state}\.npcEconomy\),)?'
               rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
               rf'{state}\.orders\.nextJobId\),)?)')
+    return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text)) + scout_production_serializers(text)
+
+
+def scout_production_serializers(text):
+    """Exact r14 wrapper: reject, detached messages, old validation, scout links.
+
+    Every returned field is still mandatory. The messages local is bound at its
+    declaration, reference validation and return; no arbitrary prefix or helper
+    body is admitted. Runtime source/HTTP/V8 hashes remain the identity proof.
+    """
+    identifier = r'[A-Za-z_$][A-Za-z0-9_$]*'
+    state = r'(?P=state)'
+
+    def call(field):
+        return rf'{field}:{identifier}\({state}\.{field}\)'
+
+    def copy(field):
+        return rf'{field}:\{{\.\.\.{state}\.{field}\}}'
+
+    def direct(field):
+        return rf'{field}:{state}\.{field}'
+
+    fields = [
+        *(call(field) for field in ('buildingTemplates', 'formations', 'researchTemplates', 'orders')),
+        rf'planets:{state}\.planets\.map\({identifier}\)',
+        direct('activePlanetId'), rf'deepSpace:structuredClone\({state}\.deepSpace\)',
+        copy('universe'), call('fleets'),
+        r'messages:(?P=messages)',
+        direct('nextFleetId'), call('research'),
+        rf'darkMatter:(?P<big>{identifier})\({state}\.darkMatter\)', copy('items'),
+        rf'boosters:{state}\.boosters\.map\((?P<booster>{identifier})=>\(\{{\.\.\.(?P=booster)\}}\)\)',
+        call('arcade'), call('lifetime'), rf'warpCores:(?P=big)\({state}\.warpCores\)',
+        copy('curvature'), rf'totalTime:(?P=big)\({state}\.totalTime\)',
+        *(direct(field) for field in ('manualClicks', 'seenEnergyShortage', 'hasPrestiged')),
+        rf'unlockedCards:{state}\.unlockedCards\.slice\(\)', call('protocols'),
+        rf'unlocked:{state}\.unlocked\.slice\(\)', copy('stats'), direct('offlineBonusHours'),
+    ]
+    prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{'
+              rf'{identifier}\({state},!1\);'
+              rf'const (?P<messages>{identifier})={identifier}\({state}\.messages\);'
+              rf'{identifier}\({state},!1\)(?:;|,){identifier}\({state}\)(?:;|,)'
+              rf'{identifier}\({state},(?P=messages)\);'
+              rf'const (?P<context>{identifier})={identifier}\({state}\.universe\.seed,(?:512|{identifier}),'
+              rf'{state}\.planets\.map\((?P<planet>{identifier})=>(?P=planet)\.coordinates\)\);'
+              rf'return\{{npcEconomy:{identifier}\({state}\.npcEconomy,(?P=context)\),'
+              rf'npcBattles:{identifier}\({state}\.npcBattles,(?P=context)\),'
+              rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,{state}\.orders\.nextJobId\),')
     return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
 
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != NPC_SCOUT_REHEARSAL_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_REHEARSAL_MANIFEST):
+        return npc_scout_rehearsal_provenance(repository, candidate, git, check)
     if candidate != NPC_REPORT_UI_ADOPTION and git('ls-tree', candidate, '--', NPC_REPORT_UI_MANIFEST):
         return npc_report_ui_provenance(repository, candidate, git, check)
     if candidate != ATTACK_ADOPTION and git('ls-tree', candidate, '--', ATTACK_MANIFEST):
@@ -607,6 +701,75 @@ def npc_report_ui_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': NPC_REPORT_UI_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact compact NPC report UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
+
+
+def npc_scout_rehearsal_provenance(repository, candidate, git, check):
+    """Compose immutable cc19 with the exact r14 scout/rehearsal source delta."""
+    prior = npc_report_ui_provenance(repository, NPC_SCOUT_REHEARSAL_ADOPTION, git, check)
+    check('NPC scout/rehearsal starts at the exact independently sealed cc19 compact report source',
+          prior['contract'] == 'exact-declared-npc-report-ui-delta'
+          and prior['candidateSourceSha'] == NPC_SCOUT_REHEARSAL_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC scout/rehearsal path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256),
+                (ATTACK_MANIFEST, ATTACK_MANIFEST_SHA256),
+                (NPC_REPORT_UI_MANIFEST, NPC_REPORT_UI_MANIFEST_SHA256)]
+    for path, digest in previous:
+        check('NPC scout/rehearsal preserves every earlier manifest byte and mode: ' + path,
+              entry(candidate, path) == entry(NPC_SCOUT_REHEARSAL_ADOPTION, path)
+              == {'mode': '100644', 'sha256': digest})
+    raw = (repository / NPC_SCOUT_REHEARSAL_MANIFEST).read_bytes()
+    check('NPC scout/rehearsal manifest has its fixed digest and exact committed ordinary-file bytes',
+          sha(raw) == NPC_SCOUT_REHEARSAL_MANIFEST_SHA256
+          and entry(candidate, NPC_SCOUT_REHEARSAL_MANIFEST) == {'mode': '100644', 'sha256': NPC_SCOUT_REHEARSAL_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + NPC_SCOUT_REHEARSAL_MANIFEST))
+    manifest = json.loads(raw)
+    check('NPC scout/rehearsal pins cc19, all prior seals and the complete production and protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-scout-rehearsal-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == NPC_SCOUT_REHEARSAL_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactDomainDeltaPaths') == list(NPC_SCOUT_REHEARSAL_DOMAIN_DELTAS)
+          and manifest.get('exactRingCriticalDeltaPaths') == list(NPC_SCOUT_REHEARSAL_RING_DELTAS)
+          and manifest.get('unchangedCombatEconomyPaths') == list(NPC_SCOUT_REHEARSAL_UNCHANGED_PATHS))
+    delta = changed(NPC_SCOUT_REHEARSAL_ADOPTION, candidate, NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS)
+    check('complete production tree differs from cc19 only at the exact approved scout/rehearsal files',
+          delta == list(NPC_SCOUT_REHEARSAL_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, NPC_SCOUT_REHEARSAL_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(NPC_SCOUT_REHEARSAL_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('each scout/rehearsal mode, byte, full patch and hunk is exact and anchored in sealed cc19 bytes',
+          manifest.get('changedPaths') == rows)
+    check('NPC scout/rehearsal admits only exact domain deltas and preserves all ring, kernel and economy scopes',
+          changed(NPC_SCOUT_REHEARSAL_ADOPTION, candidate, DOMAIN_PATHS) == list(NPC_SCOUT_REHEARSAL_DOMAIN_DELTAS)
+          and changed(NPC_SCOUT_REHEARSAL_ADOPTION, candidate, RING_CRITICAL_PATHS) == list(NPC_SCOUT_REHEARSAL_RING_DELTAS)
+          and changed(NPC_SCOUT_REHEARSAL_ADOPTION, candidate, NPC_SCOUT_REHEARSAL_UNCHANGED_PATHS) == [])
+    return {'contract': 'exact-declared-npc-scout-rehearsal-semantic-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': NPC_SCOUT_REHEARSAL_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': NPC_SCOUT_REHEARSAL_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact NPC scout/rehearsal source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):

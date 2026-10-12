@@ -17,7 +17,7 @@ function game(clicks = 17) {
 function raw(clicks = 17) { return exportSave(game(clicks), NOW); }
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7 | 8, source = raw()) {
   const file = JSON.parse(source);
-  file.revision = revision; stripSyntheticTerraformerMetadata(file.state, 0);
+  stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
   delete file.state.buildingTemplates;
   if (revision === 8) return JSON.stringify(file);
   delete file.state.formations;

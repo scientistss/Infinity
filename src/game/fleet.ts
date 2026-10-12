@@ -11,11 +11,13 @@ import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 import type { OrderFleetIdentity, OrderNonDelivery } from "./order-state";
 import { checkedCargoCredit, checkedShipLanding, ORDER_MAX_LANDED_UNITS } from "./order-wallet";
 import { isOwnedDockBlocked, pauseOwnedFleetOwner, recordOwnedTripPhase, validateOwnedFleetContext, type ValidOwnedFleetContext } from "./order-transport-ledger";
-import { npcScoutReportText } from "./npc-scout";
+import { npcScoutReportTextFromObservation } from "./npc-scout";
+import { NPC_SCOUT_SNAPSHOT_MODEL, readNpcScoutSnapshot, type NpcScoutSnapshotV1 } from "./npc-scout-state";
+import { projectNpc } from "./npc-wallet";
 import type { NpcAttackContract } from "./npc-attack-state";
 import { checkedNpcFuelIntent, type NpcFuelIntent } from "./npc-fuel";
 import { checkedNpcFuelDebitWithRemainder } from "./npc-remainder";
-import { isNpcAttackDockBlocked, npcAttackContract, npcAttackLaunchReason, npcAttackLaunchWallet, npcPlanetRemainder, nextNpcAttackEvent, recallNpcAttack, resolveNpcAttackArrivals } from "./npc-attack";
+import { isNpcAttackDockBlocked, npcAttackContract, npcAttackLaunchReason, npcAttackLaunchWallet, npcPlanetRemainder, nextNpcAttackEvent, npcWalletContext, recallNpcAttack, resolveNpcAttackArrivals } from "./npc-attack";
 
 export const MISSIONS = ["transport", "deploy", "colonize", "scout", "charge", "recycle", "attack"] as const;
 export type Mission = (typeof MISSIONS)[number];
@@ -36,7 +38,7 @@ export interface Fleet {
   charge?: ChargeOrder;
   npcAttack?: NpcAttackContract;
 }
-export interface FleetMessage { id: string; at: number; text: string }
+export interface FleetMessage { id: string; at: number; text: string; npcScoutSnapshot: NpcScoutSnapshotV1 | null }
 export interface FleetRequest {
   mission: Mission;
   target: Coordinates;
@@ -227,13 +229,16 @@ export function advanceFleets(state: GameState, seconds: number): GameState {
   const advanced = { ...state, fleets: state.fleets.map((f) => ownedFleetFrozen(state, f, receipts) ? f : ({ ...f, remaining: Math.max(0, f.remaining - seconds), elapsed: f.elapsed + seconds })) };
   return resolveNpcAttackArrivals(resolveFleetArrivals(advanced));
 }
-function addMessage(state: GameState, id: string, text: string): GameState {
+function addMessage(state: GameState, id: string, text: string, npcScoutSnapshot: NpcScoutSnapshotV1 | null = null): GameState {
   // `at` is only a list label, constrained by the existing save reader to 1e12.
   // Keep the true Decimal time in overflow text; never change the simulation clock.
   const timeBeyondDisplay = state.totalTime.gt(1e12);
-  const at = timeBeyondDisplay ? 1e12 : state.totalTime.toNumber();
+  // New observations derive the numeric label from their accepted canonical
+  // timestamp too. Keep all pre-existing text and non-observation time behavior.
+  const at = npcScoutSnapshot ? big(npcScoutSnapshot.observedAt).min(1e12).toNumber()
+    : timeBeyondDisplay ? 1e12 : state.totalTime.toNumber();
   const message = timeBeyondDisplay ? `${text}（列表时间已达显示上限；实际游戏时间 ${state.totalTime.toString()} 秒。）` : text;
-  return { ...state, messages: [...state.messages, { id, at, text: message }].slice(-SPACE.maxMessages) };
+  return { ...state, messages: [...state.messages, { id, at, text: message, npcScoutSnapshot }].slice(-SPACE.maxMessages) };
 }
 function unload(state: GameState, planetId: string, fleet: Fleet, ships: boolean): GameState {
   return { ...state, planets: state.planets.map((p) => {
@@ -280,6 +285,45 @@ function resolveOwnedFleetEvent(state: GameState, context: ValidOwnedFleetContex
     fleets: patched.fleets.map(value => value.id === fleet.id ? { ...value, cargo: failure ? value.cargo : emptyCargo(), returning: true, remaining: value.duration, elapsed: 0 } : value),
   };
   return addMessage(next, `${failure ? "failed" : "arrival"}-${fleet.id}`, failure ? `舰队 #${fleet.id} 未能交付，全部货物和舰船原路返航。` : `舰队 #${fleet.id} 已抵达 ${target!.name}，货物已安全卸载，舰队开始返航。`);
+}
+/** Only the actual due outbound path can attach an observation to a message. */
+function observeNpcScoutArrival(state: GameState, fleet: Fleet): { text: string; snapshot: NpcScoutSnapshotV1 } | null {
+  const npc = npcAt(state, fleet.target);
+  if (!npc) return null;
+  const validSeconds = (value: number) => Number.isFinite(value) && value >= 0 && value <= 1e12;
+  if (state.fleets.filter(value => value.id === fleet.id).length !== 1
+    || !Number.isSafeInteger(fleet.id) || fleet.id < 1 || fleet.id >= Number.MAX_SAFE_INTEGER
+    || !Number.isSafeInteger(state.nextFleetId) || fleet.id >= state.nextFleetId
+    || fleet.mission !== "scout" || fleet.returning !== false || fleet.orderTransport !== null || fleet.charge !== undefined || fleet.npcAttack !== undefined
+    || state.planets.filter(planet => planet.id === fleet.originId).length !== 1
+    || !validSeconds(fleet.duration) || fleet.duration < SPACE.minFlightSeconds
+    || !validSeconds(fleet.remaining) || fleet.remaining > 1e-9 || !validSeconds(fleet.elapsed)
+    || Math.abs(fleet.remaining + fleet.elapsed - fleet.duration) > 1e-6
+    || !(fleet.ships.espionage_probe! > 0)
+    || Object.entries(fleet.ships).some(([key, count]) => !SHIP_IDS.includes(key as ShipId) || key === "solar_satellite"
+      || !Number.isSafeInteger(count) || count < 0 || count > SPACE.maxShips)
+    // Historical readers admitted nonzero scout cargo. Observation does not
+    // spend or grant cargo; preserve it for the ordinary return.
+    || RESOURCE_IDS.some(id => !isValidAmount(fleet.cargo[id]))
+    || state.messages.some(message => message.id === `scout-${fleet.id}` || message.npcScoutSnapshot?.fleetId === fleet.id)
+    || state.npcBattles.reports.some(report => report.fleetId === fleet.id)) throw new Error("NPC 侦察抵达身份或出航状态无效，已停止结算以保护存档");
+  // projectNpc returns a detached frozen projection and never materializes a site.
+  // Both representations use that single projection, never a second live read.
+  const projection = projectNpc(state.npcEconomy, fleet.target, npcWalletContext(state));
+  const snapshot = readNpcScoutSnapshot({ model: NPC_SCOUT_SNAPSHOT_MODEL, fleetId: fleet.id, originId: fleet.originId,
+    target: fleet.target, observedAt: state.totalTime.toString(), stock: projection.stock, garrison: projection.garrison,
+    defenderTech: { weapons: 0, shields: 0, armour: 0 } });
+  return { text: npcScoutReportTextFromObservation(npc, snapshot.target, projection, state.totalTime), snapshot };
+}
+/** Legacy readers allowed a text-only scout-ID collision. Keep that old report
+ * and complete the trip without inventing replacement observation authority. */
+function scoutCollisionMessageId(state: GameState, fleetId: number): string {
+  const ids = new Set(state.messages.map(message => message.id));
+  for (let suffix = 1; suffix <= SPACE.maxMessages + 1; suffix++) {
+    const id = `scout-${fleetId}-observation-${suffix}`;
+    if (!ids.has(id)) return id;
+  }
+  throw new Error("侦察历史消息编号已超过安全范围");
 }
 /** Resolve only due events; tick must stop at their exact times before calling this. */
 export function resolveFleetArrivals(state: GameState): GameState {
@@ -341,9 +385,15 @@ export function resolveFleetArrivals(state: GameState): GameState {
       next = addMessage(next, `colony-${fleet.id}`, `已建立 ${planet.name}。消耗 1 艘殖民船；其余舰船返航。`);
       if (!Object.values(ships).some((n) => n > 0)) { remove(); continue; }
     } else if (fleet.mission === "scout") {
-      const npcReport = npcScoutReportText(next, fleet.target);
-      const detail = target ? `${target.name}（己方），${target.fieldsMax} 格` : "无人占据，可派殖民船建立基地";
-      next = addMessage(next, `scout-${fleet.id}`, npcReport ?? `侦察报告 [${coordinateKey(fleet.target)}]：${detail}。`);
+      const reportId = `scout-${fleet.id}`;
+      if (next.messages.some(message => message.id === reportId && message.npcScoutSnapshot === null)) {
+        next = addMessage(next, scoutCollisionMessageId(next, fleet.id),
+          `侦察报告 [${coordinateKey(fleet.target)}]：历史消息编号冲突，未生成新的可预演快照；舰队原路返航。`);
+      } else {
+        const observation = observeNpcScoutArrival(next, fleet);
+        const detail = target ? `${target.name}（己方），${target.fieldsMax} 格` : "无人占据，可派殖民船建立基地";
+        next = addMessage(next, reportId, observation?.text ?? `侦察报告 [${coordinateKey(fleet.target)}]：${detail}。`, observation?.snapshot ?? null);
+      }
     } else {
       next = addMessage(next, `failed-${fleet.id}`, `舰队 #${fleet.id} 目标失效，全部舰船及货物原路返航。`);
     }

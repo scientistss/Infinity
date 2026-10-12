@@ -45,7 +45,23 @@ export function stripVerifiedNpcRemainders(state: any): void {
   for (const planet of state.planets) delete planet.npcResourceRemainder;
 }
 
-/** Remove only independently verified exact r13 fields from an explicit old-schema projection. */
+/** Assert every r14-only slot before any old-schema projection removes it. */
+function assertVerifiedNullNpcScoutSnapshots(state: any): void {
+  expect(Array.isArray(state.messages)).toBe(true);
+  for (const message of state.messages) {
+    const descriptor = Object.getOwnPropertyDescriptor(message, "npcScoutSnapshot");
+    expect(descriptor && "value" in descriptor && descriptor.enumerable).toBe(true);
+    expect(descriptor!.value).toBeNull();
+  }
+}
+
+/** Remove only explicit null slots, never real or malformed historical snapshots. */
+export function stripVerifiedNullNpcScoutSnapshots(state: any): void {
+  assertVerifiedNullNpcScoutSnapshots(state);
+  for (const message of state.messages) delete message.npcScoutSnapshot;
+}
+
+/** Remove only independently verified r13 metadata and null r14 slots from an explicit old-schema projection. */
 export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: number): void {
   expect(Object.hasOwn(state, "npcEconomy")).toBe(true);
   expect(Object.hasOwn(state, "npcBattles")).toBe(true);
@@ -54,7 +70,9 @@ export function stripVerifiedNpcMetadata(state: any, expectedElapsedSeconds: num
   expect(Reflect.ownKeys(state.npcBattles).sort()).toEqual(["model", "reports"]);
   expect(state.npcBattles).toEqual(expectedEmptyNpcBattles());
   // Every assertion precedes any deletion, so a failed projection is atomic.
+  assertVerifiedNullNpcScoutSnapshots(state);
   stripVerifiedNpcRemainders(state);
+  stripVerifiedNullNpcScoutSnapshots(state);
   delete state.npcEconomy;
   delete state.npcBattles;
 }

@@ -1,8 +1,8 @@
 /** Full-state prestige parity against the independently archived, last-green r8 engine.
  * Usage: node --import tsx scripts/check-prestige-parity.mjs /path/to/6016391
- * Synthetic engine-built fixtures only; no production saves; only explicitly asserted empty r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r13 NPC state are added.
+ * Synthetic engine-built fixtures only; no production saves; only explicitly asserted empty r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r14 NPC state are added.
  */
-import { expectedNpcEconomy, assertR8StatePreserved, assertHistoricalSource } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, assertHistoricalSource } from "./r14-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -69,5 +69,5 @@ for (const [name, before] of Object.entries(fixtures)) {
   assert.deepEqual(currentSave.serializeState(restored), currentSave.serializeState(evaluation.next), `${name}: candidate reader roundtrip`);
   results.push({ name, gain: evaluation.gain.toString(), launches: evaluation.next.stats.launches });
 }
-console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "every r8 field exact; r9 empty buildingTemplates and r10 fixed-floor/zero-grant ledgers and r11 null demolition slots and r13 zero-age NPC state independently asserted and retained through prestige; prestige reset floor equals the archived retained job counter",
+console.log(JSON.stringify({ baseline, result: "passed", comparisons: results.length, projection: "every r8 field exact; r9 empty buildingTemplates and r10 fixed-floor/zero-grant ledgers and r11 null demolition slots and r14 zero-age NPC state independently asserted and retained through prestige; prestige reset floor equals the archived retained job counter",
   scope: "Actual old-r8 APIs, stored seeds, settled readers, paid queues, old formation origin, templates, owned transport phases, ring authority, deep rewards and threshold/achievement boundaries", scenarios: results }, null, 2));

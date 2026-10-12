@@ -3,7 +3,7 @@
  * Helpers are also used by unit tests and the domain journey.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
-import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r13-compatibility.mjs";
+import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { clearSlot, equipCard, refreshUnlocks, toggleSlot, unlockedSlotCount } from "../src/automation/engine";
 import { big } from "../src/game/decimal";
@@ -48,8 +48,8 @@ export function projectR11NullToR10(current: unknown, old: unknown): unknown {
   return projection;
 }
 /** Pure r10 migration only: zero NPC age is proven before the frozen r11 null-slot adapter. */
-export function projectR13ZeroToR10(current: unknown, old: unknown): unknown {
-  return projectR11NullToR10(projectVerifiedNpcEconomy(current, expectedNpcEconomy(), "r10→r13 pure migration"), old);
+export function projectR14ZeroToR10(current: unknown, old: unknown): unknown {
+  return projectR11NullToR10(projectVerifiedNpcEconomy(current, expectedNpcEconomy(), "r10→r14 pure migration"), old);
 }
 export const DEMOLITION_GOLDEN = {
   homeId: "homeworld", colonyId: "colony-1", building: "metal_storage",
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   for (const key of DEMOLITION_MILESTONES) {
     const matches = report.milestones.filter((row: { name: string }) => row.name === key);
     requireEvidence(matches.length === 1, `Missing/duplicate milestone ${key}`); const row = matches[0];
-    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 13 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
+    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 14 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
     assertNpcEconomy(row.save.state, expectedNpcEconomy(row.npcAdoptedSegmentsSeconds), `${key}: one original adopted second plus counted natural continuation`);
     const parsed = importSave(JSON.stringify(row.save)), state = deserializeState(parsed.state);
     exactEvidence(parsed, row.save, `${key}: entire strict envelope unchanged`);
@@ -153,12 +153,12 @@ async function main(): Promise<void> {
   const source = report.origin.originalSave;
   requireEvidence(source.revision === 10 && source.savedAt === source.lastTickAt, "Source raw envelope must stay unchanged r10");
   const imported = importSave(JSON.stringify(source));
-  projectR13ZeroToR10(imported.state, source.state);
+  projectR14ZeroToR10(imported.state, source.state);
   exactEvidence({ ...imported, revision: 10, state: source.state }, source, "Migration preserves every envelope field except revision");
   const synthetic = syntheticDemolitionBoundaries(report.milestones.find((row: { name: string }) => row.name === "origin").save.savedAt, expected.firstPaid!);
   Object.assign(expected, synthetic.expected);
   process.stdout.write(JSON.stringify({ schema: "infinity-demolition-browser-fixture-v1", key: STORAGE_KEY, homeId: DEMOLITION_GOLDEN.homeId, colonyId: DEMOLITION_GOLDEN.colonyId,
-    description: "Unchanged green r10 serializer envelope, explicit zero-age r13 migration, one original live tick, then one natural cancel/re-pay/reload/demolish/ordinary-rebuild loop. Four-width views are layout evidence, not four economic loops.",
+    description: "Unchanged green r10 serializer envelope, explicit zero-age r14 migration, one original live tick, then one natural cancel/re-pay/reload/demolish/ordinary-rebuild loop. Four-width views are layout evidence, not four economic loops.",
     source: { reportSha256: hash, sourceSha: expectedSha, gitHead: report.source.gitHead, sourceScopeStatusPorcelain: report.source.sourceScopeStatusPorcelain, oracleSourceScopeStatusPorcelain: sourceScope },
     origin: report.origin, originalSave: source, originalSaveRaw: report.origin.originalSaveRaw, importedSave: imported, base: report.milestones.find((row: { name: string }) => row.name === "origin").save,
     golden: DEMOLITION_GOLDEN, naturalMilestones: milestones, expected, synthetic, events: report.events, outcome: report.outcome,

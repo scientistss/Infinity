@@ -7,7 +7,7 @@ import { BACKUP_KEY, deserializeState, exportSave, importSave, serializeState, t
 import { SaveSession } from "../src/game/save-session";
 
 const INITIAL = expectedFreshNpcWallet();
-const lift = (old: any) => ({ ...old, revision: 13, state: { ...old.state, npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(), planets: old.state.planets.map((planet: any) => ({ ...planet, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
+const lift = (old: any) => ({ ...old, revision: 14, state: { ...old.state, messages: old.state.messages.map((message: any) => ({ ...message, npcScoutSnapshot: null })), npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(), planets: old.state.planets.map((planet: any) => ({ ...planet, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
 const partial = historical.rows.find(row => row.id === "partial-demolition-earned-grants")!;
 
 describe("exact ca5 r11 source adoption", () => {

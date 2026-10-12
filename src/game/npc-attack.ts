@@ -67,7 +67,7 @@ export function nextNpcAttackEvent(state: GameState): number {
 function message(state: GameState, id: string, text: string): GameState {
   const beyond = state.totalTime.gt(1e12);
   return { ...state, messages: [...state.messages, { id, at: beyond ? 1e12 : state.totalTime.toNumber(),
-    text: beyond ? `${text}（列表时间已达显示上限；实际游戏时间 ${state.totalTime.toString()} 秒。）` : text }].slice(-SPACE.maxMessages) };
+    text: beyond ? `${text}（列表时间已达显示上限；实际游戏时间 ${state.totalTime.toString()} 秒。）` : text, npcScoutSnapshot: null }].slice(-SPACE.maxMessages) };
 }
 function sameShips(a: Fleet["ships"], b: Fleet["ships"]): boolean {
   return SHIP_IDS.every(id => (a[id] ?? 0) === (b[id] ?? 0));

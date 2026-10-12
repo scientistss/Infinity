@@ -1,4 +1,4 @@
-from r13_compatibility import expected_npc_economy, exact_json
+from r14_compatibility import expected_npc_economy, expected_npc_from_r12_snapshot, advance_expected_npc_wallet, exact_json
 """Accounted snapshot regressions against the real HTTP production bundle.
 
 Native localStorage and browser input; Date/performance, requestAnimationFrame and
@@ -672,14 +672,19 @@ def run_cases():
 
     if args.session_fixture:
         legacy=json.loads(Path(args.session_fixture).read_text())
-        for revision in range(2,13):
+        for revision in range(2,14):
             case=f'actual-source r{revision} startup migration accounts through sampled wall'
             source=next(row for row in legacy['legacySources'] if row['revision']==revision)
             check('legacy fixture uses actual released serializer',source['generatedBy']=='actual source-revision createInitialState/exportSave')
             context,page=boot(value=legacy['legacy'][str(revision)],wall=61000)
             value=saved(page); envelope(value,61000,61000)
             check('successful migration includes full 61-second startup catch-up',value['state']['totalTime']=='61')
-            check('NPC migration adopts exactly the same 61 seconds once',value['state']['npcEconomy']==expected_npc_economy([61]))
+            source_state=legacy['legacy'][str(revision)]['state']
+            prior_wallet=(source_state['npcEconomy'] if revision == 13 else
+                          expected_npc_from_r12_snapshot(source_state['npcEconomy']) if revision == 12 else
+                          expected_npc_economy())
+            check('NPC migration preserves its genuine source baseline and adopts exactly 61 seconds once',
+                  exact_json(value['state']['npcEconomy'],advance_expected_npc_wallet(prior_wallet,[61])))
             backup=json.loads(raw(page,BACKUP)); check('migration backs up actual old-revision source',backup['revision']==revision and backup['lastTickAt']==EPOCH)
             audit(page); context.close()
         case='actual-source migration write fault freezes source and raw export'

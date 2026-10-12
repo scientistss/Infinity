@@ -334,7 +334,7 @@ describe("synthetic arrival boundaries and static-report compatibility", () => {
   });
 
   it("queries and message views never mutate frozen state or retrospectively fill old reports", () => {
-    const historical = { id: "scout-old", at: 3, text: "侦察报告 [1:56:6]：旧身份情报，没有历史库存。" };
+    const historical = { id: "scout-old", at: 3, text: "侦察报告 [1:56:6]：旧身份情报，没有历史库存。", npcScoutSnapshot: null };
     let state = ready();
     state = { ...state, messages: [historical] };
     const before = exportSave(state, 1);

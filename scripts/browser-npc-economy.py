@@ -4,7 +4,8 @@ confirmation, trusted input, rendering and reload remain actual browser behavior
 Separate fault branches explicitly wrap native storage and never claim natural
 quota exhaustion or unchanged disk after uncertain readback. No local run allowed.
 """
-from r13_compatibility import expected_npc_economy
+from r14_compatibility import expected_npc_economy
+from npc_display_contract import MESSAGE_ROWS_SAMPLE_JS, assert_message_rows, OPEN_REHEARSAL
 from contextlib import contextmanager
 import argparse
 import copy
@@ -644,7 +645,7 @@ def flush():
         'case': case, 'url': args.url, 'sourceSha': source_sha, 'fixture': fixtures['description'],
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR10SaveSha256': fixtures['origin']['originalSaveSha256'], 'actualCa5R11Sha256': fixtures['origin']['r11Sha256'],
-        'classification': 'One real r11→r13 age0 native file import, real paid research202/probe203/scouts4/5, actual arrival snapshots and reload. Separate exact-source identity-report/curvature/newgame/offline/protection branches.',
+        'classification': 'One real r11→r14 age0 native file import, real paid research202/probe203/scouts4/5, actual arrival snapshots and reload. Separate exact-source identity-report/curvature/newgame/offline/protection branches.',
         'responsiveScope': '320/390/768/1440 actual frozen report glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only.',
         'timing': timing_report(), 'oracle': 'Every serialized main-loop field equals actual domain milestones; separately frozen research/probe/fuel costs, IDs, arrival ages and stock formulas.',
         'nativeBoundary': 'Browser storage/file/dialog/HTTP are native. Date/performance/RAF timestamps are controlled. Fault-only Storage wrappers are explicit. This runner is not a genuine unmodified-clock background-throttling test.',
@@ -766,19 +767,45 @@ def independent_report(age):
             f'重氢 {age:.3f}/10000.000，固定产量 1.000/秒，生产中。轨道驻军：轻型战斗机 4，重型战斗机 0；驻军战斗科技 0。历史快照不会随时间更新。')
 
 
+def independent_scout_message(fleet_id, age):
+    """Complete literal expected arrival. Never derive identity/time from UI."""
+    assert type(fleet_id) is int and type(age) is int and (fleet_id, age) in ((4, 3), (5, 65))
+    at = 25810 + age
+    return {'id': f'scout-{fleet_id}', 'at': at, 'text': independent_report(age),
+        'npcScoutSnapshot': {'model': 'npc-scout-snapshot-v1', 'fleetId': fleet_id,
+            'originId': 'homeworld', 'target': {'galaxy': 1, 'system': 56, 'position': 6},
+            'observedAt': str(at), 'stock': [500 + age * 5, 250 + age * 2.5, age],
+            'garrison': {'light_fighter': 4, 'heavy_fighter': 0},
+            'defenderTech': {'weapons': 0, 'shields': 0, 'armour': 0}}}
+
+
+def current_message_display(page, state):
+    evidence = page.evaluate(MESSAGE_ROWS_SAMPLE_JS)
+    valid = True
+    try:
+        assert_message_rows(evidence, state['messages'])
+    except (AssertionError, KeyError, TypeError, ValueError):
+        valid = False
+    check('complete current message rows retain exact state order/text/time and typed-only rehearsal controls', valid, evidence)
+
+
 def arrived_report(page, state, fleet_id, age):
     messages = [m for m in state['messages'] if m['id'] == f'scout-{fleet_id}']
-    check('one real arrived immutable snapshot: fleet' + str(fleet_id), len(messages) == 1 and messages[0]['at'] == 25810 + age
-          and messages[0]['text'] == independent_report(age) and state['npcEconomy'] == expected_npc_economy([age]), messages)
-    tab(page, 'messages')
-    check('actual arrival UI shows complete independent report text', page.locator('#space-messages .space-message p').all_text_contents().count(independent_report(age)) == 1)
+    check('one real arrived immutable snapshot: fleet' + str(fleet_id), len(messages) == 1 and exact_json(messages[0], independent_scout_message(fleet_id, age))
+          and state['npcEconomy'] == expected_npc_economy([age]), messages)
+    tab(page, 'messages'); current_message_display(page, state)
+    check('actual arrival UI shows complete independent report text', page.locator('#space-message-list > .space-message > p:first-of-type').all_text_contents().count(independent_report(age)) == 1)
+    row = page.locator(f'#space-message-list > .space-message[data-message-id="scout-{fleet_id}"]')
+    check('actual typed arrival has one direct enabled historical rehearsal opener', row.count() == 1 and row.locator(':scope > button').count() == 1
+          and row.locator(':scope > button').text_content() == OPEN_REHEARSAL and row.locator(':scope > button').is_enabled())
     return messages[0]
 
 
 def report_selector(page, text):
-    texts = page.locator('#space-messages .space-message p').all_text_contents()
-    check('exact saved snapshot appears once in message DOM', texts.count(text) == 1)
-    return f'#space-messages .space-message:nth-child({texts.index(text) + 1}) p'
+    rows = page.locator('#space-message-list > .space-message').evaluate_all('(rows)=>rows.map(row=>({id:row.getAttribute("data-message-id"),text:row.querySelector(":scope > p")?.textContent}))')
+    matches = [row for row in rows if row['text'] == text]
+    check('exact saved snapshot appears once in its stable keyed message DOM', len(matches) == 1 and re.fullmatch(r'scout-[0-9]+', matches[0]['id'] or '') is not None, rows)
+    return f'#space-message-list > .space-message[data-message-id="{matches[0]["id"]}"] > p:first-of-type'
 
 
 def responsive_report(page, label, text):
@@ -877,14 +904,14 @@ try:
           hashlib.sha256(fixtures['origin']['originalSaveRaw'].encode()).hexdigest() == 'd456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a'
           and hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == fixtures['origin']['r11Sha256']
           and source_report['source']['historicalProducer']['sourceSha'] == 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
-          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 13)
+          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 14)
     for key, row in fixtures['naturalMilestones'].items():
         matches = [m for m in source_report['milestones'] if m['name'] == key]
         check('entire genuine milestone unchanged: ' + key, len(matches) == 1 and exact_json(matches[0], row) and row['strictRoundtrips'] == 2 and row['stateAdoptedFromReload'])
     (out / 'source-npc-natural-report.json').write_bytes(source_bytes)
     with sync_playwright() as playwright, capture_live_failure():
         browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox'])
-        begin_case('one actual ca5 r11 native file import → r13 age0 → paid research/probe/two-scout loop')
+        begin_case('one actual ca5 r11 native file import → r14 age0 → paid research/probe/two-scout loop')
         context, page = boot(fixtures['originalSave']['savedAt'])
         import_save(page, fixtures['originalSave'], 'actual-ca5-produced-r11', original_raw=fixtures['originalSaveRaw'], expected=fixtures['importedSave'])
         baseline = save(page, 'origin-migrated-r11-age-zero')
@@ -924,12 +951,14 @@ try:
         begin_case('real native close/reopen from final natural save, controlled100000-second gap, one7200 adoption')
         page = offline_once(context, page); context.close()
 
-        begin_case('genuine ca5 identity-only historical reports remain exactly unchanged after r13 migration')
+        begin_case('genuine ca5 identity-only historical reports remain exactly unchanged after r14 migration')
         branch = fixtures['branches']['legacyIdentity']; context, page = boot(branch['save']['savedAt'])
         import_save(page, branch['save'], 'genuine-ca5-identity-only-branch', original_raw=branch['raw'], expected=branch['migratedSave'])
         legacy_state = save(page)
-        check('actual old identity reports retain exact text/time without fabricated new fields', legacy_state['messages'] == branch['save']['state']['messages'] and legacy_state['npcEconomy'] == expected_npc_economy())
-        tab(page, 'messages'); text = page.locator('#space-messages').inner_text()
+        check('actual old identity reports retain every exact source field with explicit null snapshot', all(set(m) == {'id', 'at', 'text'} for m in branch['save']['state']['messages'])
+              and exact_json(legacy_state['messages'], [{**m, 'npcScoutSnapshot': None} for m in branch['save']['state']['messages']])
+              and legacy_state['npcEconomy'] == expected_npc_economy())
+        tab(page, 'messages'); current_message_display(page, legacy_state); text = page.locator('#space-messages').inner_text()
         check('actual old report UI remains identity-only', '战斗与精确情报尚未开放' in text and '抵达时快照' not in text)
         record(page, 'native-historical-identity-reports-preserved'); context.close()
 
@@ -973,7 +1002,7 @@ try:
 
         begin_case('suite integrity')
         check('no app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('served exact release is v9/r13', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 13)
+        check('served exact release is v9/r14', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

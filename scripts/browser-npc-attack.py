@@ -4,6 +4,7 @@ confirmation, trusted input, rendering and reload remain actual browser behavior
 Separate fault branches explicitly wrap native storage and never claim natural
 quota exhaustion or unchanged disk after uncertain readback. No local run allowed.
 """
+from npc_display_contract import MESSAGE_ROWS_SAMPLE_JS, assert_message_rows
 from contextlib import contextmanager
 from fractions import Fraction
 import argparse
@@ -1022,7 +1023,7 @@ def full_report():
         'fixtureSha256': fixture_sha256, 'sourceReportSha256': fixtures['source']['reportSha256'],
         'originalR12SaveSha256': fixtures['origin']['rawSha256'],
         'oracleReloadSchedule': fixtures.get('reloadSchedule'), 'observedMainReloadCheckpoints': main_reload_checkpoints,
-        'classification': 'Unedited public eef r12 66s two-scout save imported through the native file picker; complete r13 paid action/tick tape replay. Explicit native Storage fault wrappers and DOM mutation probes are separate branches. The three enumerated synthetic boundary fixtures separately change colony metal right to 0.25, landed LF count to 1e15, or colony name plus delivered report8 originId. None is part of the natural main; the identity fixture is not a native rename action or natural colony battle.',
+        'classification': 'Unedited public eef r12 66s two-scout save imported through the native file picker; complete r14 paid action/tick tape replay. Explicit native Storage fault wrappers and DOM mutation probes are separate branches. The three enumerated synthetic boundary fixtures separately change colony metal right to 0.25, landed LF count to 1e15, or colony name plus delivered report8 originId. None is part of the natural main; the identity fixture is not a native rename action or natural colony battle.',
         'responsiveScope': '320/390/768/1440 CLOSED compact summaries before detail expansion, actual frozen full-detail glyphs and controls; five real hit points, ancestor clipping, stable native scroll and exact screenshot geometry. One economic execution only, with route/clear/form/report four-width witnesses at real milestones.',
         'timing': timing_report(), 'oracle': 'Natural-main serialized fields equal pinned eef legacy engine plus independent NPC LF combat, loot, FNV, wallet, event and exact-decimal oracle. Curvature and abandonment have independent whole-state branch checks. Other boundary envelopes are real current-engine executions with separately asserted ownership, money and combat invariants. No game globals or source injection. Natural main is never economically patched; the explicitly synthetic branch fields are enumerated separately.',
         'nativeBoundary': 'Browser storage/file/dialog/HTTP are native. Date/performance/RAF timestamps are controlled. Fault-only Storage wrappers are explicit. This runner is not a genuine unmodified-clock background-throttling test.',
@@ -1459,12 +1460,27 @@ def remainder_detail_witness(page, expected):
     page.set_viewport_size({'width': 1440, 'height': 1100}); advance(page)
 
 
+def current_message_display(page, state):
+    tab(page, 'messages')
+    evidence = page.evaluate(MESSAGE_ROWS_SAMPLE_JS)
+    valid = True
+    try:
+        assert_message_rows(evidence, state['messages'])
+    except (AssertionError, KeyError, TypeError, ValueError):
+        valid = False
+    check('complete current message rows retain exact state order/text/time and typed-only rehearsal controls', valid, evidence)
+
+
 def native_tape(page):
     report_widths_done, quote_widths_done, draft_done = False, False, False
+    typed_message_ids_checked = set()
     for index, operation in enumerate(fixtures['tape']):
         kind = operation['kind']
         if kind == 'checkpoint':
             name = operation['name']; actual = save(page, name)
+            typed_ids = {message['id'] for message in actual['messages'] if message['npcScoutSnapshot'] is not None}
+            if typed_ids - typed_message_ids_checked:
+                current_message_display(page, actual); typed_message_ids_checked.update(typed_ids)
             if name in NATIVE_RELOAD_CHECKPOINTS:
                 reload_same_time(page, name); main_reload_checkpoints.append(name); record(page, 'native-' + name)
             if name == 'empty10-zero-round-loot-delivered':
@@ -1513,6 +1529,7 @@ def native_tape(page):
             tab(page, 'fleet'); trusted_click(page, f'[data-space="npc-retry-dock"][data-fleet="{operation["fleetId"]}"]')
         else:
             raise AssertionError('Unknown exact natural tape operation: ' + kind)
+    check('actual natural scout arrivals received exact typed message DOM checks', typed_message_ids_checked == {'scout-6', 'scout-9'})
     check('exactly the four declared native main reloads completed in order', main_reload_checkpoints == list(NATIVE_RELOAD_CHECKPOINTS))
     check('full native paid route includes four-width draft/form/report witnesses', draft_done and quote_widths_done and report_widths_done)
 
@@ -1815,7 +1832,7 @@ try:
           and source_report['source']['sourceScopeStatusPorcelain'] == '')
     check('native oracle declares and proves the exact four-reload schedule', native_reload_schedule_valid(source_report))
     check('original public r12 final raw remains byte-exact', hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
-          and fixtures['originalSave']['revision'] == 12 and fixtures['base']['revision'] == 13
+          and fixtures['originalSave']['revision'] == 12 and fixtures['base']['revision'] == 14
           and fixtures['provenance']['injectedGameState'] is False)
     for row in fixtures['milestones']:
         check('milestone raw bytes and full envelope are bound: ' + row['name'],
@@ -1832,7 +1849,7 @@ try:
         begin_case('suite integrity')
         verify_compact_report_coverage()
         check('no actual app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('served release exact v9/r13', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 13)
+        check('served release exact v9/r14', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)
         completed = True; browser.close(); flush(full=True, final=True)
 except BaseException as error:
     if failure is None:

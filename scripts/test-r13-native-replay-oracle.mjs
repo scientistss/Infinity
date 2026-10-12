@@ -2,7 +2,7 @@
  * node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
  */
 import assert from 'node:assert/strict';
-import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR13, projectVerifiedNpcEconomy } from './r13-compatibility.mjs';
+import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR14, projectVerifiedNpcEconomy } from './r14-compatibility.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,11 +41,11 @@ function syntheticTrace(raw, specs = [
     age = advanceExpectedNpcWallet(age, observed.adoptedSegmentsSeconds);
   }
   function withNpc() {
-    return liftR11StateToR13(save.serializeState(state),age);
+    return liftR11StateToR14(save.serializeState(state),age);
   }
   function write(savedAt, lastTickAt) {
     oldFile = JSON.parse(save.exportSave(state, savedAt, lastTickAt));
-    previousRaw = JSON.stringify({ ...oldFile, revision: 13, state: withNpc() }, null, 2);
+    previousRaw = JSON.stringify({ ...oldFile, revision: 14, state: withNpc() }, null, 2);
     return previousRaw;
   }
   for (const [index, spec] of specs.entries()) {
@@ -95,7 +95,7 @@ async function rejects(change, pattern, input = sample) {
 
 test('full-state golden: first migration and nonzero NPC age survive actual-stage saves and two reloads', async () => {
   const result = await replayNativeTrace(root, sample);
-  assert.equal(result.schema, 'infinity-fixed-r11-native-r13-replay-oracle-v1');
+  assert.equal(result.schema, 'infinity-fixed-r11-native-r14-replay-oracle-v1');
   assert.equal(result.sourceSha, SOURCE_SHA);
   assert.deepEqual(result.dependencyIdentity, DEPENDENCIES);
   assert.equal(result.inputRawSha256, r11.rows[0].rawSha256);
@@ -144,7 +144,7 @@ test('every genuine fixture can replay without a second legacy normalization', a
     ]);
     const result = await replayNativeTrace(root, input);
     const actual = JSON.parse(events(input, 'save', 1).at(-1).raw);
-    assert.deepEqual(actual.state, liftR11StateToR13(result.state,result.npcWallet));
+    assert.deepEqual(actual.state, liftR11StateToR14(result.state,result.npcWallet));
   }
 });
 
