@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+from test_manual_unit_hidden import ManualUnitHiddenHelperTests
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/'scripts/browser-manual-unit-orders.py'
@@ -272,17 +273,24 @@ class NativeContractTests(unittest.TestCase):
         self.assertIn("whole_state('import-attempt-entire-memory-unchanged',save(page),before)",source)
         self.assertLess(source.index("whole_state('import-attempt-entire-memory-unchanged'"),source.index('mode_only_then_pay('))
 
-    def test_headed_native_visibility_restores_focus_without_faking_properties(self):
+    def test_only_last_case_uses_independent_raw_cdp_and_keeps_real_native_contract(self):
         source=definition('hidden_resume')
-        self.assertEqual(source.count("Emulation.setFocusEmulationEnabled',{'enabled':False}"),2)
-        self.assertIn('nativeHidden',source)
-        self.assertIn('nativeVisibility',source)
-        self.assertIn('e.trusted&&e.hidden',source)
-        self.assertIn('e.trusted&&!e.hidden',source)
-        self.assertIn('timeout=5000,polling=50',source)
-        self.assertIn("windows['game']['windowId']==windows['cover']['windowId']",source)
-        self.assertNotIn('Object.defineProperty',source)
-        self.assertNotIn('dispatchEvent',source)
+        self.assertIn("scripts/browser-manual-unit-hidden.mjs",source)
+        self.assertIn('subprocess.Popen(',source)
+        self.assertIn('start_new_session=True',source)
+        self.assertIn("ownership=child_dir/'chrome-owner.json'",source)
+        self.assertIn("os.getpgid(owner['chromePid'])",source)
+        self.assertIn('process.communicate(timeout=max(.001,50-',source)
+        self.assertIn("'expectedBrowserVersion':browser.version",source)
+        self.assertIn("'beforeState':fixture['expected']",source)
+        self.assertIn("'clockScript':CLOCK.replace('__EPOCH__'",source)
+        self.assertIn('validate_native_hidden_result(value,request,input_ref',source)
+        self.assertIn('verify_file_references(value)',source)
+        self.assertIn("original_bytes('native-hidden-original-report'",source)
+        self.assertLess(source.index("persist_json('native-hidden-result-before-assertion'"),source.index('validate_native_hidden_result('))
+        self.assertLess(source.index('validate_native_hidden_result('),source.index('complete_case()'))
+        for forbidden in ('Emulation.setFocusEmulationEnabled','live_context(','page.evaluate(','.click()','dispatchEvent','Object.defineProperty'):
+            self.assertNotIn(forbidden,source)
         self.assertIn('headless=False',definition('main'))
 
     def test_file_completion_uses_exact_new_event_and_bounded_terminal_observation(self):
@@ -309,7 +317,7 @@ class NativeContractTests(unittest.TestCase):
         for name in ('tab-away','switch-planet-return','same-id-import','reset','duplicate','detach','detach-reinsert','crosslabel','ancestor-reinsert'):
             self.assertIn(name,source)
         self.assertIn("whole_state('retired-or-untrusted-node-has-no-payment-authority',save(page),expected)",source)
-        self.assertIn("hidden=='hidden'",definition('hidden_resume'))
+        self.assertIn("hidden['hidden'] is True",definition('validate_native_hidden_result'))
         self.assertIn("whole_state('latest-plan-only-entire-world',save(page),fixture['afterTick'])",definition('latest_plan'))
 
 
@@ -562,6 +570,55 @@ class FixtureProvenanceTests(unittest.TestCase):
             self.assertIn('"'+edge,source)
         self.assertIn('paid(adopted,"anti_ballistic_missile",1)',source)
         self.assertIn('unitById("solar_satellite").drives.length===0',source)
+
+
+class NativeHiddenOriginalValidationTests(unittest.TestCase):
+    def specimen(self):
+        module.load_reviewed_helpers()
+        h='a'*64; sha='b'*40; url='http://127.0.0.1:4173/Infinity/'; key='save'
+        files={name:h for name in ['index.html','app.js','style.css',*('resource-'+str(i) for i in range(59))]}
+        release={'sourceSha':sha,'version':module.CANDIDATE_VERSION,'files':files,'saveVersion':9,'saveRevision':14}
+        request={'expectedSha':sha,'expectedVersion':module.CANDIDATE_VERSION,'expectedBrowserVersion':'154.0.8037.97','chromium':'/usr/bin/google-chrome','expectedRelease':release,'key':key,'url':url,'beforeState':{'value':1},'expectedState':{'value':2},'initialRaw':'original','clockScript':'unchanged clock'}
+        native={k:True for k in ('storageGet','storageSet','fileText','confirm','timeout','interval','hidden','visibility','noOwnHidden','noOwnVisibility','storageInstance')}
+        event=lambda seq,kind,hidden,trusted=True:{'seq':seq,'id':'same-document','type':kind,'trusted':trusted,'hidden':hidden,'state':'hidden' if hidden else 'visible','nativeMono':seq*10,'action':'manual-unit-pay' if kind=='click' else None}
+        events=[event(1,'document-start',False,None),event(2,'click',False),event(3,'visibilitychange',True),event(4,'visibilitychange',False)]
+        def observation(count,hidden=False):
+            return {'id':'same-document','seq':count,'events':copy.deepcopy(events[:count]),'clicks':[copy.deepcopy(events[1])] if count>=2 else [],'hidden':hidden,'state':'hidden' if hidden else 'visible','native':dict(native),'initialRaw':'original'}
+        def storage(state):
+            raw=json.dumps({'state':state});return {'raw':raw,'state':state,'storage':{'local':{key:raw},'session':{}},'card':{'input':'1','payDisabled':state['value']==2}}
+        def row(name,kind=None):
+            value={'name':name,'url':url+name,'requestURL':url+name,'status':200,'sha256':h,'body':{'sha256':h}}
+            if kind:value['kind']=kind
+            return value
+        document=row('index.html');document['url']=document['requestURL']=url
+        report={'schema':'infinity-manual-unit-hidden-report-v1','completed':True,'result':'passed','failure':None,'inputSha256':h,'input':{'sha256':h},'clockScript':{'sha256':module.digest(request['clockScript'].encode())},'sourceSha':sha,'version':request['expectedVersion'],'chrome':{'version':{'product':'Chrome/'+request['expectedBrowserVersion']},'executable':request['chromium']},'releaseMetadata':release,'durationMs':1000,'boundsMs':{'hidden':5000,'resume':5000,'whole':45000},'errors':[],'cleanup':{k:True for k in ('socketClosed','processExited','processGroupGone','profileRemoved')},'checks':[{'name':'synthetic validator specimen','passed':True}],
+          'beforeSave':storage(request['beforeState']),'beforePayment':storage(request['beforeState']),'afterPayment':storage(request['expectedState']),'finalSave':storage(request['expectedState']),'afterResumeCard':{'input':'1','payDisabled':True},
+          'initial':observation(1),'beforeHide':observation(2),'hidden':observation(3,True),'resumed':observation(4),'finalProbe':observation(4),'coverBefore':{'hidden':True,'state':'hidden'},'coverHidden':{'hidden':False,'state':'visible'},'hiddenEvent':copy.deepcopy(events[2]),'resumedEvent':copy.deepcopy(events[3]),
+          'actions':[{'kind':'activate-cover','targetId':'cover','hostMono':100},{'kind':'activate-game','targetId':'game','hostMono':200}],
+          'windows':{'gameTarget':'game','coverTarget':'cover','game':{'windowId':1},'cover':{'windowId':1}},'functionalAdvanceCalls':[{'completed':True,'milliseconds':0,'beforeAt':100,'afterAt':100,'hostStartMs':10}],
+          'releaseResources':[row(name) for name in files],'sourceBindings':[{'document':document,'assets':[row('app.js','script'),row('style.css','stylesheet')],'executed':[{'url':url+'app.js','sha256':h,'httpSha256':h,'body':{'sha256':h}}]}]}
+        return copy.deepcopy(report),request,h
+
+    def test_full_child_originals_independently_satisfy_parent_contract(self):
+        value,request,h=self.specimen();self.assertTrue(module.validate_native_hidden_result(value,request,h))
+
+    def test_false_status_source_state_input_clock_and_cleanup_cannot_be_accepted(self):
+        mutations=(lambda v:v.update(completed=False),lambda v:v.update(result='failed'),lambda v:v.update(failure='old failed'),lambda v:v.update(sourceSha='c'*40),lambda v:v['beforeSave']['state'].update(value=True),lambda v:v['finalSave']['state'].update(value=3),lambda v:v['input'].update(sha256='d'*64),lambda v:v['clockScript'].update(sha256='d'*64),lambda v:v.update(durationMs=45000),lambda v:v['boundsMs'].update(hidden=6000),lambda v:v['cleanup'].update(processGroupGone=False),lambda v:v['checks'][0].update(passed=1),lambda v:v['chrome']['version'].update(product='Chrome/other'))
+        for mutate in mutations:
+            value,request,h=self.specimen();mutate(value)
+            with self.subTest(mutation=mutate),self.assertRaises((AssertionError,KeyError)):module.validate_native_hidden_result(value,request,h)
+
+    def test_old_visible_event_wrong_document_or_fake_visibility_are_rejected(self):
+        mutations=(lambda v:v['resumedEvent'].update(seq=2),lambda v:v['hiddenEvent'].update(trusted=False),lambda v:v['resumed'].update(id='new-document'),lambda v:v['hidden']['native'].update(noOwnHidden=False),lambda v:v['hidden'].update(hidden=False),lambda v:v['coverHidden'].update(hidden=True),lambda v:v['finalProbe']['events'].pop(0),lambda v:v['actions'].append(copy.deepcopy(v['actions'][0])),lambda v:v['windows']['cover'].update(windowId=2),lambda v:v['finalProbe']['clicks'].append(copy.deepcopy(v['finalProbe']['clicks'][0])),lambda v:v['functionalAdvanceCalls'][0].update(milliseconds=1000),lambda v:v['functionalAdvanceCalls'][0].update(hostStartMs=150),lambda v:v['afterResumeCard'].update(payDisabled=False))
+        for mutate in mutations:
+            value,request,h=self.specimen();mutate(value)
+            with self.subTest(mutation=mutate),self.assertRaises((AssertionError,KeyError)):module.validate_native_hidden_result(value,request,h)
+
+    def test_missing_or_wrong_actual_release_http_v8_bytes_are_rejected(self):
+        mutations=(lambda v:v['releaseResources'].pop(),lambda v:v['releaseResources'][0].update(status=304),lambda v:v['releaseResources'][0]['body'].update(sha256='d'*64),lambda v:v['sourceBindings'][0].update(executed=[]),lambda v:v['sourceBindings'][0]['executed'][0].update(httpSha256='d'*64),lambda v:v['sourceBindings'][0]['document'].update(url='http://wrong/'),lambda v:v['sourceBindings'][0]['assets'][0].update(requestURL='http://wrong/'))
+        for mutate in mutations:
+            value,request,h=self.specimen();mutate(value)
+            with self.subTest(mutation=mutate),self.assertRaises((AssertionError,KeyError)):module.validate_native_hidden_result(value,request,h)
 
 
 if __name__=='__main__': unittest.main()

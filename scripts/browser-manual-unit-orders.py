@@ -657,36 +657,131 @@ def protection_boundary():
         writer.close(); old.dispose()
 
 
+def validate_native_hidden_result(value, request, input_sha):
+    """Independently bind the child originals before accepting its native checks."""
+    def require(ok, name):
+        if not ok: raise AssertionError('Native hidden result: '+name)
+    require(type(value) is dict and value.get('schema')=='infinity-manual-unit-hidden-report-v1','schema')
+    require(value.get('completed') is True and value.get('result')=='passed' and value.get('failure') is None,'successful terminal')
+    require(value['inputSha256']==input_sha and value['sourceSha']==request['expectedSha'] and value['version']==request['expectedVersion'],'input/source/version')
+    require(value['chrome']['version']['product']=='Chrome/'+request['expectedBrowserVersion'],'same browser binary version')
+    require(value['chrome']['executable']==request['chromium'],'same browser path')
+    require(value['releaseMetadata']==request['expectedRelease'],'complete release metadata')
+    require(value['input']['sha256']==input_sha and value['clockScript']['sha256']==digest(request['clockScript'].encode()),'original input and unmodified functional clock')
+    require(type(value['durationMs']) in (int,float) and 0<=value['durationMs']<45000,'bounded complete helper duration')
+    require(value['boundsMs']['hidden']==5000 and value['boundsMs']['resume']==5000 and value['boundsMs']['whole']==45000,'original action bounds')
+    require(value.get('errors')==[],'browser errors')
+    cleanup=value['cleanup']
+    require(all(cleanup.get(k) is True for k in ('socketClosed','processExited','processGroupGone','profileRemoved')) and not cleanup.get('error'),'owned cleanup')
+    require(type(value['checks']) is list and value['checks'] and all(c.get('passed') is True and type(c.get('name')) is str for c in value['checks']),'all child checks')
+    for key,expected in (('beforeSave',request['beforeState']),('beforePayment',request['beforeState']),('afterPayment',request['expectedState']),('finalSave',request['expectedState'])):
+        row=value[key]; envelope=json.loads(row['raw'])
+        require(exact_json(envelope['state'],expected) and exact_json(row['state'],expected),'whole state '+key)
+        require(row['storage']['local'][request['key']]==row['raw'],'raw storage '+key)
+    require(value['initial']['initialRaw']==request['initialRaw'],'unaltered input save')
+    require(value['beforePayment']['card']['input']=='1' and value['beforePayment']['card']['payDisabled'] is False,'initial default quote')
+    require(value['afterPayment']['card']['payDisabled'] is True and value['afterResumeCard']['payDisabled'] is True and value['afterResumeCard']['input']=='1','consumed quote remains retired')
+    native_keys={'storageGet','storageSet','fileText','confirm','timeout','interval','hidden','visibility','noOwnHidden','noOwnVisibility','storageInstance'}
+    initial=value['initial']; before=value['beforeHide']; hidden=value['hidden']; resumed=value['resumed']; final=value['finalProbe']; cover=value['coverBefore']
+    for observation in (initial,before,hidden,resumed,final):
+        require(observation['id']==initial['id'] and set(observation['native'])==native_keys and all(v is True for v in observation['native'].values()),'same document and actual native APIs')
+        require(type(observation['seq']) is int and all(type(e['seq']) is int for e in observation['events']),'event sequence integers')
+        require([e['seq'] for e in observation['events']]==sorted(set(e['seq'] for e in observation['events'])),'unique ordered events')
+    require(before['hidden'] is False and before['state']=='visible' and cover['hidden'] is True and cover['state']=='hidden','native action preconditions')
+    require(hidden['hidden'] is True and hidden['state']=='hidden' and resumed['hidden'] is False and resumed['state']=='visible','real hidden and visible')
+    require(value['coverHidden']['hidden'] is False and value['coverHidden']['state']=='visible','cover genuinely visible during game hidden')
+    he=value['hiddenEvent']; ve=value['resumedEvent']
+    require(he in hidden['events'] and he['id']==initial['id'] and he['seq']>before['seq'] and he['type']=='visibilitychange' and he['trusted'] is True and he['hidden'] is True and he['state']=='hidden','new trusted hidden event')
+    require(ve in resumed['events'] and ve['id']==initial['id'] and ve['seq']>hidden['seq'] and ve['type']=='visibilitychange' and ve['trusted'] is True and ve['hidden'] is False and ve['state']=='visible' and ve['nativeMono']>he['nativeMono'],'later trusted resume event')
+    require(before['events']==hidden['events'][:len(before['events'])] and hidden['events']==resumed['events'][:len(hidden['events'])] and resumed['events']==final['events'][:len(resumed['events'])],'complete unmodified event prefixes')
+    require(not any(e['type'] in ('pagehide','beforeunload') for e in final['events']),'no reload or document replacement')
+    actions=value['actions']; covers=[a for a in actions if a['kind']=='activate-cover']; games=[a for a in actions if a['kind']=='activate-game']
+    require(len(covers)==len(games)==1 and covers[0]['hostMono']<games[0]['hostMono'],'one ordered real activation each')
+    windows=value['windows'];require(windows['gameTarget']!=windows['coverTarget'] and windows['game']['windowId']==windows['cover']['windowId'],'same real headed window')
+    require(covers[0]['targetId']==windows['coverTarget'] and games[0]['targetId']==windows['gameTarget'],'actual activation targets')
+    clicks=final['clicks']; require(len([c for c in clicks if c['action']=='manual-unit-pay'])==1 and all(c['trusted'] is True for c in clicks),'one trusted payment')
+    advances=value['functionalAdvanceCalls']
+    require(advances and all(a['completed'] is True and a['milliseconds']==0 and a['beforeAt']==a['afterAt'] for a in advances),'only zero-time visible functional advances')
+    require(not any(covers[0]['hostMono']<=a['hostStartMs']<=games[0]['hostMono'] for a in advances),'no advance while hidden')
+    files=request['expectedRelease']['files']; resources=value['releaseResources']
+    require(len(resources)==len(files)==62 and {r['name'] for r in resources}==set(files),'all unique release resources')
+    for row in resources:
+        require(row['status']==200 and row['url']==row['requestURL']==urljoin(request['url'],row['name']) and row['sha256']==row['body']['sha256']==files[row['name']],'actual resource HTTP body')
+    bindings=value['sourceBindings']; require(len(bindings)==1,'one actual executed production document')
+    binding=bindings[0]; doc=binding['document']
+    require(doc['url']==doc['requestURL']==request['url'] and doc['status']==200 and doc['sha256']==doc['body']['sha256']==files['index.html'],'actual document body')
+    require({'script','stylesheet'}<={r['kind'] for r in binding['assets']},'actual JS and CSS HTTP responses')
+    for row in binding['assets']:
+        require(row['status']==200 and row['url']==row['requestURL']==urljoin(request['url'],row['name']) and row['sha256']==row['body']['sha256']==files[row['name']],'actual execution asset')
+    require(binding['executed'],'actual V8 source')
+    for row in binding['executed']:
+        name=row['url'].removeprefix(request['url'])
+        require(row['sha256']==row['httpSha256']==row['body']['sha256']==files[name],'V8 and HTTP byte identity')
+    return True
+
+
 def hidden_resume():
-    begin_case('SYNTHETIC-consumed-native-hidden-resume'); fixture=fixtures['synthetic']['all-unlocked']; unit='small_cargo'
-    with live_context(fixture['raw']) as (context,page):
-        expected=fixture['positive'][unit]['expected']; prepare(page,unit,'count','1'); trusted_click(page,b('upay',unit))
-        page.evaluate('''()=>{window.__manualVisibility=[];document.addEventListener('visibilitychange',e=>window.__manualVisibility.push({trusted:e.isTrusted,hidden:document.hidden,state:document.visibilityState,clock:Date.now()}));}''')
-        cdp=page_sources[page]['cdp']; cdp.send('Emulation.setFocusEmulationEnabled',{'enabled':False})
-        other=context.new_page(); other.goto(urljoin(args.url,'icons/save.webp'),wait_until='load')
-        cover_cdp=context.new_cdp_session(other); cover_cdp.send('Emulation.setFocusEmulationEnabled',{'enabled':False})
-        game_target=cdp.send('Target.getTargetInfo')['targetInfo']['targetId']; cover_target=cover_cdp.send('Target.getTargetInfo')['targetInfo']['targetId']
-        windows={'game':cdp.send('Browser.getWindowForTarget',{'targetId':game_target}),'cover':cover_cdp.send('Browser.getWindowForTarget',{'targetId':cover_target})}
-        def observed():
-            return page.evaluate(r'''()=>({hidden:document.hidden,state:document.visibilityState,events:window.__manualVisibility.slice(),
-              nativeHidden:/\[native code\]/.test(Function.prototype.toString.call(Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get)),
-              nativeVisibility:/\[native code\]/.test(Function.prototype.toString.call(Object.getOwnPropertyDescriptor(Document.prototype,'visibilityState').get))})''')
-        before_ref=persist_json('native-focus-restored',{'windows':windows,'state':observed(),'classification':'Headed Chrome under Xvfb; restore native focus on both pages. Functional clocks controlled; not background throttling/time/performance evidence.'})
-        check('cover and game are distinct real tabs in the same headed Chrome window',game_target!=cover_target and windows['game']['windowId']==windows['cover']['windowId'],before_ref)
-        other.bring_to_front(); persist_json('hidden-first-observation',observed())
-        try:
-            page.wait_for_function('document.hidden && document.visibilityState === "hidden" && window.__manualVisibility.some(e=>e.trusted&&e.hidden&&e.state==="hidden")',timeout=5000,polling=50)
-        finally: hidden_value=observed(); hidden_ref=persist_json('hidden-final-observation',hidden_value)
-        hidden=page.evaluate('document.visibilityState')
-        check('real hidden getter and trusted visibilitychange are established without emulation',hidden=='hidden' and hidden_value['nativeHidden'] and hidden_value['nativeVisibility'] and any(e['trusted'] and e['hidden'] for e in hidden_value['events']),hidden_ref)
-        page.bring_to_front(); persist_json('resume-first-observation',observed())
-        try:
-            page.wait_for_function('!document.hidden && document.visibilityState === "visible" && window.__manualVisibility.some(e=>e.trusted&&!e.hidden&&e.state==="visible")',timeout=5000,polling=50)
-        finally: resumed=observed(); resumed_ref=persist_json('resume-final-observation',resumed)
-        advance(page); after=card(page,unit)
-        ref=persist_json('native-hidden-resume',{'hidden':hidden_value,'resumed':resumed,'card':after,'expected':expected,'hiddenEvidence':hidden_ref,'resumedEvidence':resumed_ref})
-        check('actual hidden/resume cannot resurrect a consumed payment',hidden=='hidden' and resumed['state']=='visible' and not resumed['hidden'] and after['payDisabled'],ref)
-        whole_state('hidden-resume-entire-state',save(page),expected); other.close()
+    global active_context,active_page,context_lifecycle,clock_calls
+    begin_case('SYNTHETIC-consumed-native-hidden-resume'); fixture=fixtures['synthetic']['all-unlocked']
+    active_context=active_page=None
+    request={'schema':'infinity-manual-unit-hidden-input-v1','url':args.url,'chromium':args.chromium,
+      'expectedSha':args.expected_sha,'expectedVersion':CANDIDATE_VERSION,'expectedBrowserVersion':browser.version,
+      'key':KEY,'initialRaw':fixture['raw'],'beforeState':fixture['expected'],'expectedState':fixture['positive']['small_cargo']['expected'],
+      'clockScript':CLOCK.replace('__EPOCH__',str(json.loads(fixture['raw'])['savedAt'])),
+      'expectedRelease':release_metadata,'evidenceRoot':str(out)}
+    input_ref=persist_json('raw-native-hidden-input',request); input_path=out/input_ref['file']
+    child_dir=scenario_directory()/'native-hidden'; started=time.monotonic(); process=None; stdout=stderr=b''; owned_group=None; invocation={}
+    set_phase('independent-headed-native-hidden')
+    try:
+        process=subprocess.Popen(['node',str(ROOT/'scripts/browser-manual-unit-hidden.mjs'),'--input',str(input_path),'--output',str(child_dir)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        invocation={'pid':process.pid,'input':input_ref,'outputDirectory':str(child_dir.relative_to(out)),'startedHostMonotonic':started}
+        ownership=child_dir/'chrome-owner.json'
+        until=min(started+5,started+50)
+        while not ownership.exists() and process.poll() is None and time.monotonic()<until: time.sleep(.02)
+        if ownership.exists():
+            if ownership.is_symlink(): raise AssertionError('Hidden ownership must be an ordinary file')
+            owner=json.loads(ownership.read_text())
+            if owner.get('schema')!='infinity-manual-unit-hidden-owner-v1' or owner.get('nodePid')!=process.pid or owner.get('parentPid')!=os.getpid() or owner.get('inputSha256')!=input_ref['sha256'] or type(owner.get('chromePid')) is not int or owner['chromePid']<=1 or owner.get('pgid')!=owner['chromePid']:
+                raise AssertionError('Owned hidden Chrome group identity mismatch')
+            if os.getpgid(owner['chromePid'])!=owner['chromePid']: raise AssertionError('Hidden Chrome must own its registered group')
+            owned_group=owner['chromePid']; invocation['ownedProcess']=owner
+        elif process.poll() is None: raise TimeoutError('Hidden Chrome ownership was not registered within five seconds')
+        stdout,stderr=process.communicate(timeout=max(.001,50-(time.monotonic()-started)))
+        invocation['returncode']=process.returncode
+    finally:
+        # Only groups established by this Popen and its verified launch handshake.
+        for group in (owned_group,process.pid if process is not None else None):
+            if group is None: continue
+            try:
+                os.killpg(group,0); invocation.setdefault('forcedCleanupGroups',[]).append(group)
+                os.killpg(group,signal.SIGTERM)
+                until=time.monotonic()+.5
+                while time.monotonic()<until:
+                    try: os.killpg(group,0)
+                    except ProcessLookupError: break
+                    time.sleep(.02)
+                try: os.killpg(group,signal.SIGKILL)
+                except ProcessLookupError: pass
+            except ProcessLookupError: pass
+        if process is not None:
+            if process.poll() is None: process.wait(timeout=2)
+            if not stdout and not stderr:
+                stdout,stderr=process.communicate(timeout=1)
+        invocation['endedHostMonotonic']=time.monotonic()
+        invocation['stdout']=original_bytes('native-hidden-child-stdout',stdout,'txt')
+        invocation['stderr']=original_bytes('native-hidden-child-stderr',stderr,'txt')
+        persist_json('native-hidden-owned-invocation',invocation)
+    child_path=child_dir/'report.json'
+    if child_path.is_symlink(): raise AssertionError('Native hidden report must be an ordinary file')
+    body=child_path.read_bytes(); child_ref=original_bytes('native-hidden-original-report',body,'json'); value=json.loads(body)
+    result_ref=persist_json('native-hidden-result-before-assertion',{'report':child_ref,'result':value,'invocation':invocation,'input':input_ref})
+    verify_file_references(value)
+    check('independent native Chrome helper completes without forced cleanup',process.returncode==0 and not invocation.get('forcedCleanupGroups'),result_ref)
+    check('independent original native hidden report satisfies full parent contract',validate_native_hidden_result(value,request,input_ref['sha256']),result_ref)
+    for row in value['checks']: check('native hidden: '+row['name'],row['passed'],row.get('detail'))
+    source_bindings.extend(value['sourceBindings']); clock_calls+=len(value['functionalAdvanceCalls'])
+    whole_state('hidden-resume-entire-state',value['finalSave']['state'],request['expectedState'])
+    set_phase('owned-native-hidden-cleanup'); complete_case()
 
 
 def transit_flight_draft(page):
