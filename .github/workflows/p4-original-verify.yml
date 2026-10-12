@@ -13,11 +13,11 @@ concurrency:
 env:
   PYTHONDONTWRITEBYTECODE: "1"
 jobs:
-  # All three independent game jobs are mandatory; no source-only skip is a release.
+  # All four independent game jobs are mandatory; no source-only skip is a release.
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    # Preserve every old gate/watchdog; only native orbital acceptance runs in parallel.
+    # Preserve every old gate/watchdog; native protection and continuation use separate runners.
     # Existing 45-minute total remains unchanged.
     timeout-minutes: 45
     outputs:
@@ -59,6 +59,7 @@ jobs:
           python -m unittest discover -s scripts -p 'test_npc_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_npc_attack_acceptance.py' -v
           python -m unittest discover -s scripts -p 'test_parallel_gate_identity.py' -v
+          python -m unittest discover -s scripts -p 'test_parallel_legacy_gate_split.py' -v
           python -m unittest discover -s scripts -p 'test_scout_fixture_identity.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
@@ -423,7 +424,7 @@ jobs:
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-scout-rehearsal" > save-session-review-save.json
           # Independent render/context gate runs first after all services and common fixtures are ready.
           python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
-          # Complete quota, orbital, save and later native/performance gates still follow unchanged.
+          # Core protection gates follow here; the unchanged continuation and paired performance run independently.
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
@@ -437,6 +438,532 @@ jobs:
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
           # Current controls must mirror protected SaveSession permissions immediately.
           python scripts/browser-ring-protection.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --expect synchronized-controls --output ring-protection-evidence
+          # Remaining independent old suites and complete performance samples run in verify-continuation.
+      - name: Archive exact readable source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-deep-${{ github.sha }}
+          path: |
+            dist
+            source.zip
+            browser-evidence
+            space-evidence
+            deep-evidence
+            ring-evidence
+            dashboard-evidence
+            save-session-evidence
+            prepared-file-import-evidence
+            ring-automation-evidence
+            orders-evidence
+            order-quotes-evidence
+            order-quotes-review-save.json
+            transport-load-evidence
+            transport-load-review-save.json
+            orders-transport-evidence
+            building-authority-build
+            building-authority-evidence
+            building-authority-server.log
+            building-templates-evidence
+            building-templates-review-save.json
+            research-templates-evidence
+            formations-evidence
+            prestige-preview-evidence
+            prestige-preview-review-save.json
+            expansion-navigation-evidence
+            expansion-navigation-review-save.json
+            accounted-clock-evidence
+            accounted-clock-review-save.json
+            native-background-evidence
+            native-background-review-save.json
+            deep-fixtures
+            test-results.json
+            natural-growth-report.json
+            natural-growth-report.log
+            natural-ring-report.json
+            natural-ring-report.log
+            natural-ring-browser-evidence
+            ring-protection-evidence
+            original-ui-report.json
+            parity-report.json
+            prestige-parity-report.json
+            save-revision-report.json
+            demolition-save-revision-report.json
+            npc-adopted-clock-report.json
+            npc-economy-review-save.json
+            npc-economy-evidence
+            npc-source-evidence
+            npc-attack-source-evidence
+            npc-attack-natural-report.json
+            npc-attack-natural-report.sha256.txt
+            npc-attack-native-report.json
+            npc-attack-native-report.sha256.txt
+            npc-attack-evidence
+            orbital-identity.json
+            common-identity.json
+            transport-save-revision-report.json
+            templates-save-revision-report.json
+            building-templates-save-revision-report.json
+            terraformer-save-revision-report.json
+            demolition-natural-report.json
+            demolition-natural-report.log
+            demolition-natural-report.sha256.txt
+            demolition-review-save.json
+            demolition-evidence/**
+            demolition-migration-report.json
+            demolition-spec-goldens-report.json
+            terraformer-migration-report.json
+            terraformer-migration-review.json
+            terraformer-origin-growth-report.json
+            terraformer-origin-growth-report.log
+            natural-terraformer-report.json
+            natural-terraformer-report.log
+            terraformer-review-save.json
+            terraformer-evidence
+            research-network-origin-terraformer-report.json
+            research-network-origin-terraformer-report.log
+            research-network-origin-terraformer-report.sha256.txt
+            research-network-provenance.json
+            natural-research-network-report.json
+            natural-research-network-report.log
+            natural-research-network-report.sha256.txt
+            research-network-review-save.json
+            research-network-browser-fixture.log
+            research-network-browser.log
+            research-network-evidence
+            formations-save-revision-report.json
+            order-migration-report.json
+            balance-report.txt
+            preview.log
+            before-build.log
+            before-preview.log
+            census-before-build.log
+            census-before-preview.log
+            shipyard-census-parity-report.json
+            building-templates-before-build.log
+            building-templates-before-preview.log
+            migration-quota-evidence
+            performance-r8-source-save.json
+            render-scheduling-r8-source-save.json
+            performance-review-save.json
+            presentation-model-report.json
+            render-scheduling-review-save.json
+            render-scheduling-evidence
+            presentation-performance-evidence
+          retention-days: 7
+          if-no-files-found: error
+
+  verify-continuation:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    # Preserve every old gate/watchdog; native protection and continuation use separate runners.
+    # Existing 45-minute total remains unchanged.
+    timeout-minutes: 45
+    outputs:
+      orbital-identity-sha256: ${{ steps.orbital_identity.outputs.sha256 }}
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Independent ordinary demolition price and time goldens
+        run: |
+          python scripts/demolition-spec-goldens.py > demolition-spec-goldens-report.json
+          cmp tests/fixtures/demolition-spec-goldens.json demolition-spec-goldens-report.json
+      - name: Offline production observer shape contract
+        run: python -m unittest discover -s scripts -p 'test_ring_protection_observer.py' -v
+      - name: Offline native target preparation and live failure evidence
+        run: python -m unittest discover -s scripts -p 'test_terraformer_native_preparation.py' -v
+      - name: Offline exact terraformer order-option projection contract
+        run: python -m unittest discover -s scripts -p 'test_render_order_target_parity.py' -v
+      - name: Offline strict demolition provenance and null migration contract
+        run: |
+          python -m unittest discover -s scripts -p 'test_demolition_domain_provenance.py' -v
+          python -m unittest discover -s scripts -p 'test_r11_compatibility.py' -v
+          node --test scripts/test-r11-compatibility.mjs
+          node --test scripts/test-r12-compatibility.mjs
+          node --test scripts/test-r13-compatibility.mjs
+          python -m unittest discover -s scripts -p 'test_r13_compatibility.py' -v
+          node --test scripts/test-r14-compatibility.mjs
+          python -m unittest discover -s scripts -p 'test_r14_compatibility.py' -v
+          python -m unittest discover -s scripts -p 'test_npc_display_contract.py' -v
+          python -m unittest discover -s scripts -p 'test_npc_attack_acceptance.py' -v
+          python -m unittest discover -s scripts -p 'test_parallel_gate_identity.py' -v
+          python -m unittest discover -s scripts -p 'test_parallel_legacy_gate_split.py' -v
+          python -m unittest discover -s scripts -p 'test_scout_fixture_identity.py' -v
+          python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
+          python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_native_frame_trace.py' -v
+          python -m unittest discover -s scripts -p 'test_npc_export_preparation.py' -v
+          python -m unittest discover -s scripts -p 'test_migration_quota_progress.py' -v
+      - name: Natural growth across curvature and role reassignment
+        run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
+      - name: Natural manual-to-bounded ring progression
+        run: node --import tsx scripts/natural-ring-journey.ts > natural-ring-report.json 2> natural-ring-report.log
+      - name: Original UI and single-world regression
+        run: |
+          node scripts/check-ui-baseline.mjs > original-ui-report.json
+          mkdir -p "$RUNNER_TEMP/original-p3"
+          git archive 69eca7107980cce3c4c24ce4736a91993c051fbd | tar -x -C "$RUNNER_TEMP/original-p3"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-p3/node_modules"
+          node --import tsx scripts/check-original-parity.mjs "$RUNNER_TEMP/original-p3" > parity-report.json
+          mkdir -p "$RUNNER_TEMP/pre-orders"
+          git archive 55f7aa9e483c69901a560dd51d1b9c1ce1ad1514 | tar -x -C "$RUNNER_TEMP/pre-orders"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-orders/node_modules"
+          mkdir -p "$RUNNER_TEMP/pre-transport"
+          git archive b58c8816ad1d7e7e5e0b3d839f1668e18de22de4 | tar -x -C "$RUNNER_TEMP/pre-transport"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-transport/node_modules"
+          mkdir -p "$RUNNER_TEMP/pre-templates"
+          git archive bc6f5a475336dca1bb02d4f1061ee01ba9c5d9c4 | tar -x -C "$RUNNER_TEMP/pre-templates"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-templates/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-templates/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-transport" > transport-save-revision-report.json
+          mkdir -p "$RUNNER_TEMP/pre-formations"
+          git archive 090d3124f799f4dadb890922268c2cc1d32e9ad8 | tar -x -C "$RUNNER_TEMP/pre-formations"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-formations/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-formations/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-templates" > templates-save-revision-report.json
+          mkdir -p "$RUNNER_TEMP/pre-building-templates"
+          git archive 4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b | tar -x -C "$RUNNER_TEMP/pre-building-templates"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-building-templates/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-building-templates/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-formations" > formations-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-terraformer" f96894eb1b32737ab403890ed83fdb3da41a0644
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-terraformer/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-terraformer/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-building-templates" > building-templates-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-demolition" ac3cce98403bea1e7162bcb4092e4cfeeb448a9a
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-demolition/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-demolition/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-terraformer" > terraformer-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-npc" ca5ef0c769856f2c4c8925e76a5c7d322822fe1b
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-npc/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-demolition" > demolition-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-npc-attack" eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-npc-attack/node_modules"
+          node --import tsx "$RUNNER_TEMP/pre-npc-attack/scripts/check-save-revision-guard.mjs" "$RUNNER_TEMP/pre-npc" > npc-economy-save-revision-report.json
+          git worktree add --detach "$RUNNER_TEMP/pre-scout-rehearsal" 7554c662e3ac1f27876a60d8aa706e5d4a4dcd52
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-scout-rehearsal/node_modules"
+          node --import tsx scripts/check-save-revision-guard.mjs "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-npc" > save-revision-report.json
+          NPC_FIXTURE_DIR="$(mktemp -d /tmp/infinity-npc-fixture-reproduction.XXXXXX)"
+          node --import tsx scripts/npc-economy-r11-fixture.mjs --source-root "$RUNNER_TEMP/pre-npc" --out "$NPC_FIXTURE_DIR/npc-economy-r11.json"
+          cmp tests/fixtures/npc-economy-r11.json "$NPC_FIXTURE_DIR/npc-economy-r11.json"
+          node --import tsx scripts/check-npc-adopted-clock.mjs "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" > npc-adopted-clock-report.json
+          node --import tsx scripts/check-demolition-migration.mjs "$RUNNER_TEMP/pre-demolition" > demolition-migration-report.json
+          node --import tsx scripts/terraformer-migration-fixture.ts "$RUNNER_TEMP/pre-terraformer" terraformer-migration-review.json > terraformer-migration-report.json
+          cmp tests/fixtures/terraformer-r9.json terraformer-migration-review.json
+          mkdir -p "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3"
+          git archive 3d29c3942225e161977f4f298d970413738553f2 | tar -x -C "$RUNNER_TEMP/source-r2"
+          git archive ebf75a755aa87f0b452bf427eb6cda833e26990d | tar -x -C "$RUNNER_TEMP/source-r3"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r2/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/source-r3/node_modules"
+          node --import tsx scripts/check-order-migration.mjs "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" > order-migration-report.json
+          mkdir -p "$RUNNER_TEMP/original-r8"
+          git archive 6016391ed947e72b6e53d5307091c152c0c69079 | tar -x -C "$RUNNER_TEMP/original-r8"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/original-r8/node_modules"
+          node --import tsx scripts/check-prestige-parity.mjs "$RUNNER_TEMP/original-r8" > prestige-parity-report.json
+          npm run sim -- 60 | tee balance-report.txt
+      - name: Natural terraformer expansion on two paid planets
+        run: |
+          # Reproduce the immutable 533 report using the identical archived r9 engine and journey.
+          git diff --exit-code 53325263ddbd654b8e8b9511ec62b944fa955233 f96894eb1b32737ab403890ed83fdb3da41a0644 -- src/game src/data scripts/natural-growth-journey.ts
+          (cd "$RUNNER_TEMP/pre-terraformer" && node --import tsx scripts/natural-growth-journey.ts) > terraformer-origin-growth-report.json 2> terraformer-origin-growth-report.log
+          echo "f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826  terraformer-origin-growth-report.json" | sha256sum -c -
+          node --import tsx scripts/natural-terraformer-journey.ts --report terraformer-origin-growth-report.json --expected-report-sha256 f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826 --source-sha 53325263ddbd654b8e8b9511ec62b944fa955233 > natural-terraformer-report.json 2> natural-terraformer-report.log
+      - name: Clean pinned terraformer origin and current-source natural research network
+        shell: bash
+        env:
+          RESEARCH_NETWORK_ORIGIN_SHA: 4afa5331d6e54509a643572570dc3cd194c78ebf
+          GROWTH_ORIGIN_SHA: 53325263ddbd654b8e8b9511ec62b944fa955233
+          GROWTH_REPORT_SHA256: f331fa2e81d9fbfa2e1d86eaf710a824d8d66e6c5b738646b26c098eea97e826
+        run: |
+          # This is a fresh reproduction of exact pre-IRN source, not a retrieved
+          # immutable terraformer CI artifact or a claim that its CI was green.
+          # Keep every generated report outside both clean execution worktrees.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "$GROWTH_REPORT_SHA256  terraformer-origin-growth-report.json" | sha256sum -c -
+          git worktree add --detach "$RUNNER_TEMP/research-network-origin" "$RESEARCH_NETWORK_ORIGIN_SHA"
+          git worktree add --detach "$RUNNER_TEMP/research-network-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/research-network-origin/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/research-network-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-origin" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+          (cd "$RUNNER_TEMP/research-network-origin" && GITHUB_SHA="$RESEARCH_NETWORK_ORIGIN_SHA" node --import tsx scripts/natural-terraformer-journey.ts --report "$GITHUB_WORKSPACE/terraformer-origin-growth-report.json" --expected-report-sha256 "$GROWTH_REPORT_SHA256" --source-sha "$GROWTH_ORIGIN_SHA") > research-network-origin-terraformer-report.json 2> research-network-origin-terraformer-report.log
+          sha256sum research-network-origin-terraformer-report.json > research-network-origin-terraformer-report.sha256.txt
+          ORIGIN_REPORT_SHA256="$(cut -d' ' -f1 research-network-origin-terraformer-report.sha256.txt)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/natural-research-network-journey.ts --report "$GITHUB_WORKSPACE/research-network-origin-terraformer-report.json" --expected-report-sha256 "$ORIGIN_REPORT_SHA256" --source-sha "$RESEARCH_NETWORK_ORIGIN_SHA") > natural-research-network-report.json 2> natural-research-network-report.log
+          sha256sum natural-research-network-report.json > natural-research-network-report.sha256.txt
+          # Require the entire natural execution checkout to be clean, beyond the
+          # fixture's mandatory clean runtime-source scope and exact commit check.
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          rows = []
+          for filename, expected_sha, schema in (
+              ('research-network-origin-terraformer-report.json', os.environ['RESEARCH_NETWORK_ORIGIN_SHA'], 'infinity-natural-terraformer-journey-v1'),
+              ('natural-research-network-report.json', os.environ['GITHUB_SHA'], 'infinity-natural-research-network-journey-v1'),
+          ):
+              raw = Path(filename).read_bytes()
+              report = json.loads(raw)
+              source = report['source']
+              assert report['schema'] == schema and report['outcome']['status'] == 'passed', filename
+              assert source['sourceSha'] == source['gitHead'] == expected_sha, filename
+              assert source['worktreeStatusPorcelain'] == source['sourceScopeStatusPorcelain'] == '', filename
+              rows.append({'file': filename, 'sha256': hashlib.sha256(raw).hexdigest(), 'source': source})
+          continuation = json.loads(Path('natural-research-network-report.json').read_bytes())
+          assert continuation['origin']['sourceSha'] == rows[0]['source']['sourceSha']
+          assert continuation['origin']['reportSha256'] == continuation['origin']['expectedReportSha256'] == rows[0]['sha256']
+          Path('research-network-provenance.json').write_text(json.dumps({
+              'classification': 'Fresh reproduction of pinned pre-IRN source, followed by clean current-source IRN continuation; not a prior immutable terraformer CI artifact or a claim of prior CI success.',
+              'growthInput': {'file': 'terraformer-origin-growth-report.json', 'sourceSha': os.environ['GROWTH_ORIGIN_SHA'], 'sha256': os.environ['GROWTH_REPORT_SHA256']},
+              'reports': rows,
+              'nativeAcceptance': 'Separate mandatory browser gate; this manifest does not establish its result.',
+          }, indent=2) + '\n', encoding='utf-8')
+          PY
+          sha256sum -c research-network-origin-terraformer-report.sha256.txt natural-research-network-report.sha256.txt
+          NATURAL_REPORT_SHA256="$(cut -d' ' -f1 natural-research-network-report.sha256.txt)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/research-network-browser-fixture.ts "$GITHUB_WORKSPACE/natural-research-network-report.json" "$NATURAL_REPORT_SHA256" "$GITHUB_SHA") > research-network-review-save.json 2> research-network-browser-fixture.log
+          test -z "$(git -C "$RUNNER_TEMP/research-network-origin" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Natural paid demolition cancellation reload completion and ordinary rebuild
+        shell: bash
+        run: |
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/demolition-natural-growth.ts --origin tests/fixtures/demolition-origin-provenance.json --expected-origin-sha256 a1a8ce7985030f6a8e500755eda4d908c8834b3ecfa888197d5ef5ed8ef27f69) > demolition-natural-report.json 2> demolition-natural-report.log
+          sha256sum demolition-natural-report.json > demolition-natural-report.sha256.txt
+          DEMOLITION_HASH="$(cut -d' ' -f1 demolition-natural-report.sha256.txt)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/demolition-fixture.ts "$GITHUB_WORKSPACE/demolition-natural-report.json" "$DEMOLITION_HASH" "$GITHUB_SHA") > demolition-review-save.json
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Natural r11-source NPC research probes and two real scout arrivals
+        shell: bash
+        run: |
+          # Both old and current clean checkout identities are verified by the route.
+          # Write even failed natural reports directly to the always-archived evidence path.
+          mkdir -p npc-source-evidence
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root "$RUNNER_TEMP/pre-npc" --output "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json")
+          NPC_REPORT_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-economy-browser-fixture.ts "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" "$NPC_REPORT_HASH" "$GITHUB_SHA") > npc-economy-review-save.json
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+          sha256sum npc-source-evidence/npc-natural-r11-report.json > npc-source-evidence/npc-natural-r11-report.sha256.txt
+      - name: Frequent-reload regression for paid orbital battles, exact rights and interrupted branches
+        shell: bash
+        run: |
+          mkdir -p npc-attack-source-evidence
+          # Reproduce the unchanged released r12 route before extending it. Its
+          # exact final save is independently pinned by the current route reader.
+          (cd "$RUNNER_TEMP/pre-npc-attack" && node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root "$RUNNER_TEMP/pre-npc" --output "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json")
+          NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --output "$GITHUB_WORKSPACE/npc-attack-natural-report.json")
+          sha256sum npc-attack-natural-report.json > npc-attack-natural-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Native four-reload orbital oracle with complete independent checks
+        shell: bash
+        run: |
+          # Keep the independently run frequent-reload regression above. The browser
+          # continues live between saves and adopts state only at its four reloads.
+          NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --reload-schedule native-main-four --output "$GITHUB_WORKSPACE/npc-attack-native-report.json")
+          sha256sum npc-attack-native-report.json > npc-attack-native-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact three-job source assets and runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/research-network-current"
+      - name: Bind independent source assets and complete orbital fixture pool
+        id: orbital_identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import copy, hashlib, json, os, re, subprocess
+          from pathlib import Path
+
+          def sha(raw):
+              return hashlib.sha256(raw).hexdigest()
+
+          def canonical(value):
+              return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+          def git(root, *args):
+              return subprocess.check_output(['git', '-C', str(root), *args])
+
+          def checkout(root, expected):
+              assert git(root, 'rev-parse', 'HEAD').decode().strip() == expected
+              assert git(root, 'status', '--porcelain=v1', '--untracked-files=all') == b'', root
+              assert git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--',
+                         'src', 'scripts', 'tests', 'public', '.github') == b'', root
+              files = {}
+              for entry in git(root, 'ls-tree', '-r', '-z', expected).split(b'\0'):
+                  if not entry:
+                      continue
+                  metadata, path = entry.split(b'\t', 1)
+                  mode, kind, blob = metadata.decode().split()
+                  path = path.decode('utf-8')
+                  file = root / path
+                  assert kind == 'blob' and mode in ('100644', '100755') and not file.is_symlink(), path
+                  raw = file.read_bytes()
+                  assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == blob, path
+                  assert bool(file.stat().st_mode & 0o111) == (mode == '100755'), path
+                  files[path] = sha(raw)
+              return {'sourceSha': expected, 'srcTree': git(root, 'rev-parse', 'HEAD:src').decode().strip(),
+                      'fullTree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(), 'sourceCode': files}
+
+          expected = os.environ['GITHUB_SHA']
+          assert re.fullmatch('[0-9a-f]{40}', expected)
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          temp = Path(os.environ['RUNNER_TEMP'])
+          assert git(workspace, 'rev-parse', 'HEAD').decode().strip() == expected
+          current = checkout(temp / 'research-network-current', expected)
+          ca5 = checkout(temp / 'pre-npc', 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b')
+          eef = checkout(temp / 'pre-npc-attack', 'eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81')
+          # Build checkout can contain generated evidence, but every tracked source byte
+          # must equal the independently clean execution checkout and exact Git blobs.
+          for path, digest in current['sourceCode'].items():
+              assert not (workspace / path).is_symlink()
+              assert sha((workspace / path).read_bytes()) == digest, path
+          assert git(workspace, 'diff', 'HEAD', '--') == b''
+          release_raw = (workspace / 'dist/release.json').read_bytes()
+          release = json.loads(release_raw)
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
+                    for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
+          assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
+          reports = {}
+          raw_hashes = {}
+          for name, path, producer in (
+              ('r12', workspace / 'npc-attack-source-evidence/r12-natural-report.json', eef),
+              ('native', workspace / 'npc-attack-native-report.json', current),
+          ):
+              raw = path.read_bytes()
+              report = json.loads(raw)
+              raw_hashes[name] = sha(raw)
+              assert report['outcome']['status'] == 'passed'
+              assert report['checks'] and all(check['passed'] is True for check in report['checks'])
+              assert report['source']['sourceSha'] == report['source']['gitHead'] == producer['sourceSha']
+              assert report['source']['sourceScopeStatusPorcelain'] == ''
+              assert {row['path']: row['sha256'] for row in report['source']['sourceFiles']} == {
+                  path: digest for path, digest in producer['sourceCode'].items() if path.startswith('src/')}
+              reports[name] = report
+          r12, native = reports['r12'], reports['native']
+          common = json.loads((workspace / 'common-identity.json').read_bytes())
+          assert common['identitySha256'] == sha(canonical(common['identity']))
+          assert common['identity']['source']['sourceSha'] == expected
+          assert r12['source']['runtimeNode'] == common['identity']['runtimeNode']
+          assert r12['schema'] == 'infinity-npc-natural-r11-route-v1'
+          assert r12['source']['worktreeStatusPorcelain'] == ''
+          assert r12['source']['historicalProducer']['sourceSha'] == ca5['sourceSha']
+          assert r12['source']['historicalProducer']['srcTree'] == ca5['srcTree']
+          assert r12['source']['scriptSha256'] == eef['sourceCode']['scripts/npc-natural-r11-route.mjs']
+          assert r12['source']['packageSha256'] == eef['sourceCode']['package.json']
+          assert r12['source']['lockSha256'] == eef['sourceCode']['package-lock.json']
+          assert native['schema'] == 'infinity-npc-attack-natural-route-v2'
+          assert native['source']['scriptSha256'] == current['sourceCode']['scripts/npc-attack-natural-route.ts']
+          assert native['source']['baseReportSha256'] == raw_hashes['r12']
+          assert native['source']['historicalProducer']['sourceSha'] == eef['sourceSha']
+          assert native['source']['historicalProducer']['srcTree'] == eef['srcTree']
+          assert native['source']['reloadSchedule'] == native['reloadSchedule']['mode'] == 'native-main-four'
+          assert native['outcome']['mainStatus'] == 'passed'
+          assert sha(native['originalSaveRaw'].encode('utf-8')) == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
+          # Independently produced full reports have different host timing. Exclude only
+          # the exact operational fields below, retaining ALL assertions, state, raw
+          # saves, natural/synthetic branches, money witnesses and game-clock values.
+          # The native raw base-report hash is verified above, recorded below, and is
+          # replaced for cross-job identity by the separately canonicalized full r12 body.
+          pool = copy.deepcopy(reports)
+          del pool['r12']['timing']['startedAt']
+          del pool['r12']['timing']['wallElapsedSeconds']
+          del pool['native']['timing']['wallElapsedSeconds']
+          pool['native']['source']['baseReportSha256'] = sha(canonical(pool['r12']))
+          identity = {'schema': 'infinity-parallel-orbital-identity-v1',
+                      'sourceSha': expected, 'srcTree': current['srcTree'],
+                      'current': current, 'ca5': ca5, 'eef': eef, 'assets': assets,
+                      'releaseSha256': sha(release_raw),
+                      'sourceZipSha256': sha(git(workspace, 'archive', '--format=zip', '--prefix=Infinity/', 'HEAD')),
+                      'fixturePoolSha256': sha(canonical(pool)),
+                      'fixturePoolReportSha256': {name: sha(canonical(report)) for name, report in pool.items()},
+                      'excludedOperationalFields': ['r12.timing.startedAt', 'r12.timing.wallElapsedSeconds',
+                          'native.timing.wallElapsedSeconds'],
+                      'canonicalizedLink': 'native.source.baseReportSha256 = SHA256(canonical complete r12 report)'}
+          identity_hash = sha(canonical(identity))
+          manifest = {'identitySha256': identity_hash, 'identity': identity,
+                      'rawReportSha256': raw_hashes,
+                      'classification': 'Independent same-SHA reproduction; identity only. Both mandatory jobs must pass; this manifest alone never establishes native acceptance.'}
+          (workspace / 'orbital-identity.json').write_bytes(canonical(manifest) + b'\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('sha256=' + identity_hash + '\n')
+          print(json.dumps({'identitySha256': identity_hash, 'sourceSha': expected,
+                            'srcTree': current['srcTree'], 'fixturePoolSha256': identity['fixturePoolSha256']}))
+          PY
+      - name: Exact before source and legal combined performance fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/pre-performance"
+          git archive 4a4a4d68d0a0cf467f10a734a690606487acd327 | tar -x -C "$RUNNER_TEMP/pre-performance"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-performance/node_modules"
+          (cd "$RUNNER_TEMP/pre-performance" && GITHUB_SHA=4a4a4d68d0a0cf467f10a734a690606487acd327 npm run build) > before-build.log 2>&1
+          node --import tsx "$RUNNER_TEMP/pre-building-templates/scripts/performance-fixture.ts" > performance-r8-source-save.json
+          node --import tsx scripts/prepare-r9-performance.mjs --r8-source "$RUNNER_TEMP/pre-building-templates" --fixture performance-r8-source-save.json > performance-review-save.json
+          node --import tsx scripts/benchmark-presentation.mjs --fixture performance-review-save.json --before-source "$RUNNER_TEMP/pre-performance" > presentation-model-report.json
+          node --import tsx "$RUNNER_TEMP/pre-building-templates/scripts/render-scheduling-fixture.ts" > render-scheduling-r8-source-save.json
+          node --import tsx scripts/prepare-r9-performance.mjs --r8-source "$RUNNER_TEMP/pre-building-templates" --fixture render-scheduling-r8-source-save.json > render-scheduling-review-save.json
+          mkdir -p "$RUNNER_TEMP/pre-census"
+          git archive 8c19d044fb3c38c601223cd55272c6570c08525d | tar -x -C "$RUNNER_TEMP/pre-census"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/pre-census/node_modules"
+          (cd "$RUNNER_TEMP/pre-census" && GITHUB_SHA=8c19d044fb3c38c601223cd55272c6570c08525d npm run build) > census-before-build.log 2>&1
+          node --import tsx scripts/check-shipyard-census-parity.mjs "$RUNNER_TEMP/pre-census" performance-review-save.json render-scheduling-review-save.json > shipyard-census-parity-report.json
+          (cd "$RUNNER_TEMP/pre-building-templates" && GITHUB_SHA=4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b npm run build) > building-templates-before-build.log 2>&1
+          python scripts/browser-presentation-performance.py --watchdog-self-test
+      - name: Prepare isolated building authority comparison
+        run: node scripts/prepare-building-authority.mjs --source . --output building-authority-build
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Independent native continuation and complete paired performance
+        run: |
+          node --import tsx scripts/p4-1-fixture.ts > p4-1-review-save.json
+          node --import tsx scripts/space-fixture.ts > space-review-save.json
+          mkdir -p deep-fixtures
+          for scenario in pirate alien merchant blackhole-protected blackhole-risk; do
+            node --import tsx scripts/deep-fixture.ts "$scenario" > "deep-fixtures/$scenario.json"
+          done
+          npm run preview -- --host 127.0.0.1 --port 4173 > preview.log 2>&1 &
+          SERVER_PID=$!
+          (cd "$RUNNER_TEMP/pre-performance" && npm run preview -- --host 127.0.0.1 --port 4174) > before-preview.log 2>&1 &
+          BEFORE_PID=$!
+          (cd "$RUNNER_TEMP/pre-census" && npm run preview -- --host 127.0.0.1 --port 4175) > census-before-preview.log 2>&1 &
+          CENSUS_BEFORE_PID=$!
+          (cd "$RUNNER_TEMP/pre-building-templates" && npm run preview -- --host 127.0.0.1 --port 4176) > building-templates-before-preview.log 2>&1 &
+          BUILDING_BEFORE_PID=$!
+          python -m http.server 4177 --bind 127.0.0.1 --directory building-authority-build > building-authority-server.log 2>&1 &
+          AUTHORITY_PID=$!
+          trap 'kill "$SERVER_PID" "$BEFORE_PID" "$CENSUS_BEFORE_PID" "$BUILDING_BEFORE_PID" "$AUTHORITY_PID" || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4174/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4175/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4176/Infinity/release.json > /dev/null; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4177/provenance.json > /dev/null; then break; fi
+            sleep 1
+          done
+          # Generate common inputs after every required HTTP service is ready.
+          node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-scout-rehearsal" > save-session-review-save.json
+          # This independent runner owns the unchanged continuation after the core protection suites.
           python scripts/browser-demolition.py --url http://127.0.0.1:4173/Infinity/ --fixture demolition-review-save.json --natural-report demolition-natural-report.json --expected-report-sha256 "$(cut -d' ' -f1 demolition-natural-report.sha256.txt)" --expected-sha "$GITHUB_SHA" --output demolition-evidence
           node --import tsx scripts/order-quotes-fixture.ts > order-quotes-review-save.json
           python scripts/browser-order-quotes.py --url http://127.0.0.1:4173/Infinity/ --fixture order-quotes-review-save.json --expected-sha "$GITHUB_SHA" --output order-quotes-evidence
@@ -488,7 +1015,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: original-deep-${{ github.sha }}
+          name: original-deep-continuation-${{ github.sha }}
           path: |
             dist
             source.zip
@@ -924,18 +1451,18 @@ jobs:
     # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
     # The existing [deep-source] source-only convention never constitutes release acceptance.
     if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
-    needs: [verify, npc-orbital, scout-rehearsal]
+    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require all three jobs and exact source asset runtime and fixture identities
+      - name: Require all four jobs and exact source asset runtime and fixture identities
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python - <<'PYCODE'
           import json, os, re
           jobs = json.loads(os.environ['JOB_RESULTS'])
-          assert set(jobs) == {'verify', 'npc-orbital', 'scout-rehearsal'}, jobs
+          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal'}, jobs
           for name, job in jobs.items():
               assert job['result'] == 'success', (name, job['result'])
           def hashes_for(names, key):
@@ -944,7 +1471,7 @@ jobs:
               assert len(set(hashes)) == 1, (key, hashes)
               return hashes[0]
           common = hashes_for(jobs, 'common-identity-sha256')
-          orbital = hashes_for(('verify', 'npc-orbital'), 'orbital-identity-sha256')
+          orbital = hashes_for(('verify', 'verify-continuation', 'npc-orbital'), 'orbital-identity-sha256')
           scout = hashes_for(('scout-rehearsal',), 'scout-fixture-sha256')
           print(json.dumps({'status':'passed','sameSourceAssetsRuntime':common,'sameCompleteOrbitalFixturePool':orbital,'completeScoutFixtures':scout}))
           PYCODE

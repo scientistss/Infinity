@@ -183,7 +183,8 @@ class NativeReloadScheduleContract(unittest.TestCase):
 
     def test_schedules_have_separate_outputs_and_both_complete_ci_gates(self):
         workflow = (ROOT / '.github/workflows/p4-original-verify.yml').read_text()
-        verify = workflow.split('  verify:\n', 1)[1].split('  npc-orbital:\n', 1)[0]
+        verify = workflow.split('  verify:\n', 1)[1].split('  verify-continuation:\n', 1)[0]
+        continuation = workflow.split('  verify-continuation:\n', 1)[1].split('  npc-orbital:\n', 1)[0]
         orbital = workflow.split('  npc-orbital:\n', 1)[1].split('  scout-rehearsal:\n', 1)[0]
         aggregate = workflow.split('  required-gates:\n', 1)[1]
         calls = [line for line in verify.splitlines() if 'node --import tsx scripts/npc-attack-natural-route.ts ' in line]
@@ -194,8 +195,11 @@ class NativeReloadScheduleContract(unittest.TestCase):
         self.assertIn('--output "$GITHUB_WORKSPACE/npc-attack-native-report.json"', calls[1])
         independent = [line for line in orbital.splitlines() if 'node --import tsx scripts/npc-attack-natural-route.ts ' in line]
         self.assertEqual(independent, [calls[1]])
-        self.assertEqual(sum('node --import tsx scripts/npc-attack-natural-route.ts ' in line for line in workflow.splitlines()), 3)
+        continuation_calls = [line for line in continuation.splitlines() if 'node --import tsx scripts/npc-attack-natural-route.ts ' in line]
+        self.assertEqual(continuation_calls, calls)
+        self.assertEqual(sum('node --import tsx scripts/npc-attack-natural-route.ts ' in line for line in workflow.splitlines()), 5)
         self.assertNotIn('python scripts/browser-npc-attack.py ', verify)
+        self.assertNotIn('python scripts/browser-npc-attack.py ', continuation)
         browsers = [line.strip() for line in workflow.splitlines() if 'python scripts/browser-npc-attack.py ' in line]
         self.assertEqual(browsers, [
             'python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ '
@@ -204,10 +208,11 @@ class NativeReloadScheduleContract(unittest.TestCase):
             '--expected-sha "$GITHUB_SHA" --output npc-attack-evidence'])
         self.assertIn(browsers[0], orbital)
         self.assertIn('    timeout-minutes: 45\n', verify)
+        self.assertIn('    timeout-minutes: 45\n', continuation)
         self.assertIn('    timeout-minutes: 25\n', orbital)
         self.assertNotIn('continue-on-error', workflow)
         condition = "    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')"
-        for job in (verify, orbital):
+        for job in (verify, continuation, orbital):
             self.assertIn(condition, job)
             self.assertIn('          ref: ${{ github.sha }}', job)
             self.assertIn('          fetch-depth: 0', job)
@@ -223,9 +228,10 @@ class NativeReloadScheduleContract(unittest.TestCase):
             self.assertIn("pool['native']['source']['baseReportSha256'] = sha(canonical(pool['r12']))", job)
             self.assertIn("native['source']['baseReportSha256'] == raw_hashes['r12']", job)
         self.assertIn('            npc-attack-natural-report.json', verify)
+        self.assertIn('            npc-attack-natural-report.json', continuation)
         self.assertIn('test "$READY" = 1', orbital)
         self.assertIn('name: npc-orbital-${{ github.sha }}', orbital)
-        self.assertIn('needs: [verify, npc-orbital, scout-rehearsal]', aggregate)
+        self.assertIn('needs: [verify, verify-continuation, npc-orbital, scout-rehearsal]', aggregate)
         self.assertIn("always() && (github.event_name != 'push'", aggregate)
         self.assertIn("assert job['result'] == 'success'", aggregate)
         self.assertIn('assert len(set(hashes)) == 1', aggregate)

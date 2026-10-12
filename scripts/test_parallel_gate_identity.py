@@ -29,15 +29,16 @@ def gate(jobs):
         exec(compile(AGGREGATE,'<actual-required-gates>','exec'),{})
 
 
-class ThreeJobGateTests(unittest.TestCase):
+class FourJobGateTests(unittest.TestCase):
     def jobs(self):
         return {
             'verify':{'result':'success','outputs':{'common-identity-sha256':'a'*64,'orbital-identity-sha256':'b'*64}},
+            'verify-continuation':{'result':'success','outputs':{'common-identity-sha256':'a'*64,'orbital-identity-sha256':'b'*64}},
             'npc-orbital':{'result':'success','outputs':{'common-identity-sha256':'a'*64,'orbital-identity-sha256':'b'*64}},
             'scout-rehearsal':{'result':'success','outputs':{'common-identity-sha256':'a'*64,'scout-fixture-sha256':'c'*64}},
         }
 
-    def test_all_three_success_with_exact_common_and_orbital_identity(self):
+    def test_all_four_success_with_exact_common_and_orbital_identity(self):
         gate(self.jobs())
 
     def test_each_failure_cancel_skip_missing_extra_or_empty_job_is_refused(self):
@@ -63,9 +64,9 @@ class ThreeJobGateTests(unittest.TestCase):
                     with self.subTest(name=name,key=key,mismatch=True),self.assertRaises(AssertionError):gate(jobs)
 
     def test_workflow_has_independent_bounded_jobs_and_one_unmodified_orbital_browser(self):
-        for name,minutes in (('verify',45),('npc-orbital',25),('scout-rehearsal',25)):
+        for name,minutes in (('verify',45),('verify-continuation',45),('npc-orbital',25),('scout-rehearsal',25)):
             job=WORKFLOW.split('  '+name+':\n',1)[1]
-            next_names=[p for p in ('\n  verify:\n','\n  npc-orbital:\n','\n  scout-rehearsal:\n','\n  required-gates:\n') if p in job]
+            next_names=[p for p in ('\n  verify:\n','\n  verify-continuation:\n','\n  npc-orbital:\n','\n  scout-rehearsal:\n','\n  required-gates:\n') if p in job]
             if next_names:job=job[:min(job.index(p) for p in next_names)]
             self.assertNotIn('    needs:',job)
             self.assertIn(f'    timeout-minutes: {minutes}\n',job)
@@ -76,7 +77,7 @@ class ThreeJobGateTests(unittest.TestCase):
         self.assertNotIn('continue-on-error',WORKFLOW)
         self.assertEqual(WORKFLOW.count('python scripts/browser-npc-attack.py '),1)
         self.assertEqual(WORKFLOW.count('python scripts/browser-scout-rehearsal.py '),1)
-        self.assertIn('needs: [verify, npc-orbital, scout-rehearsal]',WORKFLOW)
+        self.assertIn('needs: [verify, verify-continuation, npc-orbital, scout-rehearsal]',WORKFLOW)
         self.assertIn('PYTHONDONTWRITEBYTECODE: "1"',WORKFLOW)
         self.assertIn('--scout-fixtures',WORKFLOW)
 
