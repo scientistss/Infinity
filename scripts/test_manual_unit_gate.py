@@ -1,4 +1,4 @@
-"""Exact six-job mandatory wiring. Python/Git only; never native or CI acceptance.
+"""Exact seven-job wiring and fully audited historical six-job mandatory wiring. Python/Git only; never native or CI acceptance.
 Every byte of the historical five-job workflow is projected only after its
 precise approved version transitions, sixth job and aggregate changes pass.
 """
@@ -122,6 +122,117 @@ MANUAL_JOB = r'''  manual-unit-orders:
 '''
 
 
+SIX_BASE_SHA = '123785c4f7fdb57a3968012d81aab74f6a3ad18b'
+SIX_BASE_WORKFLOW_SHA256 = 'e16b5d79140bdca65f58015e78f35268630910d6b7782906ef731be53eea0349'
+MANUAL_GROUPS = ('payments', 'authority')
+SEVEN_JOBS = (*OLD_JOBS, 'manual-unit-payments', 'manual-unit-authority')
+
+
+def six_workflow():
+    raw = subprocess.check_output(['git','-C',str(ROOT),'show',SIX_BASE_SHA+':'+WORKFLOW_PATH])
+    assert hashlib.sha256(raw).hexdigest()==SIX_BASE_WORKFLOW_SHA256, 'Pinned original six-job workflow drift'
+    return raw.decode()
+
+
+def split_job(group):
+    assert group in MANUAL_GROUPS
+    job=MANUAL_JOB
+    for before,after in (
+        ('  manual-unit-orders:\n','  manual-unit-'+group+':\n'),
+        ('          name: manual-unit-orders-${{ github.sha }}\n','          name: manual-unit-'+group+'-${{ github.sha }}\n'),
+        ('      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}\n',
+         '      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}\n'
+         '      manual-fixture-sha256: ${{ steps.manual_census.outputs.manual-fixture-sha256 }}\n'
+         '      manual-census-json: ${{ steps.manual_census.outputs.manual-census-json }}\n'),
+        ("          python -m unittest discover -s scripts -p 'test_manual_unit_gate.py' -v 2>&1 | tee \"$RUNNER_TEMP/manual-unit-gate.log\"\n",
+         "          python -m unittest discover -s scripts -p 'test_manual_unit_gate.py' -v 2>&1 | tee \"$RUNNER_TEMP/manual-unit-gate.log\"\n"
+         "          python -m unittest discover -s scripts -p 'test_manual_unit_census.py' -v 2>&1 | tee \"$RUNNER_TEMP/manual-unit-census.log\"\n"),
+        ('          xvfb-run -a python scripts/browser-manual-unit-orders.py --url ',
+         '          xvfb-run -a python scripts/browser-manual-unit-orders.py --group '+group+' --url '),
+        ('      - name: Archive exact readable manual unit source\n',
+         '      - name: Verify actual completed native group census and complete original fixture binding\n'
+         '        id: manual_census\n'
+         '        run: python scripts/manual_unit_census.py report --group '+group+' --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json\n'
+         '      - name: Archive exact readable manual unit source\n'),
+        ('            common-identity.json\n','            common-identity.json\n            manual-unit-census.json\n'),
+        ('      - uses: actions/upload-artifact@v4\n',
+         '      - name: Collect offline logs under the exact workspace artifact root\n'
+         '        if: always()\n'
+         '        run: |\n'
+         '          mkdir -p manual-unit-offline-logs\n'
+         '          for logfile in "$RUNNER_TEMP"/manual-unit-*.log; do\n'
+         '            if test -f "$logfile"; then cp "$logfile" manual-unit-offline-logs/; fi\n'
+         '          done\n'
+         '      - uses: actions/upload-artifact@v4\n'),
+        ('            ${{ runner.temp }}/manual-unit-*.log\n','            manual-unit-offline-logs\n'),
+    ):
+        job=exact_replace(job,before,after)
+    return job
+
+
+AGGREGATE_ARTIFACT_STEPS = r'''      - name: Checkout exact source for independent original-artifact census verification
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download exact same-run payments artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manual-unit-payments-${{ github.sha }}
+          path: ${{ runner.temp }}/manual-unit-payments-artifact
+      - name: Download exact same-run authority artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manual-unit-authority-${{ github.sha }}
+          path: ${{ runner.temp }}/manual-unit-authority-artifact
+      - name: Recompute source fixture and complete scenario census from both original native artifacts
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/manual_unit_census.py aggregate --payments "$RUNNER_TEMP/manual-unit-payments-artifact" --authority "$RUNNER_TEMP/manual-unit-authority-artifact" --expected-sha "$GITHUB_SHA" --output manual-unit-aggregate-census.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-unit-aggregate-census-${{ github.sha }}
+          path: manual-unit-aggregate-census.json
+          retention-days: 7
+          if-no-files-found: error
+'''
+
+
+def expected_split_workflow(baseline):
+    assert hashlib.sha256(baseline.encode()).hexdigest()==SIX_BASE_WORKFLOW_SHA256, 'Pinned six-job workflow bytes differ'
+    assert baseline==expected_workflow(baseline_workflow()), 'Original six-to-five workflow contract differs'
+    result=exact_replace(baseline,MANUAL_JOB,split_job('payments')+split_job('authority'))
+    for before,after in (
+        ('    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-orders]\n',
+         '    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority]\n'),
+        ('      - name: Require all six jobs and exact source asset runtime and fixture identities\n',
+         '      - name: Require all seven jobs and exact source asset runtime and fixture identities\n'),
+        ("          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-orders'}, jobs\n",
+         "          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority'}, jobs\n"),
+    ):
+        result=exact_replace(result,before,after)
+    # The final original aggregate Python terminator is the only insertion point.
+    marker='          PYCODE\n'
+    assert result.endswith(marker)
+    return result+AGGREGATE_ARTIFACT_STEPS
+
+
+def assert_split_gate(workflow,baseline):
+    assert workflow==expected_split_workflow(baseline), 'unapproved seven-job workflow drift'
+
+
+def previous_six_workflow(workflow=None):
+    """Audit every actual seven-job byte before exposing the frozen six-job contract."""
+    if workflow is None: workflow=(ROOT/WORKFLOW_PATH).read_bytes().decode()
+    baseline=six_workflow()
+    assert_split_gate(workflow,baseline)
+    assert_release_transitions()
+    return baseline
+
+
+
 def baseline_bytes(path):
     return subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{BASE_SHA}:{path}'])
 
@@ -178,7 +289,7 @@ def assert_release_transitions():
 
 def previous_workflow(workflow=None):
     if workflow is None:
-        workflow = (ROOT / WORKFLOW_PATH).read_bytes().decode()
+        workflow = previous_six_workflow()
     baseline = baseline_workflow()
     assert_manual_unit_gate(workflow, baseline)
     assert_release_transitions()
@@ -198,7 +309,7 @@ def aggregate_code(workflow):
 class ManualUnitGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / WORKFLOW_PATH).read_text()
+        cls.workflow = previous_six_workflow()
         cls.baseline = baseline_workflow()
         cls.current, cls.original = jobs(cls.workflow), jobs(cls.baseline)
 
@@ -329,6 +440,95 @@ class ManualUnitGateTests(unittest.TestCase):
                 return changed if path==target else read(path)
             with patch.object(Path, 'read_bytes', altered), self.assertRaises(AssertionError): previous_workflow()
         with self.assertRaises(AssertionError): previous_release_bytes('src/main.ts')
+
+
+class SplitManualGateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow=(ROOT/WORKFLOW_PATH).read_text()
+        cls.baseline=six_workflow()
+        cls.current,cls.original=jobs(cls.workflow),jobs(cls.baseline)
+    def reject(self,before,after,job):
+        body=self.current[job]
+        self.assertEqual(body.count(before),1,before)
+        changed=self.workflow.replace(body,body.replace(before,after,1),1)
+        with self.assertRaisesRegex(AssertionError,'unapproved seven-job workflow drift'):
+            assert_split_gate(changed,self.baseline)
+    def test_exact_seven_six_five_projection_preserves_all_old_job_bytes(self):
+        self.assertEqual(previous_six_workflow(),self.baseline)
+        self.assertEqual(previous_workflow(),baseline_workflow())
+        self.assertEqual(tuple(self.current),(*SEVEN_JOBS,'required-gates'))
+        for name in OLD_JOBS:self.assertEqual(self.current[name],self.original[name],name)
+        self.assertEqual(self.workflow.split('\njobs:\n')[0],self.baseline.split('\njobs:\n')[0])
+    def test_all_seven_jobs_budgets_and_aggregate_two_minutes_remain_exact(self):
+        for name,minutes in zip((*SEVEN_JOBS,'required-gates'),(45,45,25,25,15,15,15,2)):
+            for value in (minutes-1,minutes+1):self.reject(f'    timeout-minutes: {minutes}\n',f'    timeout-minutes: {value}\n',name)
+            block='  '+name+':\n'+self.current[name]
+            for bad in (self.workflow.replace(block,'',1),self.workflow+block):
+                with self.assertRaises(AssertionError):assert_split_gate(bad,self.baseline)
+    def test_both_groups_have_independent_exact_preparation_native_census_and_artifacts(self):
+        for group in MANUAL_GROUPS:
+            name='manual-unit-'+group;body=self.current[name]
+            self.assertNotIn('    needs:',body)
+            self.assertNotIn('download-artifact',body)
+            self.assertIn('--group '+group+' --url',body)
+            self.assertIn('name: '+name+'-${{ github.sha }}',body)
+            self.assertIn('manual-census-json: ${{ steps.manual_census.outputs.manual-census-json }}',body)
+            self.assertIn("'test_manual_unit_census.py'",body)
+            for step in steps(body):
+                self.reject(step,'',name);self.reject(step,step*2,name)
+            command=next(line+'\n' for line in body.splitlines() if 'xvfb-run -a python scripts/browser-manual-unit-orders.py ' in line)
+            for old,new in (('--group '+group,'--group other'),('--expected-sha "$GITHUB_SHA"','--expected-sha old'),
+                ('--expected-fixture-sha256','--optional-fixture-sha256'),('--runtime-node "$(node --version)"','--runtime-node v22.0.0')):
+                self.reject(command,command.replace(old,new,1),name)
+            for suffix in (' || true\n','; true\n',' &\n'):self.reject(command,command.rstrip('\n')+suffix,name)
+            for step in steps(body):
+                if '        if: always()\n' not in step:
+                    head=step.splitlines(keepends=True)[0]
+                    for optional in ('        if: false\n','        continue-on-error: true\n','        shell: bash +e {0}\n'):
+                        self.reject(step,step.replace(head,head+optional,1),name)
+    def test_aggregate_checks_success_before_exact_artifact_downloads_and_recomputation(self):
+        body=self.current['required-gates'];all_steps=steps(body)
+        self.assertIn("assert job['result'] == 'success'",all_steps[0])
+        self.assertIn('actions/checkout@v7',all_steps[1])
+        for index,group in ((2,'payments'),(3,'authority')):
+            self.assertIn('uses: actions/download-artifact@v4',all_steps[index])
+            self.assertIn('name: manual-unit-'+group+'-${{ github.sha }}',all_steps[index])
+            self.assertNotIn('pattern:',all_steps[index]);self.assertNotIn('run-id:',all_steps[index])
+        self.assertIn('manual_unit_census.py aggregate',all_steps[4])
+        for step in all_steps:
+            self.reject(step,'','required-gates')
+            if 'if: always()' not in step:
+                head=step.splitlines(keepends=True)[0]
+                self.reject(step,step.replace(head,head+'        continue-on-error: true\n',1),'required-gates')
+    def test_actual_seven_job_aggregate_rejects_every_non_success_and_bad_identity(self):
+        base={name:{'result':'success','outputs':{'common-identity-sha256':'a'*64}} for name in SEVEN_JOBS}
+        for name in OLD_JOBS[:3]:base[name]['outputs']['orbital-identity-sha256']='b'*64
+        base['scout-rehearsal']['outputs']['scout-fixture-sha256']='c'*64
+        code=compile(aggregate_code(self.workflow),'<actual-seven-job-first-stage>','exec')
+        def execute(value):
+            with patch.dict(os.environ,{'JOB_RESULTS':json.dumps(value)}),contextlib.redirect_stdout(io.StringIO()):exec(code,{})
+        execute(base)
+        for name in SEVEN_JOBS:
+            for result in ('failure','cancelled','skipped','in_progress','',None):
+                bad=copy.deepcopy(base);bad[name]['result']=result
+                with self.assertRaises(AssertionError):execute(bad)
+            bad=copy.deepcopy(base);del bad[name]
+            with self.assertRaises(AssertionError):execute(bad)
+            for key in base[name]['outputs']:
+                for digest in ('','invalid','A'*64,None):
+                    bad=copy.deepcopy(base);bad[name]['outputs'][key]=digest
+                    with self.assertRaises((AssertionError,TypeError)):execute(bad)
+                bad=copy.deepcopy(base);del bad[name]['outputs'][key]
+                with self.assertRaises(AssertionError):execute(bad)
+            bad=copy.deepcopy(base);bad[name]['outputs']['common-identity-sha256']='d'*64
+            with self.assertRaises(AssertionError):execute(bad)
+        bad=copy.deepcopy(base);bad['unexpected']=copy.deepcopy(base['manual-unit-payments'])
+        with self.assertRaises(AssertionError):execute(bad)
+    def test_bad_workflow_cannot_hide_behind_historical_six_projection(self):
+        for bad in (self.workflow+'\n',self.workflow.replace('\n','\r\n'),self.workflow.replace('--group payments','--group authority',1)):
+            with self.assertRaises(AssertionError):previous_six_workflow(bad)
+
 
 
 if __name__ == '__main__': unittest.main()

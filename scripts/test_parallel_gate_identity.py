@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('parallel_identity', ROOT/'scripts/parallel-gate-identity.py')
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
-WORKFLOW = (ROOT/'.github/workflows/p4-original-verify.yml').read_text()
+# Preserve the exact historical six-job test body only after full seven-job validation.
+from test_manual_unit_gate import previous_six_workflow
+WORKFLOW = previous_six_workflow()
 AGGREGATE = textwrap.dedent(WORKFLOW.split('  required-gates:\n',1)[1].split("python - <<'PYCODE'\n",1)[1].split('          PYCODE',1)[0])
 ORBITAL = textwrap.dedent(WORKFLOW.split('        id: orbital_identity\n',1)[1].split("python - <<'PY'\n",1)[1].split('          PY\n',1)[0])
 POOL = ORBITAL[ORBITAL.index('pool = copy.deepcopy(reports)'):ORBITAL.index('\nidentity =')]

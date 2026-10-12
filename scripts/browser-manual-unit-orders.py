@@ -32,6 +32,34 @@ RESOURCES = ('metal', 'crystal', 'deuterium')
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 INVALID = ('', '0', '-1', '1.5', '1e3', 'NaN', 'Infinity', '9' * 512, '9007199254740992')
 SHIPS = ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'battlecruiser', 'bomber', 'destroyer', 'deathstar', 'recycler', 'espionage_probe', 'solar_satellite', 'colony_ship')
+# Fixed exhaustive partition, not a user-selectable case/unit filter.
+GROUP_UNITS = {
+ 'payments': ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'battlecruiser', 'bomber', 'destroyer', 'deathstar', 'recycler', 'espionage_probe', 'solar_satellite', 'colony_ship'),
+ 'authority': ('rocket_launcher', 'light_laser', 'heavy_laser', 'gauss_cannon', 'ion_cannon', 'plasma_turret', 'small_shield_dome', 'large_shield_dome', 'anti_ballistic_missile', 'interplanetary_missile'),
+}
+GROUP_CASES = {
+ 'payments': ('natural05-real-count-fill-max-payments', 'natural09-paid-flight-does-not-cover-fill')
+   + tuple('SYNTHETIC-all24-'+unit for unit in GROUP_UNITS['payments'])
+   + ('SYNTHETIC-native-trim-leading-zero-raw-preserved',)
+   + tuple('SYNTHETIC-full-canonical-price-width-'+str(width) for width in WIDTHS),
+ 'authority': tuple('SYNTHETIC-all24-'+unit for unit in GROUP_UNITS['authority']) + (
+   'SYNTHETIC-reject-queue-full-small_cargo', 'SYNTHETIC-reject-insufficient-small_cargo', 'SYNTHETIC-reject-unit-cap-small_cargo',
+   'SYNTHETIC-reject-owned-small_shield_dome-small_shield_dome', 'SYNTHETIC-reject-owned-large_shield_dome-large_shield_dome',
+   'SYNTHETIC-reject-queued-small_shield_dome-small_shield_dome', 'SYNTHETIC-reject-queued-large_shield_dome-large_shield_dome',
+   'SYNTHETIC-reject-silo-39-interplanetary_missile', 'SYNTHETIC-reject-silo-40-anti_ballistic_missile', 'SYNTHETIC-reject-silo-40-interplanetary_missile',
+   'SYNTHETIC-silo39-one-slot-abm-succeeds', 'SYNTHETIC-latest-plan-retires-old-max', 'SYNTHETIC-latest-plan-retires-old-fill',
+   'SYNTHETIC-authority-tab-away', 'SYNTHETIC-authority-switch-planet-return', 'SYNTHETIC-authority-same-id-import', 'SYNTHETIC-authority-reset',
+   'SYNTHETIC-authority-duplicate', 'SYNTHETIC-authority-detach', 'SYNTHETIC-authority-detach-reinsert', 'SYNTHETIC-authority-crosslabel',
+   'SYNTHETIC-authority-ancestor-reinsert', 'SYNTHETIC-authority-quote-hidden', 'SYNTHETIC-authority-total-hidden',
+   'SYNTHETIC-authority-quote-hide-show', 'SYNTHETIC-authority-ancestor-hide-show', 'SYNTHETIC-authority-class-hide-show',
+   'SYNTHETIC-authority-style-visibility-hide-show', 'SYNTHETIC-authority-quote-text-tamper', 'SYNTHETIC-authority-total-text-tamper',
+   'SYNTHETIC-authority-same-text-hidden-child', 'SYNTHETIC-cancelled-import-retires-visible-quote', 'SYNTHETIC-failed-import-retires-visible-quote',
+   'SYNTHETIC-real-cross-tab-protection', 'SYNTHETIC-consumed-native-hidden-resume'),
+}
+INFRASTRUCTURE_CASES = ('setup', 'suite-integrity')
+GROUP_JOBS = {'payments':'manual-unit-payments', 'authority':'manual-unit-authority'}
+RUNTIME_KEYS = {'githubRunId':'GITHUB_RUN_ID','githubRunAttempt':'GITHUB_RUN_ATTEMPT','githubJob':'GITHUB_JOB',
+ 'githubWorkflow':'GITHUB_WORKFLOW','githubSha':'GITHUB_SHA','githubRef':'GITHUB_REF','githubRepository':'GITHUB_REPOSITORY'}
 # Independent literal ordinary-flight form census; solar satellites cannot fly.
 TRANSIT_FLYING_IDS = ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'battlecruiser', 'bomber', 'destroyer', 'deathstar', 'recycler', 'espionage_probe', 'colony_ship')
 GOLDEN = {
@@ -76,13 +104,26 @@ def unit_tab(unit): return 'shipyard' if unit in SHIPS else 'defense'
 def digest(body): return hashlib.sha256(body).hexdigest()
 
 
+def runtime_identity():
+    return {name:os.environ.get(env) for name,env in RUNTIME_KEYS.items()}
+
+
+def valid_runtime_identity(group,value,expected_sha):
+    return (group in GROUP_JOBS and isinstance(value,dict) and set(value)==set(RUNTIME_KEYS)
+      and all(isinstance(item,str) and item for item in value.values())
+      and value['githubJob']==GROUP_JOBS[group] and value['githubSha']==expected_sha)
+
+
 def metadata():
-    return {'schema':'infinity-manual-unit-native-v1','completed':completed,'result':'passed' if completed else 'incomplete',
+    return {'schema':'infinity-manual-unit-native-v2','completed':completed,'result':'passed' if completed else 'incomplete',
+      'group':args.group,'fixtureSha256':fixture_sha256,'sourceBindingSha256':source_binding_sha256,'runtimeNode':args.runtime_node,'sourceIdentity':source_identity_value,
+      'runtimeIdentity':runtime_identity(),
+      'caseCensus':case_census(),'releaseMetadata':release_metadata,'failureLifecycle':failure_lifecycle,
       'sourceSha':args.expected_sha,'candidateVersion':CANDIDATE_VERSION,'case':case,'checks':checks,'evidence':evidence,
       'sourceBindings':source_bindings,'errors':errors,'failedRequests':failed_requests,'failure':failure,
       'timing':{'hostElapsedSeconds':time.monotonic()-HOST_STARTED,'functionalAdvanceCalls':clock_calls,'functionalSeconds':clock_seconds},
       'classification':'Fresh immutable241a natural05/09 handoffs, actual native trusted input, unchanged HTTP/V8 production app. Controlled functional clocks. Explicit synthetic edges are separate; no wall-clock play or performance claim.',
-      'acceptanceRule':'Additional independent sixth job. All existing five jobs and required aggregate remain mandatory on the same SHA.'}
+      'acceptanceRule':'Two required fixed-partition manual-unit jobs. Their disjoint scenario union is the original complete suite; all existing five jobs and required aggregate remain mandatory on the same SHA.'}
 
 
 def flush(final=False):
@@ -91,7 +132,7 @@ def flush(final=False):
         journal.append('evidence',{'index':recorded_evidence,'record':evidence[recorded_evidence]}); recorded_evidence+=1
     while recorded_checks < len(checks):
         journal.append('check',{'index':recorded_checks,'record':checks[recorded_checks]}); recorded_checks+=1
-    atomic_json(out/'manual-unit-progress.json',{'completed':completed,'case':case,'checks':len(checks),'evidence':len(evidence),'elapsed':time.monotonic()-HOST_STARTED})
+    atomic_json(out/'manual-unit-progress.json',{'completed':completed,'group':args.group,'case':case,'phase':case_records[-1]['phase'] if case_records else None,'completedCases':[r['name'] for r in case_records if r['kind']=='scenario' and r['status']=='completed'],'checks':len(checks),'evidence':len(evidence),'elapsed':time.monotonic()-HOST_STARTED})
     if final:
         value=metadata(); verify_file_references(value)
         publish_new_json(out/'manual-unit-browser-report.json',value)
@@ -104,10 +145,37 @@ def check(name, condition, detail=None):
     if not condition: raise AssertionError(name)
 
 
+def case_census():
+    return {'completedCases':[r['name'] for r in case_records if r['kind']=='scenario' and r['status']=='completed'],
+      'infrastructureCases':[r['name'] for r in case_records if r['kind']=='infrastructure' and r['status']=='completed'],
+      'records':copy.deepcopy(case_records)}
+
+
+def set_phase(phase):
+    record=case_records[-1]; observed=time.monotonic()
+    record['phase']=phase; record['phases'].append({'phase':phase,'hostMonotonic':observed})
+    journal.append('case-phase',{'case':case,'phase':phase,'hostMonotonic':observed})
+
+
 def begin_case(name):
-    global case
+    global case,context_lifecycle
     if name in seen_cases: raise ValueError('Case identity must be unique: '+name)
-    case=name; seen_cases.add(name); scenario_directory(); flush()
+    if name not in INFRASTRUCTURE_CASES and name not in GROUP_CASES[args.group]: raise ValueError('Case outside fixed group: '+name)
+    if case_records and case_records[-1]['status']!='completed': raise ValueError('Previous case has not completed')
+    case=name; seen_cases.add(name); observed=time.monotonic()
+    context_lifecycle={'case':case,'contextCreated':False,'pageCreated':False,'navigationCompleted':False,'plannedSeed':None}
+    case_records.append({'name':name,'kind':'infrastructure' if name in INFRASTRUCTURE_CASES else 'scenario','status':'running',
+      'phase':'begin','hostStartedMonotonic':observed,'hostCompletedMonotonic':None,'hostElapsedSeconds':None,
+      'phases':[{'phase':'begin','hostMonotonic':observed}]})
+    journal.append('case-start',copy.deepcopy(case_records[-1])); scenario_directory(); flush()
+
+
+def complete_case():
+    record=case_records[-1]
+    if record['name']!=case or record['status']!='running': raise ValueError('Only the current running case can complete')
+    observed=time.monotonic(); record.update(status='completed',phase='completed',hostCompletedMonotonic=observed,hostElapsedSeconds=observed-record['hostStartedMonotonic'])
+    record['phases'].append({'phase':'completed','hostMonotonic':observed})
+    journal.append('case-complete',copy.deepcopy(record)); flush()
 
 
 def persist_json(label,value):
@@ -250,14 +318,24 @@ def verify_bundle(page,response):
 
 
 def boot(initial_raw,width=1440):
-    global active_page
+    global active_context,active_page,context_lifecycle
+    active_context=active_page=None
+    context_lifecycle={'case':case,'contextCreated':False,'pageCreated':False,'navigationCompleted':False,'plannedSeed':None}
+    set_phase('boot-planned-seed')
     envelope=json.loads(initial_raw); entries=[{'name':KEY,'value':initial_raw},{'name':'infinity.ui.tab','value':'overview'}]
+    context_lifecycle['plannedSeed']=persist_json('planned-anonymous-native-origin-seed',{'raw':initial_raw,'rawSha256':digest(initial_raw.encode()),'origin':ORIGIN,'localStorage':entries,'viewport':{'width':width,'height':1100},'savedAt':envelope['savedAt']})
+    set_phase('boot-create-context')
     context=browser.new_context(viewport={'width':width,'height':1100},reduced_motion='reduce',storage_state={'cookies':[],'origins':[{'origin':ORIGIN,'localStorage':entries}]})
+    active_context=context; context_lifecycle['contextCreated']=True; set_phase('boot-read-context-storage')
     original=context.storage_state(); ref=persist_json('anonymous-native-origin-seed',{'original':original,'expectedRaw':initial_raw})
     check('new anonymous context contains only exact input origin and save bytes',original['cookies']==[] and len(original['origins'])==1 and original['origins'][0]['origin']==ORIGIN and {r['name']:r['value'] for r in original['origins'][0]['localStorage']}=={r['name']:r['value'] for r in entries},ref)
+    set_phase('boot-add-functional-clock')
     context.add_init_script(CLOCK.replace('__EPOCH__',str(envelope['savedAt'])))
-    page=context.new_page(); active_page=page; attach(page)
-    response=page.goto(args.url,wait_until='networkidle'); advance(page); verify_bundle(page,response)
+    set_phase('boot-create-page'); page=context.new_page(); active_page=page; context_lifecycle['pageCreated']=True
+    set_phase('boot-attach-observers'); attach(page)
+    set_phase('boot-navigate'); response=page.goto(args.url,wait_until='networkidle'); context_lifecycle['navigationCompleted']=True
+    set_phase('boot-initial-functional-frame'); advance(page)
+    set_phase('boot-bind-production'); verify_bundle(page,response)
     ref=persist_json('native-implementations',page.evaluate('window.__npcNative'))
     check('actual native Storage File dialog and timers are retained',page.evaluate('window.__npcNative'),ref)
     return context,page
@@ -265,16 +343,36 @@ def boot(initial_raw,width=1440):
 
 @contextmanager
 def live_context(initial_raw,width=1440):
-    context,page=boot(initial_raw,width)
-    try: yield context,page
+    global active_context,active_page
+    try:
+        context,page=boot(initial_raw,width)
+        set_phase('case-actions'); yield context,page
     except BaseException:
-        capture_failure(page); raise
-    else: context.close()
+        capture_failure(active_page); raise
+    finally:
+        if active_context is not None:
+            set_phase('context-cleanup')
+            try: active_context.close()
+            except BaseException as error:
+                if failure is None:
+                    capture_failure(active_page); raise
+                journal.append('diagnostic-error',{'name':'context-cleanup','error':repr(error)})
+            finally: active_context=active_page=None
+    complete_case()
 
 
 def capture_failure(page):
-    global failure
+    global failure,failure_lifecycle
+    if failure is not None: return
     failure=traceback.format_exc()
+    record=case_records[-1]; observed=time.monotonic()
+    failure_lifecycle={**copy.deepcopy(context_lifecycle),'case':case,'failurePhase':record['phase'],
+      'page':None if page is None else {'isClosed':page.is_closed()},'hostMonotonic':observed}
+    record.update(status='failed',hostFailedMonotonic=observed,hostElapsedSeconds=observed-record['hostStartedMonotonic'])
+    persist_json('failure-lifecycle',{'failure':failure,'lifecycle':failure_lifecycle})
+    journal.append('case-failed',copy.deepcopy(record))
+    # A failure before new_page has no app DOM. Never substitute a previous case.
+    if page is None or page.is_closed(): return
     # Keep the context alive while saving originals. Evidence precedes cleanup.
     for name,action in [('failure-storage',lambda:all_storage(page)),('failure-dom',lambda:page.content())]:
         try: persist_json(name,action())
@@ -315,6 +413,7 @@ def natural_route():
         assert_quote(page,'small_cargo',1,before)
         tick_index=0
         for operation in fixtures['natural']['tape']:
+            set_phase('natural-'+operation['kind']+'-'+operation.get('name','live-seconds'))
             persist_json('natural-operation',operation)
             if operation['kind']=='checkpoint':
                 expected=fixtures['natural']['expected'][operation['name']]
@@ -341,12 +440,13 @@ def natural_route():
 
 def invalid_and_all_units():
     fixture=fixtures['synthetic']['all-unlocked']; base=fixture['expected']
-    for unit in GOLDEN:
+    for unit in GROUP_UNITS[args.group]:
         begin_case('SYNTHETIC-all24-'+unit)
         with live_context(fixture['raw']) as (_context,page):
             persist_json('classification',{'classification':fixture['classification'],'unit':unit})
             whole_state('strict-synthetic-start',save(page),base)
             for index,value in enumerate(INVALID):
+                set_phase('invalid-raw-'+str(index))
                 prepare(page,unit,'count',value); original=card(page,unit)
                 before_ref=persist_json('invalid-before',{'invalidIndex':index,'raw':value,'card':original,'expected':base,'storage':all_storage(page)})
                 # Genuine pointer input onto the disabled payment control, plus
@@ -357,7 +457,7 @@ def invalid_and_all_units():
                 observed=card(page,unit); after_ref=persist_json('invalid-after',{'card':observed,'storage':all_storage(page),'expected':base})
                 check('invalid text blocks payment and preserves raw exact bytes',original['payDisabled'] and observed['payDisabled'] and observed['input']==value,{'before':before_ref,'after':after_ref})
                 whole_state('invalid-complete-memory-no-mutation',save(page),base)
-            expected=fixture['positive'][unit]['expected']
+            set_phase('positive-count-one'); expected=fixture['positive'][unit]['expected']
             mode_only_then_pay(page,unit,'count','1',1,base,expected)
             if unit=='solar_satellite':
                 tab(page,'fleet'); ref=persist_json('satellite-fleet-exclusion',{'selectable':page.locator('[data-ship="solar_satellite"]').count()})
@@ -383,6 +483,7 @@ def rejected_boundaries():
         with live_context(fixture['raw']) as (_context,page):
             before=save(page); whole_state('exact-boundary-start',before,fixture['expected'])
             for mode in ('count','fill','max'):
+                set_phase('boundary-'+mode)
                 prepare(page,unit,mode,'1'); value=card(page,unit)
                 ref=persist_json('boundary-rejection',{'mode':mode,'card':value,'expected':before,'classification':fixture['classification']})
                 check('capacity resource or uniqueness boundary rejects separate payment',value['payDisabled'],ref)
@@ -401,6 +502,7 @@ def four_widths():
         with live_context(fixture['raw'],width) as (_context,page):
             prepare(page,unit,'count','1000000'); assert_quote(page,unit,1000000,fixture['expected'])
             for name in ('uqty','ubuild','ufill','umax','uquote','utotal','upay'):
+                set_phase('native-geometry-'+name)
                 selector=b(name,unit); native_scroll_to(page,selector)
                 hits=visibility(page,[selector]); glyphs=None if name=='uqty' else text_leaf_visibility(page,[selector])
                 ref=persist_json('four-width-native-geometry',{'width':width,'selector':selector,'hits':hits,'glyphs':glyphs})
@@ -627,8 +729,10 @@ def transit_fill():
 
 def main():
     global args,out,KEY,ORIGIN,fixtures,browser,CLOCK,checks,evidence,source_bindings,errors,failed_requests,page_sources
-    global completed,case,seen_cases,evidence_sequence,recorded_checks,recorded_evidence,journal,release_metadata,failure,clock_calls,clock_seconds,active_page
+    global completed,case,seen_cases,evidence_sequence,recorded_checks,recorded_evidence,journal,release_metadata,failure,clock_calls,clock_seconds,active_page,active_context
+    global case_records,context_lifecycle,failure_lifecycle,fixture_sha256,source_binding_sha256,source_identity_value
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--group',required=True,choices=('payments','authority'))
     parser.add_argument('--fixture',required=True); parser.add_argument('--expected-fixture-sha256',required=True)
     parser.add_argument('--natural-report',required=True); parser.add_argument('--source-binding',required=True)
     parser.add_argument('--expected-sha',required=True); parser.add_argument('--expected-version',required=True)
@@ -639,12 +743,17 @@ def main():
     if args.expected_version!=CANDIDATE_VERSION or not re.fullmatch(r'[a-f0-9]{40}',args.expected_sha): parser.error('Exact candidate version and SHA required')
     load_reviewed_helpers()
     out=Path(args.output).resolve(); out.mkdir(parents=True,exist_ok=False)
-    checks,evidence,source_bindings,errors,failed_requests=[],[],[],[],[]; page_sources={}; completed=False; case='setup'; seen_cases={case}
-    evidence_sequence=recorded_checks=recorded_evidence=clock_calls=clock_seconds=0; failure=release_metadata=active_page=None
+    checks,evidence,source_bindings,errors,failed_requests=[],[],[],[],[]; page_sources={}; completed=False; case=None; seen_cases=set(); case_records=[]
+    evidence_sequence=recorded_checks=recorded_evidence=clock_calls=clock_seconds=0; failure=release_metadata=active_page=active_context=None
+    context_lifecycle={}; failure_lifecycle=fixture_sha256=source_binding_sha256=source_identity_value=browser=None
     journal=NativeCheckJournal(out/'manual-unit-checks.jsonl')
     try:
-        source=source_identity(ROOT,args.expected_sha); persist_json('full-committed-source-binding',source)
+        begin_case('setup'); set_phase('source-and-fixture-binding')
+        runtime_ref=persist_json('actual-native-job-identity',{'group':args.group,'identity':runtime_identity(),'expectedJob':GROUP_JOBS[args.group]})
+        check('actual GitHub job source and role match the required fixed group',valid_runtime_identity(args.group,runtime_identity(),args.expected_sha),runtime_ref)
+        source=source_identity(ROOT,args.expected_sha); source_identity_value=source; persist_json('full-committed-source-binding',source)
         fixture_bytes=Path(args.fixture).read_bytes(); natural_bytes=Path(args.natural_report).read_bytes(); binding_bytes=Path(args.source_binding).read_bytes()
+        fixture_sha256=digest(fixture_bytes); source_binding_sha256=digest(binding_bytes)
         fixtures=json.loads(fixture_bytes); old_binding=json.loads(binding_bytes)
         refs={'fixture':original_bytes('fixture',fixture_bytes,'json'),'natural':original_bytes('fresh241a-natural-report',natural_bytes,'json'),'sourceBinding':original_bytes('fresh241a-source-binding',binding_bytes,'json')}
         check('fixture bound to current source runtime and exact fresh natural producer',digest(fixture_bytes)==args.expected_fixture_sha256 and fixtures['source']['sourceSha']==args.expected_sha and fixtures['source']['fullTree']==source['fullTree'] and fixtures['source']['runtimeNode']==args.runtime_node and digest(natural_bytes)==REPORT_SHA and fixtures['historical']['reportSha256']==REPORT_SHA and fixtures['historical']['sourceBindingSha256']==digest(binding_bytes) and old_binding['complete'] is True and old_binding['codeSourceSha']==OLD_SHA,refs)
@@ -656,17 +765,31 @@ def main():
         signal.signal(signal.SIGALRM,lambda *_:(_ for _ in ()).throw(TimeoutError('660-second native worker bound'))); signal.alarm(660)
         from playwright.sync_api import sync_playwright
         with sync_playwright() as playwright:
-            browser=playwright.chromium.launch(executable_path=args.chromium,headless=False)
-            natural_route(); transit_fill(); invalid_and_all_units(); legal_raw_payment(); rejected_boundaries(); four_widths(); latest_plan(); lifecycle_and_hostile_dom(); rejected_import_attempts(); protection_boundary(); hidden_resume()
-            begin_case('suite-integrity'); ref=persist_json('actual-browser-errors',{'errors':errors,'failedRequests':failed_requests})
-            check('no application errors or failed production requests',not errors and not failed_requests,ref)
-            completed=True; flush(final=True); browser.close()
+            try:
+                set_phase('launch-headed-browser'); browser=playwright.chromium.launch(executable_path=args.chromium,headless=False)
+                complete_case()
+                if args.group=='payments':
+                    natural_route(); transit_fill(); invalid_and_all_units(); legal_raw_payment(); four_widths()
+                else:
+                    invalid_and_all_units(); rejected_boundaries(); latest_plan(); lifecycle_and_hostile_dom(); rejected_import_attempts(); protection_boundary(); hidden_resume()
+                begin_case('suite-integrity'); ref=persist_json('actual-browser-errors',{'errors':errors,'failedRequests':failed_requests})
+                check('no application errors or failed production requests',not errors and not failed_requests,ref)
+                census_ref=persist_json('actual-completed-case-census',case_census())
+                check('fixed group completed every original scenario exactly once',case_census()['completedCases']==list(GROUP_CASES[args.group]) and seen_cases==set(GROUP_CASES[args.group])|set(INFRASTRUCTURE_CASES),census_ref)
+                set_phase('browser-cleanup'); browser.close(); complete_case()
+            except BaseException:
+                # This boundary remains inside the live Playwright lifetime.
+                capture_failure(active_page)
+                if browser is not None:
+                    try: browser.close()
+                    except BaseException as error: journal.append('diagnostic-error',{'name':'browser-cleanup','error':repr(error)})
+                raise
+        completed=True; flush(final=True)
     except BaseException:
-        if failure is None:
-            failure=traceback.format_exc()
-            if active_page is not None:
-                try: capture_failure(active_page)
-                except BaseException: pass
+        completed=False
+        # All live pages were captured before leaving Playwright. Setup failures
+        # have no page, and must never reuse a previously closed app page.
+        if failure is None: capture_failure(None)
         flush(final=True); raise
     finally: signal.alarm(0); os.close(journal.fd)
 

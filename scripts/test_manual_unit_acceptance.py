@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/'scripts/browser-manual-unit-orders.py'
@@ -169,7 +171,7 @@ class NativeContractTests(unittest.TestCase):
         source=definition('main')
         self.assertLess(source.index("os.environ.get('CI')!='true'"),source.index('from playwright.sync_api import'))
         with tempfile.TemporaryDirectory() as out:
-            command=[sys.executable,str(SCRIPT),'--fixture','unused','--expected-fixture-sha256','0'*64,
+            command=[sys.executable,str(SCRIPT),'--group','payments','--fixture','unused','--expected-fixture-sha256','0'*64,
               '--natural-report','unused','--source-binding','unused','--expected-sha','a'*40,
               '--expected-version',module.CANDIDATE_VERSION,'--runtime-node','v22.0.0',
               '--output',out,'--chromium','unused']
@@ -225,7 +227,7 @@ class NativeContractTests(unittest.TestCase):
 
     def test_invalid_complete_memory_not_just_stale_storage(self):
         source=definition('invalid_and_all_units')
-        self.assertIn('for unit in GOLDEN:',source)
+        self.assertIn('for unit in GROUP_UNITS[args.group]:',source)
         self.assertIn('for index,value in enumerate(INVALID):',source)
         self.assertIn("whole_state('invalid-complete-memory-no-mutation',save(page),base)",source)
         self.assertIn("observed['input']==value",source)
@@ -234,7 +236,8 @@ class NativeContractTests(unittest.TestCase):
 
     def test_failure_originals_before_context_cleanup(self):
         source=definition('live_context')
-        self.assertLess(source.index('capture_failure(page)'),source.index('context.close()'))
+        self.assertLess(source.index('try:'),source.index('boot(initial_raw,width)'))
+        self.assertLess(source.index('capture_failure(active_page)'),source.index('active_context.close()'))
         self.assertIn("('failure-storage'",definition('capture_failure'))
         self.assertIn("caret='initial'",definition('capture_failure'))
 
@@ -308,6 +311,178 @@ class NativeContractTests(unittest.TestCase):
         self.assertIn("whole_state('retired-or-untrusted-node-has-no-payment-authority',save(page),expected)",source)
         self.assertIn("hidden=='hidden'",definition('hidden_resume'))
         self.assertIn("whole_state('latest-plan-only-entire-world',save(page),fixture['afterTick'])",definition('latest_plan'))
+
+
+class FixedGroupCensusTests(unittest.TestCase):
+    def test_only_two_required_cli_groups_and_no_arbitrary_filter(self):
+        source=definition('main')
+        self.assertIn("parser.add_argument('--group',required=True,choices=('payments','authority'))",source)
+        for flag in ('--skip','--unit','--case','--subset','--timeout'):
+            self.assertNotIn("add_argument('"+flag,source)
+        required=['--fixture','unused','--expected-fixture-sha256','0'*64,'--natural-report','unused',
+          '--source-binding','unused','--expected-sha','a'*40,'--expected-version',module.CANDIDATE_VERSION,
+          '--runtime-node','v22.0.0','--output','unused','--chromium','unused']
+        for group in ([],['--group','all'],['--group','small_cargo']):
+            result=subprocess.run([sys.executable,str(SCRIPT),*required,*group],capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('--group',result.stderr)
+            self.assertNotIn('playwright',result.stderr)
+
+    def test_fixed_literal_unit_partition_is_exhaustive_and_disjoint(self):
+        payments=module.GROUP_UNITS['payments']; authority=module.GROUP_UNITS['authority']
+        self.assertEqual(payments,module.SHIPS)
+        self.assertEqual(authority,('rocket_launcher','light_laser','heavy_laser','gauss_cannon','ion_cannon','plasma_turret','small_shield_dome','large_shield_dome','anti_ballistic_missile','interplanetary_missile'))
+        self.assertEqual((len(payments),len(authority)),(14,10))
+        self.assertEqual(len(set(payments)),14); self.assertEqual(len(set(authority)),10)
+        self.assertFalse(set(payments)&set(authority))
+        self.assertEqual(set(payments)|set(authority),set(module.GOLDEN))
+
+    def test_exact_original_sixty_six_scenarios_and_shared_infrastructure(self):
+        payments=module.GROUP_CASES['payments']; authority=module.GROUP_CASES['authority']
+        self.assertEqual((len(payments),len(authority)),(21,45))
+        self.assertEqual(len(set(payments)),21); self.assertEqual(len(set(authority)),45)
+        self.assertFalse(set(payments)&set(authority))
+        self.assertEqual(module.INFRASTRUCTURE_CASES,('setup','suite-integrity'))
+        original={'natural05-real-count-fill-max-payments','natural09-paid-flight-does-not-cover-fill',
+          'SYNTHETIC-native-trim-leading-zero-raw-preserved','SYNTHETIC-silo39-one-slot-abm-succeeds',
+          'SYNTHETIC-real-cross-tab-protection','SYNTHETIC-consumed-native-hidden-resume'}
+        original.update('SYNTHETIC-all24-'+unit for unit in module.GOLDEN)
+        original.update('SYNTHETIC-full-canonical-price-width-'+str(width) for width in (320,390,768,1440))
+        original.update('SYNTHETIC-latest-plan-retires-old-'+mode for mode in ('max','fill'))
+        original.update('SYNTHETIC-'+action+'-retires-visible-quote' for action in ('cancelled-import','failed-import'))
+        original.update('SYNTHETIC-authority-'+action for action in ('tab-away','switch-planet-return','same-id-import','reset','duplicate','detach','detach-reinsert','crosslabel','ancestor-reinsert','quote-hidden','total-hidden','quote-hide-show','ancestor-hide-show','class-hide-show','style-visibility-hide-show','quote-text-tamper','total-text-tamper','same-text-hidden-child'))
+        original.update('SYNTHETIC-reject-'+name+'-'+unit for name,unit in (
+          ('queue-full','small_cargo'),('insufficient','small_cargo'),('unit-cap','small_cargo'),
+          ('owned-small_shield_dome','small_shield_dome'),('owned-large_shield_dome','large_shield_dome'),
+          ('queued-small_shield_dome','small_shield_dome'),('queued-large_shield_dome','large_shield_dome'),
+          ('silo-39','interplanetary_missile'),('silo-40','anti_ballistic_missile'),('silo-40','interplanetary_missile')))
+        self.assertEqual(set(payments)|set(authority),original)
+        self.assertFalse(set(module.INFRASTRUCTURE_CASES)&original)
+
+    def test_dispatch_preserves_every_original_function_and_660_second_bound(self):
+        source=definition('main')
+        self.assertIn("if args.group=='payments':\n                    natural_route(); transit_fill(); invalid_and_all_units(); legal_raw_payment(); four_widths()",source)
+        self.assertIn('invalid_and_all_units(); rejected_boundaries(); latest_plan(); lifecycle_and_hostile_dom(); rejected_import_attempts(); protection_boundary(); hidden_resume()',source)
+        self.assertIn('signal.alarm(660)',source)
+        self.assertIn('fixture_sha256=digest(fixture_bytes)',source)
+        self.assertIn("case_census()['completedCases']==list(GROUP_CASES[args.group])",source)
+        report=definition('metadata')
+        for field in ('group','fixtureSha256','sourceBindingSha256','runtimeNode','sourceIdentity','runtimeIdentity','caseCensus','releaseMetadata'):
+            self.assertIn("'"+field+"':",report)
+
+    def test_real_runtime_group_role_is_bound_and_never_erased_for_equal_hashes(self):
+        # Explicitly synthetic environment for this pure validator unit test.
+        environment={'GITHUB_RUN_ID':'synthetic-run','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'manual-unit-payments',
+          'GITHUB_WORKFLOW':'synthetic-workflow','GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/heads/synthetic',
+          'GITHUB_REPOSITORY':'synthetic/fixture'}
+        with patch.dict(os.environ,environment,clear=True): identity=module.runtime_identity()
+        self.assertTrue(module.valid_runtime_identity('payments',identity,'a'*40))
+        self.assertFalse(module.valid_runtime_identity('authority',identity,'a'*40))
+        self.assertFalse(module.valid_runtime_identity('payments',identity,'b'*40))
+        self.assertFalse(module.valid_runtime_identity('all',identity,'a'*40))
+        for key in module.RUNTIME_KEYS:
+            missing=copy.deepcopy(identity); missing.pop(key)
+            self.assertFalse(module.valid_runtime_identity('payments',missing,'a'*40))
+            empty=copy.deepcopy(identity); empty[key]=None
+            self.assertFalse(module.valid_runtime_identity('payments',empty,'a'*40))
+        source=definition('main')
+        self.assertIn('source_binding_sha256=digest(binding_bytes)',source)
+        self.assertIn("fixtures['historical']['sourceBindingSha256']==digest(binding_bytes)",source)
+        self.assertIn('valid_runtime_identity(args.group,runtime_identity(),args.expected_sha)',source)
+        self.assertNotIn('os.environ.pop(',SCRIPT.read_text())
+        self.assertNotIn('os.environ.clear(',SCRIPT.read_text())
+
+
+class LifecycleEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        module.load_reviewed_helpers()
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        module.out=Path(self.temp.name); module.args=SimpleNamespace(group='payments')
+        module.case_records=[]; module.seen_cases=set(); module.evidence=[]; module.evidence_sequence=0
+        module.failure=None; module.failure_lifecycle=None; module.active_context=None; module.active_page=None
+        module.context_lifecycle={}; module.KEY='save-key'; module.ORIGIN='http://127.0.0.1:4173'
+        module.CLOCK='clock __EPOCH__'; self.events=[]
+        module.journal=SimpleNamespace(append=lambda kind,value:self.events.append((kind,copy.deepcopy(value))))
+        self.flush_patch=patch.object(module,'flush',lambda **_kwargs:None); self.flush_patch.start(); self.addCleanup(self.flush_patch.stop)
+        module.begin_case('natural05-real-count-fill-max-payments')
+        self.raw=json.dumps({'savedAt':100,'state':{'original':'unchanged'}})
+
+    def test_completion_is_actual_unique_and_has_finite_monotonic_phase_times(self):
+        self.assertEqual(module.case_census()['completedCases'],[])
+        module.set_phase('case-actions'); module.complete_case()
+        census=module.case_census(); record=census['records'][0]
+        self.assertEqual(census['completedCases'],['natural05-real-count-fill-max-payments'])
+        self.assertEqual(record['phase'],'completed'); self.assertEqual(record['phases'][-1]['phase'],'completed')
+        self.assertGreaterEqual(record['hostCompletedMonotonic'],record['hostStartedMonotonic'])
+        self.assertEqual(record['hostElapsedSeconds'],record['hostCompletedMonotonic']-record['hostStartedMonotonic'])
+        self.assertEqual([p['hostMonotonic'] for p in record['phases']],sorted(p['hostMonotonic'] for p in record['phases']))
+        census['records'][0]['status']='changed'; self.assertEqual(module.case_records[0]['status'],'completed')
+        with self.assertRaises(ValueError): module.complete_case()
+        with self.assertRaises(ValueError): module.begin_case('natural05-real-count-fill-max-payments')
+        with self.assertRaises(ValueError): module.begin_case('SYNTHETIC-all24-rocket_launcher')
+
+    def test_cannot_mark_next_case_until_previous_case_actually_completes(self):
+        with self.assertRaises(ValueError): module.begin_case('natural09-paid-flight-does-not-cover-fill')
+        self.assertEqual(module.case_census()['completedCases'],[])
+
+    def test_storage_seed_failure_records_raw_before_context_creation_and_no_stale_page(self):
+        closed=[]
+        def new_context(**_kwargs):
+            seeds=list(module.out.rglob('*planned-anonymous-native-origin-seed.json'))
+            self.assertEqual(len(seeds),1)
+            self.assertEqual(json.loads(seeds[0].read_text())['raw'],self.raw)
+            return SimpleNamespace(storage_state=lambda:(_ for _ in ()).throw(TimeoutError('storage_state timeout')),
+              close=lambda:closed.append('context closed'))
+        module.browser=SimpleNamespace(new_context=new_context)
+        module.active_page=SimpleNamespace(is_closed=lambda:True)  # A previous case must not be reused.
+        with self.assertRaisesRegex(TimeoutError,'storage_state timeout'):
+            with module.live_context(self.raw): self.fail('No app page was created')
+        self.assertEqual(closed,['context closed'])
+        self.assertIsNone(module.active_page); self.assertIsNone(module.active_context)
+        self.assertEqual(module.failure_lifecycle['failurePhase'],'boot-read-context-storage')
+        self.assertTrue(module.failure_lifecycle['contextCreated']); self.assertFalse(module.failure_lifecycle['pageCreated'])
+        self.assertIsNone(module.failure_lifecycle['page'])
+        self.assertEqual(module.case_census()['completedCases'],[])
+        self.assertEqual(module.case_records[0]['status'],'failed')
+        self.assertEqual(len(list(module.out.rglob('*failure-lifecycle.json'))),1)
+        self.assertFalse(list(module.out.rglob('*failure-dom.json')))
+
+    def test_live_page_failure_originals_are_captured_before_actual_cleanup(self):
+        order=[]; closed=[False]
+        page=SimpleNamespace(is_closed=lambda:closed[0],evaluate=lambda *_: {},
+          content=lambda:order.append('dom') or '<html>actual app</html>',
+          screenshot=lambda **_:order.append('screen') or b'actual screenshot')
+        seed={'cookies':[],'origins':[{'origin':module.ORIGIN,'localStorage':[{'name':module.KEY,'value':self.raw},{'name':'infinity.ui.tab','value':'overview'}]}]}
+        context=SimpleNamespace(storage_state=lambda:seed,add_init_script=lambda _:None,new_page=lambda:page,
+          close=lambda: (order.append('closed'),closed.__setitem__(0,True)))
+        module.browser=SimpleNamespace(new_context=lambda **_:context)
+        with patch.object(module,'check',lambda *_:None),patch.object(module,'attach',side_effect=RuntimeError('observer failure')):
+            with self.assertRaisesRegex(RuntimeError,'observer failure'):
+                with module.live_context(self.raw): self.fail('Observer preparation failed')
+        self.assertEqual(order,['dom','screen','closed'])
+        self.assertEqual(module.failure_lifecycle['failurePhase'],'boot-attach-observers')
+        self.assertTrue(module.failure_lifecycle['pageCreated'])
+        self.assertFalse(module.failure_lifecycle['page']['isClosed'])
+        self.assertEqual(module.case_census()['completedCases'],[])
+
+    def test_success_is_not_completed_until_context_close_returns(self):
+        def close():
+            self.assertEqual(module.case_census()['completedCases'],[])
+            self.events.append(('actual-close',{}))
+        context=SimpleNamespace(close=close)
+        def boot(*_):
+            module.active_context=context; module.active_page=object(); return context,module.active_page
+        with patch.object(module,'boot',side_effect=boot):
+            with module.live_context(self.raw): self.assertEqual(module.case_census()['completedCases'],[])
+        self.assertEqual(module.case_census()['completedCases'],['natural05-real-count-fill-max-payments'])
+        self.assertLess([kind for kind,_ in self.events].index('actual-close'),[kind for kind,_ in self.events].index('case-complete'))
+
+    def test_outer_failure_does_not_touch_closed_playwright_or_reuse_previous_page(self):
+        source=definition('main')
+        outer=source.split('except BaseException:')[-1]
+        self.assertIn('capture_failure(None)',outer)
+        self.assertNotIn('capture_failure(active_page)',outer)
+        self.assertLess(definition('boot').index("persist_json('planned-anonymous-native-origin-seed'"),definition('boot').index('browser.new_context('))
 
 
 class FixtureProvenanceTests(unittest.TestCase):

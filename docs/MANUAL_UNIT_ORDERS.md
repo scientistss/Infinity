@@ -4,7 +4,7 @@ Candidate: `0.6.26-alpha.1`, save version 9 / revision 14 unchanged.
 
 ## Evidence classification
 
-The new native job is an additional, independent sixth required gate. It does not replace the existing five gates or their natural/UI controls.
+Two additional independent native jobs, `manual-unit-payments` and `manual-unit-authority`, join the five existing gates. All seven must succeed for the same exact commit. The existing five jobs retain their commands, order and budgets. Each new job retains its 15-minute job limit and 660-second browser limit; no test is sampled or omitted.
 
 The job freshly checks out immutable source `241a51de31364e9086abcc304884bf9df7cd6912`, builds that source and runs its unchanged `scripts/natural-growth-journey.ts`. It does not upload or reuse a pre-generated natural report. The complete resulting report must reproduce SHA-256 `9102da6f8fc52427b642883389d186726a8cf0c02747aa6c135150566458d8ea`. Its full source binding is created by the unchanged old diagnostic script at `1f66672f40556c61c4acfaeec23f1cb18c64636a`; that diagnostic test SHA is intentionally different from the new candidate SHA.
 
@@ -26,6 +26,7 @@ node --import tsx scripts/manual-unit-native-fixture.ts \
   > manual-unit-source-evidence/native-fixture.json
 
 xvfb-run -a python scripts/browser-manual-unit-orders.py \
+  --group payments \
   --fixture manual-unit-source-evidence/native-fixture.json \
   --expected-fixture-sha256 "$FIXTURE_SHA256" \
   --natural-report "$FRESH_241A_REPORT" \
@@ -39,6 +40,20 @@ xvfb-run -a python scripts/browser-manual-unit-orders.py \
 ```
 
 `manual-unit-evidence` must not already exist. Browser execution refuses any process outside GitHub Actions CI. The worker has a 660-second functional bound; the workflow retains its independent 15-minute job bound.
+
+Run the same command with `--group authority` in its independent runner and context. The fixed census contains 66 player scenarios, with no overlap: payments has 21 (both natural routes, 14 ship entries, legal raw input and four widths); authority has 45 (10 defense entries, capacity/funding boundaries, changed-plan quotes, lifecycle, rejected import, protection and hidden/resume). Infrastructure checks are separately identified and cannot substitute for a player scenario. A case is complete only after its original checks and context cleanup have both succeeded.
+
+The two complete historical source binders retain their real `GITHUB_JOB` values. Each fixture must reference its own complete binder hash. Their raw fixture hashes therefore differ. A narrowly defined source-comparison digest projects only the binder's `runIdentity.GITHUB_JOB` and the fixture's `historical.sourceBindingSha256`, after validating the actual job and original reference. Every other byte remains unchanged. This is a comparison of source provenance, not a claim that both original fixtures are byte-identical.
+
+The mandatory aggregate downloads both same-run artifacts and independently recomputes these identities and the full scenario census from the original report, fixture, binder, source ZIP and 62 production assets. It also checks the original job outputs against those recomputed values. Unknown jobs, a third differing field, wrong binder references, false common hashes, missing groups and duplicate scenarios are rejected. The aggregate retains its two-minute limit.
+
+### Previous unsuccessful executions
+
+- `cec295a2` / run `38313366075`: the old five-to-six-job negative-message expectation and a sparse-versus-complete UI fleet fixture stopped acceptance; these are retained failures.
+- `7ddad9c` / run `38314627211`: all five existing jobs passed; the new job stopped at synthetic startup expectations. Its cold-start achievements were then reproduced with the unchanged released engine and complete adopted-state expectations.
+- `123785c` / run `38316120365`: the single manual worker completed 8,887 checks without a failed assertion, then reached its 660-second bound before the remaining scenarios. This is incomplete acceptance. The independent lab job also failed because an import confirmation had not arrived at a fixed 100 ms observation. Its subsequent success state cannot replace the missing action-time witness. The successor binds the sole File submission to its exact dialog and terminal event within the existing action deadline.
+
+The fixed A/B census and explicit source comparison were introduced before the next full run. No previous red run is reclassified as successful, and local Python checks do not establish browser completion.
 
 Offline contracts need neither Node nor browser:
 

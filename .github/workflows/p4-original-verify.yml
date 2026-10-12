@@ -1545,13 +1545,15 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  manual-unit-orders:
+  manual-unit-payments:
     # Separate mandatory paid manual-unit acceptance; historical bug proof is diagnostic only.
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      manual-fixture-sha256: ${{ steps.manual_census.outputs.manual-fixture-sha256 }}
+      manual-census-json: ${{ steps.manual_census.outputs.manual-census-json }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1572,6 +1574,7 @@ jobs:
           python -m unittest discover -s scripts -p 'test_manual_unit_legacy_inputs.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-legacy_inputs.log"
           python scripts/test_manual_unit_provenance.py --verify-candidate "$GITHUB_SHA" -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-provenance.log"
           python -m unittest discover -s scripts -p 'test_manual_unit_gate.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-gate.log"
+          python -m unittest discover -s scripts -p 'test_manual_unit_census.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-census.log"
       - name: Prepare independently clean exact manual unit execution source
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -1613,23 +1616,136 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          xvfb-run -a python scripts/browser-manual-unit-orders.py --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.26-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group payments --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.26-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+      - name: Verify actual completed native group census and complete original fixture binding
+        id: manual_census
+        run: python scripts/manual_unit_census.py report --group payments --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json
       - name: Archive exact readable manual unit source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > manual-unit-source.zip
+      - name: Collect offline logs under the exact workspace artifact root
+        if: always()
+        run: |
+          mkdir -p manual-unit-offline-logs
+          for logfile in "$RUNNER_TEMP"/manual-unit-*.log; do
+            if test -f "$logfile"; then cp "$logfile" manual-unit-offline-logs/; fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: manual-unit-orders-${{ github.sha }}
+          name: manual-unit-payments-${{ github.sha }}
           path: |
             dist
             manual-unit-source.zip
             common-identity.json
+            manual-unit-census.json
             tests/fixtures/manual-unit-provenance.json
             manual-unit-source-evidence
             manual-unit-evidence
             manual-unit-preview.log
-            ${{ runner.temp }}/manual-unit-*.log
+            manual-unit-offline-logs
+          retention-days: 7
+          if-no-files-found: error
+
+  manual-unit-authority:
+    # Separate mandatory paid manual-unit acceptance; historical bug proof is diagnostic only.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      manual-fixture-sha256: ${{ steps.manual_census.outputs.manual-fixture-sha256 }}
+      manual-census-json: ${{ steps.manual_census.outputs.manual-census-json }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Offline exact manual unit acceptance source seal and mandatory gate
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts -p 'test_manual_unit_acceptance.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-acceptance.log"
+          python -m unittest discover -s scripts -p 'test_manual_unit_display_contract.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-display_contract.log"
+          python -m unittest discover -s scripts -p 'test_manual_unit_legacy_inputs.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-legacy_inputs.log"
+          python scripts/test_manual_unit_provenance.py --verify-candidate "$GITHUB_SHA" -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-provenance.log"
+          python -m unittest discover -s scripts -p 'test_manual_unit_gate.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-gate.log"
+          python -m unittest discover -s scripts -p 'test_manual_unit_census.py' -v 2>&1 | tee "$RUNNER_TEMP/manual-unit-census.log"
+      - name: Prepare independently clean exact manual unit execution source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/manual-unit-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/manual-unit-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/manual-unit-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact manual unit source production assets and actual Node runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/manual-unit-current"
+      - name: Reproduce old natural checkpoints using only exact old producer and diagnostic binding
+        run: |
+          mkdir -p manual-unit-source-evidence
+          git worktree add --detach "$RUNNER_TEMP/manual-unit-old" 241a51de31364e9086abcc304884bf9df7cd6912
+          git worktree add --detach "$RUNNER_TEMP/manual-unit-diagnostic" 1f66672f40556c61c4acfaeec23f1cb18c64636a
+          git archive --format=zip --prefix=Infinity/ 241a51de31364e9086abcc304884bf9df7cd6912 > manual-unit-source-evidence/source-241a.zip
+          (cd "$RUNNER_TEMP/manual-unit-old" && npm ci) > manual-unit-source-evidence/old-npm-ci.log 2>&1
+          (cd "$RUNNER_TEMP/manual-unit-old" && GITHUB_SHA=241a51de31364e9086abcc304884bf9df7cd6912 npm run build) > manual-unit-source-evidence/old-build.log 2>&1
+          (cd "$RUNNER_TEMP/manual-unit-old" && node --import tsx scripts/natural-growth-journey.ts) > manual-unit-source-evidence/fresh-natural-report.json 2> manual-unit-source-evidence/fresh-natural-report.log
+          echo '9102da6f8fc52427b642883389d186726a8cf0c02747aa6c135150566458d8ea  manual-unit-source-evidence/fresh-natural-report.json' | sha256sum -c -
+          python "$RUNNER_TEMP/manual-unit-diagnostic/scripts/manual-unit-proof-source.py" --proof-root "$RUNNER_TEMP/manual-unit-diagnostic" --baseline-root "$RUNNER_TEMP/manual-unit-old" --source-archive manual-unit-source-evidence/source-241a.zip --test-sha 1f66672f40556c61c4acfaeec23f1cb18c64636a --dist "$RUNNER_TEMP/manual-unit-old/dist" --published-manifest "$RUNNER_TEMP/manual-unit-diagnostic/scripts/manual-unit-published-241a-manifest.json" --output manual-unit-source-evidence/old-source-binding.json
+          (cd "$RUNNER_TEMP/manual-unit-current" && node --import tsx scripts/manual-unit-native-fixture.ts "$GITHUB_WORKSPACE/manual-unit-source-evidence/fresh-natural-report.json" "$GITHUB_WORKSPACE/manual-unit-source-evidence/old-source-binding.json" "$GITHUB_SHA") > manual-unit-source-evidence/native-fixture.json
+          sha256sum manual-unit-source-evidence/native-fixture.json > manual-unit-source-evidence/native-fixture.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/manual-unit-current" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/manual-unit-old" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/manual-unit-diagnostic" status --porcelain=v1 --untracked-files=all)"
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory native paid manual units on independent HTTP service and browser
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > manual-unit-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group authority --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.26-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+      - name: Verify actual completed native group census and complete original fixture binding
+        id: manual_census
+        run: python scripts/manual_unit_census.py report --group authority --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json
+      - name: Archive exact readable manual unit source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > manual-unit-source.zip
+      - name: Collect offline logs under the exact workspace artifact root
+        if: always()
+        run: |
+          mkdir -p manual-unit-offline-logs
+          for logfile in "$RUNNER_TEMP"/manual-unit-*.log; do
+            if test -f "$logfile"; then cp "$logfile" manual-unit-offline-logs/; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-unit-authority-${{ github.sha }}
+          path: |
+            dist
+            manual-unit-source.zip
+            common-identity.json
+            manual-unit-census.json
+            tests/fixtures/manual-unit-provenance.json
+            manual-unit-source-evidence
+            manual-unit-evidence
+            manual-unit-preview.log
+            manual-unit-offline-logs
           retention-days: 7
           if-no-files-found: error
 
@@ -1637,18 +1753,18 @@ jobs:
     # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
     # The existing [deep-source] source-only convention never constitutes release acceptance.
     if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
-    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-orders]
+    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require all six jobs and exact source asset runtime and fixture identities
+      - name: Require all seven jobs and exact source asset runtime and fixture identities
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python - <<'PYCODE'
           import json, os, re
           jobs = json.loads(os.environ['JOB_RESULTS'])
-          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-orders'}, jobs
+          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority'}, jobs
           for name, job in jobs.items():
               assert job['result'] == 'success', (name, job['result'])
           def hashes_for(names, key):
@@ -1661,3 +1777,30 @@ jobs:
           scout = hashes_for(('scout-rehearsal',), 'scout-fixture-sha256')
           print(json.dumps({'status':'passed','sameSourceAssetsRuntime':common,'sameCompleteOrbitalFixturePool':orbital,'completeScoutFixtures':scout}))
           PYCODE
+      - name: Checkout exact source for independent original-artifact census verification
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download exact same-run payments artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manual-unit-payments-${{ github.sha }}
+          path: ${{ runner.temp }}/manual-unit-payments-artifact
+      - name: Download exact same-run authority artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manual-unit-authority-${{ github.sha }}
+          path: ${{ runner.temp }}/manual-unit-authority-artifact
+      - name: Recompute source fixture and complete scenario census from both original native artifacts
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/manual_unit_census.py aggregate --payments "$RUNNER_TEMP/manual-unit-payments-artifact" --authority "$RUNNER_TEMP/manual-unit-authority-artifact" --expected-sha "$GITHUB_SHA" --output manual-unit-aggregate-census.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-unit-aggregate-census-${{ github.sha }}
+          path: manual-unit-aggregate-census.json
+          retention-days: 7
+          if-no-files-found: error
