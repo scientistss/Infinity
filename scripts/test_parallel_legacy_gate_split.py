@@ -20,6 +20,30 @@ CONTINUATION_NATIVE = 'python scripts/browser-demolition.py '
 LAST_PROTECTION = 'python scripts/browser-ring-protection.py '
 WATCHDOG = 'python scripts/browser-presentation-performance.py --watchdog-self-test'
 GAME_JOBS = ('verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal')
+SCOUT_VERSION_LINES = (
+    "          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.22-alpha.1'\n",
+    "          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.22-alpha.1'\n",
+)
+COMPARISON_OFFLINE_STEP = (
+    '      - name: Offline exact scout comparison provenance acceptance and mandatory gate\n'
+    '        run: |\n'
+    "          python -m unittest discover -s scripts -p 'test_scout_comparison_provenance.py' -v\n"
+    "          python -m unittest discover -s scripts -p 'test_scout_comparison_acceptance.py' -v\n"
+    "          python -m unittest discover -s scripts -p 'test_scout_comparison_gate.py' -v\n"
+)
+SCOUT_IDENTITY_STEP = '      - name: Bind exact scout source assets runtime and complete fixture outputs\n'
+SCOUT_NATIVE_COMMAND = (
+    '          python scripts/browser-scout-rehearsal.py'
+    ' --url http://127.0.0.1:4173/Infinity/'
+    ' --natural-report scout-rehearsal-source-evidence/natural-report.json'
+    ' --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d\' \' -f1)"'
+    ' --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence\n'
+)
+COMPARISON_NATIVE_COMMAND = SCOUT_NATIVE_COMMAND.replace(
+    'scripts/browser-scout-rehearsal.py', 'scripts/browser-scout-comparison.py').replace(
+    '--output scout-rehearsal-evidence', '--output scout-comparison-evidence')
+SCOUT_ARTIFACT_PATH = '            scout-rehearsal-evidence\n'
+COMPARISON_ARTIFACT_PATH = '            scout-comparison-evidence\n'
 
 
 def jobs(workflow):
@@ -116,6 +140,45 @@ def without_artifact_name(step):
     return significant(re.sub(r'^          name: .+\n', '', step, flags=re.MULTILINE))
 
 
+def assert_scout_comparison_preserved(current, original):
+    """Allow only four explicit additions to the immutable scout job.
+
+    Validate cardinality, placement and every approved byte before reverting
+    them for a whole-job comparison. Never filter arbitrary differing lines,
+    commands, metadata, comments, time budgets or artifact paths.
+    """
+    assert original.count('0.6.22-alpha.1') == 2, 'pinned scout release lines drift'
+    assert current.count('0.6.22-alpha.2') == 2, 'scout release-line cardinality'
+    normalized = current
+    for old in SCOUT_VERSION_LINES:
+        new = old.replace('0.6.22-alpha.1', '0.6.22-alpha.2')
+        assert original.count(old) == 1, 'pinned scout release line drift'
+        assert normalized.count(new) == 1, 'exact scout release transition missing'
+        assert old not in normalized, 'old scout release line retained'
+        normalized = normalized.replace(new, old, 1)
+
+    assert COMPARISON_OFFLINE_STEP not in original, 'comparison already in pinned scout job'
+    assert current.count(COMPARISON_OFFLINE_STEP) == 1, 'exact comparison offline step missing or duplicated'
+    assert current.count(COMPARISON_OFFLINE_STEP + SCOUT_IDENTITY_STEP) == 1, 'comparison offline step position drift'
+    assert SCOUT_IDENTITY_STEP in original, 'pinned scout identity step missing'
+    normalized = normalized.replace(COMPARISON_OFFLINE_STEP, '', 1)
+
+    assert original.count(SCOUT_NATIVE_COMMAND) == 1, 'pinned scout native command drift'
+    assert COMPARISON_NATIVE_COMMAND not in original, 'comparison native already in pinned scout job'
+    assert current.count(SCOUT_NATIVE_COMMAND) == 1, 'old scout native command missing or duplicated'
+    assert current.count(COMPARISON_NATIVE_COMMAND) == 1, 'comparison native command missing or duplicated'
+    assert current.count(SCOUT_NATIVE_COMMAND + COMPARISON_NATIVE_COMMAND) == 1, 'comparison must immediately follow old native gate'
+    normalized = normalized.replace(SCOUT_NATIVE_COMMAND + COMPARISON_NATIVE_COMMAND, SCOUT_NATIVE_COMMAND, 1)
+
+    assert original.count(SCOUT_ARTIFACT_PATH) == 1, 'pinned scout artifact path drift'
+    assert COMPARISON_ARTIFACT_PATH not in original, 'comparison artifact already in pinned scout job'
+    assert current.count(COMPARISON_ARTIFACT_PATH) == 1, 'comparison artifact path missing or duplicated'
+    assert current.count(SCOUT_ARTIFACT_PATH + COMPARISON_ARTIFACT_PATH) == 1, 'comparison artifact path position drift'
+    normalized = normalized.replace(SCOUT_ARTIFACT_PATH + COMPARISON_ARTIFACT_PATH, SCOUT_ARTIFACT_PATH, 1)
+
+    assert normalized == original, 'unapproved scout job drift'
+
+
 class ParallelLegacyGateSplitTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -177,10 +240,9 @@ class ParallelLegacyGateSplitTests(unittest.TestCase):
             self.assertEqual(len(prereq), 1)
             self.assertIn('        timeout-minutes: 4\n', prereq[0])
 
-    def test_orbital_and_scout_jobs_are_unchanged(self):
-        for name in ('npc-orbital', 'scout-rehearsal'):
-            with self.subTest(job=name):
-                self.assertEqual(self.current[name], self.original[name])
+    def test_orbital_unchanged_and_scout_has_only_exact_comparison_additions(self):
+        self.assertEqual(self.current['npc-orbital'], self.original['npc-orbital'])
+        assert_scout_comparison_preserved(self.current['scout-rehearsal'], self.original['scout-rehearsal'])
 
     def test_common_and_fixture_identity_wiring_covers_every_job(self):
         for name in GAME_JOBS:

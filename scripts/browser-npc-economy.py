@@ -5,7 +5,8 @@ Separate fault branches explicitly wrap native storage and never claim natural
 quota exhaustion or unchanged disk after uncertain readback. No local run allowed.
 """
 from r14_compatibility import expected_npc_economy
-from npc_display_contract import MESSAGE_ROWS_SAMPLE_JS, assert_message_rows, OPEN_REHEARSAL
+from npc_display_contract import (MESSAGE_ROWS_SAMPLE_JS, assert_message_rows,
+                                  MESSAGE_OPENERS_SAMPLE_JS, typed_message_openers, exact_copied_data)
 from contextlib import contextmanager
 import argparse
 import copy
@@ -786,7 +787,7 @@ def current_message_display(page, state):
         assert_message_rows(evidence, state['messages'])
     except (AssertionError, KeyError, TypeError, ValueError):
         valid = False
-    check('complete current message rows retain exact state order/text/time and typed-only rehearsal controls', valid, evidence)
+    check('complete current message rows retain exact state order/text/time and typed-only ordered rehearsal/comparison controls', valid, evidence)
 
 
 def arrived_report(page, state, fleet_id, age):
@@ -796,8 +797,9 @@ def arrived_report(page, state, fleet_id, age):
     tab(page, 'messages'); current_message_display(page, state)
     check('actual arrival UI shows complete independent report text', page.locator('#space-message-list > .space-message > p:first-of-type').all_text_contents().count(independent_report(age)) == 1)
     row = page.locator(f'#space-message-list > .space-message[data-message-id="scout-{fleet_id}"]')
-    check('actual typed arrival has one direct enabled historical rehearsal opener', row.count() == 1 and row.locator(':scope > button').count() == 1
-          and row.locator(':scope > button').text_content() == OPEN_REHEARSAL and row.locator(':scope > button').is_enabled())
+    openers = row.evaluate(MESSAGE_OPENERS_SAMPLE_JS) if row.count() == 1 else None
+    check('actual typed arrival has exactly the original rehearsal then comparison opener with unchanged native values',
+          exact_copied_data(openers, typed_message_openers()), openers)
     return messages[0]
 
 

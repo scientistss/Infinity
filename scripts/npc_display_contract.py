@@ -22,6 +22,10 @@ UNIT_PANEL_COPY={
   'after':DEFENSE_INTRO+'当前 NPC 轨道攻击仅派遣可飞舰船，防御与导弹不参与；NPC 不会主动袭击母星。'}}
 UNAVAILABLE='没有可用的演练快照；需要新的付费侦察抵达'
 OPEN_REHEARSAL='打开历史侦察演练'
+OPEN_COMPARISON='历史对照'
+REHEARSAL_OPENER_HTML=f'<button type="button">{OPEN_REHEARSAL}</button>'
+COMPARISON_OPENER_HTML=f'<button type="button" data-npc-scout-comparison="">{OPEN_COMPARISON}</button>'
+COMPARISON_NOTICE_HTML='<p id="npc-scout-comparison-notice" class="muted" role="status" aria-live="polite" hidden=""></p>'
 FLYING_SHIPS=[('small_cargo','小型运输舰'),('large_cargo','大型运输舰'),('light_fighter','轻型战斗机'),
  ('heavy_fighter','重型战斗机'),('cruiser','巡洋舰'),('battleship','战列舰'),('battlecruiser','战列巡洋舰'),
  ('bomber','轰炸机'),('destroyer','毁灭者'),('deathstar','死星'),('recycler','回收船'),
@@ -49,12 +53,48 @@ def initial_rehearsal_html():
   </section>'''
 
 
+def initial_comparison_html():
+    """Independent closed comparison literal, never imported from production."""
+    return '''<section id="npc-scout-comparison-panel" class="ov-card npc-scout-comparison" aria-labelledby="npc-scout-comparison-title" hidden="">
+    <h3 id="npc-scout-comparison-title" tabindex="-1">历史侦察对照</h3>
+    <p id="npc-scout-comparison-source" class="chip"></p>
+    <label for="npc-scout-comparison-other">同坐标的另一份报告<select id="npc-scout-comparison-other" disabled=""><option value="">请明确选择一份报告</option></select></label>
+    <div class="space-controls"><button id="npc-scout-comparison-run" type="button" disabled="">查看差值</button><button id="npc-scout-comparison-cancel" type="button">取消 / 返回消息</button></div>
+    <p id="npc-scout-comparison-status" class="muted" role="status" aria-live="polite"></p>
+    <p id="npc-scout-comparison-warning" class="muted">只是两次观察差，不代表净产量、战利品或当前库存。</p>
+    <div id="npc-scout-comparison-results" hidden=""></div>
+  </section>'''
+
+
+def initial_comparison_controls():
+    return [
+      {'id':'npc-scout-comparison-other','type':'select-one','value':'','disabled':True,'visible':False},
+      {'id':'npc-scout-comparison-run','type':'button','value':'','disabled':True,'visible':False},
+      {'id':'npc-scout-comparison-cancel','type':'button','value':'','disabled':False,'visible':False}]
+
+
+# The whole two-opener shape is checked before any legacy browser action can
+# select the original rehearsal opener. This is a read-only DOM witness.
+MESSAGE_OPENERS_SAMPLE_JS=r'''row => ({children:row.children.length,
+ controls:[...row.querySelectorAll('input,select,textarea,button')].map(e=>({
+  html:e.outerHTML,tag:e.tagName,type:e.type,value:e.value,disabled:e.disabled,
+  direct:e.parentElement===row,index:[...row.children].indexOf(e)}))})'''
+
+
+def typed_message_openers(comparison_disabled=False):
+    assert type(comparison_disabled) is bool
+    comparison_html=COMPARISON_OPENER_HTML.replace('>',' disabled="">',1) if comparison_disabled else COMPARISON_OPENER_HTML
+    return {'children':5,'controls':[
+      {'html':REHEARSAL_OPENER_HTML,'tag':'BUTTON','type':'button','value':'','disabled':False,'direct':True,'index':3},
+      {'html':comparison_html,'tag':'BUTTON','type':'button','value':'','disabled':comparison_disabled,'direct':True,'index':4}]}
+
+
 def initial_message_panel_html(origin,message_html):
     """Bind the complete added container, including hidden data and all wrappers."""
     return ('<section id="space-messages" class="tab-panel space-panel" data-tab-panel="messages" aria-labelledby="space-messages-title">'
       +f'<div class="panel-head"><h2 id="space-messages-title">航行消息</h2><p class="space-location">{dom_text(origin)}</p></div>'
       +f'<p class="muted">{INTRO}</p><div id="space-message-list">{message_html}</div>'
-      +initial_rehearsal_html()+f'<h3 class="group-title">NPC 轨道战报</h3><p class="muted">{HISTORY}</p>'
+      +initial_rehearsal_html()+COMPARISON_NOTICE_HTML+'\n  '+initial_comparison_html()+f'<h3 class="group-title">NPC 轨道战报</h3><p class="muted">{HISTORY}</p>'
       +f'<details class="npc-battle-rules"><summary>战斗规则</summary><p class="muted">{RULES}</p></details>'
       +'<div id="npc-battle-reports"></div></section>')
 
@@ -98,7 +138,7 @@ def game_message_time(at):
     return '游戏 '+(f'{days} 天 {hours} 小时' if days else f'{hours} 小时 {minutes} 分' if hours else f'{minutes} 分 {seconds} 秒' if minutes else f'{seconds} 秒')
 
 
-def ordered_text_projection(text,parts):
+def ordered_text_projection(text,parts,adjacent_button_boundary=None):
     """Preserve exact native paragraph gaps while projecting identified rows."""
     cursor=0;result=''
     for index,(native,prior) in enumerate(parts):
@@ -106,7 +146,8 @@ def ordered_text_projection(text,parts):
         gap=''
         if index:
             while cursor<len(text) and text[cursor]=='\n':gap+='\n';cursor+=1
-            assert gap in ('\n','\n\n')
+            allowed=('', '\n', '\n\n') if index==adjacent_button_boundary else ('\n','\n\n')
+            assert gap in allowed
         assert text.startswith(native,cursor)
         cursor+=len(native);result+=gap+prior
     assert cursor==len(text)
@@ -130,8 +171,8 @@ def assert_message_rows(evidence,messages,current=True):
                 notice=UNAVAILABLE if typed is None else f"历史情报，之后可能变化 · 抵达时间 {typed['observedAt']} 秒 · {typed['model']}"
                 parts.append(f'<p class="muted">{dom_text(notice)}</p>');child_texts.append(notice)
             if typed is not None:
-                parts.append(f'<button type="button">{OPEN_REHEARSAL}</button>');child_texts.append(OPEN_REHEARSAL)
-                controls=[{'tag':'BUTTON','type':'button','disabled':False,'text':OPEN_REHEARSAL}]
+                parts.extend([REHEARSAL_OPENER_HTML,COMPARISON_OPENER_HTML]);child_texts.extend([OPEN_REHEARSAL,OPEN_COMPARISON])
+                controls=[{'tag':'BUTTON','type':'button','disabled':False,'text':text} for text in (OPEN_REHEARSAL,OPEN_COMPARISON)]
             assert row['key']==(message['id'] if is_scout else None)
             opening=f'<article class="space-message" data-message-id="{escape(message["id"],quote=True)}">' if is_scout else '<article class="space-message">'
         else:
@@ -139,7 +180,10 @@ def assert_message_rows(evidence,messages,current=True):
             opening='<article class="space-message">'
         assert exact_copied_data(row['controls'],controls) and row['html']==opening+''.join(parts)+'</article>'
         assert exact_copied_data(row['children'],[{'html':html,'text':text} for html,text in zip(parts,child_texts)])
-        ordered_text_projection(row['text'],[(text,text) for text in child_texts])
+        # Only the verified new adjacent button pair may be inline. Original
+        # paragraphs and all other row/list boundaries keep their strict gaps.
+        ordered_text_projection(row['text'],[(text,text) for text in child_texts],
+                                4 if len(controls)==2 else None)
         # The complete, verified first two native children survive unchanged.
         end=row['text'].find(body,len(time)) if body else len(time)
         assert end>=len(time)
@@ -207,14 +251,19 @@ SAMPLE_JS=r'''() => {
  }
  if(tab==='messages'){
   const list=panel.querySelector('#space-message-list'),head=panel.querySelector('.panel-head'),rules=panel.querySelector('.npc-battle-rules'),reports=panel.querySelector('#npc-battle-reports'),rehearsal=panel.querySelector('#npc-rehearsal-panel');
+  const comparison=panel.querySelector('#npc-scout-comparison-panel'),comparisonNotice=panel.querySelector('#npc-scout-comparison-notice');
   const source=list??panel,rows=[...source.children];
   result.current=!!list;result.messageHTML=source.innerHTML;result.messageText=source.innerText;
   result.messages={count:list?document.querySelectorAll('#space-message-list').length:document.querySelectorAll('[data-tab-panel="messages"]').length,html:source.innerHTML,text:source.innerText,
    rows:rows.filter(row=>row.matches('article.space-message')).map(row=>({html:row.outerHTML,text:row.innerText,key:row.getAttribute('data-message-id'),direct:row.parentElement===source,
     children:[...row.children].map(e=>({html:e.outerHTML,text:e.innerText})),controls:[...row.querySelectorAll('input,select,textarea,button')].map(e=>({tag:e.tagName,type:e.type,disabled:e.disabled,text:e.textContent}))}))};
   if(list)result.addition={counts:{panels:document.querySelectorAll('#space-messages').length,lists:document.querySelectorAll('#space-message-list').length,titles:document.querySelectorAll('#space-messages-title').length,reports:document.querySelectorAll('#npc-battle-reports').length,rules:document.querySelectorAll('.npc-battle-rules').length},headHTML:head.outerHTML,heading:head.querySelector('h2').textContent,origin:head.querySelector('.space-location').textContent,headText:head.innerText,intro:head.nextElementSibling.textContent,
-   title:rehearsal?.nextElementSibling.textContent,history:rehearsal?.nextElementSibling.nextElementSibling.textContent,rulesText:rules.querySelector('p').textContent,summary:rules.querySelector('summary').textContent,closed:!rules.open,reportHTML:reports.innerHTML,
-   exactOrder:panel.children.length===8&&panel.children[0]===head&&panel.children[2]===list&&panel.children[3]===rehearsal&&panel.children[6]===rules&&panel.children[7]===reports,
+   title:comparison?.nextElementSibling.textContent,history:comparison?.nextElementSibling.nextElementSibling.textContent,rulesText:rules.querySelector('p').textContent,summary:rules.querySelector('summary').textContent,closed:!rules.open,reportHTML:reports.innerHTML,
+   exactOrder:panel.children.length===10&&panel.children[0]===head&&panel.children[2]===list&&panel.children[3]===rehearsal&&panel.children[4]===comparisonNotice&&panel.children[5]===comparison&&panel.children[8]===rules&&panel.children[9]===reports,
+   comparisonNotice:comparisonNotice?{count:document.querySelectorAll('#npc-scout-comparison-notice').length,html:comparisonNotice.outerHTML,hidden:comparisonNotice.hidden,visible:visible(comparisonNotice),exactOrder:comparisonNotice.previousElementSibling===rehearsal&&comparisonNotice.nextElementSibling===comparison}:null,
+   comparison:comparison?{count:document.querySelectorAll('#npc-scout-comparison-panel').length,html:comparison.outerHTML,hidden:comparison.hidden,visible:visible(comparison),
+    exactIds:[...comparison.querySelectorAll('[id]')].every(e=>document.querySelectorAll('#'+e.id).length===1),
+    controls:[...comparison.querySelectorAll('input,select,textarea,button')].map(e=>({id:e.id,type:e.type,value:e.value,disabled:e.disabled,visible:visible(e)}))}:null,
    rehearsal:rehearsal?{count:document.querySelectorAll('#npc-rehearsal-panel').length,html:rehearsal.outerHTML,hidden:rehearsal.hidden,visible:visible(rehearsal),
     exactIds:[...rehearsal.querySelectorAll('[id]')].every(e=>document.querySelectorAll('#'+e.id).length===1),
     controls:[...rehearsal.querySelectorAll('input,select,textarea,button')].map(e=>({id:e.id,type:e.type,value:e.value,disabled:e.disabled,visible:visible(e)}))}:null};
@@ -316,8 +365,10 @@ def normalize_npc_display(snapshot,evidence,state,side):
             assert evidence['panelHTML']==initial_message_panel_html(origin,evidence['messageHTML'])
             assert a['heading']=='航行消息' and a['origin']==origin and a['intro']==INTRO
             assert a['title']=='NPC 轨道战报' and a['history']==HISTORY and a['rulesText']==RULES and a['summary']=='战斗规则'
-            assert a['closed'] and a['reportHTML']=='' and a['exactOrder']
+            assert a['closed'] is True and a['reportHTML']=='' and a['exactOrder'] is True
             assert exact_copied_data(a['rehearsal'],{'count':1,'html':initial_rehearsal_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_rehearsal_controls()})
+            assert exact_copied_data(a['comparisonNotice'],{'count':1,'html':COMPARISON_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True})
+            assert exact_copied_data(a['comparison'],{'count':1,'html':initial_comparison_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()})
             parts_exact(a['headText'],['航行消息',origin])
             parts_exact(out['text'],[a['headText'],INTRO,evidence['messageText'],'NPC 轨道战报',HISTORY,'战斗规则'])
             out['text']=historical_text

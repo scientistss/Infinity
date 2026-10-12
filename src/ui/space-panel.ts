@@ -1,5 +1,7 @@
 import { installNpcAttackControls, type NpcActionAuthority, type NpcAttackUiAction } from "./npc-attack-controls";
 import { installNpcBattlePanel, npcBattlePanelHtml } from "./npc-battle-panel";
+import { installNpcScoutComparisonPanel, npcScoutComparisonPanelHtml } from "./npc-scout-comparison-panel";
+import { isNpcScoutComparisonMessage } from "./npc-scout-comparison-model";
 import { installNpcRehearsalPanel, npcRehearsalPanelHtml, NPC_REHEARSAL_FLYING_IDS, NPC_REHEARSAL_UNAVAILABLE, type NpcRehearsalDraft } from "./npc-rehearsal-panel";
 import { installExpansionNavigation } from "./expansion-navigation";
 import { installDemolitionPanel, type DemolitionUiAction } from "./demolition-panel";
@@ -171,6 +173,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
   let state: GameState | null = null, writable = false, protection = "", world: object = {};
   let previousOrigin = "", previousWritable: boolean | null = null, retiredMount = false;
   let controller: ReturnType<typeof installNpcRehearsalPanel> | null = null;
+  let comparison: ReturnType<typeof installNpcScoutComparisonPanel> | null = null;
   const rows = new Map<FleetMessage, HTMLElement>();
   const watched = new Set<Node>();
   function removed(records: MutationRecord[]) {
@@ -192,7 +195,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
   }
   const request = (draft: NpcRehearsalDraft): FleetRequest => ({ mission: "attack", target: { ...draft.target }, ships: { ...draft.ships }, speedPercent: draft.speedPercent, cargo: emptyCargo() });
   const clearNotice = () => { notice.hidden = true; notice.textContent = ""; };
-  function retire() { controller?.invalidate(); for (const row of rows.values()) row.remove(); rows.clear(); }
+  function retire() { controller?.invalidate(); comparison?.invalidate(); for (const row of rows.values()) row.remove(); rows.clear(); }
   function observe(next: GameState, ready: boolean, reason: string) {
     const nextOrigin = activePlanet(next).id;
     if (state && (nextOrigin !== previousOrigin || ready !== previousWritable)) retire();
@@ -225,7 +228,10 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
         return { ok: true, reason: "仅已填入，尚未派遣或付款。" };
       },
     });
-    controller.observe();
+    if (!comparison && root.querySelector("#npc-scout-comparison-panel")) comparison = installNpcScoutComparisonPanel(root, {
+      readContext: () => ({ adoptedWorld: world, messages: state!.messages, writable, protectionReason: protection }),
+    });
+    controller.observe(); comparison?.observe();
     // Hidden message pages must not retain evicted typed history in a UI map.
     const retained = new Set(next.messages);
     for (const [message, row] of rows) if (!retained.has(message)) { row.remove(); rows.delete(message); }
@@ -255,6 +261,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
         rows.set(message, row);
         const next: Element | null = previous ? previous.nextElementSibling : list.firstElementChild; list.insertBefore(row, next);
         if (snapshot) { const button = document.createElement("button"); button.type = "button"; button.textContent = "打开历史侦察演练"; row.append(button); controller.registerReport(button, message); }
+        if (comparison && isNpcScoutComparisonMessage(message)) { const button = document.createElement("button"); button.type = "button"; button.textContent = "历史对照"; button.dataset.npcScoutComparison = ""; row.append(button); comparison.registerReport(button, message); }
       } else {
         const next: Element | null = previous ? previous.nextElementSibling : list.firstElementChild;
         if (next !== row) list.insertBefore(row, next);
@@ -268,7 +275,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
   });
   return {
     observe, updateMessages, retire, clearNotice,
-    close() { controller?.close(); },
+    close() { controller?.close(); comparison?.close(); },
     adoptWorld() { retire(); world = {}; clearNotice(); },
   };
 }
@@ -302,7 +309,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
-  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-message-list"></div>${npcRehearsalPanelHtml()}${npcBattlePanelHtml()}`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()+buildingTemplatesPanelHtml()));
+  `)+make("messages","航行消息",`<p class="muted">按游戏时间记录派遣、抵达、侦察和返航；保留最近 ${SPACE.maxMessages} 条。</p><div id="space-message-list"></div>${npcRehearsalPanelHtml()}${npcScoutComparisonPanelHtml()}${npcBattlePanelHtml()}`)+make("deep","深空任务与贸易",deepPanelHtml())+make("orders","有限计划与单源运输",ordersPanelHtml()+researchTemplatesPanelHtml()+buildingTemplatesPanelHtml()));
   const orderPanel=installOrdersPanel(root,onAction);
   const templatePanel=installResearchTemplatesPanel(root,onAction);
   const buildingTemplatePanel=installBuildingTemplatesPanel(root,onAction);

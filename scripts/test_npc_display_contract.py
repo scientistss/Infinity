@@ -194,8 +194,9 @@ class NpcDisplayTests(unittest.TestCase):
                 parts.append({'html':f'<p class="muted">{notice}</p>','text':notice})
             controls=[]
             if typed is not None:
-                parts.append({'html':f'<button type="button">{OPEN_REHEARSAL}</button>','text':OPEN_REHEARSAL})
-                controls=[{'tag':'BUTTON','type':'button','disabled':False,'text':OPEN_REHEARSAL}]
+                parts.extend([{'html':'<button type="button">打开历史侦察演练</button>','text':'打开历史侦察演练'},
+                              {'html':'<button type="button" data-npc-scout-comparison="">历史对照</button>','text':'历史对照'}])
+                controls=[{'tag':'BUTTON','type':'button','disabled':False,'text':text} for text in ('打开历史侦察演练','历史对照')]
             opening=f'<article class="space-message" data-message-id="{m["id"]}">' if scout else '<article class="space-message">'
             rows.append({'html':opening+''.join(p['html'] for p in parts)+'</article>','text':'\n\n'.join(p['text'] for p in parts),
                 'key':m['id'] if scout else None,'direct':True,'children':parts,'controls':controls})
@@ -204,7 +205,9 @@ class NpcDisplayTests(unittest.TestCase):
     def messages(self):
         head='航行消息\nHome [1:50:8]';rows=self.copied_rows(self.state()['messages']);message=rows['text'];text='\n\n'.join([head,INTRO,message,'NPC 轨道战报',HISTORY,'战斗规则'])
         a={'counts':{'panels':1,'lists':1,'titles':1,'reports':1,'rules':1},'headHTML':'<div class="panel-head"><h2 id="space-messages-title">航行消息</h2><p class="space-location">Home [1:50:8]</p></div>','heading':'航行消息','origin':'Home [1:50:8]','intro':INTRO,'title':'NPC 轨道战报','history':HISTORY,'rulesText':RULES,'summary':'战斗规则','closed':True,'reportHTML':'','exactOrder':True,'headText':head,
-           'rehearsal':{'count':1,'html':initial_rehearsal_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_rehearsal_controls()}}
+           'rehearsal':{'count':1,'html':initial_rehearsal_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_rehearsal_controls()},
+           'comparisonNotice':{'count':1,'html':COMPARISON_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True},
+           'comparison':{'count':1,'html':initial_comparison_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()}}
         return {'tab':'messages','text':text,'inputs':[]},{'tab':'messages','current':True,'panelHTML':initial_message_panel_html('Home [1:50:8]',rows['html']),'messageHTML':message and rows['html'],'messageText':message,'messages':rows,'addition':a}
     def test_all_original_message_html_and_text_retained(self):
         snapshot,evidence=self.messages();state=self.state();original=copy.deepcopy((snapshot,evidence,state))
@@ -378,5 +381,218 @@ class NpcDisplayTests(unittest.TestCase):
             if mutation=='origin':evidence['addition']['origin']='wrong'
             if mutation=='open':evidence['addition']['closed']=False
             with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def typed_state(self):
+        state=self.state()
+        state['messages'][1]['npcScoutSnapshot']={'model':'npc-scout-snapshot-v1','fleetId':2,'originId':'homeworld',
+            'target':{'galaxy':1,'system':56,'position':6},'observedAt':'60','stock':[800,400,60],
+            'garrison':{'light_fighter':4,'heavy_fighter':0},'defenderTech':{'weapons':0,'shields':0,'armour':0}}
+        return state
+
+    def rebuild_typed_row(self,rows):
+        row=rows['rows'][0]
+        row['html']=f'<article class="space-message" data-message-id="{row["key"]}">'+''.join(p['html'] for p in row['children'])+'</article>'
+        row['text']='\n\n'.join(p['text'] for p in row['children'])
+        rows['html']=''.join(r['html'] for r in rows['rows']);rows['text']='\n\n'.join(r['text'] for r in rows['rows'])
+
+    def test_typed_message_comparison_is_exactly_second_and_original_opener_unchanged(self):
+        state=self.typed_state();rows=self.copied_rows(state['messages']);original=copy.deepcopy((rows,state))
+        row=rows['rows'][0]
+        self.assertEqual(row['children'][3:],[
+            {'html':'<button type="button">打开历史侦察演练</button>','text':'打开历史侦察演练'},
+            {'html':'<button type="button" data-npc-scout-comparison="">历史对照</button>','text':'历史对照'}])
+        self.assertEqual(len(row['children']),5);self.assertEqual(len(row['controls']),2)
+        projected=assert_message_rows(rows,state['messages'])
+        self.assertEqual((rows,state),original)
+        self.assertNotIn('历史对照',projected[0]);self.assertNotIn('历史对照',projected[1])
+        self.assertIn('<small>游戏 1 分 0 秒</small><p>原有侦察情报。</p>',projected[0])
+
+    def test_two_opener_witness_binds_complete_html_original_values_order_and_protected_state(self):
+        expected={'children':5,'controls':[
+            {'html':'<button type="button">打开历史侦察演练</button>','tag':'BUTTON','type':'button','value':'','disabled':False,'direct':True,'index':3},
+            {'html':'<button type="button" data-npc-scout-comparison="">历史对照</button>','tag':'BUTTON','type':'button','value':'','disabled':False,'direct':True,'index':4}]}
+        self.assertTrue(exact_copied_data(typed_message_openers(),expected))
+        protected=copy.deepcopy(expected)
+        protected['controls'][1]['html']='<button type="button" data-npc-scout-comparison="" disabled="">历史对照</button>'
+        protected['controls'][1]['disabled']=True
+        self.assertTrue(exact_copied_data(typed_message_openers(True),protected))
+        self.assertFalse(exact_copied_data(typed_message_openers(),protected))
+        for index in range(2):
+            for field,value in (('html','<button>changed</button>'),('tag','INPUT'),('type','submit'),('value','injected'),
+                                ('disabled',True),('disabled',0),('direct',False),('direct',1),('index',0),('index',True)):
+                changed=copy.deepcopy(expected);changed['controls'][index][field]=value
+                with self.subTest(index=index,field=field,value=value):
+                    self.assertFalse(exact_copied_data(typed_message_openers(),changed))
+        for mutation in ('missing','duplicate','reversed','extra_input','children','boolean_count','extra_field','missing_field'):
+            changed=copy.deepcopy(expected)
+            if mutation=='missing':changed['controls'].pop()
+            if mutation=='duplicate':changed['controls'].append(copy.deepcopy(changed['controls'][1]))
+            if mutation=='reversed':changed['controls'].reverse()
+            if mutation=='extra_input':changed['controls'].append({'html':'<input value="secret">','tag':'INPUT'})
+            if mutation=='children':changed['children']=6
+            if mutation=='boolean_count':changed['children']=True
+            if mutation=='extra_field':changed['controls'][1]['unknown']='secret'
+            if mutation=='missing_field':del changed['controls'][1]['value']
+            with self.subTest(mutation=mutation):self.assertFalse(exact_copied_data(typed_message_openers(),changed))
+
+    def test_typed_message_rejects_missing_duplicate_retagged_changed_or_reordered_comparison(self):
+        mutations=('missing','duplicate','tag','text','attribute','missing_attribute','wrong_attribute','type','disabled',
+                   'value','nested','input','reordered','rehearsal_attribute','rehearsal_text','button_child_text')
+        for mutation in mutations:
+            state=self.typed_state();rows=self.copied_rows(state['messages']);row=rows['rows'][0];button=row['children'][4]
+            if mutation=='missing':row['children'].pop();row['controls'].pop()
+            if mutation=='duplicate':row['children'].append(copy.deepcopy(button));row['controls'].append(copy.deepcopy(row['controls'][1]))
+            if mutation=='tag':button['html']=button['html'].replace('<button ','<input ').replace('</button>','');row['controls'][1]['tag']='INPUT'
+            if mutation=='text':button['html']=button['html'].replace('历史对照','当前库存');button['text']='当前库存';row['controls'][1]['text']='当前库存'
+            if mutation=='attribute':button['html']=button['html'].replace('>',' data-other="secret">',1)
+            if mutation=='missing_attribute':button['html']=button['html'].replace(' data-npc-scout-comparison=""','')
+            if mutation=='wrong_attribute':button['html']=button['html'].replace('data-npc-scout-comparison=""','data-npc-scout-comparison="forged"')
+            if mutation=='type':button['html']=button['html'].replace('type="button"','type="submit"');row['controls'][1]['type']='submit'
+            if mutation=='disabled':button['html']=button['html'].replace('>',' disabled="">',1);row['controls'][1]['disabled']=True
+            if mutation=='value':button['html']=button['html'].replace('>',' value="secret">',1)
+            if mutation=='nested':button['html']=button['html'].replace('历史对照','<span>历史对照</span>')
+            if mutation=='input':button['html']+='<input value="secret">';row['controls'].append({'tag':'INPUT','type':'text','disabled':False,'text':''})
+            if mutation=='reordered':row['children'][3:]=reversed(row['children'][3:]);row['controls'].reverse()
+            if mutation=='rehearsal_attribute':row['children'][3]['html']=row['children'][3]['html'].replace('>',' data-other="secret">',1)
+            if mutation=='rehearsal_text':row['children'][3]['text']='changed'
+            if mutation=='button_child_text':button['text']='changed'
+            self.rebuild_typed_row(rows)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):assert_message_rows(rows,state['messages'])
+
+    def test_only_new_adjacent_button_boundary_accepts_inline_text(self):
+        state=self.typed_state()
+        for gap in ('','\n','\n\n'):
+            rows=self.copied_rows(state['messages']);row=rows['rows'][0]
+            row['text']=row['text'].replace('打开历史侦察演练\n\n历史对照','打开历史侦察演练'+gap+'历史对照')
+            rows['text']='\n\n'.join(r['text'] for r in rows['rows'])
+            with self.subTest(gap=repr(gap)):assert_message_rows(rows,state['messages'])
+        for boundary in range(1,5):
+            for gap in (('',' ','\t','\n\n\n') if boundary!=4 else (' ','\t','\n\n\n')):
+                rows=self.copied_rows(state['messages']);row=rows['rows'][0];texts=[p['text'] for p in row['children']]
+                row['text']=texts[0]+''.join((gap if index==boundary else '\n\n')+text for index,text in enumerate(texts[1:],1))
+                rows['text']='\n\n'.join(r['text'] for r in rows['rows'])
+                with self.subTest(boundary=boundary,gap=repr(gap)),self.assertRaises(AssertionError):assert_message_rows(rows,state['messages'])
+
+    def test_plain_null_and_legacy_messages_cannot_gain_comparison_content(self):
+        for current in (True,False):
+            state=self.state()
+            if not current:
+                for message in state['messages']:message.pop('npcScoutSnapshot')
+            for index in range(2):
+                for mutation in ('button','notice','hidden_input','attribute'):
+                    rows=self.copied_rows(state['messages'],current);row=rows['rows'][index]
+                    self.assertEqual(row['controls'],[])
+                    if mutation=='button':row['html']=row['html'].replace('</article>',COMPARISON_OPENER_HTML+'</article>');row['controls']=self.copied_rows(self.typed_state()['messages'])['rows'][0]['controls'][1:]
+                    if mutation=='notice':row['html']=row['html'].replace('</article>','<p class="muted">历史对照</p></article>')
+                    if mutation=='hidden_input':row['html']=row['html'].replace('</article>','<input hidden="" value="secret"></article>')
+                    if mutation=='attribute':row['html']=row['html'].replace('space-message"','space-message" data-npc-scout-comparison=""')
+                    rows['html']=''.join(r['html'] for r in rows['rows'])
+                    with self.subTest(current=current,index=index,mutation=mutation),self.assertRaises(AssertionError):assert_message_rows(rows,state['messages'],current)
+
+    def test_hidden_comparison_region_requires_complete_unique_html_and_initial_controls(self):
+        for mutation in ('missing','zero_count','duplicate_count','boolean_count','shown','numeric_hidden','visible','numeric_visible',
+                         'ids','numeric_ids','tag','text','attribute','hidden_data','input','duplicate_html','missing_hidden',
+                         'extra_field','missing_field'):
+            snapshot,evidence=self.messages();region=evidence['addition']['comparison'];old_html=region['html']
+            if mutation=='missing':evidence['addition']['comparison']=None
+            if mutation=='zero_count':region['count']=0
+            if mutation=='duplicate_count':region['count']=2
+            if mutation=='boolean_count':region['count']=True
+            if mutation=='shown':region['hidden']=False
+            if mutation=='numeric_hidden':region['hidden']=1
+            if mutation=='visible':region['visible']=True
+            if mutation=='numeric_visible':region['visible']=0
+            if mutation=='ids':region['exactIds']=False
+            if mutation=='numeric_ids':region['exactIds']=1
+            if mutation=='tag':region['html']=region['html'].replace('<section ','<div ').replace('</section>','</div>')
+            if mutation=='text':region['html']=region['html'].replace('历史侦察对照','当前库存')
+            if mutation=='attribute':region['html']=region['html'].replace('class="ov-card','data-other="secret" class="ov-card')
+            if mutation=='hidden_data':region['html']=region['html'].replace('</section>','<p hidden="">secret</p></section>')
+            if mutation=='input':region['html']=region['html'].replace('</section>','<input hidden="" value="secret"></section>')
+            if mutation=='duplicate_html':region['html']*=2
+            if mutation=='missing_hidden':region['html']=region['html'].replace(' hidden=""','',1)
+            if mutation=='extra_field':region['unknown']='secret'
+            if mutation=='missing_field':del region['exactIds']
+            evidence['panelHTML']=evidence['panelHTML'].replace(old_html,region['html'],1)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+        for index in range(3):
+            for field,value in (('id','forged'),('type','number'),('value','1'),('disabled',None),('disabled',0),('visible',True),('visible',0)):
+                snapshot,evidence=self.messages();region=evidence['addition']['comparison'];region['controls'][index][field]=value
+                with self.subTest(index=index,field=field,value=value),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+        for mutation in ('order','extra','missing','enable_select','enable_run','disable_cancel'):
+            snapshot,evidence=self.messages();controls=evidence['addition']['comparison']['controls']
+            if mutation=='order':controls.reverse()
+            if mutation=='extra':controls.append(copy.deepcopy(controls[0]))
+            if mutation=='missing':controls.pop()
+            if mutation=='enable_select':controls[0]['disabled']=False
+            if mutation=='enable_run':controls[1]['disabled']=False
+            if mutation=='disable_cancel':controls[2]['disabled']=True
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_comparison_notice_requires_unique_hidden_empty_exact_position(self):
+        for mutation in ('missing','count','zero','boolean_count','shown','visible','numeric_hidden','numeric_visible','order','numeric_order',
+                         'text','tag','id','role','live','class','attribute','input','duplicate_html','missing_hidden','extra_field','missing_field'):
+            snapshot,evidence=self.messages();notice=evidence['addition']['comparisonNotice'];old_html=notice['html']
+            if mutation=='missing':evidence['addition']['comparisonNotice']=None
+            if mutation=='count':notice['count']=2
+            if mutation=='zero':notice['count']=0
+            if mutation=='boolean_count':notice['count']=True
+            if mutation=='shown':notice['hidden']=False
+            if mutation=='visible':notice['visible']=True
+            if mutation=='numeric_hidden':notice['hidden']=1
+            if mutation=='numeric_visible':notice['visible']=0
+            if mutation=='order':notice['exactOrder']=False
+            if mutation=='numeric_order':notice['exactOrder']=1
+            if mutation=='text':notice['html']=notice['html'].replace('</p>','secret</p>')
+            if mutation=='tag':notice['html']=notice['html'].replace('<p ','<div ').replace('</p>','</div>')
+            if mutation=='id':notice['html']=notice['html'].replace('npc-scout-comparison-notice','other-notice')
+            if mutation=='role':notice['html']=notice['html'].replace('role="status"','role="alert"')
+            if mutation=='live':notice['html']=notice['html'].replace('aria-live="polite"','aria-live="assertive"')
+            if mutation=='class':notice['html']=notice['html'].replace('class="muted"','class="space-status"')
+            if mutation=='attribute':notice['html']=notice['html'].replace(' role=',' data-other="secret" role=')
+            if mutation=='input':notice['html']=notice['html'].replace('</p>','<input value="secret"></p>')
+            if mutation=='duplicate_html':notice['html']*=2
+            if mutation=='missing_hidden':notice['html']=notice['html'].replace(' hidden=""','')
+            if mutation=='extra_field':notice['unknown']=True
+            if mutation=='missing_field':del notice['exactOrder']
+            evidence['panelHTML']=evidence['panelHTML'].replace(old_html,notice['html'],1)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_comparison_panel_and_notice_cannot_be_missing_duplicated_nested_or_reordered(self):
+        for mutation in ('missing_panel','missing_notice','duplicate_panel','duplicate_notice','swap','before_rehearsal','after_battle','nested','order_witness','numeric_order'):
+            snapshot,evidence=self.messages();panel=initial_comparison_html();notice=COMPARISON_NOTICE_HTML;pair=notice+'\n  '+panel
+            if mutation=='missing_panel':evidence['panelHTML']=evidence['panelHTML'].replace(panel,'')
+            if mutation=='missing_notice':evidence['panelHTML']=evidence['panelHTML'].replace(notice,'')
+            if mutation=='duplicate_panel':evidence['panelHTML']=evidence['panelHTML'].replace(panel,panel+panel)
+            if mutation=='duplicate_notice':evidence['panelHTML']=evidence['panelHTML'].replace(notice,notice+notice)
+            if mutation=='swap':evidence['panelHTML']=evidence['panelHTML'].replace(pair,panel+'\n  '+notice)
+            if mutation=='before_rehearsal':evidence['panelHTML']=evidence['panelHTML'].replace(initial_rehearsal_html()+pair,pair+initial_rehearsal_html())
+            if mutation=='after_battle':evidence['panelHTML']=evidence['panelHTML'].replace(pair,'').replace('<div id="npc-battle-reports"></div>','<div id="npc-battle-reports"></div>'+pair)
+            if mutation=='nested':evidence['panelHTML']=evidence['panelHTML'].replace(pair,'<div>'+pair+'</div>')
+            if mutation=='order_witness':evidence['addition']['exactOrder']=False
+            if mutation=='numeric_order':evidence['addition']['exactOrder']=1
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_comparison_addition_keeps_all_59_original_controls_and_values_exact(self):
+        # Synthetic field-by-field canaries; this is not a native DOM count.
+        snapshot,evidence=self.fleet();state=self.state()
+        snapshot['inputs']=[{'id':f'original-{n}','action':None,'type':'number','value':str(n),
+                            'disabled':False,'checked':False,'text':None} for n in range(59)]
+        snapshot['shared']={'status':'已保存到本地','amount-metal':'7.80e4'}
+        expected=normalize_npc_display(snapshot,evidence,state,'after')
+        self.assertEqual(expected['inputs'],snapshot['inputs']);self.assertEqual(len(expected['inputs']),59)
+        prior=copy.deepcopy(snapshot);prior['text']='任务\n'+'\n'.join(label for _,label in MISSION_OPTIONS)+'\n原有在途舰队'
+        old_evidence={'tab':'fleet','options':copy.deepcopy(MISSION_OPTIONS),'selected':'colonize',
+                      'selectText':'\n'.join(label for _,label in MISSION_OPTIONS),
+                      'hiddenAttack':None,'rehearsalNotice':None,'clear':None}
+        self.assertEqual(normalize_npc_display(prior,old_evidence,state,'before'),expected)
+        for index in range(59):
+            for field,value in (('id','changed'),('action','changed'),('type','text'),('value','changed'),
+                                ('disabled',True),('checked',True),('text','changed')):
+                changed=copy.deepcopy(snapshot);changed['inputs'][index][field]=value;original=copy.deepcopy(changed)
+                result=normalize_npc_display(changed,evidence,state,'after')
+                with self.subTest(index=index,field=field):
+                    self.assertNotEqual(result,expected);self.assertEqual(changed,original)
+                    self.assertEqual(result['inputs'],changed['inputs']);self.assertEqual(result['shared'],changed['shared'])
 
 if __name__=='__main__':unittest.main()

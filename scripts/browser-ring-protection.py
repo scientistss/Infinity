@@ -26,6 +26,8 @@ Compact report UI adoption composes the unchanged attack seal at exact 7554
 with three presentation-only files; every domain and ring byte stays fixed.
 Scout/rehearsal adoption separately composes exact cc19 with r14 source bytes,
 complete patches and hunks; kernel/economy and all ring scope remain protected.
+Scout comparison composes exact e729 with only a frozen four-file presentation
+delta; the r14 schema, every historical seal, all domain bytes and art stay fixed.
 """
 import argparse
 import hashlib
@@ -189,6 +191,21 @@ NPC_SCOUT_REHEARSAL_UNCHANGED_PATHS = (
     'src/game/npc-transfer.ts', 'src/game/npc-remainder.ts',
 )
 
+NPC_SCOUT_COMPARISON_ADOPTION = 'e729c7ff3c4ef519bfd14da9dc132ba7d971de48'
+NPC_SCOUT_COMPARISON_MANIFEST = 'tests/fixtures/npc-scout-comparison-provenance.json'
+# Frozen e729-to-comparison UI source seal. It cannot replace the r14 source seal.
+NPC_SCOUT_COMPARISON_MANIFEST_SHA256 = '0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00'
+NPC_SCOUT_COMPARISON_PRODUCTION_PATHS = ('src',)
+NPC_SCOUT_COMPARISON_CHANGED_PATHS = (
+    'src/ui/npc-scout-comparison-model.ts',
+    'src/ui/npc-scout-comparison-panel.ts',
+    'src/ui/npc-scout-comparison.css',
+    'src/ui/space-panel.ts',
+)
+NPC_SCOUT_COMPARISON_UNCHANGED_PATHS = (
+    'public', 'src/ui/npc-rehearsal-panel.ts',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -342,6 +359,8 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):
+        return npc_scout_comparison_provenance(repository, candidate, git, check)
     if candidate != NPC_SCOUT_REHEARSAL_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_REHEARSAL_MANIFEST):
         return npc_scout_rehearsal_provenance(repository, candidate, git, check)
     if candidate != NPC_REPORT_UI_ADOPTION and git('ls-tree', candidate, '--', NPC_REPORT_UI_MANIFEST):
@@ -770,6 +789,76 @@ def npc_scout_rehearsal_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': NPC_SCOUT_REHEARSAL_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact NPC scout/rehearsal source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
+
+
+def npc_scout_comparison_provenance(repository, candidate, git, check):
+    """Compose immutable e729 r14 bytes with only the exact comparison UI delta."""
+    prior = npc_scout_rehearsal_provenance(repository, NPC_SCOUT_COMPARISON_ADOPTION, git, check)
+    check('NPC scout comparison starts at the exact independently sealed e729 scout/rehearsal source',
+          prior['contract'] == 'exact-declared-npc-scout-rehearsal-semantic-delta'
+          and prior['candidateSourceSha'] == NPC_SCOUT_COMPARISON_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC scout comparison path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256),
+                (ATTACK_MANIFEST, ATTACK_MANIFEST_SHA256),
+                (NPC_REPORT_UI_MANIFEST, NPC_REPORT_UI_MANIFEST_SHA256),
+                (NPC_SCOUT_REHEARSAL_MANIFEST, NPC_SCOUT_REHEARSAL_MANIFEST_SHA256)]
+    for path, digest in previous:
+        check('NPC scout comparison preserves every earlier manifest byte and mode: ' + path,
+              entry(candidate, path) == entry(NPC_SCOUT_COMPARISON_ADOPTION, path)
+              == {'mode': '100644', 'sha256': digest})
+    raw = (repository / NPC_SCOUT_COMPARISON_MANIFEST).read_bytes()
+    check('NPC scout comparison manifest has its fixed digest and exact committed ordinary-file bytes',
+          sha(raw) == NPC_SCOUT_COMPARISON_MANIFEST_SHA256
+          and entry(candidate, NPC_SCOUT_COMPARISON_MANIFEST) == {'mode': '100644', 'sha256': NPC_SCOUT_COMPARISON_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + NPC_SCOUT_COMPARISON_MANIFEST))
+    manifest = json.loads(raw)
+    check('NPC scout comparison pins e729, all seven prior seals and the complete production and protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-scout-comparison-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == NPC_SCOUT_COMPARISON_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(NPC_SCOUT_COMPARISON_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactDomainDeltaPaths') == []
+          and manifest.get('exactRingCriticalDeltaPaths') == []
+          and manifest.get('unchangedPresentationPaths') == list(NPC_SCOUT_COMPARISON_UNCHANGED_PATHS))
+    delta = changed(NPC_SCOUT_COMPARISON_ADOPTION, candidate, NPC_SCOUT_COMPARISON_PRODUCTION_PATHS)
+    check('complete production tree differs from e729 only at the exact four scout comparison UI files',
+          delta == list(NPC_SCOUT_COMPARISON_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, NPC_SCOUT_COMPARISON_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(NPC_SCOUT_COMPARISON_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('each comparison UI mode, byte, full patch and hunk is exact and anchored in sealed e729 bytes',
+          manifest.get('changedPaths') == rows)
+    check('NPC scout comparison preserves entire domain, ring, original art and rehearsal panel scopes',
+          changed(NPC_SCOUT_COMPARISON_ADOPTION, candidate, DOMAIN_PATHS) == []
+          and changed(NPC_SCOUT_COMPARISON_ADOPTION, candidate, RING_CRITICAL_PATHS) == []
+          and changed(NPC_SCOUT_COMPARISON_ADOPTION, candidate, NPC_SCOUT_COMPARISON_UNCHANGED_PATHS) == [])
+    return {'contract': 'exact-declared-npc-scout-comparison-ui-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': NPC_SCOUT_COMPARISON_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': NPC_SCOUT_COMPARISON_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact same-schema NPC scout comparison UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):

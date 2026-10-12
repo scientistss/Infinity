@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from fractions import Fraction
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+from npc_display_contract import MESSAGE_OPENERS_SAMPLE_JS, typed_message_openers, exact_copied_data
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST_STARTED_MONOTONIC = time.monotonic()
@@ -423,9 +424,19 @@ def boot(initial_raw, width=1440, fault=None, native_clock=False, extra_entries=
     return context, page
 
 
-def open_report(page, ident=11):
+def rehearsal_opener(page, ident=11, comparison_disabled=False):
+    """Bind both complete direct controls before selecting the original action."""
+    row_selector = f'#space-message-list > article.space-message[data-message-id="scout-{ident}"]'
+    row = page.locator(row_selector)
+    openers = row.evaluate(MESSAGE_OPENERS_SAMPLE_JS) if row.count() == 1 else None
+    check('typed report has exactly ordered original rehearsal and comparison openers',
+          exact_copied_data(openers, typed_message_openers(comparison_disabled)), openers)
+    return row_selector + ' > button:not([data-npc-scout-comparison])'
+
+
+def open_report(page, ident=11, comparison_disabled=False):
     tab(page, 'messages')
-    selector = f'article.space-message[data-message-id="scout-{ident}"] button'
+    selector = rehearsal_opener(page, ident, comparison_disabled)
     trusted_click(page, selector)
     expect(page.locator('#npc-rehearsal-panel')).to_be_visible()
     check('new panel zeroes separate dense13 selection and speed100',
@@ -893,7 +904,7 @@ def foreground_conflict_page(page):
     Persist raw probes before each assertion and keep the final hashed witness
     even if activation, readiness or a read fails. Ordinary geometry checks follow.
     """
-    selector='article.space-message[data-message-id="scout-11"] button'
+    selector='#space-message-list > article.space-message[data-message-id="scout-11"] > button:not([data-npc-scout-comparison])'
     path=out/'authority-conflict-foreground.json'
     witness={'schema':'infinity-scout-native-foreground-v1','case':case,'selector':selector,
              'before':None,'after':None,'frame':None,'afterFrame':None,
@@ -916,6 +927,9 @@ def foreground_conflict_page(page):
               frame['observerTimedOut'] is False and type(timestamp) in (int,float) and math.isfinite(timestamp)
               and frame['nativeFrameSequence']>0 and frame['controlledElapsed']==before['performanceNow']
               and frame['geometry']['rect'] is not None and final==after,copy.deepcopy(witness))
+        # The real conflict retires comparison actions; historical rehearsal
+        # reading stays enabled. Bind this exact protected shape after the frame.
+        rehearsal_opener(page, comparison_disabled=True)
     finally:
         atomic_json(path,witness)
         evidence.append({'kind':'native-foreground-witness','case':case,'file':path.name,
@@ -968,7 +982,7 @@ def authority_boundaries():
                   any(event['trusted'] is True and event['oldValue']==before[KEY]
                       and event['newValue']==competing_raw for event in storage_events),storage_events)
             expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
-            open_report(page); check('protected history stays readable but edits Run Fill disabled', page.locator('#npc-rehearsal-run').is_disabled() and page.locator('#npc-rehearsal-fill').is_disabled())
+            open_report(page, comparison_disabled=True); check('protected history stays readable but edits Run Fill disabled', page.locator('#npc-rehearsal-run').is_disabled() and page.locator('#npc-rehearsal-fill').is_disabled())
             unchanged_authority_draft(page, 'protected conflict', draft_before)
             storage_check('protected history reading preserves exact competing disk and all backups',
                           page, before, {**before, KEY: competing_raw})
@@ -1009,7 +1023,7 @@ def keyboard_and_paid_completion():
     check('opening report focuses actual panel title',page.locator('#npc-rehearsal-title').evaluate('(e)=>document.activeElement===e'))
     field=page.locator('#npc-rehearsal-ship-light_fighter');field.focus();field.press('Escape');advance(page)
     expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
-    opener='article.space-message[data-message-id="scout-11"] button'
+    opener=rehearsal_opener(page)
     check('trusted keyboard Escape retires review and restores exact opener focus',page.locator(opener).evaluate('(e)=>document.activeElement===e') and any(e['trusted'] and e['key']=='Escape' for e in page.evaluate('window.__scoutKeys')))
     whole_state('keyboard-cancel-does-not-change-game',save(page),row['expected']);context.close()
     begin_case('actual-paid-build-and-research-completion-invalidates-review')
@@ -1150,7 +1164,7 @@ def measured_upper_bound():
     context,page=boot(fixtures['branches']['performance']['raw'],native_clock=True)
     check('measurement clocks are native and unmodified',page.evaluate('window.__timingNative'))
     page.locator('[data-tab="messages"]').click()
-    page.locator('article.space-message[data-message-id="scout-11"] button').click()
+    page.locator(rehearsal_opener(page)).click()
     for ship in SHIPS: page.locator('#npc-rehearsal-ship-'+ship).fill('1000000000000')
     cdp=page.context.new_cdp_session(page); cdp.send('Performance.enable')
     before={r['name']:r['value'] for r in cdp.send('Performance.getMetrics')['metrics']}

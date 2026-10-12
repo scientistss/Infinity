@@ -1,0 +1,154 @@
+{
+  "schema": "infinity-ring-protection-npc-scout-comparison-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "e729c7ff3c4ef519bfd14da9dc132ba7d971de48",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    }
+  ],
+  "referenceStatus": "Exact same-schema scout comparison UI adoption atop independently sealed e729 r14 scout/rehearsal source. This source seal is not native, CI or release acceptance.",
+  "scope": "All production src paths, file modes, before/after bytes, complete deterministic Git patches and individual hunks are bound. All seven historical manifests, full domain and ring-critical scopes, original public art and existing rehearsal panel remain unchanged.",
+  "approvedDelta": "Pure historical scout comparison model, read-only comparison panel and scoped CSS, with exact narrow space-panel wiring. No game logic, persistence schema, combat, economy, wallet, dispatch, rehearsal or art changes.",
+  "productionPaths": [
+    "src"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "unchangedPresentationPaths": [
+    "public",
+    "src/ui/npc-rehearsal-panel.ts"
+  ],
+  "changedPaths": [
+    {
+      "path": "src/ui/npc-scout-comparison-model.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "cc4f73eb142348d1aebb87381115481c232535295f403c3a3d63e6bad2e9e7c2"
+      },
+      "patchSha256": "44378cb5f37290fc7863c1c5c6bb274be974c631fcde98850d392338e43c31ab",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,193 @@",
+          "sha256": "21ff51d3c75095b8c19931d2179b602a8d4f18b53495c4e3c4d0dc8059b40651"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-scout-comparison-panel.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "f8db8f5981300d266ad81dd917f6b47f2e330b24e81817788ad8e68863ece4eb"
+      },
+      "patchSha256": "a5f67ae451c8aeef2886da61a4b058893f9a9a67936599df5999507531e0f26d",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,305 @@",
+          "sha256": "6e6d9e2293fadd1a3584dd0359cd34414caff6c226f5027d2fa3136ef4295a25"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-scout-comparison.css",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "b458da3434416bced7adad7c0d15eea1d26a46496fce0316d542177d0e4a0830"
+      },
+      "patchSha256": "37ff4d90aa7bcae2ae04ea24abfb105d96e5a48a979242479c490b1dfaec1540",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,10 @@",
+          "sha256": "18d9c5e34fa807513ba916aef6c868897b16873b12a415a996e239af34591a2a"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "c83a9529db9bc6b14430f4f5c3d2598412f89d8132ec492bd69f08ab795399ef"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "82b3766420952d917ed4ddabbde62cd0a5ced863de32dbf821ef45c540ea7f77"
+      },
+      "patchSha256": "3bd80ae8c8f57274f922dc309e8e2ece20c4abce11b650c75a7e2c5cb1a6eeaa",
+      "hunks": [
+        {
+          "header": "@@ -1,5 +1,7 @@",
+          "sha256": "cf4928939f37a5e478e29af807bd14827a2e1672f4a73f23e0d00712f10e0820"
+        },
+        {
+          "header": "@@ -171,6 +173,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "0310b100d0b54314adde8136d62b03e962ee59d4008aa0134e338ef0d2fe8a2c"
+        },
+        {
+          "header": "@@ -192,7 +195,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "f839f7134026bebc52091d76d9101552b27e81f5fac72421184ad18d7454450a"
+        },
+        {
+          "header": "@@ -225,7 +228,10 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "9a8f5ccf50bac4ddf37b534373a2b5b0c325ec9fa4842496a8c2ad18095302e7"
+        },
+        {
+          "header": "@@ -255,6 +261,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "05d98f587c398de9be5d9e4c9e4291a80af8b3511abb1cddc75502ec7f5beefc"
+        },
+        {
+          "header": "@@ -268,7 +275,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "ca37e04292b4e9dd533d54df8c51f34d5d1e85602780990bc3b54d659958a694"
+        },
+        {
+          "header": "@@ -302,7 +309,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "585c2e44d806b726bd098eadba8a04babd7d0265d8258e10e1720c5e57ca2c5a"
+        }
+      ]
+    }
+  ]
+}

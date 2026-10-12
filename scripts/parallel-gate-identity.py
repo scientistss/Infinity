@@ -61,7 +61,7 @@ def exact_assets(workspace, expected):
     assert release['sourceSha'] == expected
     assert type(release['saveVersion']) is int and release['saveVersion'] == 9
     assert type(release['saveRevision']) is int and release['saveRevision'] == 14
-    assert release['version'] == '0.6.22-alpha.1'
+    assert release['version'] == '0.6.22-alpha.2'
     assert type(release['files']) is dict and len(release['files']) == 62
     assets = {}
     for file in sorted((workspace / 'dist').rglob('*')):

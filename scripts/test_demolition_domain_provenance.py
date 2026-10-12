@@ -736,6 +736,9 @@ class NpcReportUiSourceContractTests(unittest.TestCase):
         dump = lambda node: ast.dump(node, include_attributes=False)
         self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])], ['synchronized_domain_provenance'])
         old_dispatch, new_dispatch = old['synchronized_domain_provenance'], copy.deepcopy(new['synchronized_domain_provenance'])
+        comparison_branch = new_dispatch.body.pop(1)
+        expected_comparison = ast.parse("if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):\n    return npc_scout_comparison_provenance(repository, candidate, git, check)").body[0]
+        self.assertEqual(dump(comparison_branch), dump(expected_comparison))
         branch = new_dispatch.body.pop(1)
         self.assertIn('npc_scout_rehearsal_provenance', ast.unparse(branch))
         self.assertEqual(dump(old_dispatch), dump(new_dispatch))
@@ -929,25 +932,18 @@ class NpcScoutRehearsalSourceContractTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(AssertionError, 'preserves all ring, kernel and economy'):
                 self.evaluate(self.make(candidate, {self.manifest_path: ('100644', raw)}))
 
-    def test_final_current_scout_source_matches_its_separate_exact_seal(self):
+    def test_frozen_e729_scout_source_matches_its_separate_exact_seal(self):
         production = module()
+        frozen = 'e729c7ff3c4ef519bfd14da9dc132ba7d971de48'
         self.assertRegex(production.NPC_SCOUT_REHEARSAL_MANIFEST_SHA256, r'^[0-9a-f]{64}$')
         raw = (ROOT / production.NPC_SCOUT_REHEARSAL_MANIFEST).read_bytes()
         self.assertEqual(digest(raw), production.NPC_SCOUT_REHEARSAL_MANIFEST_SHA256)
-        tracked = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', self.reference,
-                                           '--', *production.NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS], cwd=ROOT).decode().splitlines()
-        untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard',
-                                             '--', *production.NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS], cwd=ROOT).decode().splitlines()
-        self.assertEqual(sorted(set(tracked + untracked)), list(production.NPC_SCOUT_REHEARSAL_CHANGED_PATHS))
-        edits = {}
-        for path in production.NPC_SCOUT_REHEARSAL_CHANGED_PATHS:
-            local = ROOT / path
-            self.assertFalse(local.is_symlink())
-            self.assertTrue(local.is_file())
-            edits[path] = ('100755' if local.stat().st_mode & stat.S_IXUSR else '100644', local.read_bytes())
-        edits[production.NPC_SCOUT_REHEARSAL_MANIFEST] = ('100644', raw)
+        self.assertEqual(self.git('show', frozen + ':' + production.NPC_SCOUT_REHEARSAL_MANIFEST), raw)
+        tracked = self.git('diff', '--name-only', '--no-renames', self.reference, frozen,
+                           '--', *production.NPC_SCOUT_REHEARSAL_PRODUCTION_PATHS).decode().splitlines()
+        self.assertEqual(tracked, list(production.NPC_SCOUT_REHEARSAL_CHANGED_PATHS))
         (self.view / production.NPC_SCOUT_REHEARSAL_MANIFEST).write_bytes(raw)
-        result = self.evaluate(self.make(self.reference, edits), ring=production)
+        result = self.evaluate(frozen, ring=production)
         self.assertEqual(result['contract'], 'exact-declared-npc-scout-rehearsal-semantic-delta')
         self.assertEqual(result['previousProvenance']['candidateSourceSha'], production.NPC_SCOUT_REHEARSAL_ADOPTION)
         self.assertEqual(result['previousProvenance']['previousProvenance']['candidateSourceSha'], production.NPC_REPORT_UI_ADOPTION)

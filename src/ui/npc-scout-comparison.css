@@ -1,0 +1,10 @@
+/* Read-only history additions only; original art and rehearsal rules are untouched. */
+.space-panel .npc-scout-comparison { margin:.75rem 0; min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.space-panel .npc-scout-comparison > label { min-width:0; max-width:100%; }
+.space-panel .npc-scout-comparison select { width:100%; max-width:100%; min-width:0; }
+.space-panel .npc-scout-comparison p { font-size:.85rem; line-height:1.6; }
+.space-panel .npc-scout-comparison details { min-width:0; max-width:100%; }
+.space-panel .npc-scout-comparison summary { min-height:44px; padding:.5rem 0; cursor:pointer; }
+.space-panel .npc-scout-comparison summary:focus-visible { outline:2px solid var(--good); outline-offset:3px; }
+.space-panel .npc-scout-comparison [data-comparison-field] { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.space-panel .space-message [data-npc-scout-comparison] { margin-left:.4rem; margin-top:.35rem; }

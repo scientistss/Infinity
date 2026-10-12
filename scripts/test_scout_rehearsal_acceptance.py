@@ -318,7 +318,16 @@ class ConflictForegroundTests(unittest.TestCase):
         return {'visibilityState':'visible' if foreground else 'hidden','hidden':not foreground,
                 'hasFocus':foreground,'dateNow':1791616309000,'performanceNow':0}
 
-    def run_preparation(self,root,*,after=None,frame=None,final=None,failure=None,events=None):
+    def protected_openers(self):
+        # Independent copied DOM witness. The original rehearsal entry stays
+        # enabled; only the new comparison entry is retired by real protection.
+        return {'children':5,'controls':[
+            {'html':'<button type="button">打开历史侦察演练</button>','tag':'BUTTON','type':'button','value':'',
+             'disabled':False,'direct':True,'index':3},
+            {'html':'<button type="button" data-npc-scout-comparison="" disabled="">历史对照</button>',
+             'tag':'BUTTON','type':'button','value':'','disabled':True,'direct':True,'index':4}]}
+
+    def run_preparation(self,root,*,after=None,frame=None,final=None,failure=None,events=None,openers=None,row_count=1):
         m=RecorderLinearityTests().runner(root);events=[] if events is None else events;owner=self
         before=self.sample(False);after=self.sample() if after is None else after
         final=copy.deepcopy(after) if final is None else final
@@ -326,6 +335,12 @@ class ConflictForegroundTests(unittest.TestCase):
                 'controlledElapsed':0,'geometry':{'rect':{'x':170,'y':-1538.3125,'width':144.5,'height':36.5}}}
                if frame is None else frame)
         states=iter([before,after,final]);path=root/'authority-conflict-foreground.json'
+        openers=self.protected_openers() if openers is None else openers
+        class Row:
+            def count(self):return row_count
+            def evaluate(self,expression):
+                owner.assertEqual(expression,m.MESSAGE_OPENERS_SAMPLE_JS)
+                events.append('read-openers');return copy.deepcopy(openers)
         class Page:
             def evaluate(self,expression,options=None):
                 if options is None:
@@ -334,16 +349,28 @@ class ConflictForegroundTests(unittest.TestCase):
                         raise RuntimeError('read-only foreground probe unavailable')
                     events.append('read-state');return copy.deepcopy(next(states))
                 owner.assertEqual(expression,'options=>window.__npcObserveFrame(options)')
-                owner.assertEqual(options,{'selector':'article.space-message[data-message-id="scout-11"] button','timeoutMs':250})
+                # The former descendant `button` selector now matches two
+                # controls. Bind exactly the original direct rehearsal button.
+                owner.assertEqual(options,{'selector':'#space-message-list > article.space-message[data-message-id="scout-11"] > button:not([data-npc-scout-comparison])','timeoutMs':250})
                 events.append('native-frame');return copy.deepcopy(frame)
+            def locator(self,selector):
+                owner.assertEqual(selector,'#space-message-list > article.space-message[data-message-id="scout-11"]')
+                owner.assertEqual(events[-1],'assert')
+                events.append('opener-row');return Row()
             def bring_to_front(self):
                 owner.assertEqual(json.loads(path.read_bytes())['before'],before)
                 events.append('bring-to-front')
                 if failure=='activate':raise RuntimeError('native activation failed')
         original=m.check
         def check(name,condition,detail=None):
-            owner.assertEqual(json.loads(path.read_bytes()),detail)
-            events.append('assert');original(name,condition,detail)
+            if name=='typed report has exactly ordered original rehearsal and comparison openers':
+                owner.assertEqual(detail,openers if row_count==1 else None)
+                owner.assertEqual(json.loads(path.read_bytes())['afterFrame'],final)
+                events.append('assert-openers')
+            else:
+                owner.assertEqual(json.loads(path.read_bytes()),detail)
+                events.append('assert')
+            original(name,condition,detail)
         with patch.object(m,'check',check):
             try:m.foreground_conflict_page(Page())
             finally:
@@ -358,13 +385,41 @@ class ConflictForegroundTests(unittest.TestCase):
     def test_real_activation_precedes_fresh_frame_and_each_assertion_has_persisted_raw_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             m,witness,events=self.run_preparation(Path(directory))
-            self.assertEqual(events,['read-state','bring-to-front','read-state','assert','native-frame','read-state','assert'])
-            self.assertEqual((m.passed_count,m.failed_count),(2,0))
+            self.assertEqual(events,['read-state','bring-to-front','read-state','assert','native-frame','read-state','assert',
+                                     'opener-row','read-openers','assert-openers'])
+            self.assertEqual((m.passed_count,m.failed_count),(3,0))
             self.assertEqual(witness['before'],self.sample(False));self.assertEqual(witness['after'],self.sample())
             self.assertEqual(witness['afterFrame'],self.sample())
             self.assertEqual(witness['frame']['controlledElapsed'],0)
             self.assertIsNone(m.checks[0]['detail']['frame'])
             self.assertIsNotNone(m.checks[1]['detail']['frame'])
+            self.assertEqual(m.checks[2]['detail'],self.protected_openers())
+
+    def test_protected_opener_shape_rejects_wrong_or_missing_original_and_comparison_controls(self):
+        for mutation in ('missing','duplicate','reordered','original_disabled','comparison_enabled','tag','text','attribute',
+                         'value','nested','input','index','children','boolean_count'):
+            openers=self.protected_openers();controls=openers['controls']
+            if mutation=='missing':controls.pop()
+            if mutation=='duplicate':controls.append(copy.deepcopy(controls[1]))
+            if mutation=='reordered':controls.reverse()
+            if mutation=='original_disabled':controls[0]['disabled']=True
+            if mutation=='comparison_enabled':controls[1]['disabled']=False
+            if mutation=='tag':controls[1]['tag']='INPUT'
+            if mutation=='text':controls[1]['html']=controls[1]['html'].replace('历史对照','changed')
+            if mutation=='attribute':controls[1]['html']=controls[1]['html'].replace('data-npc-scout-comparison=""','data-npc-scout-comparison="forged"')
+            if mutation=='value':controls[0]['value']='secret'
+            if mutation=='nested':controls[1]['direct']=False
+            if mutation=='input':controls.append({'tag':'INPUT','value':'secret'})
+            if mutation=='index':controls[1]['index']=3
+            if mutation=='children':openers['children']=6
+            if mutation=='boolean_count':openers['children']=True
+            with self.subTest(mutation=mutation),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(AssertionError,'exactly ordered original rehearsal and comparison openers'):
+                    self.run_preparation(Path(directory),openers=openers)
+        for count in (0,2):
+            with self.subTest(row_count=count),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(AssertionError,'exactly ordered original rehearsal and comparison openers'):
+                    self.run_preparation(Path(directory),row_count=count)
 
     def test_hidden_unfocused_or_changed_clock_cannot_reach_controls_or_frame_probe(self):
         mutations={'visibilityState':'hidden','hidden':True,'hasFocus':False,'dateNow':1791616309001,'performanceNow':1}
@@ -410,7 +465,7 @@ class ConflictForegroundTests(unittest.TestCase):
         body=source.split('# Genuine same-origin storage event',1)[1].split('def save_without_navigation',1)[0]
         self.assertLess(body.index('other.evaluate('),body.index('foreground_conflict_page(page)'))
         self.assertLess(body.index('foreground_conflict_page(page)'),body.index('advance(page)'))
-        self.assertLess(body.index('advance(page)'),body.index('open_report(page)'))
+        self.assertLess(body.index('advance(page)'),body.index('open_report(page, comparison_disabled=True)'))
         self.assertIn("page.evaluate('window.__npcStorage')",body)
         for required in ("event['trusted'] is True","event['oldValue']==before[KEY]","event['newValue']==competing_raw",
                          "page, before, {**before, KEY: competing_raw}","protected_export.read_bytes() == before[KEY].encode()"):
