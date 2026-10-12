@@ -1397,4 +1397,261 @@ class TypedOpenerReadinessTests(unittest.TestCase):
             self.assertNotIn(forbidden,functions['rehearsal_opener'])
 
 
+class NativeFileImportWaitTests(unittest.TestCase):
+    """Offline event-order/timeout doubles only; never native browser evidence."""
+    KEY = 'infinity.original-p4.save.v1'
+    SUCCESS = '已导入并存入本地'
+    CANCELLED = '已取消文件导入，当前进度未改动'
+    CONFIRMATION = 'exact current File confirmation'
+
+    class Dialog:
+        def __init__(self, page, message, kind):
+            self.page, self.message, self.type = page, message, kind
+
+        def accept(self):
+            self.page.answers.append('accept')
+            if len(self.page.answers) == 1: self.page.accepted = True
+
+        def dismiss(self):
+            self.page.answers.append('dismiss')
+            if len(self.page.answers) == 1: self.page.accepted = False
+
+    class Page:
+        def __init__(self, test, **options):
+            self.test = test; self.options = options; self.now = 0; self.events = []
+            self.files = [{'trusted': True, 'name': 'earlier.json', 'size': 2, 'priorRaw': 'earlier raw'}]
+            self.local = {test.KEY: json.dumps({'state': {'stats': {'launches': 2},
+                'planets': [{'id': 'home', 'name': '原始星球'}], 'activePlanetId': 'home', 'full': ['unaltered']}}),
+                'unknown-local': ' exact local bytes\n', test.KEY + '.backup': ' exact older backup bytes\n'}
+            self.original = copy.deepcopy(self.local); self.status = options.get('initial_status', 'ready')
+            self.session = {'unknown-session': ' exact session bytes\n'}
+            self.callback = None; self.armed = False; self.answers = []; self.accepted = None
+            self.submissions = 0; self.advances = 0; self.timeouts = []; self.reads = 0
+            self.terminal_at = None; self.terminal_written = False; self.expired = False
+
+        def on(self, name, callback):
+            self.test.assertEqual(name, 'dialog'); self.callback = callback
+            self.events.append('listener')
+
+        def remove_listener(self, name, callback):
+            self.test.assertIs(self.callback, callback); self.callback = None
+            self.events.append('remove-listener')
+
+        def budget(self, phase, timeout):
+            self.timeouts.append((phase, self.now, timeout))
+            self.test.assertGreater(timeout, 0)
+            self.test.assertLessEqual(self.now * 1000 + timeout, 5000.000001)
+
+        def expect_event(self, name, timeout):
+            self.test.assertEqual(name, 'dialog'); self.budget('dialog', timeout)
+            page = self; deadline = self.now + timeout / 1000
+            class Pending:
+                def __enter__(self):
+                    page.armed = True; page.events.append('expect-event'); return self
+                def __exit__(self, kind, value, trace):
+                    if kind: return False
+                    if page.answers: return False
+                    at = page.options.get('dialog_at', .25)
+                    if at is None or at > deadline:
+                        page.now = deadline; page.expired = True
+                        raise TimeoutError('double dialog timeout')
+                    page.now = max(page.now, at); page.emit_dialog()
+            return Pending()
+
+        def emit_dialog(self):
+            self.events.append('dialog')
+            dialog = NativeFileImportWaitTests.Dialog(self,
+                self.options.get('message', self.test.CONFIRMATION), self.options.get('dialog_type', 'confirm'))
+            self.callback(dialog)
+            self.terminal_at = self.now + self.options.get('terminal_delay', .25)
+            if self.options.get('duplicate'):
+                self.callback(NativeFileImportWaitTests.Dialog(self, self.test.CONFIRMATION, 'confirm'))
+
+        def locator(self, selector):
+            self.test.assertIn(selector, ('[data-bind="import-file"]', '[data-bind="status"]'))
+            return self
+
+        def set_input_files(self, path, timeout):
+            self.budget('submit', timeout)
+            self.test.assertTrue(self.armed); self.test.assertIsNotNone(self.callback)
+            self.submissions += 1; self.events.append('submit')
+            self.file = Path(path); self.incoming = self.file.read_text()
+            self.files.append({'trusted': self.options.get('trusted', True), 'name': self.file.name,
+                               'size': self.file.stat().st_size, 'priorRaw': self.local[self.test.KEY]})
+            self.now += self.options.get('submit_delay', 0)
+            if self.options.get('immediate_dialog'): self.emit_dialog()
+
+        def finish_terminal(self):
+            if self.terminal_written or self.terminal_at is None or self.now < self.terminal_at: return
+            self.terminal_written = True
+            self.status = self.test.SUCCESS if self.accepted else self.test.CANCELLED
+            if self.accepted:
+                self.local[self.test.KEY + '.backup'] = self.local[self.test.KEY]
+                self.local[self.test.KEY] = self.incoming
+            if self.options.get('cancel_mutation'): self.local['unknown-local'] += ' mutated'
+
+        def to_have_text(self, expected, timeout):
+            self.budget('terminal', timeout); self.test.assertEqual(self.advances, 0)
+            self.events.append('wait-terminal'); deadline = self.now + timeout / 1000
+            self.now = min(deadline, self.terminal_at); self.finish_terminal()
+            if self.status != expected:
+                self.now = deadline; self.expired = True
+                raise TimeoutError('double terminal timeout')
+            self.events.append('terminal')
+
+        def read_storage(self):
+            # Simulates an event delivered while the live failure capture pumps
+            # Playwright. It must be recorded and dismissed, never accepted late.
+            if self.expired and self.options.get('late_on_final') and not self.answers:
+                self.now += .2; self.emit_dialog()
+            self.finish_terminal()
+            return copy.deepcopy(self.local)
+
+        def evaluate(self, expression):
+            self.test.assertIn('files:window.__npcFiles.slice()', expression)
+            self.reads += 1
+            if self.options.get('final_read_error') and (self.expired or self.reads == 3):
+                raise RuntimeError('double final DOM read failed')
+            return {'status': self.status, 'files': copy.deepcopy(self.files), 'session': self.session.copy()}
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+
+    def run_case(self, *, accept=True, runner='browser-scout-rehearsal.py', **options):
+        spec = importlib.util.spec_from_file_location('offline_import_wait_' + runner.replace('-', '_'), SCRIPT.with_name(runner))
+        value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)
+        if runner == 'browser-scout-rehearsal.py': value.load_shared_helpers()
+        else: value.load_reviewed_helpers()
+        page = self.Page(self, **options); root = self.directory / str(len(list(self.directory.iterdir())))
+        root.mkdir(); evidence = []; checks = []
+        text = json.dumps({'version': 8, 'revision': 14, 'state': {'all': ['actual incoming bytes', {'count': 42}]}})
+        def check(name, condition, detail=None):
+            # No acceptance assertion may lose the complete final originals.
+            final = next(root.glob('file-import-*/final.json'))
+            self.assertTrue(json.loads(final.read_text())['final']['captureComplete'])
+            checks.append((name, bool(condition)))
+            if not condition: raise AssertionError(name)
+        def advance(current):
+            self.assertIn('terminal', current.events)
+            self.assertTrue(list(root.glob('file-import-*/terminal.json')))
+            current.advances += 1; current.events.append('advance')
+            if options.get('advance_error'): raise RuntimeError('double advance failed')
+        def storage_check(name, current, before): check(name, current.local == before)
+        bindings = {'out': root, 'case': 'offline-double', 'KEY': self.KEY, 'checks': checks, 'evidence': evidence,
+                    'time': SimpleNamespace(monotonic=lambda: page.now), 'flush': lambda: None,
+                    'tab': lambda current, name: None, 'storage': lambda current: current.read_storage(),
+                    'check': check, 'expect': lambda locator: locator, 'advance': advance,
+                    'storage_check': storage_check, 'import_confirmation': lambda *_: self.CONFIRMATION}
+        self.last = (page, root, evidence, checks)
+        with patch.dict(value.__dict__, bindings):
+            result = value.import_file(page, text, accept, 'one-current-file')
+        self.assertEqual(result, page.original)
+        return page, self.witness('final')
+
+    def witness(self, phase):
+        return json.loads(next(self.last[1].glob('file-import-*/' + phase + '.json')).read_text())
+
+    def test_delayed_success_and_cancellation_wait_for_complete_terminal_without_resubmit(self):
+        for accept in (True, False):
+            with self.subTest(accept=accept):
+                page, record = self.run_case(accept=accept, dialog_at=.4, terminal_delay=.3)
+                self.assertEqual(page.submissions, 1); self.assertEqual(page.advances, 1)
+                self.assertEqual(page.answers, ['accept' if accept else 'dismiss'])
+                self.assertEqual(record['initial']['storage'], page.original)
+                self.assertEqual(record['final']['storage'], page.local)
+                self.assertEqual(record['final']['session'], page.session)
+                self.assertEqual(record['final']['state'], json.loads(page.local[self.KEY])['state'])
+                self.assertEqual(record['dialogs'][0]['message'], self.CONFIRMATION)
+                self.assertEqual(record['terminal']['status'], self.SUCCESS if accept else self.CANCELLED)
+                self.assertLess(page.events.index('expect-event'), page.events.index('submit'))
+                self.assertLess(page.events.index('terminal'), page.events.index('advance'))
+                self.assertIsNone(page.callback)
+                for ref in [record['inputFile'], *self.last[2]]:
+                    self.assertEqual(hashlib.sha256((self.last[1] / ref['file']).read_bytes()).hexdigest(), ref['sha256'])
+
+    def test_all_four_ast_runners_have_the_shared_dependencies_and_execute_it(self):
+        for runner in ('browser-scout-rehearsal.py', 'browser-scout-comparison.py',
+                       'browser-rehearsal-formation-copy.py', 'browser-lab-blockers.py'):
+            with self.subTest(runner=runner): self.run_case(runner=runner, immediate_dialog=True)
+
+    def test_dialog_and_terminal_consume_one_budget_instead_of_two(self):
+        with self.assertRaisesRegex(TimeoutError, 'double terminal timeout'):
+            self.run_case(submit_delay=.5, dialog_at=4.8, terminal_delay=.3)
+        page = self.last[0]; self.assertEqual(page.submissions, 1); self.assertEqual(page.advances, 0)
+        self.assertAlmostEqual(page.timeouts[-1][2], 200)
+        record = self.witness('final')
+        self.assertIn('double terminal timeout', record['error'])
+        self.assertEqual(record['dialogs'][0]['message'], self.CONFIRMATION)
+        self.assertEqual(record['final']['status'], 'ready'); self.assertEqual(record['final']['storage'], page.original)
+        self.assertIsNone(record['terminal']); self.assertEqual(self.last[3], [])
+
+    def test_timeout_late_dialog_is_recorded_dismissed_and_never_rescues_failure(self):
+        with self.assertRaisesRegex(TimeoutError, 'double dialog timeout'):
+            self.run_case(dialog_at=None, late_on_final=True)
+        page = self.last[0]; record = self.witness('final')
+        self.assertEqual(page.answers, ['dismiss']); self.assertEqual(page.advances, 0)
+        self.assertEqual(page.submissions, 1); self.assertIsNone(page.callback)
+        self.assertFalse(record['dialogs'][0]['accepted'])
+        self.assertIn('double dialog timeout', record['error']); self.assertIsNone(record['terminal'])
+        self.assertEqual(record['initial']['storage'], page.original)
+        self.assertEqual(record['final']['storage'], page.original)
+
+    def test_wrong_text_type_duplicate_and_non_native_selection_cannot_pass(self):
+        for options in ({'message': 'wrong'}, {'dialog_type': 'alert'}, {'duplicate': True}, {'trusted': False}):
+            with self.subTest(options=options), self.assertRaises((TimeoutError, AssertionError)):
+                self.run_case(**options)
+            page = self.last[0]; record = self.witness('final')
+            self.assertEqual(page.submissions, 1); self.assertIsNone(page.callback)
+            self.assertIsNotNone(record['final']); self.assertTrue(record['dialogs'])
+            self.assertLessEqual(page.answers.count('accept'), 1)
+
+    def test_cancel_storage_assertion_still_covers_unknown_raw_keys(self):
+        with self.assertRaisesRegex(AssertionError, 'cancelled import retains every native storage byte'):
+            self.run_case(accept=False, cancel_mutation=True)
+        self.assertNotEqual(self.witness('final')['final']['storage'], self.last[0].original)
+
+    def test_previous_terminal_fails_preparation_without_another_submission(self):
+        for accept, status in ((True, self.SUCCESS), (False, self.CANCELLED)):
+            with self.subTest(accept=accept), self.assertRaisesRegex(AssertionError, 'fresh nonterminal'):
+                self.run_case(accept=accept, initial_status=status)
+            page = self.last[0]; self.assertEqual(page.submissions, 0); self.assertEqual(page.answers, [])
+            self.assertEqual(self.witness('final')['final']['storage'], page.original)
+
+    def test_live_final_read_failure_preserves_partial_raw_and_original_timeout(self):
+        with self.assertRaisesRegex(TimeoutError, 'double dialog timeout'):
+            self.run_case(dialog_at=None, final_read_error=True)
+        record = self.witness('final')
+        self.assertIn('double dialog timeout', record['error'])
+        self.assertIn('double final DOM read failed', record['finalReadError'])
+        self.assertEqual(record['final']['storage'], self.last[0].original)
+        self.assertEqual(record['final']['state'], record['initial']['state'])
+
+    def test_incomplete_final_observation_fails_closed_even_after_success(self):
+        with self.assertRaisesRegex(AssertionError, 'final originals could not be captured'):
+            self.run_case(final_read_error=True)
+        record = self.witness('final')
+        self.assertEqual(record['terminal']['status'], self.SUCCESS)
+        self.assertIn('double final DOM read failed', record['finalReadError'])
+        self.assertEqual(record['final']['storage'], self.last[0].local)
+        self.assertEqual(self.last[3], [])
+
+    def test_advance_failure_keeps_complete_terminal_and_live_final_originals(self):
+        with self.assertRaisesRegex(RuntimeError, 'double advance failed'):
+            self.run_case(advance_error=True)
+        self.assertEqual(self.witness('terminal')['terminal']['status'], self.SUCCESS)
+        self.assertIn('double advance failed', self.witness('final')['error'])
+        self.assertTrue(self.witness('final')['final']['captureComplete'])
+
+    def test_helper_has_no_sleep_retry_private_handler_or_clock_override(self):
+        tree = ast.parse(SCRIPT.read_text()); node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'import_file')
+        source = ast.get_source_segment(SCRIPT.read_text(), node)
+        for forbidden in ('wait_for_timeout', 'sleep(', 'File.prototype', 'handleAction', 'localStorage.setItem', 'Date.now', 'set_default_timeout', 'signal.'):
+            self.assertNotIn(forbidden, source)
+        self.assertEqual(source.count('.set_input_files('), 1)
+        self.assertIn('deadline = action_started + 5', source)
+        self.assertIn("len(dialogs) == 1 and dialogs[0]['valid']", source)
+        self.assertIn("storage_check('cancelled import retains every native storage byte'", source)
+
+
 if __name__=='__main__':unittest.main()

@@ -830,18 +830,111 @@ def replay_natural(page):
 
 
 def import_file(page, text, accept, label):
-    envelope = json.loads(text); path = out / (label + '.json'); path.write_text(text)
-    tab(page, 'save'); before = storage(page); dialogs = []
-    state = json.loads(raw(page))['state']; planet = next(p for p in state['planets'] if p['id'] == state['activePlanetId'])
+    """One real File/confirmation/terminal result within one five-second budget.
+
+    These definitions are AST-loaded into four runners. Use only their common
+    helpers, not persist_json (absent in scout) or mutable hashed evidence files.
+    __npcFiles is their existing read-only native change-event observer.
+    """
+    envelope = json.loads(text)
+    directory = out / ('file-import-%05d-' % (len(checks) + 1) + re.sub(r'[^a-zA-Z0-9_-]', '-', label))
+    directory.mkdir()  # Exclusive: never overwrite an earlier operation's originals.
+    path = directory / (label + '.json'); path.write_text(text, encoding='utf-8')
+    tab(page, 'save')
+    started = time.monotonic(); dialogs = []; events = []
+    witness = {'schema': 'infinity-native-file-import-wait-v1', 'case': case, 'label': label,
+               'budgetMs': 5000, 'acceptRequested': bool(accept),
+               'inputFile': {'file': path.relative_to(out).as_posix(), 'name': path.name,
+                             'size': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()},
+               'initial': None, 'terminal': None, 'final': None, 'dialogs': dialogs, 'events': events}
+    def observe(phase):
+        # Keep complete raw values, including unknown local/session keys. Never
+        # Save here: a diagnostic action could cancel the pending File read.
+        value = {'hostElapsedSeconds': time.monotonic() - started}
+        witness[phase] = value  # Retain a partial raw capture if a later read fails.
+        value['storage'] = storage(page)
+        value['raw'] = value['storage'].get(KEY)
+        value['state'] = json.loads(value['raw'])['state']
+        value.update(page.evaluate('''()=>({status:document.querySelector('[data-bind="status"]').textContent,
+          files:window.__npcFiles.slice(), session:Object.fromEntries(Object.keys(sessionStorage).sort().map(k=>[k,sessionStorage.getItem(k)]))})'''))
+        value['captureComplete'] = True
+        return value
+    def persist(phase):
+        target = directory / (phase + '.json')
+        atomic_json(target, witness)
+        reference = {'kind': 'native-file-import-' + phase, 'case': case,
+                     'file': target.relative_to(out).as_posix(),
+                     'sha256': hashlib.sha256(target.read_bytes()).hexdigest()}
+        evidence.append(reference); flush()
+        return reference
+    witness['initial'] = observe('initial'); before = witness['initial']['storage']
+    state = witness['initial']['state']; planet = next(p for p in state['planets'] if p['id'] == state['activePlanetId'])
     confirmation = import_confirmation(envelope, f'第 {state["stats"]["launches"]+1} 轮，{len(state["planets"])} 颗星球，当前“{planet["name"]}”')
+    terminal = '已导入并存入本地' if accept else '已取消文件导入，当前进度未改动'
+    witness.update(expectedConfirmation=confirmation, expectedTerminal=terminal)
+    persist('initial')
+    action_started = time.monotonic(); deadline = action_started + 5
+    def remaining():
+        milliseconds = (deadline - time.monotonic()) * 1000
+        if milliseconds <= 0: raise TimeoutError('Native File import exceeded its single 5000 ms action budget')
+        return milliseconds
+    def event(kind):
+        events.append({'kind': kind, 'hostElapsedSeconds': time.monotonic() - started,
+                       'actionElapsedSeconds': time.monotonic() - action_started})
     def answer(dialog):
         valid = dialog.type == 'confirm' and dialog.message == confirmation
-        dialogs.append({'valid': valid, 'message': dialog.message, 'accepted': bool(valid and accept)})
-        dialog.accept() if valid and accept else dialog.dismiss()
-    page.once('dialog', answer); page.locator('[data-bind="import-file"]').set_input_files(str(path))
-    page.wait_for_timeout(100); advance(page)
+        accepted = bool(valid and accept and not dialogs and time.monotonic() < deadline)
+        dialogs.append({'valid': valid, 'type': dialog.type, 'message': dialog.message,
+                        'accepted': accepted, 'hostElapsedSeconds': time.monotonic() - started})
+        event('dialog')
+        # Invalid, duplicate or late dialogs cannot receive replacement consent.
+        dialog.accept() if accepted else dialog.dismiss()
+        event('dialog-accepted' if accepted else 'dialog-dismissed')
+    page.on('dialog', answer)
+    try:
+        # These callers prepare a fresh boot or explicit Save. A repeated import
+        # with the same displayed terminal needs a separate completion witness;
+        # do not mistake that valid product scenario for proof in this suite.
+        if witness['initial']['status'] == terminal:
+            raise AssertionError('Native import preparation requires a fresh nonterminal status witness')
+        # Both listeners precede the only submission. No predicate can filter
+        # out an unexpected dialog, and every wait consumes the SAME deadline.
+        with page.expect_event('dialog', timeout=remaining()):
+            event('file-submit')
+            page.locator('[data-bind="import-file"]').set_input_files(str(path), timeout=remaining())
+            event('file-submitted')
+        event('dialog-observed')
+        expect(page.locator('[data-bind="status"]')).to_have_text(terminal, timeout=remaining())
+        remaining(); event('terminal-observed')
+        witness['terminal'] = observe('terminal')
+        persist('terminal')  # Original terminal bytes precede advance's assertions.
+        advance(page)
+    except BaseException:
+        witness['error'] = traceback.format_exc()
+        raise
+    finally:
+        # Still inside the live browser. A late event remains recorded (and is
+        # dismissed); diagnostics never turn the original timeout into success.
+        original_error = sys.exc_info()[0] is not None
+        try:
+            try: witness['final'] = observe('final')
+            except BaseException: witness['finalReadError'] = traceback.format_exc()
+            witness['hostElapsedSeconds'] = time.monotonic() - started
+            reference = persist('final')
+        finally:
+            page.remove_listener('dialog', answer)
+        if not (witness['final'] or {}).get('captureComplete') and not original_error:
+            raise AssertionError('Native File import final originals could not be captured')
     check('actual file read has exact expected confirmation once', len(dialogs) == 1 and dialogs[0]['valid'], dialogs)
-    if accept: expect(page.locator('[data-bind="status"]')).to_contain_text('已导入并存入本地')
+    initial, final = witness['initial'], witness['final']
+    check('terminal belongs to the single current native File and not an earlier status',
+          initial['status'] != terminal and final['status'] == terminal
+          and final['files'][:len(initial['files'])] == initial['files']
+          and final['files'][len(initial['files']):] == [{'trusted': True, 'name': path.name,
+               'size': path.stat().st_size, 'priorRaw': initial['raw']}]
+          and dialogs[0]['accepted'] is bool(accept), reference)
+    if accept:
+        check('actual file read reaches the complete imported status', '已导入并存入本地' in final['status'], reference)
     else: storage_check('cancelled import retains every native storage byte', page, before)
     return before
 
