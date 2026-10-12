@@ -190,6 +190,199 @@ def initial_rehearsal_controls():
       {'id':'npc-rehearsal-cancel','type':'button','value':'','disabled':False,'visible':False},
       {'id':'npc-rehearsal-fill','type':'button','value':'','disabled':True,'visible':False}]
 
+# Reviewed 24-unit catalog, independent of the candidate's quote/presenter code.
+# This adapter is deliberately limited to the fresh count=1 parity trajectory.
+MANUAL_UNIT_CATALOG = (
+    ('small_cargo', '小型运输舰', (2000, 2000, 0)),
+    ('large_cargo', '大型运输舰', (6000, 6000, 0)),
+    ('light_fighter', '轻型战斗机', (3000, 1000, 0)),
+    ('heavy_fighter', '重型战斗机', (6000, 4000, 0)),
+    ('cruiser', '巡洋舰', (20000, 7000, 2000)),
+    ('battleship', '战列舰', (45000, 15000, 0)),
+    ('battlecruiser', '战列巡洋舰', (30000, 40000, 15000)),
+    ('bomber', '轰炸机', (50000, 25000, 15000)),
+    ('destroyer', '毁灭者', (60000, 50000, 15000)),
+    ('deathstar', '死星', (5000000, 4000000, 1000000)),
+    ('recycler', '回收船', (10000, 6000, 2000)),
+    ('espionage_probe', '间谍卫星', (0, 1000, 0)),
+    ('solar_satellite', '太阳能卫星', (0, 2000, 500)),
+    ('colony_ship', '殖民船', (10000, 20000, 10000)),
+    ('rocket_launcher', '火箭发射器', (2000, 0, 0)),
+    ('light_laser', '轻型激光炮', (1500, 500, 0)),
+    ('heavy_laser', '重型激光炮', (6000, 2000, 0)),
+    ('gauss_cannon', '高斯炮', (20000, 15000, 2000)),
+    ('ion_cannon', '离子炮', (2000, 6000, 0)),
+    ('plasma_turret', '等离子炮塔', (50000, 50000, 30000)),
+    ('small_shield_dome', '小型护盾罩', (10000, 10000, 0)),
+    ('large_shield_dome', '大型护盾罩', (50000, 50000, 0)),
+    ('anti_ballistic_missile', '反弹道导弹', (8000, 0, 2000)),
+    ('interplanetary_missile', '星际导弹', (12500, 2500, 10000)),
+)
+MANUAL_ORIGINAL_BINDINGS = ('ucard', 'uqty', 'ubuild', 'umax', 'ufill', 'ureason')
+MANUAL_ADDED_BINDINGS = ('umode-hint', 'uquote', 'utotal', 'upay', 'umanual-reason')
+MANUAL_HINT = '建造输入的数量；选择模式只更新报价。'
+
+
+def _manual_order_html(ident, name, *, current, reason='', maximum='', disabled=False):
+    attr_reason = dom_text(reason).replace('"', '&quot;')
+    if current:
+        quantity = f'<input type="text" value="1" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="{name}数量" aria-describedby="umode-hint-{ident}" data-bind="uqty-{ident}">'
+    else:
+        quantity = f'<input type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="{name}数量" data-bind="uqty-{ident}">'
+    buttons = []
+    for mode, bind, label, title in (
+        ('count', 'ubuild', '建造', '预览输入数量的整批报价' if current else attr_reason),
+        ('max', 'umax', '最大' if current else maximum, '预览按当前资源能造的最大数量' if current else attr_reason),
+        ('fill', 'ufill', '补到', '预览补到输入总量的报价（本星已有 + 排队中计入）' if current else '补到输入的数量（已有 + 排队中计入）')):
+        pressed = f' aria-pressed="{str(mode == "count").lower()}"' if current else ''
+        disabled_attr = ' disabled=""' if disabled and not current else ''
+        action = 'manual-unit-mode' if current else 'build-units'
+        buttons.append(f'<button type="button" class="unit-btn" data-action="{action}" data-mode="{mode}"{pressed} data-id="{ident}" data-bind="{bind}-{ident}" title="{title}"{disabled_attr}>{label}</button>')
+    return '<div class="unit-order">\n          ' + '\n          '.join([quantity, *buttons]) + '\n        </div>'
+
+
+def _manual_added_html(ident, summary, total, reason, disabled):
+    disabled_attr = ' disabled=""' if disabled else ''
+    return (f'<p class="muted unit-mode-hint" id="umode-hint-{ident}" data-bind="umode-hint-{ident}">{MANUAL_HINT}</p>\n        '
+        '<div class="unit-confirm">\n          '
+        f'<p class="btn-cost unit-quote" data-bind="uquote-{ident}">{dom_text(summary)}</p>\n          '
+        f'<p class="btn-cost unit-total" data-bind="utotal-{ident}">{total}</p>\n          '
+        f'<button type="button" class="unit-btn unit-pay" data-action="manual-unit-pay" data-id="{ident}" data-bind="upay-{ident}"{disabled_attr}>支付并入队</button>\n        </div>\n        '
+        f'<p class="btn-cost unit-reason" data-bind="umanual-reason-{ident}" role="status">{dom_text(reason)}</p>')
+
+
+def _manual_input(current=False):
+    return {'id': '', 'action': None, 'type': 'text' if current else 'number', 'value': '1',
+            'disabled': False, 'checked': False, 'text': None}
+
+
+def _manual_button(text, disabled=False, current=False, pay=False):
+    return {'id': '', 'action': 'manual-unit-pay' if pay else 'manual-unit-mode' if current else 'build-units',
+            'type': 'button', 'value': '', 'disabled': disabled, 'checked': None, 'text': text}
+
+
+def _assert_manual_identity(evidence, current):
+    assert set(evidence['manualUnits']) == {'identity', 'cards'}
+    ids = [item[0] for item in MANUAL_UNIT_CATALOG]
+    assert len(ids) == len(set(ids)) == 24
+    expected = {
+        'panels': {'shipyard': 1, 'defense': 1},
+        'bindings': {prefix: [f'{prefix}-{ident}' for ident in ids] if current or prefix in MANUAL_ORIGINAL_BINDINGS else []
+                     for prefix in (*MANUAL_ORIGINAL_BINDINGS, *MANUAL_ADDED_BINDINGS)},
+        'actions': {'build-units': 0 if current else 72, 'manual-unit-mode': 72 if current else 0,
+                    'manual-unit-pay': 24 if current else 0},
+        'hintIds': [f'umode-hint-{ident}' for ident in ids] if current else [],
+    }
+    assert exact_copied_data(evidence['manualUnits']['identity'], expected), 'Unique, ordered 24-unit native identity required'
+
+
+def normalize_manual_unit_display(snapshot, evidence, state, side, legacy=None):
+    """Exact old controls -> fresh count=1 quote delta, copied evidence only.
+
+    The historical pair supplies the actual original eligibility/max/reason,
+    never a candidate-derived substitute. Both sides' full original controls
+    are bound before projection. Catalog prices are literal independent data.
+    Every remaining card byte/text/control and all queue/status data survives.
+    This cannot accept a revisited, stale, protected or changed-quantity quote.
+    """
+    assert side in ('before', 'after') and snapshot['tab'] == evidence['tab'] in ('shipyard', 'defense')
+    current = side == 'after'
+    _assert_manual_identity(evidence, current)
+    if current:
+        assert legacy is not None and set(legacy) == {'snapshot', 'evidence'}
+        normalize_manual_unit_display(legacy['snapshot'], legacy['evidence'], state, 'before')
+        assert legacy['snapshot']['tab'] == snapshot['tab']
+    else:
+        assert legacy is None
+    out, copied = deepcopy(snapshot), deepcopy(evidence)
+    catalog = MANUAL_UNIT_CATALOG[:14] if snapshot['tab'] == 'shipyard' else MANUAL_UNIT_CATALOG[14:]
+    rows = evidence['manualUnits']['cards']
+    assert len(rows) == len(catalog)
+    replacements = []
+    home = next(planet for planet in state['planets'] if planet['id'] == state['activePlanetId'])
+    coord = home['coordinates']
+    summary = f"当前星球 {home['name']} [{coord['galaxy']}:{coord['system']}:{coord['position']}] · 本次新增 1"
+    last_index = -1
+    for number, (row, (ident, name, price)) in enumerate(zip(rows, catalog)):
+        old = legacy['evidence']['manualUnits']['cards'][number] if current else row
+        assert set(row) == {'id', 'html', 'text', 'children', 'placement', 'orderHTML', 'orderText', 'reasonHTML', 'reasonText', 'additionHTML', 'quoteVisible', 'controls'}
+        assert row['id'] == ident
+        assert type(row['children']) is int and row['children'] == (12 if current else 9)
+        assert row['placement'] is True
+        assert exact_copied_data(row['quoteVisible'], [True, True, True] if current else None)
+        assert row['reasonHTML'] == f'<p class="btn-cost unit-reason" data-bind="ureason-{ident}">{dom_text(row["reasonText"])}</p>'
+        assert row['reasonText'] and row['html'].count(row['reasonHTML']) == 1
+        controls = row['controls']
+        assert len(controls) == (5 if current else 4)
+        disabled = old['controls'][1]['snapshot']['disabled']
+        assert type(disabled) is bool
+        maximum = old['controls'][2]['snapshot']['text']
+        # Historical labels are part of that native oracle, never max=39 for
+        # every unit or a value copied out of the new fixed-label buttons.
+        assert type(maximum) is str and maximum.startswith('最大 ')
+        amount = maximum[3:].replace(',', '')
+        assert amount.isascii() and amount.isdecimal() and str(int(amount)) == amount
+        assert maximum == f'最大 {int(amount):,}' and 0 <= int(amount) <= 1000000
+        assert (int(amount) == 0) is disabled
+        reason = old['reasonText']
+        assert (reason == f'可造 {int(amount):,}') is (not disabled)
+        assert row['reasonText'] == reason
+        expected_controls = [_manual_input(current)] + [
+            _manual_button(label, False if current else disabled, current)
+            for label in ('建造', '最大' if current else maximum, '补到')]
+        if current:
+            expected_controls.append(_manual_button('支付并入队', disabled, pay=True))
+        for offset, (control, expected) in enumerate(zip(controls, expected_controls)):
+            assert set(control) == {'index', 'native', 'visible', 'snapshot'}
+            index = control['index']
+            assert type(index) is int and index > last_index
+            if offset: assert index == controls[0]['index'] + offset
+            last_index = index
+            assert control['native'] is True and control['visible'] is True
+            assert exact_copied_data(control['snapshot'], expected)
+            assert index < len(out['inputs']) and exact_copied_data(out['inputs'][index], expected)
+        expected_order = _manual_order_html(ident, name, current=current, reason=reason, maximum=maximum, disabled=disabled)
+        assert row['orderHTML'] == expected_order
+        assert row['orderText'] == '\n'.join(['建造', '最大' if current else maximum, '补到'])
+        old_region = old['orderHTML'] + '\n        ' + old['reasonHTML']
+        if current:
+            total = ' · '.join(f'{label} {value:,}' for label, value in zip(('金属', '晶体', '重氢'), price))
+            manual_reason = reason if disabled else ''
+            expected_addition = _manual_added_html(ident, summary, total, manual_reason, disabled)
+            assert row['additionHTML'] == expected_addition, 'Complete fresh quote, full canonical price, one pay button and exact reason required'
+            new_region = expected_order + '\n        ' + expected_addition + '\n        ' + row['reasonHTML']
+            # Bind the literal changed region to its exact card before touching
+            # copied full-panel HTML. Retain all unrelated bytes for comparison.
+            assert row['html'].count(new_region) == 1
+            projected_card = replace_once(row['html'], new_region, old_region)
+            assert projected_card == old['html'], 'Every remaining original card DOM byte must match'
+            copied['panelHTML'] = replace_once(copied['panelHTML'], row['html'], projected_card)
+            assert row['text'].count(row['orderText']) == 1 and old['text'].count(old['orderText']) == 1
+            prefix, tail = row['text'].split(row['orderText'])
+            old_prefix, old_tail = old['text'].split(old['orderText'])
+            assert prefix == old_prefix, 'Every original non-control card text byte must match'
+            # Native block/grid layout may emit one or two linebreaks; no text
+            # or whitespace outside this complete approved tail is normalized.
+            ordered_text_projection(row['orderText'] + tail, [(part, part) for part in [row['orderText'], MANUAL_HINT, summary, total, '支付并入队', *([manual_reason] if manual_reason else []), reason]])
+            out['text'] = replace_once(out['text'], row['text'], prefix + old['orderText'] + old_tail)
+            replacements.append((controls[0]['index'], controls[-1]['index'] + 1,
+                                 [deepcopy(control['snapshot']) for control in old['controls']]))
+        else:
+            assert row['additionHTML'] is None and row['html'].count(old_region) == 1
+            assert row['html'].count(row['orderHTML']) == 1
+            assert row['text'].count(row['orderText']) == 1
+            prefix, tail = row['text'].split(row['orderText'])
+            assert prefix
+            parts_exact(row['orderText'] + tail, [row['orderText'], reason])
+        assert evidence['panelHTML'].count(row['html']) == 1
+        assert snapshot['text'].count(row['text']) == 1
+    for start, stop, original in reversed(replacements):
+        out['inputs'][start:stop] = original
+    if current:
+        assert len(out['inputs']) == len(legacy['snapshot']['inputs']), 'Only one added payment per card changes control count'
+    return out, copied
+
+
 # Read-only evidence from the exact list and its direct rows. Never clone,
 # rewrite, remove or temporarily hide live nodes to derive old message evidence.
 MESSAGE_ROWS_SAMPLE_JS=r'''() => {
@@ -290,6 +483,32 @@ SAMPLE_JS=r'''() => {
   // queue, card grid and status siblings, never to a text search.
   const children=[...panel.children],head=children[0],intro=head?.nextElementSibling,queue=intro?.nextElementSibling,
    grid=queue?.nextElementSibling,status=grid?.nextElementSibling,suffix=tab==='defense'?'-def':'';
+  const prefixes=['ucard','uqty','ubuild','umax','ufill','ureason','umode-hint','uquote','utotal','upay','umanual-reason'];
+  const quoteVisible=e=>{
+   if(!e||document.hidden||!visible(e)||![...e.getClientRects()].some(r=>r.width>0&&r.height>0))return false;
+   for(let a=e;a;a=a.parentElement){const style=getComputedStyle(a);
+    if(a.getAttribute('aria-hidden')==='true'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0'||style.contentVisibility==='hidden')return false;}
+   return true;
+  };
+  const describe=e=>({index:inputs.indexOf(e),native:e instanceof HTMLInputElement||e instanceof HTMLButtonElement,visible:visible(e),
+   snapshot:{id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}});
+  result.manualUnits={identity:{
+   panels:Object.fromEntries(['shipyard','defense'].map(t=>[t,document.querySelectorAll(`[data-tab-panel="${t}"]`).length])),
+   bindings:Object.fromEntries(prefixes.map(prefix=>[prefix,[...document.querySelectorAll(`[data-bind^="${prefix}-"]`)].map(e=>e.dataset.bind)])),
+   actions:Object.fromEntries(['build-units','manual-unit-mode','manual-unit-pay'].map(action=>[action,document.querySelectorAll(`[data-action="${action}"]`).length])),
+   hintIds:[...document.querySelectorAll('[id^="umode-hint-"]')].map(e=>e.id)},
+   cards:[...grid.children].map(card=>{
+    const children=[...card.children],order=children[7],reason=children.at(-1),addition=children.slice(8,-1),id=card.dataset.bind?.slice(6);
+    return {id,html:card.outerHTML,text:card.innerText,children:children.length,
+     placement:card.matches('article.bld.unit-card')&&card.parentElement===grid&&children[6]?.matches('details.unit-rf')&&
+      order?.matches('div.unit-order')&&order.children.length===4&&reason?.matches(`p.btn-cost.unit-reason[data-bind="ureason-${id}"]`)&&
+      (addition.length===0||(addition.length===3&&addition[0].matches(`p.unit-mode-hint[data-bind="umode-hint-${id}"]`)&&
+       addition[1].matches('div.unit-confirm')&&addition[1].children.length===3&&addition[2].matches(`p.unit-reason[data-bind="umanual-reason-${id}"]`))),
+     orderHTML:order?.outerHTML,orderText:order?.innerText,reasonHTML:reason?.outerHTML,reasonText:reason?.textContent,
+     additionHTML:addition.length?addition.map(e=>e.outerHTML).join('\n        '):null,
+     quoteVisible:addition.length?[...addition[1].children].map(quoteVisible):null,
+     controls:[...card.querySelectorAll('input,select,textarea,button')].map(describe)};
+   })};
   result.intro=intro?.innerText;
   result.introBoundary={
    counts:{children:children.length,blurbs:panel.querySelectorAll('p.blurb').length,heads:panel.querySelectorAll('.panel-head').length,

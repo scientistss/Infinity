@@ -1506,7 +1506,13 @@ def native_tape(page):
             tab(page, 'research'); trusted_click(page, '[data-bind="research-' + operation['tech'] + '"]')
         elif kind == 'build':
             tab(page, 'shipyard'); input_number(page, '[data-bind="uqty-' + operation['unit'] + '"]', operation['count'])
-            trusted_click(page, '[data-bind="ubuild-' + operation['unit'] + '"]')
+            before_quote = raw(page)
+            trusted_click(page, '[data-bind="ubuild-' + operation['unit'] + '"][data-action="manual-unit-mode"][data-mode="count"]')
+            expect(page.locator('[data-bind="ubuild-' + operation['unit'] + '"]')).to_have_attribute('aria-pressed', 'true')
+            check('native count mode quote preserves complete save bytes before payment', raw(page) == before_quote)
+            expect(page.locator('[data-bind="upay-' + operation['unit'] + '"]')).to_be_enabled()
+            trusted_click(page, '[data-bind="upay-' + operation['unit'] + '"][data-action="manual-unit-pay"]')
+            expect(page.locator('[data-bind="upay-' + operation['unit'] + '"]')).to_be_disabled()
         elif kind in ('scout', 'attack'):
             before_send = save(page)
             configure_fleet(page, kind, operation.get('count', 0))

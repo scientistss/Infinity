@@ -40,11 +40,18 @@ function unitCard(def: UnitDef, icon: IconFn): string {
         </dl>
         ${rapidFireLine(def)}
         <div class="unit-order">
-          <input type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="${def.nameZh}数量" data-bind="uqty-${id}" />
-          <button type="button" class="unit-btn" data-action="build-units" data-mode="count" data-id="${id}" data-bind="ubuild-${id}" title="按输入的数量下单">建造</button>
-          <button type="button" class="unit-btn" data-action="build-units" data-mode="max" data-id="${id}" data-bind="umax-${id}" title="按现有资源能造的最大数量下单">最大</button>
-          <button type="button" class="unit-btn" data-action="build-units" data-mode="fill" data-id="${id}" data-bind="ufill-${id}" title="补到输入的数量（已有 + 排队中计入）">补到</button>
+          <input type="text" value="1" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="${def.nameZh}数量" aria-describedby="umode-hint-${id}" data-bind="uqty-${id}" />
+          <button type="button" class="unit-btn" data-action="manual-unit-mode" data-mode="count" aria-pressed="true" data-id="${id}" data-bind="ubuild-${id}" title="预览输入数量的整批报价">建造</button>
+          <button type="button" class="unit-btn" data-action="manual-unit-mode" data-mode="max" aria-pressed="false" data-id="${id}" data-bind="umax-${id}" title="预览按当前资源能造的最大数量">最大</button>
+          <button type="button" class="unit-btn" data-action="manual-unit-mode" data-mode="fill" aria-pressed="false" data-id="${id}" data-bind="ufill-${id}" title="预览补到输入总量的报价（本星已有 + 排队中计入）">补到</button>
         </div>
+        <p class="muted unit-mode-hint" id="umode-hint-${id}" data-bind="umode-hint-${id}">建造输入的数量；选择模式只更新报价。</p>
+        <div class="unit-confirm">
+          <p class="btn-cost unit-quote" data-bind="uquote-${id}"></p>
+          <p class="btn-cost unit-total" data-bind="utotal-${id}">金属 0 · 晶体 0 · 重氢 0</p>
+          <button type="button" class="unit-btn unit-pay" data-action="manual-unit-pay" data-id="${id}" data-bind="upay-${id}" disabled>支付并入队</button>
+        </div>
+        <p class="btn-cost unit-reason" data-bind="umanual-reason-${id}" role="status"></p>
         <p class="btn-cost unit-reason" data-bind="ureason-${id}"></p>
       </article>`;
 }
@@ -104,7 +111,6 @@ function updateCard(root: ParentNode, card: UnitCardView): void {
   put(root, `ucost-${id}`, card.cost);
   put(root, `utime-${id}`, card.time);
   put(root, `ureason-${id}`, card.reason);
-  put(root, `umax-${id}`, card.maxLabel);
   bound(root, `ucard-${id}`)?.classList.toggle("locked", card.locked);
   const chain = bound(root, `uchain-${id}`);
   if (chain && chain.dataset.key !== card.chainKey) {
@@ -118,13 +124,8 @@ function updateCard(root: ParentNode, card: UnitCardView): void {
       }),
     );
   }
-  for (const mode of ["ubuild", "umax", "ufill"]) {
-    const button = bound(root, `${mode}-${id}`);
-    if (!(button instanceof HTMLButtonElement)) continue;
-    const disabled = card.locked || (mode === "umax" ? card.max < 1 : !card.canBuild);
-    button.disabled = disabled;
-    if (mode !== "ufill") button.title = card.reason;
-  }
+  // These buttons only select the quote mode. The manual controller owns the
+  // separate payment button, including protection and one-use confirmation.
 }
 
 export function updateShipyardCards(root: ParentNode, view: ShipyardView): void {
@@ -132,11 +133,4 @@ export function updateShipyardCards(root: ParentNode, view: ShipyardView): void 
   put(root, "defense-silo", view.silo);
   for (const card of view.ships) updateCard(root, card);
   for (const card of view.defenses) updateCard(root, card);
-}
-
-/** Quantity typed into a card's input (at least 1). */
-export function unitQuantity(root: ParentNode, id: string): number {
-  const input = bound(root, `uqty-${id}`);
-  const value = input instanceof HTMLInputElement ? Math.floor(Number(input.value)) : 1;
-  return Number.isFinite(value) && value >= 1 ? value : 1;
 }

@@ -1,0 +1,332 @@
+{
+  "schema": "infinity-ring-protection-manual-unit-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-comparison-provenance.json",
+      "sha256": "0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00"
+    },
+    {
+      "path": "tests/fixtures/npc-rehearsal-formation-copy-provenance.json",
+      "sha256": "2143af16367f93160ef9250c18de2e87bb2791f4665159bd3d8f43d8ab9fdb39"
+    },
+    {
+      "path": "tests/fixtures/lab-blockers-provenance.json",
+      "sha256": "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8"
+    }
+  ],
+  "referenceStatus": "Exact manual-unit UI adoption atop recursively verified laboratory source 9a27ed8. Historical diagnostic 1f666 is not release or native acceptance.",
+  "scope": "Every src/public path and mode, approved before/after bytes, full deterministic patches and each hunk are bound; all ten prior manifests and all domain, ring and public bytes remain unchanged.",
+  "approvedDelta": "Per-card transient raw unit text, strict integer quotes and explicit paid manual submission through unchanged game authority. No game, core, data, automation, save schema, combat, economy, dispatch or public asset changes.",
+  "productionPaths": [
+    "src",
+    "public"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "unchangedPresentationPaths": [
+    "public",
+    "src/space.css",
+    "src/ui/npc-battle-panel.ts",
+    "src/ui/npc-battle-present.ts",
+    "src/ui/npc-scout-comparison-model.ts",
+    "src/ui/npc-scout-comparison-panel.ts",
+    "src/ui/npc-scout-comparison.css",
+    "src/ui/npc-rehearsal-formation-model.ts",
+    "src/ui/npc-rehearsal-panel.ts"
+  ],
+  "originalUiBaseline": {
+    "baseline": "69eca71",
+    "expected": {
+      "src/style.css": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad",
+      "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+    },
+    "exactDeltaPaths": [
+      "src/style.css",
+      "src/ui/view.ts"
+    ],
+    "changedPaths": [
+      {
+        "path": "src/style.css",
+        "before": {
+          "mode": "100644",
+          "sha256": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "09d3861314d9d10e062361afacefebb57cc6331c04663b0b3014f94c6dda2a13"
+        },
+        "patchSha256": "c8d2cd84e7f3fdc66b70c8fab8cbde841834268e07e753090f2b6b63667b874c",
+        "hunks": [
+          {
+            "header": "@@ -647,6 +647,11 @@ textarea {",
+            "sha256": "2afcaf94d16217f31c1052bc604d41551650485ff9212e2772875c25a7e456c6"
+          },
+          {
+            "header": "@@ -812,6 +817,13 @@ textarea {",
+            "sha256": "f8e97faaad4207464e8b3a683611bae1eb3c7cf45fbc46ca1c0a38cf095811d9"
+          },
+          {
+            "header": "@@ -821,4 +833,6 @@ textarea {",
+            "sha256": "1268103965290f056eae0b2115116eb9d6bc6d2a4f1115fbb85c0cbcfb6ec067"
+          }
+        ]
+      },
+      {
+        "path": "src/ui/view.ts",
+        "before": {
+          "mode": "100644",
+          "sha256": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "23c4ca1ec796cafa6dba3a910261b302b4cd215138c298d3b02c43348ce534ee"
+        },
+        "patchSha256": "3c7b747006d9a0c5bc90b176f3e561c499990423a7bbc6ce306acf30b1f60401",
+        "hunks": [
+          {
+            "header": "@@ -23,8 +23,8 @@ import type { ResourceId } from \"../game/types\";",
+            "sha256": "f02691a7b0d2d848bf156ba301364cc4464acc96c21e84372d89f86f9abcc75a"
+          },
+          {
+            "header": "@@ -32,7 +32,6 @@ export type UiAction =",
+            "sha256": "33da7b9ca2bad1975a924d282e5fb73a68b4899e2f652e0bc7b2e28f83ae39c8"
+          },
+          {
+            "header": "@@ -145,11 +144,6 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi",
+            "sha256": "70a121ae3575b953e2bae039197614048fc7d35c29028a7e076014a98bf97200"
+          },
+          {
+            "header": "@@ -478,6 +472,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {",
+            "sha256": "81d9fccdd32bee1ef4de481036af6617ba2da7670ee52b2c3f496f03ebfc7ba2"
+          },
+          {
+            "header": "@@ -977,6 +972,7 @@ function shellMarkup(): string {",
+            "sha256": "332c17a028d3efbcba18280d0ca021632764c76b06de5ef4847609d9a47fc5d8"
+          }
+        ]
+      }
+    ]
+  },
+  "changedPaths": [
+    {
+      "path": "src/main.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "5da4b0fdb376a0d9a380eacdfceb6665fea9b2d0382e2ba6091b81e92fd17d6d"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "871f447bd30fee652d00978caafe0772bf0eba20d11bb62ffdd01db1f203075a"
+      },
+      "patchSha256": "06a5485e6586bbc64bd280b271c83ad61a3f561038cec2001e9b111b053fc5fe",
+      "hunks": [
+        {
+          "header": "@@ -195,7 +195,10 @@ function render(urgent = true, now = performance.now()): void {",
+          "sha256": "1c81b30bb148df7a2ceeb26e495d39ba5d61449b6076b3ff1d37a9e8b2ed42c5"
+        },
+        {
+          "header": "@@ -313,12 +316,16 @@ async function handleAction(action: UiAction): Promise<void> {",
+          "sha256": "67005e32341a9d5173d36715485206fa5e1a7fea5872a8afe2f20e511ae30452"
+        },
+        {
+          "header": "@@ -473,6 +480,7 @@ async function handleAction(action: UiAction): Promise<void> {",
+          "sha256": "140eb8558e9f4a60c781475525f8f829922fbc92622e4879baec7b8d817dc79f"
+        },
+        {
+          "header": "@@ -504,7 +512,7 @@ async function handleAction(action: UiAction): Promise<void> {",
+          "sha256": "bc8d97878b7004c970727eb80831800c180c0fa93086a20df712a908bb8e4c03"
+        }
+      ]
+    },
+    {
+      "path": "src/style.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "74dc9280eaca0e91c279209508991c4086a15582163bb557788cbd51ce43be2c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "09d3861314d9d10e062361afacefebb57cc6331c04663b0b3014f94c6dda2a13"
+      },
+      "patchSha256": "509f291fe79894718e45b83bf45b732b0bda164e52b12e73ad64bd8f236fb4c8",
+      "hunks": [
+        {
+          "header": "@@ -817,6 +817,13 @@ textarea {",
+          "sha256": "df4f276d2010f2b2d77fbf0cc91faf30a60d327512562689c12c1f69ccd19965"
+        },
+        {
+          "header": "@@ -826,4 +833,6 @@ textarea {",
+          "sha256": "703d2e19a13ee64041cee4e45f344e95e93d2f3d23cb5d730bed118d65fb3e9e"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/manual-unit-controls.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "5a1454f4c3da88034cec20bf55d1308284d538191743149483eb123f8cd8d183"
+      },
+      "patchSha256": "37d8334ee0f7a0e1d16bd4d9018800dc8ac8ec5fb562a539592273820da1d013",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,251 @@",
+          "sha256": "f43bd5c3593e364a4b19a92c89f2a7ef792f21508ceb7088d2defa61739c82be"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/manual-unit-quote.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "3c4b1922e350f731431f2a47141e283ca6637d6409447f35caaf450d9cadc394"
+      },
+      "patchSha256": "cf95d1cde92e583aedc97682cd5c4b9141dc11b3eaa21f79e5815394827f6805",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,127 @@",
+          "sha256": "ce6d303d339b5c4cd3835d0b287299d992878da0415fad81aa59e0cd65c00c72"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/shipyard-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "683327e41425f0c3f6779b892092980477cd982db138afb3f7254e211a45536c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "1cd86892e7d66231b62fb35b5be9df8445f0ab0c775513713bc607b07cde9b36"
+      },
+      "patchSha256": "10eb6ac2d09b5437d328a40c67ac529bc07cc32d2b85cfce0bc764e6c8585152",
+      "hunks": [
+        {
+          "header": "@@ -40,11 +40,18 @@ function unitCard(def: UnitDef, icon: IconFn): string {",
+          "sha256": "125ba7b2b925a2a19f3bc13ebb05f075c593f6b0b4f58f71ff81fad173944bab"
+        },
+        {
+          "header": "@@ -104,7 +111,6 @@ function updateCard(root: ParentNode, card: UnitCardView): void {",
+          "sha256": "12ca667c93e844e93e7abb775f98f867781ed8ee8c25e44c48f367af4cc05daa"
+        },
+        {
+          "header": "@@ -118,13 +124,8 @@ function updateCard(root: ParentNode, card: UnitCardView): void {",
+          "sha256": "3e38a36b79020764184ac917a70e56f276574830a0a4975b7982734d09661f49"
+        },
+        {
+          "header": "@@ -133,10 +134,3 @@ export function updateShipyardCards(root: ParentNode, view: ShipyardView): void",
+          "sha256": "843a8e4da89d732ff9547f22f101eb5e248af7484d35c7b3aa9ba33994b80ddd"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "2d96d7cbcd658f17a44eda6369b32aa7e74e451f99ed15efdf7cefc9d71b3691"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "e4bf779ff98a4e84348626b8a66e85c4931828e6d37728439135fe8cbb1a4b1c"
+      },
+      "patchSha256": "6336ae12ebf7126acc132ee77f806df7dd167c228345fcd8e9fff37a4065f0da",
+      "hunks": [
+        {
+          "header": "@@ -1,3 +1,4 @@",
+          "sha256": "7111f1df75773fde04ed612ed886d67f47f55926d89632a23fc61f5b17956df3"
+        },
+        {
+          "header": "@@ -28,7 +29,7 @@ import { npcRemainderView, transportLoadView } from \"./space-present\";",
+          "sha256": "af238e137315a4e23a2e817558185d88fe49201de96d0d1aae989f99a0bbbbeb"
+        },
+        {
+          "header": "@@ -319,6 +320,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "16606e0e91e46bdfec3c36c2cc8e23b67e807ff7ce92417a4ce0ac8a5ed24f32"
+        },
+        {
+          "header": "@@ -421,7 +423,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "2f02be3ba1c6a67327ff64189bd5ff9eddfe66ead420c69b4a247856f8aef27c"
+        },
+        {
+          "header": "@@ -431,10 +433,12 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "f7fa037360e619c8782d625c7a87aecc61ba7f23da5d1f73ea254d57d9c5f9ee"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/view.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "a43d58639f1934be5d7b3b61c6479964759f73b4096b6175899baecdb6182907"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "23c4ca1ec796cafa6dba3a910261b302b4cd215138c298d3b02c43348ce534ee"
+      },
+      "patchSha256": "0ae0dc81ba5f2d2f2ba9fa4f2ecd4b3335bbec7f4969d6fe091ddaacdb1e6d2c",
+      "hunks": [
+        {
+          "header": "@@ -23,8 +23,7 @@ import type { ResourceId } from \"../game/types\";",
+          "sha256": "c6a26f757461b52aaf845cb97bae79703e074da0ebf1da3a192890cd38719f52"
+        },
+        {
+          "header": "@@ -33,7 +32,6 @@ export type UiAction =",
+          "sha256": "a4afa4523ea1fbf43f4ee6397dde9816a73f91d8d1ad0cea6af457ca7247c058"
+        },
+        {
+          "header": "@@ -146,11 +144,6 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi",
+          "sha256": "0740d59d542964b20805bea2c4652db0c9b298dfbeaf0d3c2098aaa3351247c3"
+        }
+      ]
+    }
+  ]
+}

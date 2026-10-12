@@ -28,6 +28,11 @@ REFERENCE = 'e729c7ff3c4ef519bfd14da9dc132ba7d971de48'
 FROZEN_COMPARISON_SOURCE = 'be0e112b964179fc15b89daa4ae6f6a722b78a92'
 
 
+def current_ring_source():
+    from test_manual_unit_provenance import previous_ring_bytes
+    return previous_ring_bytes().decode()
+
+
 def module():
     spec = importlib.util.spec_from_file_location('scout_comparison_source_contract', SCRIPT)
     result = importlib.util.module_from_spec(spec)
@@ -369,7 +374,7 @@ class ScoutComparisonSyntheticTests(unittest.TestCase):
 
     def test_e729_original_functions_constants_and_dispatch_are_preserved(self):
         before = ast.parse(self.git('show', REFERENCE + ':scripts/browser-ring-protection.py').decode())
-        after = ast.parse(SCRIPT.read_text())
+        after = ast.parse(current_ring_source())
         functions = lambda tree: {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         old, new = functions(before), functions(after)
         dump = lambda node: ast.dump(node, include_attributes=False)

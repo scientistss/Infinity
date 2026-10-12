@@ -23,6 +23,11 @@ SCRIPT = ROOT / 'scripts/browser-ring-protection.py'
 REFERENCE = 'ac3cce98403bea1e7162bcb4092e4cfeeb448a9a'
 
 
+def current_ring_source():
+    from test_manual_unit_provenance import previous_ring_bytes
+    return previous_ring_bytes().decode()
+
+
 def module():
     spec = importlib.util.spec_from_file_location('ring_source_contract', SCRIPT)
     result = importlib.util.module_from_spec(spec)
@@ -217,7 +222,7 @@ class DemolitionSourceContractTests(unittest.TestCase):
 
     def test_old_native_functions_and_all_original_provenance_statements_are_preserved(self):
         old = ast.parse(self.git('show', REFERENCE + ':scripts/browser-ring-protection.py').decode())
-        new = ast.parse(SCRIPT.read_text())
+        new = ast.parse(current_ring_source())
         nodes = lambda tree: {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
         before, after = nodes(old), nodes(new)
         dump = lambda node: ast.dump(node, include_attributes=False)
@@ -730,7 +735,7 @@ class NpcReportUiSourceContractTests(unittest.TestCase):
         self.assertIn(old_line, expected_source)
         expected_source = expected_source.replace(old_line, new_lines, 1)
         before = ast.parse(expected_source)
-        after = ast.parse(SCRIPT.read_text())
+        after = ast.parse(current_ring_source())
         functions = lambda tree: {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         old, new = functions(before), functions(after)
         dump = lambda node: ast.dump(node, include_attributes=False)

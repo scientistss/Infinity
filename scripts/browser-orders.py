@@ -338,9 +338,18 @@ try:
                 page.locator('[data-action="research"][data-id="energy_tech"]').click()
             else:
                 quantity = page.locator('[data-bind="uqty-light_fighter"]')
-                if quantity.count():
-                    quantity.fill('1')
-                page.locator('[data-action="build-units"][data-id="light_fighter"][data-mode="count"]').click()
+                quantity.fill('1')
+                before_quote = read(page)
+                # The historical build action is now a mode-only quote. Only
+                # the separate native payment click may replace the paid job.
+                mode = page.locator('[data-action="manual-unit-mode"][data-id="light_fighter"][data-mode="count"]')
+                mode.click()
+                expect(mode).to_have_attribute('aria-pressed', 'true')
+                check('manual count quote does not pay or alter the saved state', read(page) == before_quote)
+                pay = page.locator('[data-action="manual-unit-pay"][data-id="light_fighter"]')
+                expect(pay).to_be_enabled()
+                pay.click()
+                expect(pay).to_be_disabled()
             after_new = read(page)
             check(f'{kind} replacement gets new node and identity', page.locator(f'[data-bind="{bind}"] .queue-cancel').evaluate_all('(els) => els.every(e => e!==window.__oldOrderButton && e.dataset.paidJob!==window.__oldOrderMeta)'))
             # Restore a stale rendered control into the DOM to deliver its original
@@ -387,7 +396,11 @@ try:
         page.locator('#order-target').select_option('laser_tech')
         after = save(page)
         check('inspection and unfinished draft authorize nothing', after['orders'] == before['orders'] and after['planets'] == before['planets'] and after['research'] == before['research'])
-        check('original manual controls still exist', page.locator('[data-action="enqueue"]').count() > 0 and page.locator('[data-action="research"]').count() > 0 and page.locator('[data-action="build-units"]').count() > 0)
+        check('original manual building/research controls and separate unit mode/payment controls exist',
+              page.locator('[data-action="enqueue"]').count() > 0
+              and page.locator('[data-action="research"]').count() > 0
+              and page.locator('[data-action="manual-unit-mode"][data-mode="count"]').count() > 0
+              and page.locator('[data-action="manual-unit-pay"]').count() > 0)
         check('legacy save bytes untouched', page.evaluate("localStorage.getItem('infinity.save.v1')") == 'SYNTHETIC LEGACY BYTES: retain unchanged')
         context.close()
 

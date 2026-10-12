@@ -424,7 +424,8 @@ class LabBlockersSyntheticTests(unittest.TestCase):
 
     def test_c80_original_functions_constants_and_dispatch_are_preserved(self):
         original = self.git('show', REFERENCE + ':scripts/browser-ring-protection.py').decode()
-        current = SCRIPT.read_text()
+        from test_manual_unit_provenance import previous_ring_bytes
+        current = previous_ring_bytes().decode()
         old_tree, new_tree = ast.parse(original), ast.parse(current)
         keyed = lambda tree: {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
         old, new = keyed(old_tree), keyed(new_tree)
@@ -466,7 +467,8 @@ class LabBlockersSyntheticTests(unittest.TestCase):
 
     def test_original_ui_baseline_expected_hashes_stay_byte_identical(self):
         original = self.git('show', REFERENCE + ':scripts/check-ui-baseline.mjs').decode()
-        current = (ROOT / 'scripts/check-ui-baseline.mjs').read_text()
+        from test_manual_unit_provenance import previous_ui_baseline_bytes
+        current = previous_ui_baseline_bytes().decode()
         extract = lambda source: source.split('const expected = {', 1)[1].split('};', 1)[0]
         self.assertEqual(extract(current), extract(original))
         self.assertIn('verify-ui-baseline', current)
@@ -480,10 +482,17 @@ class LabBlockersCommittedCandidateTests(unittest.TestCase):
         def git(*args):
             return subprocess.check_output(['git', *args], cwd=ROOT, stderr=subprocess.PIPE)
         candidate = git('rev-parse', CANDIDATE + '^{commit}').decode().strip()
+        actual_candidate = candidate
+        executed_ring_bytes = SCRIPT.read_bytes()
+        if git('ls-tree', candidate, '--', 'tests/fixtures/manual-unit-provenance.json'):
+            from test_manual_unit_provenance import verify_candidate, previous_ring_bytes, REFERENCE as manual_base
+            verify_candidate(candidate)
+            candidate = manual_base
+            executed_ring_bytes = previous_ring_bytes()
         self.assertNotEqual(candidate, REFERENCE, 'Laboratory-blockers candidate must be committed before final verification')
         self.assertEqual(git('merge-base', REFERENCE, candidate).decode().strip(), REFERENCE,
                          'The real committed candidate must integrate exact c80 ancestry')
-        self.assertEqual(SCRIPT.read_bytes(), git('show', candidate + ':scripts/browser-ring-protection.py'),
+        self.assertEqual(executed_ring_bytes, git('show', candidate + ':scripts/browser-ring-protection.py'),
                          'The executed source gate must be the committed candidate gate')
         self.assertRegex(ring.LAB_BLOCKERS_MANIFEST_SHA256, r'^[0-9a-f]{64}$')
         self.assertNotEqual(ring.LAB_BLOCKERS_MANIFEST_SHA256, '0' * 64)
@@ -502,7 +511,7 @@ class LabBlockersCommittedCandidateTests(unittest.TestCase):
         paths = ['src', 'public', ring.LAB_BLOCKERS_MANIFEST,
                  *(path for path, _ in previous_manifests(ring))]
         self.assertEqual(git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
-                             candidate, '--', *paths), b'')
+                             actual_candidate, '--', *paths), b'')
         self.assertEqual(git('ls-files', '--others', '--exclude-standard', '--', 'src', 'public'), b'')
 
 

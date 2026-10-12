@@ -119,10 +119,10 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
         path = self.workspace / 'package-lock.json'
         original = path.read_bytes()
         lock = json.loads(original)
-        self.assertEqual(lock['version'], '0.6.24-alpha.1')
-        self.assertEqual(lock['packages']['']['version'], '0.6.24-alpha.1')
+        self.assertEqual(lock['version'], '0.6.26-alpha.1')
+        self.assertEqual(lock['packages']['']['version'], '0.6.26-alpha.1')
         for field in ('top', 'package'):
-            for version in ('0.6.22-alpha.2', '0.6.23-alpha.1', '0.6.23-alpha.2', '0.6.24-alpha.2', '0.6.24', True, None):
+            for version in ('0.6.22-alpha.2', '0.6.23-alpha.1', '0.6.23-alpha.2', '0.6.24-alpha.1', '0.6.24-alpha.2', '0.6.26-alpha.2', '0.6.24', True, None):
                 changed = copy.deepcopy(lock)
                 target = changed if field == 'top' else changed['packages']['']
                 target['version'] = version

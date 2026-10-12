@@ -171,23 +171,25 @@ def assert_lab_blockers_gate(workflow, baseline):
 
 
 def assert_release_transitions():
+    from test_manual_unit_gate import previous_release_bytes as successor_release_bytes
     for relative, cardinality in RELEASE_FILES.items():
         before = baseline_bytes(relative)
         assert before.count(OLD_VERSION.encode()) == cardinality, ('pinned release cardinality', relative)
-        assert (ROOT / relative).read_bytes() == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('unapproved release/source drift', relative)
+        assert successor_release_bytes(relative) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('unapproved release/source drift', relative)
     # Preserve the actual test-only successor fixes, including all 36 tests.
     # Only its four exact current-release literals change for this release.
     for relative, cardinality in CORRECTED_FORMATION_VERSION_FILES.items():
         before = subprocess.check_output(['git', '-C', str(ROOT), 'show',
             f'{CORRECTED_FORMATION_SHA}:{relative}'])
         assert before.count(OLD_VERSION.encode()) == cardinality, ('corrected formation release cardinality', relative)
-        assert (ROOT / relative).read_bytes() == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('corrected formation source drift', relative)
+        assert successor_release_bytes(relative) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('corrected formation source drift', relative)
 
 
 def previous_workflow(workflow=None):
     """Audit the complete successor before running unchanged historical rules."""
     if workflow is None:
-        workflow = (ROOT / WORKFLOW_PATH).read_bytes().decode('utf-8')
+        from test_manual_unit_gate import previous_workflow as successor_workflow
+        workflow = successor_workflow()
     baseline = baseline_workflow()
     assert_lab_blockers_gate(workflow, baseline)
     assert_release_transitions()
@@ -209,7 +211,8 @@ def aggregate_code(workflow):
 class LabBlockersGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / WORKFLOW_PATH).read_bytes().decode('utf-8')
+        from test_manual_unit_gate import previous_workflow as successor_workflow
+        cls.workflow = successor_workflow()
         cls.baseline = baseline_workflow()
         cls.current, cls.original = jobs(cls.workflow), jobs(cls.baseline)
 
@@ -437,7 +440,8 @@ class LabBlockersGateTests(unittest.TestCase):
                     if 'browser-rehearsal-formation-copy.py ' in line)
         self.assert_refused(line, line.replace(VERSION, OLD_VERSION), 'scout-rehearsal')
         assert_release_transitions()
-        current = json.loads((ROOT / 'package-lock.json').read_bytes())
+        from test_manual_unit_gate import previous_release_bytes as successor_release_bytes
+        current = json.loads(successor_release_bytes('package-lock.json'))
         historical = json.loads(subprocess.check_output(['git', '-C', str(ROOT), 'show',
             'cc19bf5e1a459cf8e667ca55f4891ca9ffd25a71:package-lock.json']))
         self.assertEqual(historical['version'], '0.6.21-alpha.1')
@@ -450,7 +454,7 @@ class LabBlockersGateTests(unittest.TestCase):
         for relative in (*RELEASE_FILES, *CORRECTED_FORMATION_VERSION_FILES):
             target = ROOT / relative
             original = original_read(target)
-            for changed in (original + b'\n', original.replace(VERSION.encode(), OLD_VERSION.encode(), 1)):
+            for changed in (original + b'\n', original.replace(b'0.6.26-alpha.1', OLD_VERSION.encode(), 1)):
                 def read_bytes(path, target=target, changed=changed):
                     return changed if path == target else original_read(path)
                 with self.subTest(relative=relative), patch.object(Path, 'read_bytes', read_bytes):

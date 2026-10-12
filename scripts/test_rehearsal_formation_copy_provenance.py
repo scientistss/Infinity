@@ -27,6 +27,11 @@ REFERENCE = 'be0e112b964179fc15b89daa4ae6f6a722b78a92'
 CANDIDATE = 'HEAD'
 
 
+def current_ring_source():
+    from test_manual_unit_provenance import previous_ring_bytes
+    return previous_ring_bytes().decode()
+
+
 def module():
     spec = importlib.util.spec_from_file_location('rehearsal_formation_copy_source_contract', SCRIPT)
     result = importlib.util.module_from_spec(spec)
@@ -420,7 +425,7 @@ class RehearsalFormationCopySyntheticTests(unittest.TestCase):
 
     def test_be0_original_functions_constants_and_dispatch_are_preserved(self):
         before = ast.parse(self.git('show', REFERENCE + ':scripts/browser-ring-protection.py').decode())
-        after = ast.parse(SCRIPT.read_text())
+        after = ast.parse(current_ring_source())
         functions = lambda tree: {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         old, new = functions(before), functions(after)
         dump = lambda node: ast.dump(node, include_attributes=False)
@@ -473,6 +478,11 @@ class RehearsalFormationCopyCommittedCandidateTests(unittest.TestCase):
             checks.append(name)
             self.assertTrue(passed, name)
         result = ring.synchronized_domain_provenance(ROOT, candidate, git, check)
+        if result['contract'] == 'exact-declared-manual-unit-ui-delta':
+            from test_manual_unit_provenance import REFERENCE as manual_base
+            self.assertEqual(result['previousAdoptionSourceSha'], manual_base)
+            result = result['previousProvenance']
+            self.assertEqual(result['candidateSourceSha'], manual_base)
         if result['contract'] == 'exact-declared-lab-blockers-ui-delta':
             self.assertEqual(result['previousAdoptionSourceSha'], ring.LAB_BLOCKERS_ADOPTION)
             result = result['previousProvenance']

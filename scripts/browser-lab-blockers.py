@@ -29,7 +29,7 @@ from urllib.parse import urljoin, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 HOST_STARTED_MONOTONIC = time.monotonic()
 WIDTHS = (320, 390, 768, 1440)
-CANDIDATE_VERSION = '0.6.24-alpha.1'
+CANDIDATE_VERSION = '0.6.26-alpha.1'
 REPORT_SHA = '1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d'
 GZIP_SHA = '0ddea5009ff9832630bf5621a1f51b1c1c8211bd253045c45025d43f5c1bc8db'
 GZIP_PATH = 'tests/fixtures/lab-blockers-be0-research-network-report.json.gz'

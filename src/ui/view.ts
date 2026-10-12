@@ -23,8 +23,7 @@ import type { ResourceId } from "../game/types";
 import { isBetSymbol, type BetSymbol } from "../data/arcade";
 import type { RunResult } from "../game/arcade";
 import { ArcadeAnimator, arcadePanelHtml, readSkipPreference, updateArcadePanel, writeSkipPreference } from "./arcade-panel";
-import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyard-panel";
-import { isUnitId, type UnitId } from "../data/units";
+import { shipyardPanelsHtml, updateShipyardCards } from "./shipyard-panel";
 import { labBlockersHtml, updateLabBlockers } from "./lab-blockers-panel";
 
 export type UiAction =
@@ -33,7 +32,6 @@ export type UiAction =
   | { type: "cancelQueue"; index: number }
   | { type: "enqueueResearch"; id: ResearchId }
   | { type: "cancelResearch"; index: number }
-  | { type: "build-units"; id: UnitId; mode: "count" | "max" | "fill"; count: number }
   | { type: "cancel-units"; index: number }
   | { type: "dm-speedup"; target: SpeedupTarget; mode: SpeedupMode }
   | { type: "dm-shop"; id: ShopItemId; res: ResourceId }
@@ -145,11 +143,6 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi
     if (action === "research") {
       const id = button.dataset.id ?? "";
       if (isResearchId(id)) onAction({ type: "enqueueResearch", id });
-    }
-    if (action === "build-units") {
-      const id = button.dataset.id ?? "";
-      const mode = button.dataset.mode === "max" ? "max" : button.dataset.mode === "fill" ? "fill" : "count";
-      if (isUnitId(id)) onAction({ type: "build-units", id, mode, count: unitQuantity(root, id) });
     }
     if (action === "cancel-units") {
       const index = Number(button.dataset.index);

@@ -50,10 +50,10 @@ const expected = {
   "public/icons/warp_core.webp": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
 };
 // The original baseline map above is immutable. The two changed UI files are
-// explicitly adopted through the complete c80-to-lab source seal; no asset or
+// explicitly adopted through the complete original-to-manual-unit cumulative source seal; no asset or
 // directory is exempted and neither changed file is called original-byte-identical.
-const LAB_BLOCKERS_MANIFEST_SHA256 = "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8";
-const manifestPath = "tests/fixtures/lab-blockers-provenance.json";
+const MANUAL_UNIT_MANIFEST_SHA256 = "0b48b25de339ee749b43d881e41c4da85df64798a978989000efde831ed3650b";
+const manifestPath = "tests/fixtures/manual-unit-provenance.json";
 const deltaPaths = ["src/style.css", "src/ui/view.ts"];
 const hash = value => createHash("sha256").update(value).digest("hex");
 let sourceAudit = null;
@@ -61,31 +61,31 @@ let approvedRows = [];
 if (existsSync(manifestPath)) {
   const local = lstatSync(manifestPath);
   if (!local.isFile() || local.isSymbolicLink() || (local.mode & 0o111))
-    throw new Error("实验室 UI 来源清单必须为普通只读来源文件");
+    throw new Error("手动数量 UI 来源清单必须为普通只读来源文件");
   const raw = readFileSync(manifestPath);
-  if (hash(raw) !== LAB_BLOCKERS_MANIFEST_SHA256)
-    throw new Error("实验室 UI 来源清单摘要不匹配");
+  if (hash(raw) !== MANUAL_UNIT_MANIFEST_SHA256)
+    throw new Error("手动数量 UI 来源清单摘要不匹配");
   // Python/Git-only verification covers the entire current src/public tree,
-  // exact ancestry, nine earlier seals, modes, full patches and every hunk.
+  // exact ancestry, ten earlier seals, modes, full patches and every hunk.
   sourceAudit = JSON.parse(execFileSync("python3",
-    ["-B", "scripts/test_lab_blockers_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
+    ["-B", "scripts/test_manual_unit_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
   const manifest = JSON.parse(raw);
   const baseline = sourceAudit.originalUiBaseline;
-  if (sourceAudit.contract !== "exact-declared-lab-blockers-ui-delta"
-      || sourceAudit.sourceBaseline !== "c80a6728fe9e1769ca4e67fe794b8f0eedfb8627"
-      || sourceAudit.manifestSha256 !== LAB_BLOCKERS_MANIFEST_SHA256
+  if (sourceAudit.contract !== "exact-declared-manual-unit-ui-delta"
+      || sourceAudit.sourceBaseline !== "9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13"
+      || sourceAudit.manifestSha256 !== MANUAL_UNIT_MANIFEST_SHA256
       || JSON.stringify(baseline) !== JSON.stringify(manifest.originalUiBaseline)
       || baseline.baseline !== "69eca71"
       || JSON.stringify(baseline.exactDeltaPaths) !== JSON.stringify(deltaPaths)
       || JSON.stringify(baseline.changedPaths.map(row => row.path)) !== JSON.stringify(deltaPaths))
-    throw new Error("实验室 UI 增量范围或完整来源核验不匹配");
+    throw new Error("手动数量 UI 增量范围或完整来源核验不匹配");
   approvedRows = baseline.changedPaths;
   for (const row of approvedRows) {
     if (baseline.expected[row.path] !== expected[row.path]
         || row.before.mode !== "100644" || row.before.sha256 !== expected[row.path]
         || row.after.mode !== "100644" || !row.hunks.length
         || !/^[0-9a-f]{64}$/.test(row.patchSha256))
-      throw new Error(`实验室 UI 增量不是原版精确来源：${row.path}`);
+      throw new Error(`手动数量 UI 增量不是原版精确来源：${row.path}`);
   }
 }
 for (const [path, digest] of Object.entries(expected)) {
@@ -96,9 +96,9 @@ for (const [path, digest] of Object.entries(expected)) {
 }
 console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length,
   result: "passed", scope: sourceAudit
-    ? "all original public assets unchanged; view.ts/style.css have exact approved laboratory UI deltas"
+    ? "all original public assets unchanged; view.ts/style.css have exact approved manual-unit UI deltas"
     : "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate",
   ...(sourceAudit ? { approvedUiDeltaPaths: deltaPaths,
     approvedSourceDeltaPaths: sourceAudit.approvedSourceDeltaPaths,
-    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: LAB_BLOCKERS_MANIFEST_SHA256 } : {})
+    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: MANUAL_UNIT_MANIFEST_SHA256 } : {})
 }, null, 2));

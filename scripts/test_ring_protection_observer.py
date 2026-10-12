@@ -36,6 +36,10 @@ HANDLER_R14_CURRENT = 'async function Xx(e){var i;["import-text","import-file","
 R13_FIXED = 'function tl(e){Zc(e,!1),kf(e);const t=pa(e.universe.seed,Kr,e.planets.map(n=>n.coordinates));return{npcEconomy:Fc(e.npcEconomy,t),npcBattles:Dc(e.npcBattles,t),terraformerGrantJobFloor:ch(e.terraformerGrantJobFloor,e.orders.nextJobId),buildingTemplates:_v(e.buildingTemplates),formations:f0(e.formations),researchTemplates:Mv(e.researchTemplates),orders:E0(e.orders),planets:e.planets.map(Ak),activePlanetId:e.activePlanetId,deepSpace:structuredClone(e.deepSpace),universe:{...e.universe},fleets:jv(e.fleets),messages:e.messages.map(n=>({...n})),nextFleetId:e.nextFleetId,research:Uk(e.research),darkMatter:gn(e.darkMatter),items:{...e.items},boosters:e.boosters.map(n=>({...n})),arcade:qh(e.arcade),lifetime:go(e.lifetime),warpCores:gn(e.warpCores),curvature:{...e.curvature},totalTime:gn(e.totalTime),manualClicks:e.manualClicks,seenEnergyShortage:e.seenEnergyShortage,hasPrestiged:e.hasPrestiged,unlockedCards:e.unlockedCards.slice(),protocols:Yk(e.protocols),unlocked:e.unlocked.slice(),stats:{...e.stats},offlineBonusHours:e.offlineBonusHours}}'
 HANDLER_R13_FIXED = 'async function JE(e){var i;ge.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(ge.mode!=="ready"&&!t){re=ge.message,Qn();return}const n=q,r=q.unlocked;'
 
+# Actual precommit index-C_2plJQU.js: 771638 bytes, SHA256 13c1c19438a2003c7284a43a26e5444fb16f2d21bf4cdc9a65405156e35b8361.
+# This exact parser specimen is not release or native acceptance.
+HANDLER_MANUAL_UNIT_CURRENT = 'async function h_(e){var i;["import-text","import-file","reset","prestige"].includes(e.type)&&(Ee.retireNpcRehearsal(),Ee.retireManualUnits()),Me.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(Me.mode!=="ready"&&!t){fe=Me.message,vr();return}const n=W,r=W.unlocked;'
+
 class ProductionActionHandlerTests(unittest.TestCase):
     def assert_unique(self, text, name='Z1', action='e', session='ge', state='j'):
         matches = RING.production_action_handlers(text)
@@ -57,6 +61,36 @@ class ProductionActionHandlerTests(unittest.TestCase):
         for text in (HANDLER_R14_CURRENT * 2, HANDLER_R14_CURRENT + HANDLER_R13_FIXED,
                      HANDLER_R14_CURRENT + HANDLER_R10):
             self.assertEqual(len(RING.production_action_handlers(text)), 2)
+
+    def test_actual_manual_unit_handler_preserves_historical_capture_positions(self):
+        self.assert_unique(HANDLER_MANUAL_UNIT_CURRENT, 'h_', 'e', 'Me', 'W')
+        renamed = HANDLER_MANUAL_UNIT_CURRENT.replace('Ee.', '$view.')
+        self.assert_unique(renamed, 'h_', 'e', 'Me', 'W')
+        for other in (HANDLER_MANUAL_UNIT_CURRENT, HANDLER_R14_CURRENT, HANDLER_R13_FIXED, HANDLER_R10):
+            self.assertEqual(len(RING.production_action_handlers(HANDLER_MANUAL_UNIT_CURRENT + other)), 2)
+
+    def test_manual_retirement_requires_exact_same_view_sequence_without_other_effects(self):
+        for before, after in (
+            ('"import-text","import-file","reset","prestige"', '"import-text","reset","prestige"'),
+            ('"reset","prestige"', '"reset","prestige","save"'),
+            ('includes(e.type)', 'includes(other.type)'),
+            ('&&(Ee.', '||(Ee.'),
+            ('Ee.retireNpcRehearsal(),Ee.retireManualUnits()', 'Ee.retireManualUnits(),Ee.retireNpcRehearsal()'),
+            ('Ee.retireManualUnits()', 'other.retireManualUnits()'),
+            ('retireManualUnits()', 'retireManualUnits(e)'),
+            ('retireNpcRehearsal()', 'retireNpcRehearsal(e)'),
+            ('Ee.retireManualUnits()', 'Ee.sendFleet()'),
+            ('Ee.retireManualUnits()', 'Ee.retireManualUnits(),sideEffect()'),
+            ('Ee.retireNpcRehearsal(),', 'Ee.retireNpcRehearsal(),sideEffect(),'),
+            (',Ee.retireManualUnits()', ''),
+            ('&&(Ee.retireNpcRehearsal(),Ee.retireManualUnits()),', '&&Ee.retireNpcRehearsal(),Ee.retireManualUnits(),'),
+            ('var i;', 'var i=sideEffect();'),
+            ('Me.cancelPendingImport();', 'Me.cancelPendingImport();sideEffect();'),
+            ('const n=W,r=W.unlocked;', 'const n=W,r=other.unlocked;'),
+        ):
+            with self.subTest(before=before, after=after):
+                self.assertIn(before, HANDLER_MANUAL_UNIT_CURRENT)
+                self.assertEqual(RING.production_action_handlers(HANDLER_MANUAL_UNIT_CURRENT.replace(before, after, 1)), [])
 
     def test_r14_retirement_admits_only_exact_actions_method_and_arguments(self):
         for before, after in (

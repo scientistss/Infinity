@@ -42,7 +42,7 @@ PANEL = PREFIX + 'panel'
 MAX_FORMATION_QUANTITY = 1_000_000
 MAX_MANUAL_QUANTITY = 1_000_000_000_000
 NATURAL_FORMATION_NAME = '原生护航 <舰&🚀>'
-CANDIDATE_VERSION = '0.6.24-alpha.1'
+CANDIDATE_VERSION = '0.6.26-alpha.1'
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 
 

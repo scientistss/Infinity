@@ -34,7 +34,9 @@ CAPTURED_CLOSED_COMPARISON_HTML = '''<section id="npc-scout-comparison-panel" cl
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'messages':[{'id':'send-1','at':3,'text':'原有消息。','npcScoutSnapshot':None},{'id':'scout-2','at':60,'text':'原有侦察情报。','npcScoutSnapshot':None}]}
     def unit_panel(self,tab,side):
-        # Deliberately copied evidence only. Live SAMPLE_JS and complete native
+        # Historical r14 / pre-manual-quote copied evidence only, including the
+        # old build-units / maximum-39 example. Current manual UI is tested by
+        # test_manual_unit_display_contract.py. Live SAMPLE_JS and complete native
         # DOM/state preservation are verified by browser-render-scheduling.py.
         paragraph=UNIT_PANEL_COPY[tab][side];node=f'<p class="blurb">{paragraph}</p>'
         snapshot={'tab':tab,'text':'标题\n\n'+paragraph+'\n\n造船队列\n每艘 3.20 秒\n可造 39',

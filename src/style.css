@@ -817,6 +817,13 @@ textarea {
 }
 .unit-order input:focus { outline: none; border-color: var(--good); box-shadow: 0 0 6px var(--good-glow); }
 .unit-btn { padding: 0.3rem 0.55rem; white-space: nowrap; font-size: 0.85rem; }
+.unit-btn[aria-pressed="true"] { border-color: var(--good); color: var(--good); }
+.unit-mode-hint { margin: 0.35rem 0; font-size: 0.78rem; }
+.unit-confirm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 0.6rem; align-items: center; }
+.unit-quote { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.unit-total { min-width: 0; overflow-wrap: anywhere; }
+.unit-confirm .unit-pay { align-self: stretch; }
+
 .unit-reason { margin: 0.25rem 0 0; min-height: 1.1em; }
 .unit-card.locked .unit-reason { color: var(--dim); }
 .unit-rf { margin: 0.35rem 0 0; font-size: 0.78rem; color: var(--muted); }
@@ -826,4 +833,6 @@ textarea {
 @media (max-width: 520px) {
   .unit-order { grid-template-columns: 1fr 1fr 1fr; }
   .unit-order input { grid-column: 1 / -1; }
+  .unit-confirm { grid-template-columns: minmax(0, 1fr); }
+  .unit-confirm .unit-pay { width: 100%; }
 }

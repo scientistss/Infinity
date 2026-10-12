@@ -297,14 +297,28 @@ def production_action_handlers(text):
         rf'(?:var {identifier}(?:,{identifier})*;)?'
         # r14's sole retirement prefix adds no captures: native groups 1/2/3 stay name/action/session.
         rf'(?:\["import-text","import-file","reset","prestige"\]'
-        rf'\.includes\((?P=action)\.type\)&&{identifier}\.retireNpcRehearsal\(\),)?'
+        rf'\.includes\((?P=action)\.type\)&&'
+        rf'(?:{identifier}\.retireNpcRehearsal\(\)|'
+        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\)\)),)?'
         rf'(?P<session>{identifier})\.cancelPendingImport\(\);'
         rf'const (?P<recovery>{identifier})={recovery}\.includes\((?P=action)\.type\);'
         rf'if\((?P=session)\.mode!=="ready"&&!(?P=recovery)\)\{{'
         rf'{identifier}=(?P=session)\.message,{identifier}\(\);return\}}'
         rf'(?=const {identifier}=(?P<state>{identifier}),{identifier}=(?P=state)\.unlocked;)'
     )
-    return list(re.finditer(pattern, text))
+    # Exact current paired retirement is optional only as a whole. Keep the
+    # historical numbered name/action/session captures unchanged. A separate
+    # read-only check requires both new calls to use the same view receiver.
+    matches = list(re.finditer(pattern, text))
+    valid = []
+    for match in matches:
+        paired = re.search(
+            rf'&&\(({identifier})\.retireNpcRehearsal\(\),({identifier})\.retireManualUnits\(\)\),',
+            match.group(0))
+        if paired is not None and paired.group(1) != paired.group(2):
+            continue
+        valid.append(match)
+    return valid
 
 
 def production_serializers(text):
@@ -405,6 +419,9 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != '9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13' and git('ls-tree', candidate, '--', 'tests/fixtures/manual-unit-provenance.json'):
+        from test_manual_unit_provenance import manual_unit_provenance
+        return manual_unit_provenance(repository, candidate, git, check)
     if candidate != LAB_BLOCKERS_ADOPTION and git('ls-tree', candidate, '--', LAB_BLOCKERS_MANIFEST):
         return lab_blockers_provenance(repository, candidate, git, check)
     if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):

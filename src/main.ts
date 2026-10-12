@@ -195,7 +195,10 @@ function render(urgent = true, now = performance.now()): void {
 async function handleAction(action: UiAction): Promise<void> {
   // Retirement precedes every dialog/await. Failed or cancelled replacement
   // attempts preserve the real fleet draft, but cannot leave a deferred Fill.
-  if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) view.retireNpcRehearsal();
+  if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) {
+    view.retireNpcRehearsal();
+    view.retireManualUnits();
+  }
   saveSession.cancelPendingImport();
   const recoveryAction = ["save", "export", "export-legacy", "import-text", "import-file", "reset", "dismiss-notice", "dismiss-offline"].includes(action.type);
   if (saveSession.mode !== "ready" && !recoveryAction) {
@@ -313,12 +316,16 @@ async function handleAction(action: UiAction): Promise<void> {
   } else if (action.type === "cancelResearch") {
     // Index-only cancellation must never resolve against a newer queue snapshot.
     status = "队列已更新，请使用当前工作的取消按钮";
-  } else if (action.type === "build-units") {
-    const amount = action.mode === "max" ? "max" : action.mode === "fill" ? { fillTo: action.count } : action.count;
-    const result = orderUnits(state, action.id, amount, "manual");
-    state = result.state;
-    status = result.reason;
-    if (result.ok) persist();
+  } else if (action.type === "manual-unit-pay") {
+    const payment = view.consumeManualUnitAction(action, state);
+    if (!payment) {
+      status = "手动建造报价已失效，本次未支付；请重新核对数量与报价。";
+    } else {
+      const result = orderUnits(state, payment.id, payment.count, "manual");
+      state = result.state;
+      status = result.reason;
+      if (result.ok) persist();
+    }
   } else if (action.type === "cancel-units") {
     // Index-only cancellation must never resolve against a newer queue snapshot.
     status = "队列已更新，请使用当前工作的取消按钮";
@@ -473,6 +480,7 @@ async function handleAction(action: UiAction): Promise<void> {
     // The user may have opened a fresh review while the file was being read.
     // Retire that review too before presenting this still-current result/dialog.
     view.retireNpcRehearsal();
+    view.retireManualUnits();
     if (!prepared.ok) {
       status = `导入失败，当前进度未改动：${prepared.message}`;
       notice = saveSession.notice;
@@ -504,7 +512,7 @@ async function handleAction(action: UiAction): Promise<void> {
     action.type === "scrape" ||
     action.type === "enqueue" ||
     action.type === "enqueueResearch" ||
-    action.type === "build-units" ||
+    action.type === "manual-unit-pay" ||
     action.type === "prestige"
   ) {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
