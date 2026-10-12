@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts/browser-scout-rehearsal.py'
@@ -186,7 +188,9 @@ class NativeCoverageTests(unittest.TestCase):
         for text in ('run_six(page)','inspect_examples(page, width)','control_proof(page',
                      '#npc-rehearsal-cancel','#npc-rehearsal-fill','#space-send',
                      'every game field equals independent snapshot oracle','emptycargo','expect_download()',
-                     'set_input_files','separate paid send','five-term fuel equation'):
+                     'set_input_files','separate paid send','five-term fuel equation',
+                     'exact independently expected seed losses and survivors全文','expose_round_cell',
+                     'keyboard_and_paid_completion','len(backup_keys)==1'):
             self.assertIn(text,source)
 
     def test_lifecycle_and_storage_branches_explicit(self):
@@ -223,6 +227,13 @@ class NativeCoverageTests(unittest.TestCase):
         self.assertIn('same-turn own leaf hide/restore permanently retires old review capability',source)
         self.assertIn('leaf_retirement_boundaries();curvature_and_eviction()',source)
 
+    def test_paid_completion_reruns_in_same_panel_before_full_state_save(self):
+        source=SCRIPT.read_text()
+        body=source[source.index('def keyboard_and_paid_completion'):source.index('def leaf_retirement_boundaries')]
+        self.assertLess(body.index('trusted same-panel stale rerun'),body.index("whole_state(f'actual-paid-completion-step-{index}'"))
+        for evidence in ('oldDetached:old.every','newDistinct:','samePanel:panel===','fillEnabled:',"trusted_click(page,'#npc-rehearsal-run')",'card.dispose()'):
+            self.assertIn(evidence,body)
+
     def test_bounded_worker_supervisor_and_no_check_count_dilution(self):
         source=SCRIPT.read_text()
         for text in ('signal.alarm(900)','time.monotonic()+910','NativeCheckJournal(journal_path)',
@@ -230,6 +241,237 @@ class NativeCoverageTests(unittest.TestCase):
             self.assertIn(text,source)
         self.assertNotIn('checks = checks[',source)
         self.assertNotIn('checks.clear()',source)
+
+
+class AuthorityAtomicityTests(unittest.TestCase):
+    def draft(self):
+        return {'mission':'transport','target':['1','50','9'],'speed':'100',
+                'ships':[[ship,'0'] for ship in module.SHIPS], 'cargo':['0','0','0']}
+
+    def verify_draft(self, actual, expected):
+        module.load_shared_helpers()
+        def check(name, condition, detail=None):
+            if not condition: raise AssertionError(name)
+        with patch.object(module, 'draft_values', return_value=actual), patch.object(module, 'check', check):
+            module.unchanged_authority_draft(object(), 'offline mutated refusal', expected)
+
+    def test_exact_unchanged_draft_is_accepted(self):
+        value=self.draft();self.verify_draft(copy.deepcopy(value), value)
+
+    def test_non_attack_mission_cannot_hide_any_partial_draft_edit(self):
+        baseline=self.draft()
+        mutations={
+            'mission':lambda d:d.update(mission='scout'),
+            'target':lambda d:d['target'].__setitem__(1,'56'),
+            'speed':lambda d:d.update(speed='70'),
+            'one_ship':lambda d:d['ships'][2].__setitem__(1,'6'),
+            'zero_ship_missing':lambda d:d['ships'].pop(),
+            'reordered_ships':lambda d:d['ships'].reverse(),
+            'cargo':lambda d:d['cargo'].__setitem__(0,'17'),
+            'extra_field':lambda d:d.update(permission='invented'),
+            'wrong_type':lambda d:d['target'].__setitem__(0,1),
+        }
+        for name, change in mutations.items():
+            with self.subTest(name=name):
+                actual=copy.deepcopy(baseline);change(actual)
+                self.assertNotEqual(actual['mission'],'attack')
+                with self.assertRaisesRegex(AssertionError,'complete ordinary draft unchanged'):
+                    self.verify_draft(actual,baseline)
+
+    def test_all_unprotected_authority_cases_save_and_compare_full_live_state(self):
+        source=SCRIPT.read_text()
+        body=source[source.index('def authority_boundaries'):source.index('def save_without_navigation')]
+        self.assertIn('draft_before = draft_values(page)',body)
+        self.assertNotIn("draft_values(page)['mission'] != 'attack'",body)
+        self.assertIn("unchanged_authority_draft(page, 'authority-' + kind, draft_before)",body)
+        self.assertIn("if kind != 'conflict':",body)
+        self.assertIn("expected = copy.deepcopy(before_row['expected'])",body)
+        self.assertIn("if kind == 'planet': expected['activePlanetId'] = 'colony-1'",body)
+        self.assertIn("whole_state('authority-' + kind + '-live-state', save(page), expected)",body)
+        self.assertLess(body.index("unchanged_authority_draft(page, 'authority-'"),body.index("whole_state('authority-'"))
+        leaf=source[source.index('def leaf_retirement_boundaries'):source.index('def curvature_and_eviction')]
+        self.assertIn("whole_state('leaf-' + selector + '-' + attribute + '-live-state', save(page), row['expected'])",leaf)
+
+    def test_conflict_uses_blocked_save_and_protected_export_before_reload(self):
+        source=SCRIPT.read_text()
+        body=source[source.index("            # Genuine same-origin storage event"):source.index('def save_without_navigation')]
+        for text in ("storage(page) == {**before, KEY: competing_raw}",
+                     "trusted_click(page, '[data-action=\"save\"]')",
+                     "storage(page) == protected_disk",'with page.expect_download()',
+                     "protected_export.read_bytes() == before[KEY].encode()"):
+            self.assertIn(text,body)
+        self.assertLess(body.index('protected_export.read_bytes()'),body.index('page.reload('))
+        self.assertNotIn("whole_state('protected",body)
+
+
+class IndependentPresenterTests(unittest.TestCase):
+    def fixture(self):
+        snapshot={'model':'npc-scout-snapshot-v1','fleetId':11,'originId':'old-origin',
+                  'target':{'galaxy':1,'system':56,'position':15},'observedAt':'32.5',
+                  'stock':[662.5,331.25,32.5],'garrison':{'light_fighter':4,'heavy_fighter':0},
+                  'defenderTech':{'weapons':0,'shields':0,'armour':0}}
+        examples={'snapshot':snapshot,'selectedShips':{'light_fighter':6},
+                  'attackerTech':{'weapons':1,'shields':5,'armour':0},'cargoFactor':1.4,
+                  'expected':[{'seed':seed,'undefended':False,'loot':[0,0,0],
+                    'battle':{'winner':'draw','rounds':[{}]*6,'attackerBefore':{'light_fighter':6},
+                              'defenderBefore':{'light_fighter':4},'attackerAfter':{'light_fighter':6}}} for seed in (608135816,2242054355,320440878)]}
+        state={'activePlanetId':'current-origin','planets':[{'id':'current-origin','name':'当前星球',
+               'coordinates':{'galaxy':1,'system':50,'position':9}}],
+               'research':{'levels':{'weapons_tech':1,'shielding_tech':5,'armour_tech':0,'hyperspace_tech':8}},
+               'messages':[{'id':'scout-11','text':'Original exact historical report.', 'npcScoutSnapshot':copy.deepcopy(snapshot)}]}
+        return examples,state
+
+    def verify(self,actual,expected,state):
+        module.load_shared_helpers()
+        def check(name,condition,detail=None):
+            if not condition: raise AssertionError(name)
+        with patch.object(module,'check',check): module.assert_natural_presenter_copy(actual,expected,state)
+
+    def test_complete_independent_literal_copy_matches_retained_history_and_own_inputs(self):
+        expected,state=self.fixture();module.load_shared_helpers()
+        wanted=module.natural_presenter_copy(expected,state);self.verify(copy.deepcopy(wanted),expected,state)
+        self.assertEqual(wanted['resultParagraphs'][0],
+            '三个固定公开种子的示例，不代表胜率、所有结果或损失/战利品保证。仅使用这份侦察抵达时的库存和驻军；真实抵达时情况可能不同。')
+        self.assertEqual(wanted['source'],'历史情报，之后可能变化 · 侦察抵达时间 32.5 秒 · npc-scout-snapshot-v1')
+        self.assertIn('当前星球 [1:50:9] → 历史目标 [1:56:15]',wanted['origin'])
+        self.assertIn('历史出发星球 old-origin；舰队 #11',wanted['history'][1])
+        self.assertIn('金属 662.5 · 晶体 331.25 · 重氢 32.5',wanted['history'][3])
+        self.assertIn('货舱倍率 ×1.4',wanted['resultParagraphs'][2])
+        self.assertIn('真实出征在派遣时冻结货舱倍率，在抵达时读取战斗科技',wanted['resultParagraphs'][2])
+
+    def test_wrong_or_extra_probability_guarantee_time_target_stock_or_result_copy_fails(self):
+        expected,state=self.fixture();module.load_shared_helpers();wanted=module.natural_presenter_copy(expected,state)
+        mutations={
+          'missing_warning':lambda d:d['resultParagraphs'].pop(0),
+          'win_probability':lambda d:d['resultParagraphs'].__setitem__(0,'这三个结果代表胜率。'),
+          'appended_guarantee':lambda d:d['resultParagraphs'].__setitem__(0,d['resultParagraphs'][0]+'保证安全。'),
+          'extra_warning':lambda d:d['resultParagraphs'].append('实际胜率100%。'),
+          'time':lambda d:d.update(source=d['source'].replace('32.5','33.5')),
+          'freshness':lambda d:d.update(source=d['source'].replace('历史情报，之后可能变化','当前实时情报')),
+          'target':lambda d:d['history'].__setitem__(2,d['history'][2].replace('1:56:15','1:56:6')),
+          'current_origin':lambda d:d.update(origin=d['origin'].replace('当前星球','旧星球')),
+          'historical_origin':lambda d:d['history'].__setitem__(1,d['history'][1].replace('old-origin','current-origin')),
+          'rounded_stock':lambda d:d['history'].__setitem__(3,d['history'][3].replace('331.25','331.2')),
+          'garrison':lambda d:d['history'].__setitem__(3,d['history'][3].replace('战斗机 4','战斗机 8')),
+          'captured_tech':lambda d:d['resultParagraphs'].__setitem__(2,d['resultParagraphs'][2].replace('武器 1','武器 2')),
+          'cargo_factor':lambda d:d['resultParagraphs'].__setitem__(2,d['resultParagraphs'][2].replace('×1.4','×1.5')),
+          'extra_summary':lambda d:d['summaries'].append(d['summaries'][0]),
+          'reordered_samples':lambda d:d['summaries'].reverse(),
+          'sample_loot':lambda d:d['summaries'].__setitem__(0,d['summaries'][0].replace('金属 0','金属 100')),
+        }
+        for name,change in mutations.items():
+            with self.subTest(name=name):
+                actual=copy.deepcopy(wanted);change(actual)
+                with self.assertRaisesRegex(AssertionError,'complete independent historical-source'):
+                    self.verify(actual,expected,state)
+
+    def test_oracle_rejects_wrong_history_reference_seed_and_completed_inputs(self):
+        module.load_shared_helpers()
+        for kind in ('retained_time','retained_fleet','wrong_seed','extra_seed','wrong_defenders','weapons','cargo'):
+            with self.subTest(kind=kind):
+                expected,state=self.fixture()
+                if kind=='retained_time':state['messages'][0]['npcScoutSnapshot']['observedAt']='33.5'
+                elif kind=='retained_fleet':state['messages'][0]['id']='scout-13'
+                elif kind=='wrong_seed':expected['expected'][0]['seed']=42
+                elif kind=='extra_seed':expected['expected'].append(copy.deepcopy(expected['expected'][0]))
+                elif kind=='wrong_defenders':expected['expected'][0]['battle']['defenderBefore']={'light_fighter':8}
+                elif kind=='weapons':state['research']['levels']['weapons_tech']=2
+                else:state['research']['levels']['hyperspace_tech']=9
+                with self.assertRaises(ValueError):module.natural_presenter_copy(expected,state)
+
+    def test_native_flow_reads_and_proves_every_required_copy_region_at_all_four_widths(self):
+        source=SCRIPT.read_text();body=source[source.index('def inspect_examples'):source.index('def draft_values')]
+        for selector in ('#npc-rehearsal-source','#npc-rehearsal-origin','#npc-rehearsal-history-body > p',
+                         '#npc-rehearsal-results > p','#npc-rehearsal-results > details.npc-battle-report > summary'):
+            self.assertIn(selector,body)
+        self.assertIn('assert_natural_presenter_copy(actual, expected, retained)',body)
+        self.assertIn('for index in (1,2,3,4,5):',body)
+        self.assertIn('for index in (1,2,3):',body)
+        self.assertIn('exact-public-example-warning-and-inputs',body)
+        self.assertNotIn('NPC_REHEARSAL_WARNING',source)
+        self.assertNotIn('all(x in source_text',body)
+
+
+class RecorderLinearityTests(unittest.TestCase):
+    def runner(self,root):
+        spec=importlib.util.spec_from_file_location('isolated_scout_recorder',SCRIPT)
+        m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);m.load_shared_helpers()
+        m.args=SimpleNamespace(expected_sha='a'*40)
+        m.fixture_sha256='b'*64;m.completed=False;m.case='offline-recorder';m.failure=None;m.performance_result=None
+        m.checks=[];m.evidence=[];m.source_bindings=[];m.errors=[];m.failed_requests=[]
+        m.report_path=root/'report.json';m.progress_path=root/'progress.json';m.journal_path=root/'journal.jsonl'
+        m.journal=m.NativeCheckJournal(m.journal_path);m.last_progress_at=0;m.reset_recorder()
+        return m
+
+    def test_actual_writer_seal_replays_every_assertion_and_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            m=self.runner(Path(directory))
+            m.source_bindings.append({'case':'one','httpAssets':[{'httpSha256':'c'*64}],'executedScripts':[{'executedSourceSha256':'c'*64}]})
+            m.check('first actual recorder assertion',True,{'width':320})
+            m.evidence.append({'kind':'screenshot','file':'320-history.png','sha256':'d'*64})
+            m.begin_case('second');m.check('second actual recorder assertion',True,{'width':390})
+            m.completed=True;m.flush(full=True,final=True);os.close(m.journal.fd)
+            full=json.loads(m.report_path.read_bytes())
+            recovered=m.recover_native_report(m.journal_path,m.report_path,m.progress_path,True)
+            self.assertTrue(recovered['completed']);self.assertTrue(recovered['recording']['sealedReportVerified'])
+            self.assertEqual(recovered['checks'],full['checks']);self.assertEqual(recovered['evidence'],full['evidence'])
+            self.assertEqual(recovered['sourceBindings'],full['sourceBindings'])
+            self.assertEqual((recovered['passed'],recovered['failed']),(2,0))
+            entries=[json.loads(line)['entry'] for line in m.journal_path.read_bytes().splitlines()]
+            bindings=[e for e in entries if e['kind']=='evidence' and e['value']['record']['kind']=='production-source-binding']
+            self.assertEqual(len(bindings),1)
+            snapshots=[e['value'] for e in entries if e['kind']=='snapshot']
+            self.assertTrue(all('sourceBindings' not in row and 'checks' not in row and 'evidence' not in row for row in snapshots[:-1]))
+            self.assertEqual(len(snapshots[-1]['sourceBindings']),1)
+
+    def test_actual_failed_assertion_is_durable_and_partial_prefix_recoverable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            m=self.runner(Path(directory));m.check('before failure',True)
+            with self.assertRaisesRegex(AssertionError,'meaningful failure'):
+                m.check('meaningful failure',False,{'actual':'retained raw diagnostic'})
+            m.failure='Offline injected assertion failure';m.flush(full=True);os.close(m.journal.fd)
+            with m.journal_path.open('ab') as output:output.write(b'{torn-tail')
+            recovered=m.recover_native_report(m.journal_path,m.report_path,m.progress_path,False)
+            self.assertFalse(recovered['completed']);self.assertIsNotNone(recovered['recording']['replayError'])
+            self.assertEqual(recovered['checks'][-1]['detail'],{'actual':'retained raw diagnostic'})
+            self.assertEqual((recovered['passed'],recovered['failed']),(1,1))
+            self.assertTrue(m.journal_path.read_bytes().endswith(b'{torn-tail'))
+
+    def test_per_assertion_and_stage_flush_never_iterate_old_prefixes(self):
+        class NoScanList(list):
+            def __iter__(self):raise AssertionError('Old prefix was scanned during incremental flush')
+        with tempfile.TemporaryDirectory() as directory:
+            m=self.runner(Path(directory))
+            for name in ('checks','evidence','source_bindings','errors','failed_requests'):setattr(m,name,NoScanList())
+            for index in range(40):
+                if index%5==0:m.source_bindings.append({'index':index,'body':'x'*2048})
+                m.check('incremental-'+str(index),True)
+                m.begin_case('stage-'+str(index))
+            self.assertEqual((m.recorded_checks,m.passed_count,m.recorded_sources),(40,40,8))
+            os.close(m.journal.fd)
+
+    def test_n_and_twice_n_output_bytes_events_and_terminal_writes_are_linear(self):
+        def run(count):
+            with tempfile.TemporaryDirectory() as directory:
+                m=self.runner(Path(directory));writes=[];write=m.atomic_json
+                def observed(path,value):writes.append(path.name);write(path,value)
+                m.atomic_json=observed
+                for index in range(count):
+                    if index%4==0:m.source_bindings.append({'index':index,'httpAssets':[{'body':'immutable source bytes '*400}]})
+                    if index%8==0:m.begin_case('stage-'+str(index//8))
+                    m.check('assertion-'+str(index),True,{'width':320,'observed':index})
+                m.completed=True;m.flush(full=True,final=True);os.close(m.journal.fd)
+                recovered=m.recover_native_report(m.journal_path,m.report_path,m.progress_path,True)
+                self.assertTrue(recovered['recording']['sealedReportVerified'])
+                self.assertEqual(len(recovered['checks']),count)
+                self.assertEqual(sum(r['kind']=='production-source-binding' for r in recovered['evidence']),count//4)
+                self.assertEqual(writes.count('report.json'),1)
+                raw=m.journal_path.read_bytes()
+                return len(raw)+m.report_path.stat().st_size,len(raw.splitlines())
+        first,second=run(32),run(64)
+        self.assertLess(second[0],first[0]*2.2)
+        self.assertLess(second[1],first[1]*2.1)
+        self.assertGreater(second[0],first[0]*1.8)
 
 
 if __name__=='__main__':unittest.main()

@@ -71,7 +71,8 @@ def load_shared_helpers():
     """
     names = {'atomic_json', 'NativeCheckJournal', 'replay_native_journal', 'recover_native_report',
              'exact_json', 'visibility', 'text_leaf_visibility', 'wait_for_scroll_settled',
-             'native_scroll_to', 'attach', 'verify_bundle', 'verify_document_response',
+             'native_scroll_to', 'scroll_region_state', 'scroll_region_plan', 'scroll_pointer_hits', 'horizontal_wheel_proven',
+             'attach', 'verify_bundle', 'verify_document_response',
              'select', 'trusted_click', 'input_number', 'snap', 'import_confirmation'}
     tree = ast.parse((ROOT / 'scripts/browser-npc-attack.py').read_text())
     selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
@@ -205,6 +206,7 @@ def boot(initial_raw, width=1440, fault=None, native_clock=False, extra_entries=
         setup = NATIVE_TIMING.replace('__KEY__', json.dumps(KEY)).replace('__ORIGIN__', json.dumps(ORIGIN))
     else:
         setup = CLOCK.replace('__EPOCH__', str(envelope['savedAt']))
+    setup += "\nwindow.__scoutKeys=[];document.addEventListener('keydown',e=>window.__scoutKeys.push({key:e.key,trusted:e.isTrusted,id:e.target.id}),true);"
     if fault is not None:
         setup += '\n' + FAULT.replace('__ORIGIN__', json.dumps(ORIGIN)).replace('__KEY__', json.dumps(KEY)).replace('__FAULT__', json.dumps(fault))
     context.add_init_script(setup)
@@ -234,43 +236,155 @@ def run_six(page):
     expect(page.locator('#npc-rehearsal-fill')).to_be_enabled()
 
 
-def control_proof(page, selector, name):
-    native_scroll_to(page, selector)
+def control_proof(page, selector, name, capture=True, prepared=False):
+    if not prepared:native_scroll_to(page, selector)
     proof = visibility(page, [selector]); glyphs = text_leaf_visibility(page, [selector])
     check(name + ': complete control five native hit points', all(row['visible'] and row['contained'] and all(p['unoccluded'] for p in row['points']) for row in proof['targets']), proof)
     check(name + ': every actual glyph visible within ancestor clips', all(row['passed'] for row in glyphs['leaves']), glyphs)
     check(name + ': no page-level horizontal overflow', page.evaluate('document.scrollingElement.scrollWidth <= innerWidth'))
-    snap(page, name + '.png')
+    if capture:snap(page, name + '.png')
+
+
+def expose_round_cell(page, region, target):
+    # Existing read-only geometry and exact trusted-wheel predicates. Each
+    # attempt is recorded immutably once, without mutable growing audit aliases.
+    wait_for_scroll_settled(page,target,region)
+    for attempt in range(9):
+        before=scroll_region_state(page,region,target)
+        check('round target stays inside its original native scroller',before['region'] is not None and before['target'] is not None and before['target']['insideRegion'],before)
+        plan=scroll_region_plan(before);proof=visibility(page,[target]);hits=scroll_pointer_hits(page,region,plan['points'])
+        check('round cell fits actual horizontal clip and viewport height',plan['targetFitsX'] and plan['targetFitsY'],{'plan':plan,'state':before})
+        fully_visible=all(row['visible'] and row['contained'] and len(row['points'])==5 and all(p['unoccluded'] for p in row['points']) for row in proof['targets'])
+        if plan['targetContainedX'] and plan['targetContainedY'] and fully_visible:
+            check('complete native round cell has all five unobstructed hit points',True,proof);return
+        if attempt==8:break
+        point=next((p for p in hits if p['insideRegion']),None)
+        horizontal=plan['targetContainedY'] and not plan['targetContainedX'] and point is not None
+        if not horizontal:point={'x':math.floor(before['viewport']['width']/2),'y':math.floor((before['viewport']['top']+before['viewport']['height'])/2)}
+        page.mouse.move(point['x'],point['y']);before=scroll_region_state(page,region,target);plan=scroll_region_plan(before)
+        point=scroll_pointer_hits(page,region,[point])[0]
+        dx,dy=(plan['deltaX'],0) if horizontal else (0,plan['deltaY'])
+        check('round scroll uses a real visible point and required nonzero delta',bool(point['hit']) and (dx!=0 or dy!=0),{'point':point,'dx':dx,'dy':dy})
+        count=page.evaluate('window.__npcWheels.length');page.mouse.wheel(dx,dy)
+        wait_for_scroll_settled(page,target,region)
+        after=scroll_region_state(page,region,target);events=page.evaluate('(n)=>window.__npcWheels.slice(n)',count)
+        record={'attempt':attempt+1,'axis':'horizontal' if horizontal else 'vertical','before':before,'point':point,'delta':{'x':dx,'y':dy},'after':after,'events':events}
+        if horizontal:
+            check('trusted round-table horizontal wheel hits exact scroller and advances offset',horizontal_wheel_proven(before,after,point,dx,events),record)
+        else:
+            check('trusted round-table vertical wheel advances document toward cell',(after['scrollY']-before['scrollY'])*dy>0 and bool(events) and all(e['trusted'] and e['deltaX']==0 and e['deltaY']==dy and e['clientX']==point['x'] and e['clientY']==point['y'] for e in events),record)
+    check('round cell exposed within eight bounded native wheel inputs',False,{'target':target,'region':region})
+
+
+def natural_presenter_copy(expected, state):
+    """Independent literal copy contract for the earned six-LF scout11 case.
+    No production presenter/constant import and no current NPC projection.
+    The frozen examples must refer to the exact retained observation and the
+    actually completed own inputs in the independent milestone state.
+    """
+    snapshot = expected['snapshot']
+    messages = [m for m in state['messages'] if m['id'] == f'scout-{snapshot["fleetId"]}']
+    if (len(messages) != 1 or not exact_json(messages[0]['npcScoutSnapshot'], snapshot)
+            or snapshot['model'] != 'npc-scout-snapshot-v1'
+            or [r['seed'] for r in expected['expected']] != [608135816, 2242054355, 320440878]
+            or expected['selectedShips'] != {'light_fighter':6}
+            or snapshot['garrison']['heavy_fighter'] != 0):
+        raise ValueError('Natural presenter requires the exact retained history and three public LF examples')
+    levels = state['research']['levels']; tech = expected['attackerTech']
+    if (not exact_json(tech, {'weapons':levels['weapons_tech'],'shields':levels['shielding_tech'],'armour':levels['armour_tech']})
+            or expected['cargoFactor'] != 1 + .05 * levels['hyperspace_tech']):
+        raise ValueError('Natural presenter own inputs differ from completed milestone technology')
+    origins = [p for p in state['planets'] if p['id'] == state['activePlanetId']]
+    if len(origins) != 1: raise ValueError('Natural presenter requires one current selected origin')
+    origin = origins[0]
+    def coordinate(value): return ':'.join(str(value[k]) for k in ('galaxy','system','position'))
+    def count(value): return f'轻型战斗机 {value}' if value else '无'
+    def number(value):
+        # The earned route has ordinary bounded decimal stock/cargo values.
+        # Fail instead of using a rounding adapter for another numeric domain.
+        if type(value) not in (int,float) or not math.isfinite(value) or value < 0 or value > 50000:
+            raise ValueError('Natural presenter number is outside its declared route')
+        result = str(int(value)) if value == int(value) else str(value)
+        if 'e' in result.lower(): raise ValueError('Natural presenter requires ordinary decimal route numbers')
+        return result
+    def loot(value): return ' · '.join(f'{name} {number(n)}' for name,n in zip(('金属','晶体','重氢'),value))
+    target = coordinate(snapshot['target']); model = 'npc-scout-snapshot-v1'
+    summaries=[]
+    for index,sample in enumerate(expected['expected'],1):
+        battle=sample['battle']
+        defenders = {'light_fighter':snapshot['garrison']['light_fighter']} if snapshot['garrison']['light_fighter'] else {}
+        if (battle['attackerBefore'] != {'light_fighter':6} or battle['defenderBefore'] != defenders
+                or set(battle['attackerAfter'])-{'light_fighter'}):
+            raise ValueError('Natural presenter sample does not match the selected six light fighters and observed defenders')
+        outcome='无驻军收集' if sample['undefended'] else {'attacker':'胜','defender':'败','draw':'平'}[battle['winner']]
+        summaries.append(f'公开示例 {index} · {outcome} · {len(battle["rounds"])} 回合 · 永久损失 {6-battle["attackerAfter"].get("light_fighter",0)} 艘 · 历史可能装载：{loot(sample["loot"])}')
+    return {
+        'source':f'历史情报，之后可能变化 · 侦察抵达时间 {snapshot["observedAt"]} 秒 · {model}',
+        'origin':f'当前所选星球：{origin["name"]} [{coordinate(origin["coordinates"])}] → 历史目标 [{target}]',
+        'history':[
+            messages[0]['text'],
+            f'模型 {model}；历史出发星球 {snapshot["originId"]}；舰队 #{snapshot["fleetId"]}。',
+            f'精确观察时间 {snapshot["observedAt"]} 秒；目标 [{target}]。历史情报，之后可能变化。',
+            f'当时库存：{loot(snapshot["stock"])}。当时驻军：{count(snapshot["garrison"]["light_fighter"])}。',
+            'NPC 当时武器 0 / 护盾 0 / 装甲 0。本页不会刷新或比对现在的 NPC 库存与驻军。'],
+        'resultParagraphs':[
+            '三个固定公开种子的示例，不代表胜率、所有结果或损失/战利品保证。仅使用这份侦察抵达时的库存和驻军；真实抵达时情况可能不同。',
+            '种子组 npc-rehearsal-public-v1 · 本次编成：轻型战斗机 6 · 草稿速度 100%。',
+            f'运行时已完成科技：武器 {tech["weapons"]} / 护盾 {tech["shields"]} / 装甲 {tech["armour"]}；货舱倍率 ×{number(expected["cargoFactor"])}。真实出征在派遣时冻结货舱倍率，在抵达时读取战斗科技，可能使用更新等级。'],
+        'summaries':summaries,
+    }
+
+
+def assert_natural_presenter_copy(actual, expected, state):
+    wanted = natural_presenter_copy(expected, state)
+    check('complete independent historical-source public-example and captured-input copy',
+          exact_json(actual, wanted), {'actual':actual,'expected':wanted})
 
 
 def inspect_examples(page, width):
-    expected = fixtures['naturalExamples']; snapshot = expected['snapshot']
-    source_text = page.locator('#npc-rehearsal-source').inner_text()
-    check('historical source exact canonical timestamp and model shown', all(x in source_text for x in ('历史情报，之后可能变化', snapshot['observedAt'], 'npc-scout-snapshot-v1')))
+    expected = fixtures['naturalExamples']
     page.locator('#npc-rehearsal-history > summary').click(); advance(page)
-    history = page.locator('#npc-rehearsal-history-body').inner_text()
-    check('historical exact values shown without rounded-text recovery', all(str(n) in history for n in snapshot['stock']), history)
+    retained = next(row for row in fixtures['milestones'] if row['name'] == 'scout11-returned')['expected']
+    actual = {
+        'source':page.locator('#npc-rehearsal-source').inner_text(),
+        'origin':page.locator('#npc-rehearsal-origin').inner_text(),
+        'history':page.locator('#npc-rehearsal-history-body > p').all_inner_texts(),
+        'resultParagraphs':page.locator('#npc-rehearsal-results > p').all_inner_texts(),
+        'summaries':page.locator('#npc-rehearsal-results > details.npc-battle-report > summary').all_inner_texts(),
+    }
+    assert_natural_presenter_copy(actual, expected, retained)
+    for key in ('source','origin'):
+        control_proof(page, '#npc-rehearsal-' + key, f'{width}-exact-historical-{key}')
     control_proof(page, '#npc-rehearsal-history > summary', f'{width}-historical-detail')
-    for index in (2,3,4,5):
+    for index in (1,2,3,4,5):
         control_proof(page, f'#npc-rehearsal-history-body > p:nth-of-type({index})', f'{width}-exact-historical-stats-{index}')
+    for index in (1,2,3):
+        control_proof(page, f'#npc-rehearsal-results > p:nth-of-type({index})', f'{width}-exact-public-example-warning-and-inputs-{index}')
     for i, sample in enumerate(expected['expected'], 1):
         selector = f'#npc-rehearsal-results > details.npc-battle-report:nth-of-type({i})'
-        heading = page.locator(selector + ' > summary').inner_text()
-        outcome = {'attacker': '胜', 'defender': '败', 'draw': '平'}[sample['battle']['winner']]
-        lost = 6 - sample['battle']['attackerAfter'].get('light_fighter', 0)
-        check('public sample summary exact independent golden', all(text in heading for text in
-              (f'公开示例 {i}', outcome, f'{len(sample["battle"]["rounds"])} 回合', f'永久损失 {lost} 艘',
-               f'金属 {sample["loot"][0]}', f'晶体 {sample["loot"][1]}', f'重氢 {sample["loot"][2]}')), heading)
         control_proof(page, selector + ' > summary', f'{width}-public-example-{i}')
         check('closed sample has no preformatted rounds', page.locator(selector + ' table').count() == 0)
         page.locator(selector + ' > summary').click(); advance(page)
-        body = page.locator(selector).inner_text()
-        check('opened sample displays literal public seed and frozen survivors', str(sample['seed']) in body and 'npc-rehearsal-public-v1' in body, body)
+        battle=sample['battle']
+        check('independent natural presenter accepts only literal light fighters',all(set(battle[key])<={'light_fighter'} for key in ('attackerBefore','attackerAfter','defenderAfter')))
+        def count(n):return f'轻型战斗机 {n}' if n else '无'
+        lost=battle['attackerBefore'].get('light_fighter',0)-battle['attackerAfter'].get('light_fighter',0)
+        wanted_body=[f'公开种子 {sample["seed"]}；npc-rehearsal-public-v1；战斗模型 squadron-v1。',
+            f'我方永久损失：{count(lost)}；幸存：{count(battle["attackerAfter"].get("light_fighter",0))}。NPC 剩余：{count(battle["defenderAfter"].get("light_fighter",0))}。']
+        body=page.locator(selector+' > div > p').all_inner_texts()
+        check('opened sample displays exact independently expected seed losses and survivors全文',body==wanted_body,{'actual':body,'expected':wanted_body})
+        for paragraph in (1,2):control_proof(page,selector+f' > div > p:nth-of-type({paragraph})',f'{width}-sample-{i}-body-{paragraph}')
         nested = page.locator(selector + ' details > summary'); nested.click(); advance(page)
         rows = page.locator(selector + ' tbody tr').evaluate_all('(rows)=>rows.map(r=>[...r.cells].map(c=>Number(c.textContent)))')
         wanted = [[r[k] for k in ('round', 'attacker', 'defender', 'attackDamage', 'defendDamage')] for r in sample['battle']['rounds']]
         check('lazy actual native round cells match independent exact counts and predeclared damage tolerance', len(rows) == len(wanted) and all(
             a[:3] == b[:3] and all(abs(x-y) <= 1e-12 + 1e-14*abs(y) for x,y in zip(a[3:], b[3:])) for a,b in zip(rows,wanted)), rows)
+        region=selector+' details > div.space-table-scroll'
+        for column in range(1,6):
+            for row in range(1,len(wanted)+1):
+                cell=selector+f' tbody tr:nth-child({row}) td:nth-child({column})'
+                expose_round_cell(page,region,cell)
+                control_proof(page,cell,f'{width}-sample-{i}-round-{row}-column-{column}',capture=row==1,prepared=True)
         page.locator(selector + ' > summary').click(); advance(page)
 
 
@@ -375,22 +489,30 @@ def import_file(page, text, accept, label):
     return before
 
 
+def unchanged_authority_draft(page, name, expected):
+    # Capture every field before navigation/save can retire controls or mask a
+    # partial edit. A non-attack mission alone is not an atomicity witness.
+    actual = draft_values(page)
+    check(name + ': complete ordinary draft unchanged', exact_json(actual, expected),
+          {'actual': actual, 'expected': expected})
+
+
 def authority_boundaries():
     before_row = next(r for r in fixtures['milestones'] if r['name'] == 'scout11-returned')
     for kind in ('forged', 'clone', 'detach', 'same-id-remount', 'planet', 'cancelled-import', 'corrupt-import', 'same-world-import', 'conflict'):
         begin_case('native-authority-' + kind)
         context,page = boot(before_row['raw']); open_report(page); run_six(page)
-        before = save_without_navigation(page)
+        before = save_without_navigation(page); draft_before = draft_values(page)
         if kind == 'forged':
             page.locator('#npc-rehearsal-fill').evaluate('(e)=>e.click()'); advance(page)
-            check('untrusted synthetic Fill cannot change draft or state', draft_values(page)['mission'] != 'attack' and storage(page) == before)
+            check('untrusted synthetic Fill cannot change draft or state', exact_json(draft_values(page), draft_before) and storage(page) == before)
         elif kind in ('clone', 'detach', 'same-id-remount'):
             selector = '#npc-rehearsal-fill'
             page.locator(selector).evaluate('''(e,kind)=>{if(kind==='detach'){const p=e.parentNode,n=e.nextSibling;e.remove();p.insertBefore(e,n);}else{const c=e.cloneNode(true);e.replaceWith(c);}}''', kind)
             advance(page)
             node = page.locator(selector)
             if node.is_enabled(): node.click(); advance(page)
-            check('cloned detached or same-ID replacement cannot fill stale draft', draft_values(page)['mission'] != 'attack' and storage(page) == before)
+            check('cloned detached or same-ID replacement cannot fill stale draft', exact_json(draft_values(page), draft_before) and storage(page) == before)
         elif kind == 'planet':
             select(page, '#planet-select', 'colony-1'); expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
         elif kind == 'corrupt-import':
@@ -407,19 +529,96 @@ def authority_boundaries():
             # Genuine same-origin storage event from second native page. It changes only metadata bytes.
             other=context.new_page(); other.goto(args.url, wait_until='networkidle')
             competing = json.loads(before_row['raw']); competing['savedAt'] += 1
-            other.evaluate('([key,value])=>localStorage.setItem(key,value)', [KEY,json.dumps(competing,ensure_ascii=False)])
+            competing_raw = json.dumps(competing,ensure_ascii=False)
+            other.evaluate('([key,value])=>localStorage.setItem(key,value)', [KEY,competing_raw])
             expect(page.locator('[data-bind="notice"]')).to_be_visible(); advance(page)
             expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
             open_report(page); check('protected history stays readable but edits Run Fill disabled', page.locator('#npc-rehearsal-run').is_disabled() and page.locator('#npc-rehearsal-fill').is_disabled())
+            unchanged_authority_draft(page, 'protected conflict', draft_before)
+            check('protected history reading preserves exact competing disk and all backups',
+                  storage(page) == {**before, KEY: competing_raw})
+            # A conflict must not save/adopt the local in-memory state. Exercise
+            # the ordinary blocked Save, then export its exact protected source.
+            tab(page, 'save'); protected_disk = storage(page)
+            trusted_click(page, '[data-action="save"]')
+            check('ordinary Save stays blocked under conflict without disk/backups changes', storage(page) == protected_disk)
+            with page.expect_download() as pending:
+                trusted_click(page, '[data-action="export"]')
+            protected_export = out / 'authority-conflict-protected-original.json'
+            pending.value.save_as(str(protected_export))
+            check('conflict export is exact original protected bytes, never competing or freshly serialized state',
+                  protected_export.read_bytes() == before[KEY].encode())
+            check('protected export does not modify disk or backups', storage(page) == protected_disk)
             other.close();page.reload(wait_until='networkidle');advance(page);open_report(page)
             check('actual conflict refresh needs a fresh explicit review',page.locator('#npc-rehearsal-fill').is_disabled())
             run_six(page)
+        unchanged_authority_draft(page, 'authority-' + kind, draft_before)
+        if kind != 'conflict':
+            # Disk equality alone misses unsaved mutations. Normal Save exposes
+            # the live state; compare every domain with the independent oracle.
+            expected = copy.deepcopy(before_row['expected'])
+            if kind == 'planet': expected['activePlanetId'] = 'colony-1'
+            whole_state('authority-' + kind + '-live-state', save(page), expected)
         context.close()
 
 
 def save_without_navigation(page):
     # Exact native storage witness while panel remains open, no game globals.
     return storage(page)
+
+
+def keyboard_and_paid_completion():
+    row=next(r for r in fixtures['milestones'] if r['name']=='scout11-returned')
+    begin_case('native-keyboard-Escape-focus')
+    context,page=boot(row['raw']);open_report(page)
+    check('opening report focuses actual panel title',page.locator('#npc-rehearsal-title').evaluate('(e)=>document.activeElement===e'))
+    field=page.locator('#npc-rehearsal-ship-light_fighter');field.focus();field.press('Escape');advance(page)
+    expect(page.locator('#npc-rehearsal-panel')).to_be_hidden()
+    opener='article.space-message[data-message-id="scout-11"] button'
+    check('trusted keyboard Escape retires review and restores exact opener focus',page.locator(opener).evaluate('(e)=>document.activeElement===e') and any(e['trusted'] and e['key']=='Escape' for e in page.evaluate('window.__scoutKeys')))
+    whole_state('keyboard-cancel-does-not-change-game',save(page),row['expected']);context.close()
+    begin_case('actual-paid-build-and-research-completion-invalidates-review')
+    branch=fixtures['branches']['paidCompletion'];context,page=boot(branch['start']['raw'])
+    tab(page,'shipyard');input_number(page,'[data-bind="uqty-light_fighter"]',1);trusted_click(page,'[data-bind="ubuild-light_fighter"]')
+    whole_state('actual-paid-seventh-fighter-queue',save(page),branch['afterShip']['envelope']['state'])
+    tab(page,'research');trusted_click(page,'[data-bind="research-weapons_tech"]')
+    whole_state('actual-paid-weapons2-queue',save(page),branch['paid']['envelope']['state'])
+    open_report(page);run_six(page)
+    frozen=page.locator('#npc-rehearsal-results').inner_text()
+    check('Run freezes completed weapons1 and six owned fighters despite paid queues','武器 1 / 护盾 5 / 装甲 0' in frozen and page.locator('#npc-rehearsal-stock-light_fighter').inner_text()=='可用 6')
+    previous=branch['paid']['envelope']['state'];retired=0
+    for index,step in enumerate(branch['steps']):
+        advance(page,int(step['seconds']*1000));current=step['expected']
+        changed=current['planets'][0]['units']['light_fighter']!=previous['planets'][0]['units']['light_fighter'] or current['research']['levels']['weapons_tech']!=previous['research']['levels']['weapons_tech']
+        if changed:
+            expect(page.locator('#npc-rehearsal-fill')).to_be_disabled();retired+=1
+            check('real completed stock/research retires Fill while frozen historical samples stay unchanged',page.locator('#npc-rehearsal-results').inner_text()==frozen)
+            old_cards=page.locator('#npc-rehearsal-results > details.npc-battle-report').element_handles()
+            original_panel=page.locator('#npc-rehearsal-panel').element_handle()
+            check('stale review still has three original connected cards before same-panel rerun',len(old_cards)==3 and all(card.evaluate('(e)=>e.isConnected') for card in old_cards))
+            trusted_click(page,'#npc-rehearsal-run')
+            expect(page.locator('#npc-rehearsal-panel')).to_be_visible();expect(page.locator('#npc-rehearsal-fill')).to_be_enabled()
+            identity=page.evaluate('''({old,panel})=>({samePanel:panel===document.querySelector('#npc-rehearsal-panel'),
+                oldDetached:old.every(e=>!e.isConnected&&e.getClientRects().length===0),
+                newDistinct:[...document.querySelectorAll('#npc-rehearsal-results > details.npc-battle-report')].length===3&&[...document.querySelectorAll('#npc-rehearsal-results > details.npc-battle-report')].every(e=>!old.includes(e)),
+                fillEnabled:!document.querySelector('#npc-rehearsal-fill').disabled})''',{'old':old_cards,'panel':original_panel})
+            check('trusted same-panel stale rerun retires old DOM cards and authorizes exactly one new review',all(identity.values()),identity)
+            check('same-panel rerun captures freshly completed levels and stock',f'武器 {current["research"]["levels"]["weapons_tech"]} / 护盾 5 / 装甲 0' in page.locator('#npc-rehearsal-results').inner_text() and page.locator('#npc-rehearsal-stock-light_fighter').inner_text()==f'可用 {current["planets"][0]["units"]["light_fighter"]}')
+            for card in old_cards:card.dispose()
+            original_panel.dispose()
+        whole_state(f'actual-paid-completion-step-{index}',save(page),current)
+        if index+1<len(branch['steps']):
+            open_report(page);run_six(page);frozen=page.locator('#npc-rehearsal-results').inner_text()
+        previous=current
+    check('at least one actual paid completion retired review',retired>0)
+    open_report(page);run_six(page)
+    check('fresh explicit Run captures actual completed weapons2 and seven-stock bound','武器 2 / 护盾 5 / 装甲 0' in page.locator('#npc-rehearsal-results').inner_text() and page.locator('#npc-rehearsal-stock-light_fighter').inner_text()=='可用 7')
+    trusted_click(page,'#npc-rehearsal-fill');before=storage(page)
+    for _ in range(3):advance(page)
+    check('fresh Fill after real completion is still unpaid',storage(page)==before)
+    trusted_click(page,'#space-send')
+    whole_state('separate-fresh-send-after-completion',save(page),branch['sent']['expected'])
+    context.close()
 
 
 def leaf_retirement_boundaries():
@@ -434,6 +633,8 @@ def leaf_retirement_boundaries():
             if fill.is_visible() and fill.is_enabled():fill.click();advance(page)
             check('same-turn own leaf hide/restore permanently retires old review capability',
                   draft_values(page)==draft and storage(page)==before and (page.locator('#npc-rehearsal-panel').is_hidden() or fill.is_disabled()))
+            unchanged_authority_draft(page, 'leaf-' + selector + '-' + attribute, draft)
+            whole_state('leaf-' + selector + '-' + attribute + '-live-state', save(page), row['expected'])
             context.close()
 
 
@@ -524,6 +725,7 @@ def measured_upper_bound():
     performance_result={**witness,'metricsBefore':before,'metricsAfter':after,
         'scriptSeconds':after['ScriptDuration']-before['ScriptDuration'],'taskSeconds':after['TaskDuration']-before['TaskDuration'],
         'heapDeltaBytes':after['JSHeapUsedSize']-before['JSHeapUsedSize'],
+        'heapScope':'Net retained JS heap delta over observed window, not peak allocation.',
         'boundary':'Native unmodified performance.now measures trusted synchronous Run event capture-to-bubble. PerformanceObserver sees window longtasks. Read-only CDP metrics, no CPU profiler and no paint claim.',
         'machine':{'platform':sys.platform,'cpuCount':os.cpu_count(),'browserVersion':browser.version}}
     check('one explicit native Run dispatch performs three bounded upper13 samples',len(witness['runs'])==1 and witness['runs'][0]['trusted'],performance_result)
@@ -591,9 +793,11 @@ def main():
             begin_case('natural-unedited-paid31-migration')
             context,page=boot(fixtures['origin']['raw'])
             backups=storage(page)
-            check('migration exact original r13 bytes backed up once',any(k.startswith(KEY+'.backup') and v==fixtures['origin']['raw'] for k,v in backups.items()))
+            backup_keys=[k for k,v in backups.items() if k.startswith(KEY+'.backup') and v==fixtures['origin']['raw']]
+            check('migration exact original r13 bytes backed up once',len(backup_keys)==1,{'matchingBackupKeys':backup_keys})
+            check('initial migration storage has only current save exact backup legacy sentinel and overview preference',set(backups)=={KEY,backup_keys[0],'infinity.save.v1','infinity.ui.tab'} and backups['infinity.save.v1']=='EXPLICIT LEGACY SENTINEL: retain unchanged' and backups['infinity.ui.tab']=='overview' and json.loads(backups[KEY])==fixtures['base'],backups)
             replay_natural(page);context.close()
-            authority_boundaries();leaf_retirement_boundaries();curvature_and_eviction();storage_boundaries();measured_upper_bound()
+            authority_boundaries();keyboard_and_paid_completion();leaf_retirement_boundaries();curvature_and_eviction();storage_boundaries();measured_upper_bound()
             check('no application error or failed native request',not errors and not failed_requests,{'errors':errors,'requests':failed_requests})
             completed=True;flush(full=True,final=True);browser.close()
     except BaseException as error:

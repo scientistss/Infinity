@@ -36,7 +36,7 @@ KEY,BACKUP,EPOCH=fixtures['key'],fixtures['backupKey'],fixtures['epoch']
 HOME,COLONY=fixtures['homeId'],fixtures['colonyId']
 out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
 MODE='controlled Date/performance/RAF/autosave callbacks; actual HTTP, native Storage and trusted browser input'
-checks,errors,failed_requests,audits,differentials=[],[],[],[],[]
+checks,errors,failed_requests,audits,differentials,parity_captures=[],[],[],[],[],[]
 case,completed,active_page,diagnostics='setup',False,None,None
 
 INIT=r"""(() => {
@@ -352,6 +352,14 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       }
       return result;
     }''',{'omitBuilding':omit_building_addition,'ringBase':ring_base,'orderBase':order_base,'facilityBase':facility_base,'researchBase':research_base})
+    # Keep every panel before any copied-evidence adapter or later equality
+    # assertion can fail. A first mismatch must not hide the other panel pairs.
+    side='before' if page.url.startswith(args.before_url) else 'after'
+    artifact=f'panel-parity-complete-{side}-{result["tab"]}-{len(parity_captures)}-raw.json'
+    (out/artifact).write_text(json.dumps({'snapshot':result,
+        'panelHTML':page.locator('[data-tab-panel="'+result['tab']+'"]').evaluate('(node)=>node.outerHTML'),
+        'stored':raw(page),'controlledClock':page.evaluate('window.__renderProbe.at()')},ensure_ascii=False,indent=2))
+    parity_captures.append({'side':side,'tab':result['tab'],'rawArtifact':artifact})
     if npc_base:
         stored=raw(page);at=page.evaluate('window.__renderProbe.at()');evidence=page.evaluate(NPC_DISPLAY_SAMPLE_JS)
         artifact=f'panel-parity-npc-{npc_base}-{result["tab"]}-{len(audits)}-raw.json'
@@ -359,7 +367,7 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         check('NPC exact display exception starts from the complete independent old state: '+npc_base,exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
         result=normalize_npc_display(result,evidence,json.loads(stored)['state'],npc_base)
         check('NPC display adapter never mutates DOM, storage, state or time',raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and page.locator('[data-tab-panel="'+result['tab']+'"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
-        audits.append({'kind':'exact-no-attack-NPC-display-delta','side':npc_base,'rawArtifact':artifact,'constraint':'Exact old coordinate identities, one attack route per NPC, one mission option, hidden attack controls, exact empty closed report region, fully bound hidden rehearsal controls, and only keyed old scout unavailable notices. Every original message node/text/time is retained. No generic message/text/control deletion.'})
+        audits.append({'kind':'exact-no-attack-NPC-display-delta','side':npc_base,'rawArtifact':artifact,'constraint':'Exact full shipyard/defense introductory paragraph in its unique native sibling boundary, old coordinate identities, one attack route per NPC, one mission option, hidden attack controls, exact empty closed report region, fully bound hidden rehearsal controls, and only keyed old scout unavailable notices. Complete remaining shipyard/defense DOM is compared. Every original message node/text/time is retained. No generic message/text/control deletion.'})
     if facility_base:
         stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
         evidence=page.evaluate(FACILITY_DEMOLITION_SAMPLE_JS)
@@ -877,7 +885,7 @@ def run_cases():
         for name in tabs:
             button=page.locator(f'[data-tab="{name}"]')
             if button.is_hidden():continue
-            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None, label if name=='research' else None, npc_base=label if name in ('galaxy','fleet','messages') else None)
+            tab(page,name);snapshots[label][name]=snapshot(page, label=='after' and name=='orders', label if name=='arcade' else None, label if name=='orders' else None, label if name=='facilities' else None, label if name=='research' else None, npc_base=label if name in ('shipyard','defense','galaxy','fleet','messages') else None)
             if name=='galaxy':
                 # The intentional package version change is the only galaxy
                 # exception. Restrict normalization to the exact #space-range
@@ -925,10 +933,15 @@ def run_cases():
                 snapshots[label][name+'-library-reopened']=reopened
                 click(page,f'#{details_id} > summary')
         whole(page,'base.initial','read-only navigation leaves complete engine state unchanged');context.close()
+    (out/'panel-parity-all.json').write_text(json.dumps(snapshots,ensure_ascii=False,indent=2))
+    # Retain all paired mismatches before asserting the first one. Unknown
+    # differences still fail the original exact comparator without filtering.
+    for name in snapshots['before'].keys() & snapshots['after'].keys():
+        if snapshots['before'][name]!=snapshots['after'][name]:
+            (out/f'panel-parity-{name}.json').write_text(json.dumps({key:value[name] for key,value in snapshots.items()},ensure_ascii=False,indent=2))
     check('both bundles expose the same unlocked panels',set(snapshots['before'])==set(snapshots['after']))
     for name in snapshots['before']:
         equal=snapshots['before'][name]==snapshots['after'][name]
-        if not equal:(out/f'panel-parity-{name}.json').write_text(json.dumps({key:value[name] for key,value in snapshots.items()},ensure_ascii=False,indent=2))
         check('fresh visible text/control parity: '+name,equal)
     differentials.append({'kind':'visible-panel-parity','tabs':list(snapshots['after'])})
 
@@ -1132,6 +1145,7 @@ with sync_playwright() as playwright:
             'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r14/r13) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
             'parityNpcDisplayException':'The copied r8 base comparison retains every original message HTML node, text, time, and order. Only independently bound keyed old scout unavailable notices and the exact initial hidden rehearsal region are removed after full node-count/order/HTML/control-value checks; typed observations cannot use this projection. The copied evidence records all hidden data. Current state receives only validated null snapshot fields, and raw bytes, DOM and clock remain unchanged.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
+            'parityShipyardDefenseException':'Only each complete literal old/new NPC explanation in the unique p.blurb introductory node is compared through a copied-text adapter. Its exact class, native heading/queue/grid/status sibling identities, order and counts are asserted; the complete remaining panel DOM, all visible controls, queue/card content, costs, timers, status, stored state and controlled time remain exact. Every raw panel is saved before adapters and all paired snapshots/mismatches before the first parity assertion.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',
             'parityOrderQuoteException':'Only the uniquely placed initial #order-quote region is excluded after exact DOM, literal text, two-button permission, zero-cap and full-base-state assertions. Before/after raw snapshots are retained. Budgets, existing create/transport controls and all remaining visible content remain exact. No DOM or state is rewritten.',
@@ -1140,7 +1154,7 @@ with sync_playwright() as playwright:
             'scope':'New controlled scheduler coverage supplements, never replaces, original 13 suites and Stage6A accounted-clock controlled/native-background suites. Native performance belongs exclusively to browser-presentation-performance.py.',
             'environment':{'platform':platform.platform(),'python':platform.python_version(),'browser':browser.version},
             'passed':sum(row['passed'] for row in checks),'checks':checks,'errors':errors,'failedRequests':failed_requests,
-            'differentials':differentials,'audit':audits,'failureDiagnostics':diagnostics}
+            'differentials':differentials,'audit':audits,'parityRawCaptures':parity_captures,'failureDiagnostics':diagnostics}
         (out/'render-scheduling-browser-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
         print(json.dumps({'completed':completed,'passed':report['passed'],'total':len(checks),'failedCase':None if completed else case},ensure_ascii=False))
         browser.close()

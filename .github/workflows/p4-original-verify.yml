@@ -10,16 +10,23 @@ permissions:
 concurrency:
   group: original-p4-${{ github.ref }}
   cancel-in-progress: true
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
 jobs:
+  # All three independent game jobs are mandatory; no source-only skip is a release.
   verify:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
-    # Preserve all existing gates/watchdogs; r13 adds a bounded 900s orbital worker / 910s supervisor.
+    # Preserve every old gate/watchdog; only native orbital acceptance runs in parallel.
     # Existing 45-minute total remains unchanged.
     timeout-minutes: 45
+    outputs:
+      orbital-identity-sha256: ${{ steps.orbital_identity.outputs.sha256 }}
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -51,6 +58,8 @@ jobs:
           python -m unittest discover -s scripts -p 'test_r14_compatibility.py' -v
           python -m unittest discover -s scripts -p 'test_npc_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_npc_attack_acceptance.py' -v
+          python -m unittest discover -s scripts -p 'test_parallel_gate_identity.py' -v
+          python -m unittest discover -s scripts -p 'test_scout_fixture_identity.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_native_preparation.py' -v
           python -m unittest discover -s scripts -p 'test_demolition_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_save_session_migration_preparation.py' -v
@@ -220,6 +229,134 @@ jobs:
           (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --reload-schedule native-main-four --output "$GITHUB_WORKSPACE/npc-attack-native-report.json")
           sha256sum npc-attack-native-report.json > npc-attack-native-report.sha256.txt
           test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact three-job source assets and runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/research-network-current"
+      - name: Bind independent source assets and complete orbital fixture pool
+        id: orbital_identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import copy, hashlib, json, os, re, subprocess
+          from pathlib import Path
+
+          def sha(raw):
+              return hashlib.sha256(raw).hexdigest()
+
+          def canonical(value):
+              return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+          def git(root, *args):
+              return subprocess.check_output(['git', '-C', str(root), *args])
+
+          def checkout(root, expected):
+              assert git(root, 'rev-parse', 'HEAD').decode().strip() == expected
+              assert git(root, 'status', '--porcelain=v1', '--untracked-files=all') == b'', root
+              assert git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--',
+                         'src', 'scripts', 'tests', 'public', '.github') == b'', root
+              files = {}
+              for entry in git(root, 'ls-tree', '-r', '-z', expected).split(b'\0'):
+                  if not entry:
+                      continue
+                  metadata, path = entry.split(b'\t', 1)
+                  mode, kind, blob = metadata.decode().split()
+                  path = path.decode('utf-8')
+                  file = root / path
+                  assert kind == 'blob' and mode in ('100644', '100755') and not file.is_symlink(), path
+                  raw = file.read_bytes()
+                  assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == blob, path
+                  assert bool(file.stat().st_mode & 0o111) == (mode == '100755'), path
+                  files[path] = sha(raw)
+              return {'sourceSha': expected, 'srcTree': git(root, 'rev-parse', 'HEAD:src').decode().strip(),
+                      'fullTree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(), 'sourceCode': files}
+
+          expected = os.environ['GITHUB_SHA']
+          assert re.fullmatch('[0-9a-f]{40}', expected)
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          temp = Path(os.environ['RUNNER_TEMP'])
+          assert git(workspace, 'rev-parse', 'HEAD').decode().strip() == expected
+          current = checkout(temp / 'research-network-current', expected)
+          ca5 = checkout(temp / 'pre-npc', 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b')
+          eef = checkout(temp / 'pre-npc-attack', 'eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81')
+          # Build checkout can contain generated evidence, but every tracked source byte
+          # must equal the independently clean execution checkout and exact Git blobs.
+          for path, digest in current['sourceCode'].items():
+              assert not (workspace / path).is_symlink()
+              assert sha((workspace / path).read_bytes()) == digest, path
+          assert git(workspace, 'diff', 'HEAD', '--') == b''
+          release_raw = (workspace / 'dist/release.json').read_bytes()
+          release = json.loads(release_raw)
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
+                    for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
+          assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
+          reports = {}
+          raw_hashes = {}
+          for name, path, producer in (
+              ('r12', workspace / 'npc-attack-source-evidence/r12-natural-report.json', eef),
+              ('native', workspace / 'npc-attack-native-report.json', current),
+          ):
+              raw = path.read_bytes()
+              report = json.loads(raw)
+              raw_hashes[name] = sha(raw)
+              assert report['outcome']['status'] == 'passed'
+              assert report['checks'] and all(check['passed'] is True for check in report['checks'])
+              assert report['source']['sourceSha'] == report['source']['gitHead'] == producer['sourceSha']
+              assert report['source']['sourceScopeStatusPorcelain'] == ''
+              assert {row['path']: row['sha256'] for row in report['source']['sourceFiles']} == {
+                  path: digest for path, digest in producer['sourceCode'].items() if path.startswith('src/')}
+              reports[name] = report
+          r12, native = reports['r12'], reports['native']
+          common = json.loads((workspace / 'common-identity.json').read_bytes())
+          assert common['identitySha256'] == sha(canonical(common['identity']))
+          assert common['identity']['source']['sourceSha'] == expected
+          assert r12['source']['runtimeNode'] == common['identity']['runtimeNode']
+          assert r12['schema'] == 'infinity-npc-natural-r11-route-v1'
+          assert r12['source']['worktreeStatusPorcelain'] == ''
+          assert r12['source']['historicalProducer']['sourceSha'] == ca5['sourceSha']
+          assert r12['source']['historicalProducer']['srcTree'] == ca5['srcTree']
+          assert r12['source']['scriptSha256'] == eef['sourceCode']['scripts/npc-natural-r11-route.mjs']
+          assert r12['source']['packageSha256'] == eef['sourceCode']['package.json']
+          assert r12['source']['lockSha256'] == eef['sourceCode']['package-lock.json']
+          assert native['schema'] == 'infinity-npc-attack-natural-route-v2'
+          assert native['source']['scriptSha256'] == current['sourceCode']['scripts/npc-attack-natural-route.ts']
+          assert native['source']['baseReportSha256'] == raw_hashes['r12']
+          assert native['source']['historicalProducer']['sourceSha'] == eef['sourceSha']
+          assert native['source']['historicalProducer']['srcTree'] == eef['srcTree']
+          assert native['source']['reloadSchedule'] == native['reloadSchedule']['mode'] == 'native-main-four'
+          assert native['outcome']['mainStatus'] == 'passed'
+          assert sha(native['originalSaveRaw'].encode('utf-8')) == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
+          # Independently produced full reports have different host timing. Exclude only
+          # the exact operational fields below, retaining ALL assertions, state, raw
+          # saves, natural/synthetic branches, money witnesses and game-clock values.
+          # The native raw base-report hash is verified above, recorded below, and is
+          # replaced for cross-job identity by the separately canonicalized full r12 body.
+          pool = copy.deepcopy(reports)
+          del pool['r12']['timing']['startedAt']
+          del pool['r12']['timing']['wallElapsedSeconds']
+          del pool['native']['timing']['wallElapsedSeconds']
+          pool['native']['source']['baseReportSha256'] = sha(canonical(pool['r12']))
+          identity = {'schema': 'infinity-parallel-orbital-identity-v1',
+                      'sourceSha': expected, 'srcTree': current['srcTree'],
+                      'current': current, 'ca5': ca5, 'eef': eef, 'assets': assets,
+                      'releaseSha256': sha(release_raw),
+                      'sourceZipSha256': sha(git(workspace, 'archive', '--format=zip', '--prefix=Infinity/', 'HEAD')),
+                      'fixturePoolSha256': sha(canonical(pool)),
+                      'fixturePoolReportSha256': {name: sha(canonical(report)) for name, report in pool.items()},
+                      'excludedOperationalFields': ['r12.timing.startedAt', 'r12.timing.wallElapsedSeconds',
+                          'native.timing.wallElapsedSeconds'],
+                      'canonicalizedLink': 'native.source.baseReportSha256 = SHA256(canonical complete r12 report)'}
+          identity_hash = sha(canonical(identity))
+          manifest = {'identitySha256': identity_hash, 'identity': identity,
+                      'rawReportSha256': raw_hashes,
+                      'classification': 'Independent same-SHA reproduction; identity only. Both mandatory jobs must pass; this manifest alone never establishes native acceptance.'}
+          (workspace / 'orbital-identity.json').write_bytes(canonical(manifest) + b'\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('sha256=' + identity_hash + '\n')
+          print(json.dumps({'identitySha256': identity_hash, 'sourceSha': expected,
+                            'srcTree': current['srcTree'], 'fixturePoolSha256': identity['fixturePoolSha256']}))
+          PY
       - name: Exact before source and legal combined performance fixture
         run: |
           mkdir -p "$RUNNER_TEMP/pre-performance"
@@ -284,7 +421,9 @@ jobs:
           done
           # Generate common inputs after every required HTTP service is ready.
           node --import tsx scripts/save-session-fixture.ts "$RUNNER_TEMP/source-r2" "$RUNNER_TEMP/source-r3" "$RUNNER_TEMP/pre-orders" "$RUNNER_TEMP/pre-transport" "$RUNNER_TEMP/pre-templates" "$RUNNER_TEMP/pre-formations" "$RUNNER_TEMP/pre-building-templates" "$RUNNER_TEMP/pre-terraformer" "$RUNNER_TEMP/pre-demolition" "$RUNNER_TEMP/pre-npc" "$RUNNER_TEMP/pre-npc-attack" "$RUNNER_TEMP/pre-scout-rehearsal" > save-session-review-save.json
-          # Independent quota/context gate runs first; all later browser and performance gates remain unchanged.
+          # Independent render/context gate runs first after all services and common fixtures are ready.
+          python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
+          # Complete quota, orbital, save and later native/performance gates still follow unchanged.
           python scripts/browser-r9-migration-quota.py --url http://127.0.0.1:4173/Infinity/ --expected-sha "$GITHUB_SHA" --fixture performance-review-save.json --session-fixture save-session-review-save.json --output migration-quota-evidence
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" R11_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r11-startup-oracle.mjs
           R11_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc" node --import tsx --test scripts/test-r12-native-replay-oracle.mjs
@@ -292,7 +431,7 @@ jobs:
           R12_ORACLE_SOURCE="$RUNNER_TEMP/pre-npc-attack" R12_ORACLE_FIXTURE="$GITHUB_WORKSPACE/save-session-review-save.json" node --import tsx --test scripts/test-r13-r12-startup-oracle.mjs
           R13_ORACLE_SOURCE="$RUNNER_TEMP/pre-scout-rehearsal" node --import tsx --test scripts/test-r14-r13-startup-oracle.mjs
           # Prioritize the new orbital UI gate; the complete SaveSession suite still follows in its own browser.
-          python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-native-report.json --natural-report npc-attack-native-report.json --expected-report-sha256 "$(sha256sum npc-attack-native-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
+          # Native orbital acceptance is mandatory in the independent same-SHA npc-orbital job.
           python scripts/browser-save-session.py --fixture save-session-review-save.json --r10-source "$RUNNER_TEMP/pre-demolition" --r11-source "$RUNNER_TEMP/pre-npc" --r12-source "$RUNNER_TEMP/pre-npc-attack" --r13-source "$RUNNER_TEMP/pre-scout-rehearsal" --expected-sha "$GITHUB_SHA"
           python scripts/browser-npc-economy.py --url http://127.0.0.1:4173/Infinity/ --natural-report "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" --expected-report-sha256 "$(sha256sum "$GITHUB_WORKSPACE/npc-source-evidence/npc-natural-r11-report.json" | cut -d' ' -f1)" --fixture npc-economy-review-save.json --expected-sha "$GITHUB_SHA" --output npc-economy-evidence
           python scripts/browser-building-authority.py --url http://127.0.0.1:4177/ --output building-authority-evidence
@@ -311,7 +450,6 @@ jobs:
           python scripts/browser-research-network.py --url http://127.0.0.1:4173/Infinity/ --fixture research-network-review-save.json --natural-report natural-research-network-report.json --expected-report-sha256 "$(cut -d' ' -f1 natural-research-network-report.sha256.txt)" --expected-sha "$GITHUB_SHA" --output research-network-evidence > research-network-browser.log 2>&1
           python scripts/browser-natural-ring.py --url http://127.0.0.1:4173/Infinity/ --report natural-ring-report.json --expected-sha "$GITHUB_SHA" --expected-report-sha256 "$(sha256sum natural-ring-report.json | cut -d' ' -f1)" --output natural-ring-browser-evidence
           python scripts/browser-prepared-file-import.py --before-url http://127.0.0.1:4175/Infinity/ --expected-before-sha 8c19d044fb3c38c601223cd55272c6570c08525d --expected-after-sha "$GITHUB_SHA" --fixture save-session-review-save.json
-          python scripts/browser-render-scheduling.py --before-url http://127.0.0.1:4174/Infinity/ --fixture render-scheduling-review-save.json
           node --import tsx scripts/accounted-clock-fixture.ts "$RUNNER_TEMP/pre-npc" > accounted-clock-review-save.json
           python scripts/browser-accounted-clock.py --fixture accounted-clock-review-save.json --session-fixture save-session-review-save.json --output accounted-clock-evidence
           node --import tsx scripts/native-background-fixture.ts > native-background-review-save.json
@@ -406,6 +544,8 @@ jobs:
             npc-attack-native-report.json
             npc-attack-native-report.sha256.txt
             npc-attack-evidence
+            orbital-identity.json
+            common-identity.json
             transport-save-revision-report.json
             templates-save-revision-report.json
             building-templates-save-revision-report.json
@@ -458,15 +598,19 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  scout-rehearsal:
-    # This independent same-SHA job is mandatory in addition to verify above.
-    # It cannot publish a candidate on its own or borrow an older legacy result.
+  npc-orbital:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
     runs-on: ubuntu-latest
+    # Fresh independent same-SHA inputs; existing 900s worker / 910s supervisor
+    # remain unchanged. A failure or timeout is mandatory failure, never a waiver.
     timeout-minutes: 25
+    outputs:
+      orbital-identity-sha256: ${{ steps.orbital_identity.outputs.sha256 }}
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -475,6 +619,225 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Prepare exact clean ca5 eef and current source checkouts
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/pre-npc" ca5ef0c769856f2c4c8925e76a5c7d322822fe1b
+          git worktree add --detach "$RUNNER_TEMP/pre-npc-attack" eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81
+          git worktree add --detach "$RUNNER_TEMP/research-network-current" "$GITHUB_SHA"
+          for source in pre-npc pre-npc-attack research-network-current; do
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/$source/node_modules"
+            test -z "$(git -C "$RUNNER_TEMP/$source" status --porcelain=v1 --untracked-files=all)"
+          done
+      - name: Independently reproduce unchanged released r12 route from exact ca5
+        shell: bash
+        run: |
+          mkdir -p npc-attack-source-evidence
+          (cd "$RUNNER_TEMP/pre-npc-attack" && node --import tsx scripts/npc-natural-r11-route.mjs --legacy-root "$RUNNER_TEMP/pre-npc" --output "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json")
+          sha256sum npc-attack-source-evidence/r12-natural-report.json > npc-attack-source-evidence/r12-natural-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/pre-npc" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/pre-npc-attack" status --porcelain=v1 --untracked-files=all)"
+      - name: Independently reproduce native four-reload orbital oracle with complete checks
+        shell: bash
+        run: |
+          NPC_ATTACK_BASE_HASH="$(sha256sum "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" | cut -d' ' -f1)"
+          (cd "$RUNNER_TEMP/research-network-current" && node --import tsx scripts/npc-attack-natural-route.ts --base-report "$GITHUB_WORKSPACE/npc-attack-source-evidence/r12-natural-report.json" --base-report-sha256 "$NPC_ATTACK_BASE_HASH" --legacy-root "$RUNNER_TEMP/pre-npc-attack" --reload-schedule native-main-four --output "$GITHUB_WORKSPACE/npc-attack-native-report.json")
+          sha256sum npc-attack-native-report.json > npc-attack-native-report.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/research-network-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact three-job source assets and runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/research-network-current"
+      - name: Bind independent source assets and complete orbital fixture pool
+        id: orbital_identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import copy, hashlib, json, os, re, subprocess
+          from pathlib import Path
+
+          def sha(raw):
+              return hashlib.sha256(raw).hexdigest()
+
+          def canonical(value):
+              return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+          def git(root, *args):
+              return subprocess.check_output(['git', '-C', str(root), *args])
+
+          def checkout(root, expected):
+              assert git(root, 'rev-parse', 'HEAD').decode().strip() == expected
+              assert git(root, 'status', '--porcelain=v1', '--untracked-files=all') == b'', root
+              assert git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--',
+                         'src', 'scripts', 'tests', 'public', '.github') == b'', root
+              files = {}
+              for entry in git(root, 'ls-tree', '-r', '-z', expected).split(b'\0'):
+                  if not entry:
+                      continue
+                  metadata, path = entry.split(b'\t', 1)
+                  mode, kind, blob = metadata.decode().split()
+                  path = path.decode('utf-8')
+                  file = root / path
+                  assert kind == 'blob' and mode in ('100644', '100755') and not file.is_symlink(), path
+                  raw = file.read_bytes()
+                  assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == blob, path
+                  assert bool(file.stat().st_mode & 0o111) == (mode == '100755'), path
+                  files[path] = sha(raw)
+              return {'sourceSha': expected, 'srcTree': git(root, 'rev-parse', 'HEAD:src').decode().strip(),
+                      'fullTree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(), 'sourceCode': files}
+
+          expected = os.environ['GITHUB_SHA']
+          assert re.fullmatch('[0-9a-f]{40}', expected)
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          temp = Path(os.environ['RUNNER_TEMP'])
+          assert git(workspace, 'rev-parse', 'HEAD').decode().strip() == expected
+          current = checkout(temp / 'research-network-current', expected)
+          ca5 = checkout(temp / 'pre-npc', 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b')
+          eef = checkout(temp / 'pre-npc-attack', 'eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81')
+          # Build checkout can contain generated evidence, but every tracked source byte
+          # must equal the independently clean execution checkout and exact Git blobs.
+          for path, digest in current['sourceCode'].items():
+              assert not (workspace / path).is_symlink()
+              assert sha((workspace / path).read_bytes()) == digest, path
+          assert git(workspace, 'diff', 'HEAD', '--') == b''
+          release_raw = (workspace / 'dist/release.json').read_bytes()
+          release = json.loads(release_raw)
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
+                    for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
+          assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
+          reports = {}
+          raw_hashes = {}
+          for name, path, producer in (
+              ('r12', workspace / 'npc-attack-source-evidence/r12-natural-report.json', eef),
+              ('native', workspace / 'npc-attack-native-report.json', current),
+          ):
+              raw = path.read_bytes()
+              report = json.loads(raw)
+              raw_hashes[name] = sha(raw)
+              assert report['outcome']['status'] == 'passed'
+              assert report['checks'] and all(check['passed'] is True for check in report['checks'])
+              assert report['source']['sourceSha'] == report['source']['gitHead'] == producer['sourceSha']
+              assert report['source']['sourceScopeStatusPorcelain'] == ''
+              assert {row['path']: row['sha256'] for row in report['source']['sourceFiles']} == {
+                  path: digest for path, digest in producer['sourceCode'].items() if path.startswith('src/')}
+              reports[name] = report
+          r12, native = reports['r12'], reports['native']
+          common = json.loads((workspace / 'common-identity.json').read_bytes())
+          assert common['identitySha256'] == sha(canonical(common['identity']))
+          assert common['identity']['source']['sourceSha'] == expected
+          assert r12['source']['runtimeNode'] == common['identity']['runtimeNode']
+          assert r12['schema'] == 'infinity-npc-natural-r11-route-v1'
+          assert r12['source']['worktreeStatusPorcelain'] == ''
+          assert r12['source']['historicalProducer']['sourceSha'] == ca5['sourceSha']
+          assert r12['source']['historicalProducer']['srcTree'] == ca5['srcTree']
+          assert r12['source']['scriptSha256'] == eef['sourceCode']['scripts/npc-natural-r11-route.mjs']
+          assert r12['source']['packageSha256'] == eef['sourceCode']['package.json']
+          assert r12['source']['lockSha256'] == eef['sourceCode']['package-lock.json']
+          assert native['schema'] == 'infinity-npc-attack-natural-route-v2'
+          assert native['source']['scriptSha256'] == current['sourceCode']['scripts/npc-attack-natural-route.ts']
+          assert native['source']['baseReportSha256'] == raw_hashes['r12']
+          assert native['source']['historicalProducer']['sourceSha'] == eef['sourceSha']
+          assert native['source']['historicalProducer']['srcTree'] == eef['srcTree']
+          assert native['source']['reloadSchedule'] == native['reloadSchedule']['mode'] == 'native-main-four'
+          assert native['outcome']['mainStatus'] == 'passed'
+          assert sha(native['originalSaveRaw'].encode('utf-8')) == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
+          # Independently produced full reports have different host timing. Exclude only
+          # the exact operational fields below, retaining ALL assertions, state, raw
+          # saves, natural/synthetic branches, money witnesses and game-clock values.
+          # The native raw base-report hash is verified above, recorded below, and is
+          # replaced for cross-job identity by the separately canonicalized full r12 body.
+          pool = copy.deepcopy(reports)
+          del pool['r12']['timing']['startedAt']
+          del pool['r12']['timing']['wallElapsedSeconds']
+          del pool['native']['timing']['wallElapsedSeconds']
+          pool['native']['source']['baseReportSha256'] = sha(canonical(pool['r12']))
+          identity = {'schema': 'infinity-parallel-orbital-identity-v1',
+                      'sourceSha': expected, 'srcTree': current['srcTree'],
+                      'current': current, 'ca5': ca5, 'eef': eef, 'assets': assets,
+                      'releaseSha256': sha(release_raw),
+                      'sourceZipSha256': sha(git(workspace, 'archive', '--format=zip', '--prefix=Infinity/', 'HEAD')),
+                      'fixturePoolSha256': sha(canonical(pool)),
+                      'fixturePoolReportSha256': {name: sha(canonical(report)) for name, report in pool.items()},
+                      'excludedOperationalFields': ['r12.timing.startedAt', 'r12.timing.wallElapsedSeconds',
+                          'native.timing.wallElapsedSeconds'],
+                      'canonicalizedLink': 'native.source.baseReportSha256 = SHA256(canonical complete r12 report)'}
+          identity_hash = sha(canonical(identity))
+          manifest = {'identitySha256': identity_hash, 'identity': identity,
+                      'rawReportSha256': raw_hashes,
+                      'classification': 'Independent same-SHA reproduction; identity only. Both mandatory jobs must pass; this manifest alone never establishes native acceptance.'}
+          (workspace / 'orbital-identity.json').write_bytes(canonical(manifest) + b'\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('sha256=' + identity_hash + '\n')
+          print(json.dumps({'identitySha256': identity_hash, 'sourceSha': expected,
+                            'srcTree': current['srcTree'], 'fixturePoolSha256': identity['fixturePoolSha256']}))
+          PY
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory native orbital browser acceptance on independent HTTP service
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          python scripts/browser-npc-attack.py --url http://127.0.0.1:4173/Infinity/ --fixture npc-attack-native-report.json --natural-report npc-attack-native-report.json --expected-report-sha256 "$(sha256sum npc-attack-native-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --output npc-attack-evidence
+      - name: Archive exact readable source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npc-orbital-${{ github.sha }}
+          path: |
+            dist
+            source.zip
+            orbital-identity.json
+            common-identity.json
+            npc-attack-source-evidence
+            npc-attack-native-report.json
+            npc-attack-native-report.sha256.txt
+            npc-attack-native-report.json.mismatch.json
+            npc-attack-evidence
+            preview.log
+          retention-days: 7
+          if-no-files-found: error
+  scout-rehearsal:
+    # This independent same-SHA job is mandatory alongside verify and npc-orbital.
+    # It cannot publish a candidate on its own or borrow an older legacy result.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      scout-fixture-sha256: ${{ steps.common_identity.outputs.scout-fixture-sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Prepare independently clean exact scout execution source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/scout-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/scout-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/scout-current" status --porcelain=v1 --untracked-files=all)"
       - name: Strict original-source historical scout migrations
         run: |
           mkdir -p scout-rehearsal-source-evidence
@@ -516,9 +879,13 @@ jobs:
           node --import tsx scripts/scout-historical-fixtures.mjs verify scout-rehearsal-source-evidence/historical-preparation.json > scout-rehearsal-source-evidence/historical-verification.json
       - name: Paid scout, historical rehearsal, separate attack and second observation
         run: |
-          node --import tsx scripts/scout-rehearsal-natural-route.ts --legacy-root "$RUNNER_TEMP/scout-source-r13" --output "$GITHUB_WORKSPACE/scout-rehearsal-source-evidence/natural-report.json"
+          (cd "$RUNNER_TEMP/scout-current" && node --import tsx scripts/scout-rehearsal-natural-route.ts --legacy-root "$RUNNER_TEMP/scout-source-r13" --output "$GITHUB_WORKSPACE/scout-rehearsal-source-evidence/natural-report.json")
           sha256sum scout-rehearsal-source-evidence/natural-report.json > scout-rehearsal-source-evidence/natural-report.sha256.txt
           python -m unittest discover -s scripts -p 'test_scout_rehearsal_acceptance.py' -v
+          python -m unittest discover -s scripts -p 'test_scout_fixture_identity.py' -v
+      - name: Bind exact scout source assets runtime and complete fixture outputs
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/scout-current" --scout-fixtures
       - name: Browser prerequisites
         timeout-minutes: 4
         run: bash scripts/browser-prerequisites.sh
@@ -545,8 +912,39 @@ jobs:
           path: |
             dist
             scout-rehearsal-source.zip
+            common-identity.json
+            scout-fixture-identity.json
             scout-rehearsal-source-evidence
             scout-rehearsal-evidence
             scout-rehearsal-preview.log
           retention-days: 7
           if-no-files-found: error
+
+  required-gates:
+    # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
+    # The existing [deep-source] source-only convention never constitutes release acceptance.
+    if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
+    needs: [verify, npc-orbital, scout-rehearsal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require all three jobs and exact source asset runtime and fixture identities
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, re
+          jobs = json.loads(os.environ['JOB_RESULTS'])
+          assert set(jobs) == {'verify', 'npc-orbital', 'scout-rehearsal'}, jobs
+          for name, job in jobs.items():
+              assert job['result'] == 'success', (name, job['result'])
+          def hashes_for(names, key):
+              hashes = [jobs[name]['outputs'].get(key, '') for name in names]
+              assert all(re.fullmatch('[0-9a-f]{64}', digest) for digest in hashes), (key, hashes)
+              assert len(set(hashes)) == 1, (key, hashes)
+              return hashes[0]
+          common = hashes_for(jobs, 'common-identity-sha256')
+          orbital = hashes_for(('verify', 'npc-orbital'), 'orbital-identity-sha256')
+          scout = hashes_for(('scout-rehearsal',), 'scout-fixture-sha256')
+          print(json.dumps({'status':'passed','sameSourceAssetsRuntime':common,'sameCompleteOrbitalFixturePool':orbital,'completeScoutFixtures':scout}))
+          PYCODE
