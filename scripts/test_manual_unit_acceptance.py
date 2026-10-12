@@ -58,6 +58,63 @@ class IndependentGoldenTests(unittest.TestCase):
         self.assertNotIn('int(',definition('edit_raw'))
 
 
+class DenseTransitDraftTests(unittest.TestCase):
+    target={'galaxy':1,'system':56,'position':10}
+    def draft(self):
+        return {'mission':'transport','target':{'galaxy':'1','system':'56','position':'10'},'speed':'100',
+          'ships':[{'unit':unit,'raw':'2' if unit=='small_cargo' else '0'} for unit in module.TRANSIT_FLYING_IDS],
+          'cargo':{'metal':'0','crystal':'0','deuterium':'0'}}
+
+    def test_exact_thirteen_dense_flying_species_with_all_twelve_zeroes(self):
+        original=self.draft(); frozen=copy.deepcopy(original)
+        self.assertEqual(len(module.TRANSIT_FLYING_IDS),13)
+        self.assertEqual(len(set(module.TRANSIT_FLYING_IDS)),13)
+        self.assertNotIn('solar_satellite',module.TRANSIT_FLYING_IDS)
+        self.assertTrue(module.valid_transit_flight_draft(original,self.target))
+        self.assertEqual(original,frozen)
+        self.assertEqual(sum(row['raw']=='0' for row in original['ships']),12)
+
+    def test_missing_and_duplicate_species_fail_even_with_same_total(self):
+        missing=self.draft(); missing['ships'].pop()
+        self.assertFalse(module.valid_transit_flight_draft(missing,self.target))
+        duplicate=self.draft(); duplicate['ships'][-1]=copy.deepcopy(duplicate['ships'][1])
+        self.assertFalse(module.valid_transit_flight_draft(duplicate,self.target))
+
+    def test_satellite_or_extra_species_never_pass(self):
+        for unit in ('solar_satellite','rocket_launcher','unknown_ship'):
+            extra=self.draft(); extra['ships'].append({'unit':unit,'raw':'0'})
+            self.assertFalse(module.valid_transit_flight_draft(extra,self.target))
+            replacement=self.draft(); replacement['ships'][-1]={'unit':unit,'raw':'0'}
+            self.assertFalse(module.valid_transit_flight_draft(replacement,self.target))
+
+    def test_nonzero_other_ship_and_coerced_or_missing_values_fail(self):
+        for raw in ('1','-1','0.0','',0,False,None):
+            draft=self.draft(); draft['ships'][1]['raw']=raw
+            self.assertFalse(module.valid_transit_flight_draft(draft,self.target))
+        for raw in ('0','1','3','2.0',2):
+            draft=self.draft(); draft['ships'][0]['raw']=raw
+            self.assertFalse(module.valid_transit_flight_draft(draft,self.target))
+        draft=self.draft(); del draft['ships'][1]['raw']
+        self.assertFalse(module.valid_transit_flight_draft(draft,self.target))
+
+    def test_complete_mission_target_speed_cargo_are_part_of_contract(self):
+        for key,value in [('mission','attack'),('speed','90'),('target',{'galaxy':'1','system':'56','position':'11'}),('cargo',{'metal':'1','crystal':'0','deuterium':'0'})]:
+            draft=self.draft(); draft[key]=value
+            self.assertFalse(module.valid_transit_flight_draft(draft,self.target))
+        draft=self.draft(); del draft['cargo']
+        self.assertFalse(module.valid_transit_flight_draft(draft,self.target))
+
+    def test_dense_source_and_native_census_precede_real_send_without_normalizing_world(self):
+        source=definition('transit_fill')
+        self.assertLess(source.index("persist_json('before-natural-flight'"),source.index('valid_transit_flight_draft('))
+        self.assertLess(source.index('valid_transit_flight_draft('),source.index("trusted_click(page,'#space-send')"))
+        self.assertIn("whole_state('actual-native-natural-two-cargo-flight',save(page),fixture['afterDispatch'])",source)
+        fixture=FIXTURE.read_text()
+        self.assertIn('ships:{small_cargo:2,large_cargo:0,light_fighter:0,heavy_fighter:0',fixture)
+        self.assertIn('exact(transit.fleets.at(-1)!.ships,transitRequest.ships',fixture)
+        self.assertNotIn('filter(',definition('valid_transit_flight_draft'))
+
+
 class ExclusiveEvidenceTests(unittest.TestCase):
     def setUp(self):
         module.load_reviewed_helpers()

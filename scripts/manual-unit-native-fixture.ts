@@ -104,9 +104,18 @@ check(maxCount >= 1 && maxCount < 10, "Bounded natural max count expected"); pay
 const naturalFinal = exportSave(state,epoch+elapsed*1000);
 // The second untouched natural handoff supplies two genuinely produced cargo ships.
 let transit = load(m09.save); const colony = transit.planets.find(p=>p.id!=="homeworld")!;
-const transitRequest = { mission:"transport" as const,target:colony.coordinates,ships:{small_cargo:2},cargo:emptyCargo(),speedPercent:100 };
+// Match the ordinary fleet form's complete 13-field request, including its
+// explicit zeroes. A sparse API request produces a different serialized fleet.
+const TRANSIT_FLYING_IDS = ["small_cargo","large_cargo","light_fighter","heavy_fighter","cruiser","battleship","battlecruiser","bomber","destroyer","deathstar","recycler","espionage_probe","colony_ship"] as const;
+const transitRequest = { mission:"transport" as const,target:colony.coordinates,
+  ships:{small_cargo:2,large_cargo:0,light_fighter:0,heavy_fighter:0,cruiser:0,battleship:0,battlecruiser:0,bomber:0,destroyer:0,deathstar:0,recycler:0,espionage_probe:0,colony_ship:0},
+  cargo:emptyCargo(),speedPercent:100 };
+check(TRANSIT_FLYING_IDS.length===13 && new Set(TRANSIT_FLYING_IDS).size===13
+  && Object.keys(transitRequest.ships).length===13 && TRANSIT_FLYING_IDS.every(id=>transitRequest.ships[id]===(id==="small_cargo"?2:0))
+  && !Object.prototype.hasOwnProperty.call(transitRequest.ships,"solar_satellite"),"Independent literal complete flying-ship census changed");
 const transitBefore = serializeState(transit); transit = accepted(sendFleet(transit,transitRequest));
 check(activePlanet(transit).units.small_cargo === 0 && transit.fleets.some(f=>(f.ships.small_cargo??0)===2),"Real outbound cargo ships required");
+exact(transit.fleets.at(-1)!.ships,transitRequest.ships,"Real flight must preserve the ordinary UI dense 13-ship request, including all twelve zeroes");
 const transitBeforePay = serializeState(transit), transitPaid = paid(transit,"small_cargo",1);
 function syntheticBase(): GameState {
   const s = load(m09.save);

@@ -32,6 +32,8 @@ RESOURCES = ('metal', 'crystal', 'deuterium')
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 INVALID = ('', '0', '-1', '1.5', '1e3', 'NaN', 'Infinity', '9' * 512, '9007199254740992')
 SHIPS = ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'battlecruiser', 'bomber', 'destroyer', 'deathstar', 'recycler', 'espionage_probe', 'solar_satellite', 'colony_ship')
+# Independent literal ordinary-flight form census; solar satellites cannot fly.
+TRANSIT_FLYING_IDS = ('small_cargo', 'large_cargo', 'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'battlecruiser', 'bomber', 'destroyer', 'deathstar', 'recycler', 'espionage_probe', 'colony_ship')
 GOLDEN = {
  'small_cargo':(2000,2000,0),'large_cargo':(6000,6000,0),'light_fighter':(3000,1000,0),'heavy_fighter':(6000,4000,0),
  'cruiser':(20000,7000,2000),'battleship':(45000,15000,0),'battlecruiser':(30000,40000,15000),'bomber':(50000,25000,15000),
@@ -580,6 +582,27 @@ def hidden_resume():
         whole_state('hidden-resume-entire-state',save(page),expected); other.close()
 
 
+def transit_flight_draft(page):
+    return page.evaluate('''()=>({mission:document.querySelector('#flight-mission').value,
+      target:Object.fromEntries(['galaxy','system','position'].map(k=>[k,document.querySelector('#flight-'+k).value])),
+      speed:document.querySelector('#flight-speed').value,
+      ships:[...document.querySelectorAll('[data-ship]')].map(e=>({unit:e.dataset.ship,raw:e.value})),
+      cargo:Object.fromEntries(['metal','crystal','deuterium'].map(k=>[k,document.querySelector('#cargo-'+k).value]))})''')
+
+
+def valid_transit_flight_draft(value,target):
+    """Validate the full real draft without deleting zeroes or coercing inputs."""
+    if not isinstance(value,dict) or set(value)!={'mission','target','speed','ships','cargo'}: return False
+    if value['mission']!='transport' or value['speed']!='100': return False
+    if value['target']!={key:str(target[key]) for key in ('galaxy','system','position')}: return False
+    if value['cargo']!={'metal':'0','crystal':'0','deuterium':'0'}: return False
+    rows=value['ships']
+    if not isinstance(rows,list) or len(rows)!=13: return False
+    if any(not isinstance(row,dict) or set(row)!={'unit','raw'} or not isinstance(row['unit'],str) for row in rows): return False
+    if len({row['unit'] for row in rows})!=13 or {row['unit'] for row in rows}!=set(TRANSIT_FLYING_IDS): return False
+    return all(row['raw']==('2' if row['unit']=='small_cargo' else '0') for row in rows)
+
+
 def transit_fill():
     begin_case('natural09-paid-flight-does-not-cover-fill'); fixture=fixtures['transit']
     with live_context(fixture['raw']) as (_context,page):
@@ -587,7 +610,10 @@ def transit_fill():
         for key,value in fixture['request']['target'].items():
             page.locator('#flight-'+key).fill(str(value)); page.locator('#flight-'+key).press('Tab')
         page.locator('[data-ship="small_cargo"]').fill('2'); page.locator('[data-ship="small_cargo"]').press('Tab'); advance(page)
-        persist_json('before-natural-flight',{'before':fixture['before'],'expected':fixture['afterDispatch'],'request':fixture['request'],'storage':all_storage(page)})
+        draft=transit_flight_draft(page)
+        ref=persist_json('before-natural-flight',{'before':fixture['before'],'expected':fixture['afterDispatch'],'request':fixture['request'],'draft':draft,'literalFlyingCensus':TRANSIT_FLYING_IDS,'storage':all_storage(page)})
+        check('complete ordinary draft has exactly thirteen unique flying species, two small cargos, twelve literal zeroes, and exact mission target speed cargo',valid_transit_flight_draft(draft,fixture['request']['target']),ref)
+        check('fixture request uses the same complete independent thirteen-field literal census',fixture['request']['ships']=={unit:2 if unit=='small_cargo' else 0 for unit in TRANSIT_FLYING_IDS},ref)
         trusted_click(page,'#space-send'); whole_state('actual-native-natural-two-cargo-flight',save(page),fixture['afterDispatch'])
         ref=persist_json('independent-transit-fill',{'state':fixture['afterDispatch'],'target':1,'added':independent_fill(fixture['afterDispatch'],'small_cargo',1)})
         check('two in-transit ships do not satisfy target-one local fill',independent_fill(fixture['afterDispatch'],'small_cargo',1)==1,ref)
