@@ -182,7 +182,10 @@ class NativeReloadScheduleContract(unittest.TestCase):
                 self.assertFalse(self.valid(fixture))
 
     def test_schedules_have_separate_outputs_and_both_complete_ci_gates(self):
-        workflow = (ROOT / '.github/workflows/p4-original-verify.yml').read_text()
+        # Validate the entire approved five-job successor before replaying
+        # this immutable four-job contract against its exact pinned parent.
+        from test_lab_blockers_gate import previous_workflow
+        workflow = previous_workflow()
         verify = workflow.split('  verify:\n', 1)[1].split('  verify-continuation:\n', 1)[0]
         continuation = workflow.split('  verify-continuation:\n', 1)[1].split('  npc-orbital:\n', 1)[0]
         orbital = workflow.split('  npc-orbital:\n', 1)[1].split('  scout-rehearsal:\n', 1)[0]
@@ -235,6 +238,24 @@ class NativeReloadScheduleContract(unittest.TestCase):
         self.assertIn("always() && (github.event_name != 'push'", aggregate)
         self.assertIn("assert job['result'] == 'success'", aggregate)
         self.assertIn('assert len(set(hashes)) == 1', aggregate)
+
+    def test_historical_workflow_projection_refuses_missing_lab_or_weakened_current_gates(self):
+        workflow_path = ROOT / '.github/workflows/p4-original-verify.yml'
+        original_read = Path.read_bytes
+        current = original_read(workflow_path).decode('utf-8')
+        start, end = current.index('  lab-blockers:\n'), current.index('  required-gates:\n')
+        mutations = (
+            current[:start] + current[end:],
+            current.replace("assert job['result'] == 'success'", "assert job['result'] in ('success', 'skipped')", 1),
+            current.replace('python scripts/browser-npc-attack.py ', 'echo skipped-orbital ', 1),
+        )
+        for changed in mutations:
+            self.assertNotEqual(changed, current)
+            def read_bytes(path, changed=changed):
+                return changed.encode('utf-8') if path == workflow_path else original_read(path)
+            with mock.patch.object(Path, 'read_bytes', read_bytes):
+                with self.assertRaisesRegex(AssertionError, 'unapproved lab-blocker workflow drift'):
+                    self.test_schedules_have_separate_outputs_and_both_complete_ci_gates()
 
     def test_live_reload_adoption_is_distinct_from_strict_validation(self):
         source = (ROOT / 'scripts/npc-attack-natural-route.ts').read_text()
