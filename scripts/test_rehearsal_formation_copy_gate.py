@@ -183,7 +183,7 @@ class RehearsalFormationCopyGateTests(unittest.TestCase):
             self.assertTrue(path.read_bytes(), name)
         acceptance = ast.parse((ROOT / 'scripts/test_rehearsal_formation_copy_acceptance.py').read_text())
         self.assertEqual(sum(isinstance(node, ast.FunctionDef) and node.name.startswith('test_')
-                             for node in ast.walk(acceptance)), 32)
+                             for node in ast.walk(acceptance)), 36)
 
     def test_offline_missing_duplicate_reordered_extra_or_repositioned_command_is_refused(self):
         self.assert_refused(FORMATION_OFFLINE_STEP, '')

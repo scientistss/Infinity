@@ -91,6 +91,81 @@ class IndependentQuantityContract(unittest.TestCase):
         self.assertEqual([state, formations], frozen)
         self.assertEqual(module.with_formations(state, None), state)
 
+    def test_exact_paid31_library_is_retained_before_fresh_id_issuance(self):
+        wanted = {'nextFormationId': 2, 'entries': [{'id': 1, 'revision': 1,
+                  'name': '首轮母星运输护航编队', 'ships': {'small_cargo': 2, 'light_fighter': 1}}]}
+        self.assertEqual(module.original_natural_formations(), wanted)
+        modified = module.original_natural_formations()
+        modified['entries'][0]['ships']['small_cargo'] = 99
+        self.assertEqual(module.original_natural_formations(), wanted)
+        rows = json.loads((ROOT / 'tests/fixtures/npc-scout-legacy.json').read_text())['rows']
+        source = next(row for row in rows if row['id'] == 'r13-empty10-zero-round-loot-delivered')
+        self.assertEqual(hashlib.sha256(source['raw'].encode()).hexdigest(),
+                         'fae7a73c01fe9dec87d22564023a601e28853a218fc301185ba1a53463a5096b')
+        self.assertEqual(json.loads(source['raw'])['state']['formations'], wanted)
+
+    def test_created_natural_design_is_exact_id_two_and_never_array_zero(self):
+        original = {'id': 1, 'revision': 1, 'name': '首轮母星运输护航编队',
+                    'ships': {'small_cargo': 2, 'light_fighter': 1}}
+        new = {'id': 2, 'revision': 1, 'name': '原生护航 <舰&🚀>', 'ships': {'light_fighter': 6}}
+        state = {'formations': {'nextFormationId': 3, 'entries': [original, new]}, 'wallet': 'retained'}
+        before = copy.deepcopy(state)
+        selected = module.natural_copy_design(state)
+        self.assertEqual(selected, new)
+        selected['ships']['light_fighter'] = 88
+        self.assertEqual(state, before)
+        mutations = [
+            lambda f: f.update(nextFormationId=2),
+            lambda f: f['entries'].pop(0),
+            lambda f: f['entries'].pop(1),
+            lambda f: f['entries'].reverse(),
+            lambda f: f['entries'].append(copy.deepcopy(new)),
+            lambda f: f['entries'][0]['ships'].update(small_cargo=3),
+            lambda f: f['entries'][0].update(id=True),
+            lambda f: f['entries'][1].update(id=3),
+            lambda f: f['entries'][1].update(revision=2),
+            lambda f: f['entries'][1].update(name='different'),
+            lambda f: f['entries'][1]['ships'].update(light_fighter=5),
+            lambda f: f.update(extra='not in bound source'),
+        ]
+        for index, mutate in enumerate(mutations):
+            bad = copy.deepcopy(before); mutate(bad['formations'])
+            with self.subTest(index=index), self.assertRaises(AssertionError):
+                module.natural_copy_design(bad)
+
+    def test_natural_lifecycle_cases_resolve_exact_created_design_and_preserve_original(self):
+        for name in ('lifecycle_boundaries', 'untrusted_boundaries', 'source_edit_delete_boundaries',
+                     'protection_boundary', 'atomic_destination_boundary'):
+            text = definition(name)
+            self.assertIn('natural_copy_design(', text)
+            self.assertNotIn("['entries'][0]", text)
+        route = definition('replay_natural_formation_route')
+        self.assertLess(route.index('original_natural_formations()'), route.index('create_formation(page'))
+        self.assertIn("created_actual = json.loads(raw(page))['state']", route)
+        self.assertIn('natural_copy_design(created_actual) == design', route)
+        untrusted = definition('untrusted_boundaries')
+        self.assertNotIn('e.options[1]', untrusted)
+        for required in ("if option['text'] == label", 'len(matches) == 1', "matches[0]['value']"):
+            self.assertIn(required, untrusted)
+
+    def test_edit_and_delete_preserve_prior_design_and_all_other_game_fields(self):
+        original = {'id': 1, 'revision': 1, 'name': '首轮母星运输护航编队',
+                    'ships': {'small_cargo': 2, 'light_fighter': 1}}
+        design = {'id': 2, 'revision': 1, 'name': '原生护航 <舰&🚀>', 'ships': {'light_fighter': 6}}
+        baseline = {'formations': {'nextFormationId': 3, 'entries': [original, design]},
+                    'wallet': {'metal': '123.5'}, 'nextFleetId': 12, 'orders': {'tasks': [{'id': 9}]}}
+        frozen = copy.deepcopy(baseline)
+        edited = copy.deepcopy(baseline)
+        edited['formations']['entries'][1] = {'id': 2, 'revision': 2,
+            'name': '原生护航 <舰&🚀>', 'ships': {'light_fighter': 5}}
+        deleted = copy.deepcopy(baseline)
+        deleted['formations']['entries'] = [copy.deepcopy(original)]
+        self.assertEqual(module.natural_source_change_expected(baseline, design, 'edit'), edited)
+        self.assertEqual(module.natural_source_change_expected(baseline, design, 'delete'), deleted)
+        self.assertEqual(baseline, frozen)
+        with self.assertRaises(AssertionError): module.natural_source_change_expected(baseline, original, 'delete')
+        with self.assertRaises(AssertionError): module.natural_source_change_expected(baseline, design, 'clear')
+
 
 class NativeContract(unittest.TestCase):
     def test_ci_only_fails_before_browser_import(self):
@@ -231,10 +306,12 @@ class NativeContract(unittest.TestCase):
         text = definition('source_edit_delete_boundaries')
         for required in ("for action in ('edit', 'delete')", "('before-copy', 'after-independent-fill')",
                          'formation_library(page)', 'actual source edit/delete does not rewrite independent ordinary draft',
-                         "expected['formations']['entries'][0]['revision'] += 1", "expected['formations']['entries'] = []",
+                         'natural_source_change_expected(baseline, design, action)',
                          'retired_copy(page, original', 'whole_state('):
             self.assertIn(required, text)
         self.assertNotIn('evaluate(', text)
+        for required in ("edited['revision'] += 1", "if row['id'] == design['id']", "if row['id'] != design['id']"):
+            self.assertIn(required, definition('natural_source_change_expected'))
 
     def test_lifecycle_adversarial_cases_and_real_protection_are_explicit(self):
         text = definition('lifecycle_boundaries')

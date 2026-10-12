@@ -88,6 +88,41 @@ def with_formations(expected, formations):
     return value
 
 
+def original_natural_formations():
+    """Literal paid31 source library; the older saved design is never removed."""
+    return {'nextFormationId': 2, 'entries': [{'id': 1, 'revision': 1,
+            'name': '首轮母星运输护航编队', 'ships': {'small_cargo': 2, 'light_fighter': 1}}]}
+
+
+def natural_copy_design(state):
+    """Resolve the one UI-created design without confusing it with source #1."""
+    wanted = original_natural_formations()
+    design = {'id': 2, 'revision': 1, 'name': NATURAL_FORMATION_NAME, 'ships': {'light_fighter': 6}}
+    wanted['entries'].append(design)
+    wanted['nextFormationId'] = 3
+    actual = state.get('formations')
+    # JSON equality keeps numeric booleans distinct and binds every library field.
+    if json.dumps(actual, sort_keys=True, ensure_ascii=False, allow_nan=False) != json.dumps(wanted, sort_keys=True, ensure_ascii=False):
+        raise AssertionError('Natural library must retain exact source #1 and the sole UI-created design #2')
+    return copy.deepcopy(design)
+
+
+def natural_source_change_expected(baseline, design, action):
+    """Independent oracle changes only the explicitly selected new library ID."""
+    if design != natural_copy_design(baseline):
+        raise AssertionError('Source mutation must target the exact UI-created design')
+    expected = copy.deepcopy(baseline)
+    if action == 'edit':
+        edited = next(row for row in expected['formations']['entries'] if row['id'] == design['id'])
+        edited['ships']['light_fighter'] = 5
+        edited['revision'] += 1
+    elif action == 'delete':
+        expected['formations']['entries'] = [row for row in expected['formations']['entries'] if row['id'] != design['id']]
+    else:
+        raise AssertionError('Unknown native source mutation')
+    return expected
+
+
 def metadata(full=False):
     value = {'schema': 'infinity-rehearsal-formation-copy-native-v1', 'completed': completed,
              'result': 'passed' if completed else 'incomplete', 'case': case,
@@ -479,8 +514,18 @@ def replay_natural_formation_route(page):
                 check('native partial/paid/return reload preserves exact original bytes', raw(page) == previous, reference)
                 whole_state(operation['name'] + '-reload', save(page), with_formations(row['expected'], formations))
         elif kind == 'rehearsal':
-            check('original natural history has no previously injected formation', formations is None and rows['scout11-returned']['expected']['formations'] == {'nextFormationId': 1, 'entries': []})
+            original = rows['scout11-returned']['expected']['formations']
+            reference = persist_json('original-retained-formation-library', {
+                'actual': original, 'expected': original_natural_formations(), 'newDesignAlreadyAdded': formations is not None})
+            check('original natural history retains the exact prior paid31 formation before any new design',
+                  formations is None and original == original_natural_formations(), reference)
             design, expected = create_formation(page, NATURAL_FORMATION_NAME, {'light_fighter': 6})
+            created_actual = json.loads(raw(page))['state']
+            reference = persist_json('natural-ui-formation-issued-id', {
+                'original': original, 'actual': created_actual['formations'],
+                'expected': expected['formations'], 'newDesign': design})
+            check('real UI appends only fresh design #2 while retaining source formation #1',
+                  natural_copy_design(created_actual) == design, reference)
             formations = copy.deepcopy(expected['formations'])
             natural_four_widths(page, design, expected)
         elif kind in ('scout', 'attack'):
@@ -624,7 +669,7 @@ def retired_copy(page, original, label):
 
 
 def lifecycle_boundaries(natural_raw):
-    baseline = json.loads(natural_raw)['state']; design = baseline['formations']['entries'][0]
+    baseline = json.loads(natural_raw)['state']; design = natural_copy_design(baseline)
     for kind in ('cancel', 'escape', 'tab-away', 'cancelled-import', 'same-world-import', 'corrupt-import',
                  'copy-hidden-aba', 'copy-style-aba', 'copy-aria-hidden-aba', 'select-hidden-aba',
                  'option-hidden-aba', 'option-style-aba', 'option-aria-hidden-aba', 'forged-option-value',
@@ -677,11 +722,16 @@ def lifecycle_boundaries(natural_raw):
 
 def untrusted_boundaries(natural_raw):
     begin_case('EXPLICIT-DOM-untrusted-copy-and-forged-selection')
-    expected = json.loads(natural_raw)['state']; design = expected['formations']['entries'][0]
+    expected = json.loads(natural_raw)['state']; design = natural_copy_design(expected)
     context, page = boot(natural_raw); save(page); before = storage(page); open_report(page)
     values = rehearsal_values(page); draft = draft_values(page)
     selector = page.locator(PREFIX + 'formation')
-    selector.evaluate("e=>{e.value=e.options[1].value;e.dispatchEvent(new Event('change',{bubbles:true}));}")
+    label = f'#{design["id"]} {design["name"]} · r{design["revision"]}'
+    options = selector.evaluate('(e)=>[...e.options].map(o=>({value:o.value,text:o.textContent}))')
+    matches = [option for option in options if option['text'] == label]
+    reference = persist_json('untrusted-selection-exact-created-design', {'design': design, 'label': label, 'options': options})
+    check('untrusted change targets the unique exact created source rather than option position', len(matches) == 1, reference)
+    selector.evaluate("(e,value)=>{e.value=value;e.dispatchEvent(new Event('change',{bubbles:true}));}", matches[0]['value'])
     page.locator(PREFIX + 'copy').evaluate('(e)=>e.click()'); advance(page)
     check('scripted change and untrusted click cannot authorize source copy',
           rehearsal_values(page) == values and draft_values(page) == draft and page.locator(PREFIX + 'copy').is_disabled())
@@ -700,7 +750,7 @@ def untrusted_boundaries(natural_raw):
 
 
 def source_edit_delete_boundaries(natural_raw):
-    baseline = json.loads(natural_raw)['state']; design = baseline['formations']['entries'][0]
+    baseline = json.loads(natural_raw)['state']; design = natural_copy_design(baseline)
     for action in ('edit', 'delete'):
         for stage in ('before-copy', 'after-independent-fill'):
             begin_case('actual-native-source-' + action + '-' + stage)
@@ -715,14 +765,12 @@ def source_edit_delete_boundaries(natural_raw):
                 formation_library(page)
                 selector = f'#formation-library article[data-formation-id="{design["id"]}"] button[data-formation-action="{action}"]'
                 trusted_click(page, selector)
-                expected = copy.deepcopy(baseline)
+                expected = natural_source_change_expected(baseline, design, action)
                 if action == 'edit':
                     input_number(page, '[data-formation-unit="light_fighter"]', 5)
-                    expected['formations']['entries'][0]['ships']['light_fighter'] = 5
-                    expected['formations']['entries'][0]['revision'] += 1
                     commit = '#formation-save'
                 else:
-                    expected['formations']['entries'] = []; commit = '#formation-confirm-delete'
+                    commit = '#formation-confirm-delete'
                 before = storage(page)
                 persist_json(f'{action}-{stage}-before', {'storage': before, 'draft': draft})
                 trusted_click(page, commit)
@@ -743,7 +791,7 @@ def source_edit_delete_boundaries(natural_raw):
 
 def protection_boundary(natural_raw):
     begin_case('actual-cross-tab-protection-retires-formation-selection')
-    expected = json.loads(natural_raw)['state']; design = expected['formations']['entries'][0]
+    expected = json.loads(natural_raw)['state']; design = natural_copy_design(expected)
     context, page = boot(natural_raw); save(page); open_report(page); choose_formation(page, design)
     before = storage(page); original = page.locator(PREFIX + 'copy').element_handle()
     other = context.new_page(); other.goto(args.url, wait_until='networkidle')
@@ -768,7 +816,7 @@ def protection_boundary(natural_raw):
 
 def atomic_destination_boundary(natural_raw):
     begin_case('EXPLICIT-DOM-last-input-file-type-refuses-all13-before-any-write')
-    expected = json.loads(natural_raw)['state']; design = expected['formations']['entries'][0]
+    expected = json.loads(natural_raw)['state']; design = natural_copy_design(expected)
     context, page = boot(natural_raw); save(page); disk = storage(page); open_report(page)
     for ship in SHIPS: input_number(page, PREFIX + 'ship-' + ship, 1)
     choose_formation(page, design)
