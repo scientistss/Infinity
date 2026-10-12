@@ -79,7 +79,10 @@ def assert_formation_copy_gate(workflow, baseline):
 class RehearsalFormationCopyGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / WORKFLOW_PATH).read_bytes().decode('utf-8')
+        # The exact fifth-job successor is audited first; replay this historical
+        # four-job contract without ignoring any of its original rules.
+        from test_lab_blockers_gate import previous_workflow
+        cls.workflow = previous_workflow()
         cls.baseline = baseline_workflow()
         cls.current = jobs(cls.workflow)
         cls.original = jobs(cls.baseline)
@@ -293,8 +296,9 @@ class RehearsalFormationCopyGateTests(unittest.TestCase):
                                       ('scripts/parallel-gate-identity.py', 1)):
             before = subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{BASE_SHA}:{relative}'])
             self.assertEqual(before.count(OLD_VERSION.encode()), cardinality, relative)
-            self.assertEqual((ROOT / relative).read_bytes(), before.replace(OLD_VERSION.encode(), VERSION.encode()), relative)
-        current = json.loads((ROOT / 'package-lock.json').read_bytes())
+            from test_lab_blockers_gate import previous_release_bytes
+            self.assertEqual(previous_release_bytes(relative), before.replace(OLD_VERSION.encode(), VERSION.encode()), relative)
+        current = json.loads(previous_release_bytes('package-lock.json'))
         historical = json.loads(subprocess.check_output(['git', '-C', str(ROOT), 'show',
             'cc19bf5e1a459cf8e667ca55f4891ca9ffd25a71:package-lock.json']))
         self.assertEqual(historical['version'], '0.6.21-alpha.1')

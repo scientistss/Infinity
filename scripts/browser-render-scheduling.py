@@ -8,7 +8,7 @@ All normal clicks/typing are trusted browser input. Adversarial old-node replay,
 synthetic hidden state and native File.text completion gates are clearly labeled.
 """
 import argparse
-from npc_display_contract import SAMPLE_JS as NPC_DISPLAY_SAMPLE_JS, normalize_npc_display
+from npc_display_contract import SAMPLE_JS as NPC_DISPLAY_SAMPLE_JS, normalize_npc_display, normalize_empty_lab_blockers
 from demolition_display_contract import FACILITY_DEMOLITION_SAMPLE_JS, normalize_demolition_display
 from r14_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r14
 import base64
@@ -273,6 +273,10 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
       if(researchBase){
         const later=panel.querySelector('[data-bind="rlater-intergalactic_research_network"]');
         const card=panel.querySelector('[data-bind="rcard-intergalactic_research_network"]');
+        const labBindings=['research-lab-blockers','research-lab-blockers-summary','research-lab-blockers-headline',
+          'research-lab-blockers-protection','research-lab-blockers-note','research-lab-blockers-list'];
+        const labs=panel.querySelector('[data-bind="research-lab-blockers"]'),labSummary=labs?.firstElementChild,
+          labIntro=labs?.previousElementSibling,labQueue=labs?.nextElementSibling;
         result.researchEvidence={panelHTML:panel.outerHTML,laterHTML:later?.outerHTML??null,laterText:later?.textContent??null,
           count:panel.querySelectorAll('[data-bind="rlater-intergalactic_research_network"]').length,
           cardBindings:[...panel.querySelectorAll('article.rcard')].map(e=>e.dataset.bind),
@@ -281,6 +285,19 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
             later.previousElementSibling?.dataset.bind==='reffect-intergalactic_research_network'&&
             later.nextElementSibling?.dataset.bind==='rchain-intergalactic_research_network',
           activeDetails:[...panel.querySelectorAll('[data-bind="rqueue-list"] [data-q="detail"]')].map(e=>e.textContent),
+          labBlockers:{count:document.querySelectorAll('.research-lab-blockers').length,
+            prefixCount:document.querySelectorAll('[data-bind^="research-lab-blockers"]').length,
+            bindingCounts:Object.fromEntries(labBindings.map(key=>[key,document.querySelectorAll(`[data-bind="${key}"]`).length])),
+            addition:labs?{html:labs.outerHTML,hidden:labs.hidden,open:labs.open,visible:visible(labs),
+              children:labs.children.length,summaryChildren:labSummary?.children.length,
+              controls:labs.querySelectorAll('button,input,select,textarea,a,[data-action]').length,
+              introHTML:labIntro?.outerHTML,queueHTML:labQueue?.outerHTML,
+              exactPlacement:panel.matches('section.tab-panel[data-tab-panel="research"][aria-labelledby="research-title"]')&&
+                labs.matches('details.research-lab-blockers')&&labs.parentElement===panel&&panel.children[2]===labs&&
+                panel.children[0]?.matches('div.panel-head')&&panel.children[1]===labIntro&&labIntro.matches('p.blurb')&&
+                labSummary.matches('summary[data-bind="research-lab-blockers-summary"]')&&
+                panel.children[3]===labQueue&&labQueue.matches('div.queue-panel')&&
+                labQueue.querySelectorAll('ol.queue-list[data-bind="rqueue-list"]').length===1}:null},
         };
       }
       if(facilityBase){
@@ -418,7 +435,8 @@ def research_base_snapshot(page,label,projected):
     # Compare the complete remaining panel DOM, including every cost, time,
     # prerequisite, disabled/title attribute, queue node and card order. Only
     # the already asserted whole paragraph's exact text changes in the copy.
-    projected['researchInvariantDOM']=evidence['panelHTML'].replace(expected_node,
+    panel_html=normalize_empty_lab_blockers(evidence['panelHTML'],evidence['labBlockers'],state,label)
+    projected['researchInvariantDOM']=panel_html.replace(expected_node,
         '<p class="bld-blurb" data-bind="rlater-intergalactic_research_network"><verified-irn-copy></verified-irn-copy></p>',1)
     text=projected['text'];left='联通 L 个额外研究实验室（只有一颗星球时没有效果）';right='✗ 研究实验室 2/10'
     check('research copy has unique exact old effect and prerequisite boundaries: '+label,
@@ -436,7 +454,7 @@ def research_base_snapshot(page,label,projected):
         'oldNode':'<p class="bld-blurb" data-bind="rlater-intergalactic_research_network">'+old+'</p>',
         'newNode':'<p class="bld-blurb" data-bind="rlater-intergalactic_research_network"></p>',
         'observedTextBoundary':boundary,
-        'constraint':'Complete unchanged base state, literal IRN-zero/lab/paid-active-job premises, unique exact old/new paragraph and all sixteen card/action identities asserted before replacing only the obsolete text and its native linebreak boundary in copied evidence. Every remaining DOM node, field, cost, time, attribute, control and state stays exact.'})
+        'constraint':'Complete unchanged base state, literal IRN-zero/lab/paid-active-job premises, unique exact old/new paragraph and all sixteen card/action identities asserted before replacing only the obsolete text and its native linebreak boundary in copied evidence. The only other removal is the exact unique empty, hidden, closed lab-blocker addition between the literal research intro and its original queue, after proving all planets lack paid lab work. Every remaining DOM node, field, cost, time, attribute, control and state stays exact.'})
     return projected
 
 
@@ -1144,7 +1162,7 @@ with sync_playwright() as playwright:
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
             'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r14/r13) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
             'parityNpcDisplayException':'The copied r8 base comparison retains every original message HTML node, text, time, and order. Only independently bound keyed old scout unavailable notices and the exact initial hidden rehearsal region are removed after full node-count/order/HTML/control-value checks; typed observations cannot use this projection. The copied evidence records all hidden data. Current state receives only validated null snapshot fields, and raw bytes, DOM and clock remain unchanged.',
-            'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. Only the exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
+            'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. The exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Separately, all actual planet queues and demolitions must contain no paid lab work; only the unique complete empty, hidden, closed lab-blocker disclosure in its exact intro-to-queue position is removed. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityShipyardDefenseException':'Only each complete literal old/new NPC explanation in the unique p.blurb introductory node is compared through a copied-text adapter. Its exact class, native heading/queue/grid/status sibling identities, order and counts are asserted; the complete remaining panel DOM, all visible controls, queue/card content, costs, timers, status, stored state and controlled time remain exact. Every raw panel is saved before adapters and all paired snapshots/mismatches before the first parity assertion.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',

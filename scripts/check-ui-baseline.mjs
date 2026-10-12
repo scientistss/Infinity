@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, lstatSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 const expected = {
   "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264",
@@ -48,8 +49,56 @@ const expected = {
   "public/icons/warp_core-256.webp": "7835cccad47495a90a36f117755ff098e2625a979ffeabed9865c4462d913d3f",
   "public/icons/warp_core.webp": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
 };
-for (const [path, digest] of Object.entries(expected)) {
-  const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
-  if (actual !== digest) throw new Error(`原版 UI 或美术发生未批准的改变：${path}`);
+// The original baseline map above is immutable. The two changed UI files are
+// explicitly adopted through the complete c80-to-lab source seal; no asset or
+// directory is exempted and neither changed file is called original-byte-identical.
+const LAB_BLOCKERS_MANIFEST_SHA256 = "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8";
+const manifestPath = "tests/fixtures/lab-blockers-provenance.json";
+const deltaPaths = ["src/style.css", "src/ui/view.ts"];
+const hash = value => createHash("sha256").update(value).digest("hex");
+let sourceAudit = null;
+let approvedRows = [];
+if (existsSync(manifestPath)) {
+  const local = lstatSync(manifestPath);
+  if (!local.isFile() || local.isSymbolicLink() || (local.mode & 0o111))
+    throw new Error("实验室 UI 来源清单必须为普通只读来源文件");
+  const raw = readFileSync(manifestPath);
+  if (hash(raw) !== LAB_BLOCKERS_MANIFEST_SHA256)
+    throw new Error("实验室 UI 来源清单摘要不匹配");
+  // Python/Git-only verification covers the entire current src/public tree,
+  // exact ancestry, nine earlier seals, modes, full patches and every hunk.
+  sourceAudit = JSON.parse(execFileSync("python3",
+    ["-B", "scripts/test_lab_blockers_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
+  const manifest = JSON.parse(raw);
+  const baseline = sourceAudit.originalUiBaseline;
+  if (sourceAudit.contract !== "exact-declared-lab-blockers-ui-delta"
+      || sourceAudit.sourceBaseline !== "c80a6728fe9e1769ca4e67fe794b8f0eedfb8627"
+      || sourceAudit.manifestSha256 !== LAB_BLOCKERS_MANIFEST_SHA256
+      || JSON.stringify(baseline) !== JSON.stringify(manifest.originalUiBaseline)
+      || baseline.baseline !== "69eca71"
+      || JSON.stringify(baseline.exactDeltaPaths) !== JSON.stringify(deltaPaths)
+      || JSON.stringify(baseline.changedPaths.map(row => row.path)) !== JSON.stringify(deltaPaths))
+    throw new Error("实验室 UI 增量范围或完整来源核验不匹配");
+  approvedRows = baseline.changedPaths;
+  for (const row of approvedRows) {
+    if (baseline.expected[row.path] !== expected[row.path]
+        || row.before.mode !== "100644" || row.before.sha256 !== expected[row.path]
+        || row.after.mode !== "100644" || !row.hunks.length
+        || !/^[0-9a-f]{64}$/.test(row.patchSha256))
+      throw new Error(`实验室 UI 增量不是原版精确来源：${row.path}`);
+  }
 }
-console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length, result: "passed", scope: "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate" }, null, 2));
+for (const [path, digest] of Object.entries(expected)) {
+  const actual = hash(readFileSync(path));
+  const approved = approvedRows.find(row => row.path === path);
+  const required = approved ? approved.after.sha256 : digest;
+  if (actual !== required) throw new Error(`原版 UI 或美术发生未批准的改变：${path}`);
+}
+console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length,
+  result: "passed", scope: sourceAudit
+    ? "all original public assets unchanged; view.ts/style.css have exact approved laboratory UI deltas"
+    : "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate",
+  ...(sourceAudit ? { approvedUiDeltaPaths: deltaPaths,
+    approvedSourceDeltaPaths: sourceAudit.approvedSourceDeltaPaths,
+    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: LAB_BLOCKERS_MANIFEST_SHA256 } : {})
+}, null, 2));

@@ -182,7 +182,10 @@ def assert_scout_comparison_preserved(current, original):
 class ParallelLegacyGateSplitTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / WORKFLOW_PATH).read_text()
+        # Validate every successor workflow byte and exact release transition
+        # before replaying the complete historical four-job contract unchanged.
+        from test_lab_blockers_gate import previous_workflow
+        cls.workflow = previous_workflow()
         # Full-history checkout is mandatory in each game job. Missing pinned
         # history fails this contract rather than silently skipping the audit.
         cls.baseline = subprocess.check_output(

@@ -1383,8 +1383,8 @@ jobs:
           before_lock = json.loads(original_lock)
           after_lock = json.loads((repo / 'package-lock.json').read_text())
           assert before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1'
-          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.23-alpha.1'
-          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.23-alpha.1'
+          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.24-alpha.1'
+          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.24-alpha.1'
           assert before_lock == after_lock
           roots = {}
           for key, original in fixture['sourceBindings'].items():
@@ -1440,7 +1440,7 @@ jobs:
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           python scripts/browser-scout-rehearsal.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence
           python scripts/browser-scout-comparison.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-comparison-evidence
-          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.23-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
+          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.24-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
       - name: Archive exact readable rehearsal source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > scout-rehearsal-source.zip
@@ -1461,22 +1461,106 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  lab-blockers:
+    # Independent mandatory native acceptance, with no borrowed current-job results.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Offline exact lab blocker acceptance source seal and mandatory gate
+        run: |
+          python -m unittest discover -s scripts -p 'test_lab_blockers_acceptance.py' -v
+          python scripts/test_lab_blockers_provenance.py --verify-candidate "$GITHUB_SHA" -v
+          python -m unittest discover -s scripts -p 'test_lab_blockers_gate.py' -v
+      - name: Prepare independently clean exact lab execution source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/lab-blockers-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/lab-blockers-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/lab-blockers-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact lab source production assets and actual Node runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/lab-blockers-current"
+      - name: Verify immutable natural input and generate separately classified lab branches
+        run: |
+          mkdir -p lab-blockers-source-evidence
+          python - <<'PYCODE'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('lab_historical_source', 'scripts/browser-lab-blockers.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          Path('lab-blockers-source-evidence/natural-report.json').write_bytes(module.validated_historical_bytes())
+          PYCODE
+          echo "1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d  lab-blockers-source-evidence/natural-report.json" | sha256sum -c -
+          (cd "$RUNNER_TEMP/lab-blockers-current" && node --import tsx scripts/lab-blockers-native-fixture.ts "$GITHUB_WORKSPACE/lab-blockers-source-evidence/natural-report.json" 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d "$GITHUB_SHA") > lab-blockers-source-evidence/native-fixture.json
+          sha256sum lab-blockers-source-evidence/native-fixture.json > lab-blockers-source-evidence/native-fixture.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/lab-blockers-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory native lab blockers on independent HTTP service and browser
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > lab-blockers-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          python scripts/browser-lab-blockers.py --url http://127.0.0.1:4173/Infinity/ --fixture lab-blockers-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum lab-blockers-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report lab-blockers-source-evidence/natural-report.json --expected-report-sha256 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d --expected-sha "$GITHUB_SHA" --expected-version 0.6.24-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output lab-blockers-evidence
+      - name: Archive exact readable lab source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > lab-blockers-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab-blockers-${{ github.sha }}
+          path: |
+            dist
+            lab-blockers-source.zip
+            common-identity.json
+            tests/fixtures/lab-blockers-be0-research-network-report.json.gz
+            tests/fixtures/lab-blockers-be0-research-network-provenance.json
+            lab-blockers-source-evidence
+            lab-blockers-evidence
+            lab-blockers-preview.log
+          retention-days: 7
+          if-no-files-found: error
+
   required-gates:
     # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
     # The existing [deep-source] source-only convention never constitutes release acceptance.
     if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
-    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal]
+    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require all four jobs and exact source asset runtime and fixture identities
+      - name: Require all five jobs and exact source asset runtime and fixture identities
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python - <<'PYCODE'
           import json, os, re
           jobs = json.loads(os.environ['JOB_RESULTS'])
-          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal'}, jobs
+          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers'}, jobs
           for name, job in jobs.items():
               assert job['result'] == 'success', (name, job['result'])
           def hashes_for(names, key):

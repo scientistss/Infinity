@@ -791,4 +791,135 @@ class NpcDisplayTests(unittest.TestCase):
                           'panel.hidden = true; text(source, ""); text(status, reason); disable();'):
             self.assertIn(statement,abandon)
 
+class EmptyLabBlockerParityTests(unittest.TestCase):
+    """Independent copied source-layout goldens, not a native execution claim."""
+
+    def fixture(self, side='after'):
+        # Keep these literals independent of production and contract constants.
+        addition = '''<details class="research-lab-blockers" data-bind="research-lab-blockers" hidden="">
+    <summary data-bind="research-lab-blockers-summary"><span data-bind="research-lab-blockers-headline"></span><span data-bind="research-lab-blockers-protection" hidden=""></span></summary>
+    <p data-bind="research-lab-blockers-note"></p>
+    <ul data-bind="research-lab-blockers-list" data-key="[]"></ul>
+  </details>'''
+        intro = '<p class="blurb">整个帝国同一时间只研究 1 项，研究队列长度与建造队列相同。成本 ⌊基础×2^(L−1)⌋（天体物理学 ×1.75 并取整到百位），研究时间 = (金属+晶体)/(1000·(1+研究实验室等级)) 小时 ÷ 研究速度。研究进行中不能升级研究实验室，研究实验室升级中也不能开始研究。前置只看已完成的等级。</p>'
+        queue = '<div class="queue-panel"><ol class="queue-list" data-bind="rqueue-list"><li>已付研究 · 剩余 2 秒</li></ol></div>'
+        prefix = '<section class="tab-panel" data-tab-panel="research" aria-labelledby="research-title"><div class="panel-head">研究</div>\n        '
+        suffix = '\n        <article class="rcard"><p>晶体 800.00</p><button disabled="">研究</button><details>原有详情</details></article></section>'
+        panel = prefix + intro + ('\n        '+addition if side == 'after' else '') + '\n        \n      ' + queue + suffix
+        keys = ('research-lab-blockers', 'research-lab-blockers-summary', 'research-lab-blockers-headline',
+                'research-lab-blockers-protection', 'research-lab-blockers-note', 'research-lab-blockers-list')
+        evidence = {'count': 1 if side == 'after' else 0, 'prefixCount': 6 if side == 'after' else 0,
+            'bindingCounts': {key: 1 if side == 'after' else 0 for key in keys}, 'addition': None}
+        if side == 'after':
+            evidence['addition'] = {'html': addition, 'hidden': True, 'open': False, 'visible': False,
+                'exactPlacement': True, 'children': 3, 'summaryChildren': 2, 'controls': 0,
+                'introHTML': intro, 'queueHTML': queue}
+        state = {'planets': [{'id': 'homeworld', 'buildQueue': [{'building': 'metal_mine'}], 'demolition': None},
+                             {'id': 'colony', 'buildQueue': [], 'demolition': None}]}
+        return panel, evidence, state
+
+    def test_minimal_pre_adapter_full_dom_mismatch_is_fixed_only_for_exact_empty_addition(self):
+        before, old_evidence, state = self.fixture('before')
+        after, evidence, state = self.fixture()
+        original = copy.deepcopy((after, evidence, state))
+        self.assertNotEqual(before, after, 'The old complete-DOM comparator must see the new node')
+        self.assertEqual(normalize_empty_lab_blockers(before, old_evidence, state, 'before'), before)
+        self.assertEqual(normalize_empty_lab_blockers(after, evidence, state, 'after'), before)
+        self.assertEqual((after, evidence, state), original)
+        self.assertIn('<details>原有详情</details>', before)
+
+    def test_every_binding_identity_and_native_count_is_required(self):
+        for key in ('count', 'prefixCount'):
+            for value in (0, 2, True, 6.0):
+                panel, evidence, state = self.fixture(); evidence[key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
+                    normalize_empty_lab_blockers(panel, evidence, state, 'after')
+        for key in self.fixture()[1]['bindingCounts']:
+            for value in (0, 2, True):
+                panel, evidence, state = self.fixture(); evidence['bindingCounts'][key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
+                    normalize_empty_lab_blockers(panel, evidence, state, 'after')
+        for key, value in (('hidden', False), ('open', True), ('visible', True), ('exactPlacement', False),
+                           ('children', 4), ('summaryChildren', 1), ('controls', 1)):
+            panel, evidence, state = self.fixture(); evidence['addition'][key] = value
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                normalize_empty_lab_blockers(panel, evidence, state, 'after')
+
+    def test_complete_empty_hidden_closed_html_rejects_unreported_content_and_controls(self):
+        for mutation in ('visible', 'open', 'headline', 'note', 'list', 'protection', 'title', 'control',
+                         'unknown-child', 'unknown-attribute', 'wrong-binding', 'wrong-class', 'missing-key'):
+            panel, evidence, state = self.fixture(); original = evidence['addition']['html']; changed = original
+            if mutation == 'visible': changed = changed.replace(' hidden=""', '', 1)
+            if mutation == 'open': changed = changed.replace('<details ', '<details open="" ', 1)
+            if mutation == 'headline': changed = changed.replace('headline"></span>', 'headline">研究受阻</span>')
+            if mutation == 'note': changed = changed.replace('note"></p>', 'note">未授权内容</p>')
+            if mutation == 'list': changed = changed.replace('</ul>', '<li>额外任务</li></ul>')
+            if mutation == 'protection': changed = changed.replace('protection" hidden=""></span>', 'protection" hidden="">冻结进度</span>')
+            if mutation == 'title': changed = changed.replace('protection" hidden=""', 'protection" hidden="" title="保护中"')
+            if mutation == 'control': changed = changed.replace('</ul>', '<button>取消</button></ul>')
+            if mutation == 'unknown-child': changed = changed.replace('</details>', '<p hidden="">别的内容</p></details>')
+            if mutation == 'unknown-attribute': changed = changed.replace('<details ', '<details data-other="1" ', 1)
+            if mutation == 'wrong-binding': changed = changed.replace('blockers-headline', 'blockers-heading')
+            if mutation == 'wrong-class': changed = changed.replace('class="research-lab-blockers"', 'class="other"')
+            if mutation == 'missing-key': changed = changed.replace(' data-key="[]"', '')
+            self.assertNotEqual(changed, original, mutation)
+            evidence['addition']['html'] = changed; panel = panel.replace(original, changed, 1)
+            with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
+                normalize_empty_lab_blockers(panel, evidence, state, 'after')
+
+    def test_wrong_position_missing_duplicate_and_nested_node_are_rejected_even_with_claimed_placement(self):
+        for mutation in ('missing', 'duplicate', 'before-intro', 'after-queue', 'nested', 'extra-binding'):
+            panel, evidence, state = self.fixture(); addition = evidence['addition']; html = addition['html']
+            if mutation == 'missing': panel = panel.replace(html, '', 1)
+            if mutation == 'duplicate': panel = panel.replace(html, html+html, 1)
+            if mutation == 'before-intro': panel = panel.replace('\n        '+html, '', 1).replace(addition['introHTML'], html+addition['introHTML'], 1)
+            if mutation == 'after-queue': panel = panel.replace('\n        '+html, '', 1).replace(addition['queueHTML'], addition['queueHTML']+html, 1)
+            if mutation == 'nested': panel = panel.replace(html, '<div>'+html+'</div>', 1)
+            if mutation == 'extra-binding': panel = panel.replace('</section>', '<span data-bind="research-lab-blockers-extra"></span></section>')
+            with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
+                normalize_empty_lab_blockers(panel, evidence, state, 'after')
+        panel, evidence, state = self.fixture('before')
+        with self.assertRaises(AssertionError):
+            normalize_empty_lab_blockers(panel+self.fixture()[1]['addition']['html'], evidence, state, 'before')
+
+    def test_any_real_paid_lab_head_tail_or_demolition_refuses_the_exception(self):
+        for index in (0, 1):
+            for kind in ('head', 'tail', 'demolition'):
+                panel, evidence, state = self.fixture(); planet = state['planets'][index]
+                if kind == 'head': planet['buildQueue'].insert(0, {'building': 'research_lab'})
+                if kind == 'tail': planet['buildQueue'].append({'building': 'research_lab'})
+                if kind == 'demolition': planet['demolition'] = {'building': 'research_lab'}
+                with self.subTest(index=index, kind=kind), self.assertRaises(AssertionError):
+                    normalize_empty_lab_blockers(panel, evidence, state, 'after')
+
+    def test_all_unrelated_dom_and_whitespace_remain_in_exact_comparison(self):
+        expected = self.fixture('before')[0]
+        for old, new in (('晶体 800.00', '晶体 801.00'), ('<button disabled="">', '<button>'),
+                         ('<details>原有详情</details>', '<details open="">原有详情</details>'),
+                         ('<article class="rcard">', '<article class="rcard" hidden="">'),
+                         ('</section>', '<p hidden="">额外节点</p></section>')):
+            panel, evidence, state = self.fixture(); panel = panel.replace(old, new, 1)
+            self.assertNotEqual(normalize_empty_lab_blockers(panel, evidence, state, 'after'), expected)
+        panel, evidence, state = self.fixture(); queue = evidence['addition']['queueHTML']
+        changed = queue.replace('剩余 2 秒', '剩余 3 秒')
+        panel = panel.replace(queue, changed, 1); evidence['addition']['queueHTML'] = changed
+        self.assertNotEqual(normalize_empty_lab_blockers(panel, evidence, state, 'after'), expected)
+
+    def test_native_research_sampler_is_single_and_archives_before_the_narrow_projection(self):
+        source = (Path(__file__).resolve().parents[1]/'scripts/browser-render-scheduling.py').read_text()
+        tree = ast.parse(source)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'research_base_snapshot')
+        calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+        project = [node for node in calls if isinstance(node.func, ast.Name) and node.func.id == 'normalize_empty_lab_blockers']
+        self.assertEqual(len(project), 1)
+        archive = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == 'write_text')
+        self.assertLess(archive.lineno, project[0].lineno)
+        self.assertEqual(source.count('result.researchEvidence='), 1)
+        self.assertEqual(source.count("projected['researchInvariantDOM']=panel_html.replace"), 1)
+        self.assertEqual(source.count("label if name=='research' else None"), 1)
+        for literal in ('panel.children[2]===labs', 'panel.children[3]===labQueue',
+                        "prefixCount:document.querySelectorAll('[data-bind^=\"research-lab-blockers\"]').length"):
+            self.assertIn(literal, source)
+
+
 if __name__=='__main__':unittest.main()

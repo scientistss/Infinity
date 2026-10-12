@@ -376,6 +376,11 @@ class ScoutComparisonSyntheticTests(unittest.TestCase):
         self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])],
                          ['synchronized_domain_provenance'])
         restored = copy.deepcopy(new['synchronized_domain_provenance'])
+        lab_branch = restored.body.pop(1)
+        expected_lab = ast.parse(
+            "if candidate != LAB_BLOCKERS_ADOPTION and git('ls-tree', candidate, '--', LAB_BLOCKERS_MANIFEST):\n"
+            '    return lab_blockers_provenance(repository, candidate, git, check)\n').body[0]
+        self.assertEqual(dump(lab_branch), dump(expected_lab))
         formation_branch = restored.body.pop(1)
         expected_formation = ast.parse(
             "if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):\n"

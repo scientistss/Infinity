@@ -25,6 +25,7 @@ import type { RunResult } from "../game/arcade";
 import { ArcadeAnimator, arcadePanelHtml, readSkipPreference, updateArcadePanel, writeSkipPreference } from "./arcade-panel";
 import { shipyardPanelsHtml, unitQuantity, updateShipyardCards } from "./shipyard-panel";
 import { isUnitId, type UnitId } from "../data/units";
+import { labBlockersHtml, updateLabBlockers } from "./lab-blockers-panel";
 
 export type UiAction =
   | { type: "scrape" }
@@ -478,6 +479,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {
   requiredElement(root, "rqueue-wrap-ov").hidden = !research.visible;
   updateQueue(root, "rqueue", ["", "-ov"], research.queue, "cancel-research", "research");
   setText(root, "research-summary", research.summary);
+  updateLabBlockers(root, research.labBlockers);
   for (const item of research.items) {
     setText(root, `rlevel-${item.id}`, item.level);
     setText(root, `rcost-${item.id}`, item.cost);
@@ -977,6 +979,7 @@ function shellMarkup(): string {
           <p data-bind="research-summary">研究</p>
         </div>
         <p class="blurb">整个帝国同一时间只研究 1 项，研究队列长度与建造队列相同。成本 ⌊基础×2^(L−1)⌋（天体物理学 ×1.75 并取整到百位），研究时间 = (金属+晶体)/(1000·(1+研究实验室等级)) 小时 ÷ 研究速度。研究进行中不能升级研究实验室，研究实验室升级中也不能开始研究。前置只看已完成的等级。</p>
+        ${labBlockersHtml()}
         ${queuePanel("", "rqueue", "研究队列")}
         ${researchGroups()}
       </section>

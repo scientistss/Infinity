@@ -79,6 +79,7 @@ import {
 } from "../game/dark-matter";
 import { outputScale, spentCores, techRank, unspentCores } from "../prestige/tree";
 import { PROTOCOL_SLOT_COUNT, RESOURCE_IDS, type CardLamp, type CurvatureId, type GameState, type ResourceId } from "../game/types";
+import { labBlockers, type LabBlockersModel } from "./lab-blockers-model";
 
 /** Metal-equivalent weights for payback time (OGame trade ratio 3 : 2 : 1). */
 const METAL_EQUIV: Record<ResourceId, number> = { metal: 1, crystal: 1.5, deuterium: 3 };
@@ -163,6 +164,8 @@ export interface ResearchPanelView {
   visible: boolean;
   queue: QueueView;
   summary: string;
+  /** Hidden page bodies are omitted; entering research always re-derives facts. */
+  labBlockers: LabBlockersModel | null;
   items: ResearchView[];
 }
 
@@ -645,6 +648,7 @@ function researchPanel(state: GameState, includeCards = true): ResearchPanelView
     visible: researchVisible(state),
     queue: researchQueueView(state),
     summary: `研究总等级 ${total} · 研究速度 ×${RESEARCH_SPEED} · 研究等级在发射殖民舰后保留`,
+    labBlockers: includeCards ? labBlockers(state) : null,
     items: includeCards ? RESEARCH.map((def) => researchView(state, def)) : [],
   };
 }

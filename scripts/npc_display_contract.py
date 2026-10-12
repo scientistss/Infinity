@@ -4,6 +4,61 @@ No browser writes, arbitrary message deletion, or generic text/control filtering
 from copy import deepcopy
 from html import escape
 import math
+LAB_BLOCKER_BINDINGS = ('research-lab-blockers', 'research-lab-blockers-summary',
+    'research-lab-blockers-headline', 'research-lab-blockers-protection',
+    'research-lab-blockers-note', 'research-lab-blockers-list')
+EMPTY_LAB_BLOCKERS_HTML = '''<details class="research-lab-blockers" data-bind="research-lab-blockers" hidden="">
+    <summary data-bind="research-lab-blockers-summary"><span data-bind="research-lab-blockers-headline"></span><span data-bind="research-lab-blockers-protection" hidden=""></span></summary>
+    <p data-bind="research-lab-blockers-note"></p>
+    <ul data-bind="research-lab-blockers-list" data-key="[]"></ul>
+  </details>'''
+RESEARCH_INTRO_HTML = '<p class="blurb">整个帝国同一时间只研究 1 项，研究队列长度与建造队列相同。成本 ⌊基础×2^(L−1)⌋（天体物理学 ×1.75 并取整到百位），研究时间 = (金属+晶体)/(1000·(1+研究实验室等级)) 小时 ÷ 研究速度。研究进行中不能升级研究实验室，研究实验室升级中也不能开始研究。前置只看已完成的等级。</p>'
+
+
+def normalize_empty_lab_blockers(panel_html, evidence, state, side):
+    """Only the exact empty addition in the fixed old research parity fixture.
+
+    Busy or protected states are never projected away. Complete source DOM is
+    archived by the caller, and every remaining byte stays in the comparison.
+    """
+    assert side in ('before', 'after')
+    assert state['planets'] and all(
+        all(job['building'] != 'research_lab' for job in planet['buildQueue']) and
+        (planet.get('demolition') is None or planet['demolition']['building'] != 'research_lab')
+        for planet in state['planets']), 'Cannot hide any paid lab work, including queue tails'
+    after = side == 'after'
+    expected = {
+        'count': int(after), 'prefixCount': 6 if after else 0,
+        'bindingCounts': {key: int(after) for key in LAB_BLOCKER_BINDINGS},
+        'addition': None,
+    }
+    if after:
+        addition = evidence['addition']
+        assert addition is not None
+        queue_html = addition['queueHTML']
+        assert queue_html.startswith('<div class="queue-panel">') and queue_html.endswith('</div>')
+        assert queue_html.count('data-bind="rqueue-list"') == 1
+        expected['addition'] = {
+            'html': EMPTY_LAB_BLOCKERS_HTML, 'hidden': True, 'open': False, 'visible': False,
+            'exactPlacement': True, 'children': 3, 'summaryChildren': 2, 'controls': 0,
+            'introHTML': RESEARCH_INTRO_HTML, 'queueHTML': queue_html,
+        }
+    assert exact_copied_data(evidence, expected), 'Exact unique empty, hidden, closed lab disclosure required'
+    if not after:
+        assert 'research-lab-blockers' not in panel_html
+        return panel_html
+    assert panel_html.count(EMPTY_LAB_BLOCKERS_HTML) == 1
+    assert panel_html.count('research-lab-blockers') == 7
+    assert panel_html.count(RESEARCH_INTRO_HTML) == 1
+    assert panel_html.count(queue_html) == 1
+    # Keep the original queue's leading template whitespace byte-for-byte.
+    # Bind to both actual siblings before removing only this approved addition
+    # and its one newly introduced line, never arbitrary details or content.
+    region = RESEARCH_INTRO_HTML + '\n        ' + EMPTY_LAB_BLOCKERS_HTML + '\n        \n      ' + queue_html
+    assert panel_html.count(region) == 1, 'Lab disclosure must be directly between research intro and queue'
+    return panel_html.replace(region, RESEARCH_INTRO_HTML + '\n        \n      ' + queue_html, 1)
+
+
 OLD_HINT='NPC 当前仅提供基础侦察，不会反击；第 16 位可派舰充能，也可回收战斗残骸。殖民地属性使用当前开发版生成曲线。'
 NEW_HINT='侦察查看抵达时的历史情报；攻击 NPC 轨道驻军可能永久损失舰船。第 16 位可派舰充能，也可回收战斗残骸。殖民地属性使用当前开发版生成曲线。'
 MISSION_OPTIONS=[['colonize','殖民'],['transport','运输'],['deploy','部署'],['scout','侦察'],['charge','深空充能'],['recycle','残骸回收']]

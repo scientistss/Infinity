@@ -87,7 +87,7 @@ function expectedProjection(full: ViewModel, tab: string): ViewModel {
   const model = structuredClone(full);
   if (tab !== "facilities") { model.buildings = []; model.production = []; }
   if (tab !== "overview") { model.overview.production = []; model.overview.energy = []; }
-  if (tab !== "research") model.research.items = [];
+  if (tab !== "research") { model.research.items = []; model.research.labBlockers = null; }
   if (tab !== "shipyard") model.shipyard.ships = [];
   if (tab !== "defense") model.shipyard.defenses = [];
   if (tab !== "darkmatter") {

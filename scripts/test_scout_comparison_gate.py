@@ -44,7 +44,8 @@ class ScoutComparisonGateTests(unittest.TestCase):
         from test_rehearsal_formation_copy_gate import assert_formation_copy_gate
         cls.workflow = subprocess.check_output(
             ['git', '-C', str(ROOT), 'show', f'{FROZEN_COMPARISON_SHA}:{WORKFLOW_PATH}'], text=True)
-        assert_formation_copy_gate((ROOT / WORKFLOW_PATH).read_bytes().decode('utf-8'), cls.workflow)
+        from test_lab_blockers_gate import previous_workflow
+        assert_formation_copy_gate(previous_workflow(), cls.workflow)
         cls.baseline = subprocess.check_output(
             ['git', '-C', str(ROOT), 'show', f'{SPLIT_SHA}:{WORKFLOW_PATH}'], text=True)
         cls.current = jobs(cls.workflow)

@@ -427,6 +427,11 @@ class RehearsalFormationCopySyntheticTests(unittest.TestCase):
         self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])],
                          ['synchronized_domain_provenance'])
         restored = copy.deepcopy(new['synchronized_domain_provenance'])
+        lab_branch = restored.body.pop(1)
+        expected_lab = ast.parse(
+            "if candidate != LAB_BLOCKERS_ADOPTION and git('ls-tree', candidate, '--', LAB_BLOCKERS_MANIFEST):\n"
+            '    return lab_blockers_provenance(repository, candidate, git, check)\n').body[0]
+        self.assertEqual(dump(lab_branch), dump(expected_lab))
         branch = restored.body.pop(1)
         expected_branch = ast.parse(
             "if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):\n"
@@ -468,6 +473,10 @@ class RehearsalFormationCopyCommittedCandidateTests(unittest.TestCase):
             checks.append(name)
             self.assertTrue(passed, name)
         result = ring.synchronized_domain_provenance(ROOT, candidate, git, check)
+        if result['contract'] == 'exact-declared-lab-blockers-ui-delta':
+            self.assertEqual(result['previousAdoptionSourceSha'], ring.LAB_BLOCKERS_ADOPTION)
+            result = result['previousProvenance']
+            self.assertEqual(result['candidateSourceSha'], ring.LAB_BLOCKERS_ADOPTION)
         self.assertEqual(result['contract'], 'exact-declared-npc-rehearsal-formation-copy-ui-delta')
         self.assertEqual(result['previousProvenance']['candidateSourceSha'], REFERENCE)
         self.assertGreater(len(checks), 65)

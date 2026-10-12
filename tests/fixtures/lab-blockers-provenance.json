@@ -1,0 +1,263 @@
+{
+  "schema": "infinity-ring-protection-lab-blockers-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "c80a6728fe9e1769ca4e67fe794b8f0eedfb8627",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-comparison-provenance.json",
+      "sha256": "0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00"
+    },
+    {
+      "path": "tests/fixtures/npc-rehearsal-formation-copy-provenance.json",
+      "sha256": "2143af16367f93160ef9250c18de2e87bb2791f4665159bd3d8f43d8ab9fdb39"
+    }
+  ],
+  "referenceStatus": "Exact read-only laboratory UI adoption atop the recursively verified c80 formation-copy source. c80 CI was not all green; source provenance does not claim native, CI or release acceptance.",
+  "scope": "All production src/public paths, file modes, before/after bytes, complete deterministic Git patches and individual hunks are bound. All nine historical manifests, full domain and ring-critical scopes, original public art, report and comparison UI remain unchanged.",
+  "approvedDelta": "Read-only laboratory blockers model and panel with exact lab view/presentation, local-source space wiring and scoped style additions. No domain, persistence schema, combat, economy, wallet, dispatch, ring or art changes.",
+  "productionPaths": [
+    "src",
+    "public"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "unchangedPresentationPaths": [
+    "public",
+    "src/main.ts",
+    "src/space.css",
+    "src/ui/npc-battle-panel.ts",
+    "src/ui/npc-battle-present.ts",
+    "src/ui/npc-scout-comparison-model.ts",
+    "src/ui/npc-scout-comparison-panel.ts",
+    "src/ui/npc-scout-comparison.css",
+    "src/ui/npc-rehearsal-formation-model.ts",
+    "src/ui/npc-rehearsal-panel.ts"
+  ],
+  "originalUiBaseline": {
+    "baseline": "69eca71",
+    "expected": {
+      "src/style.css": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad",
+      "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+    },
+    "exactDeltaPaths": [
+      "src/style.css",
+      "src/ui/view.ts"
+    ],
+    "changedPaths": [
+      {
+        "path": "src/style.css",
+        "before": {
+          "mode": "100644",
+          "sha256": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "74dc9280eaca0e91c279209508991c4086a15582163bb557788cbd51ce43be2c"
+        },
+        "patchSha256": "aa636c33b5ca18f17ea53b1e2c36b26e9b159a5a556e761581b7640b469e68b6",
+        "hunks": [
+          {
+            "header": "@@ -647,6 +647,11 @@ textarea {",
+            "sha256": "2afcaf94d16217f31c1052bc604d41551650485ff9212e2772875c25a7e456c6"
+          }
+        ]
+      },
+      {
+        "path": "src/ui/view.ts",
+        "before": {
+          "mode": "100644",
+          "sha256": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "a43d58639f1934be5d7b3b61c6479964759f73b4096b6175899baecdb6182907"
+        },
+        "patchSha256": "996f1b69a62c9c522ced7e0544d0eb7ad7bf2c57422608de0ba07ce856dfac15",
+        "hunks": [
+          {
+            "header": "@@ -25,6 +25,7 @@ import type { RunResult } from \"../game/arcade\";",
+            "sha256": "4dafec245402b149abbec501ed051768b545ae0206383c17b447c7e03650749c"
+          },
+          {
+            "header": "@@ -478,6 +479,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {",
+            "sha256": "587042f925ffaa3fe58bb5a4349bddf533daa055243f6a6df80df9340edc97d8"
+          },
+          {
+            "header": "@@ -977,6 +979,7 @@ function shellMarkup(): string {",
+            "sha256": "113fc41c831a99afe3ae5372c5fde3c29e5676cd7a3cfe591ca6fb61301977c0"
+          }
+        ]
+      }
+    ]
+  },
+  "changedPaths": [
+    {
+      "path": "src/style.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "74dc9280eaca0e91c279209508991c4086a15582163bb557788cbd51ce43be2c"
+      },
+      "patchSha256": "aa636c33b5ca18f17ea53b1e2c36b26e9b159a5a556e761581b7640b469e68b6",
+      "hunks": [
+        {
+          "header": "@@ -647,6 +647,11 @@ textarea {",
+          "sha256": "2afcaf94d16217f31c1052bc604d41551650485ff9212e2772875c25a7e456c6"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/lab-blockers-model.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "97da30e319afe4ea1b4673561c5dcd8c54513e1b9d35bbd03b8d2faa58d3c206"
+      },
+      "patchSha256": "57c31215e39a3ac589689e379deeb6e4a6e0f6cc2ed70777f67bc2b386acfe29",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,65 @@",
+          "sha256": "9e76e65e1da24aaebf037b7cb5ce5c886fb1debc91a664c80818e24c774e9677"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/lab-blockers-panel.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "3e8428ea9330c5230fee36ac0395407d672525bc203075c02d946b28ed3b908e"
+      },
+      "patchSha256": "7f3b7fadf712644c9240ba1b00217398abc454130eb7ee81abf7c1503a6bfba1",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,47 @@",
+          "sha256": "b0e1831b12a28789381d96d9165462b2fdae8d2ba310d5355c7521689d4ea736"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/present.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "64924bf70fa17a1b30c2c0c248b25c511ead400075141089297c4891426a3830"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "86979014aff31ab9ea9c4c653e43940199151664ee2074f1f8a7e4368786cbfd"
+      },
+      "patchSha256": "6e5b77f6fb4ab458be64bea9c995fd86d2fc06785f03a22991314c9f3a9304a7",
+      "hunks": [
+        {
+          "header": "@@ -79,6 +79,7 @@ import {",
+          "sha256": "4e1182582ee05c8fcb16f9fb25b993aef288d282b9529bce363b500b1895ddd6"
+        },
+        {
+          "header": "@@ -163,6 +164,8 @@ export interface ResearchPanelView {",
+          "sha256": "378c092f365cf11f136070ecacc84eb096e8b91e09475487a9e8b95912a355e7"
+        },
+        {
+          "header": "@@ -645,6 +648,7 @@ function researchPanel(state: GameState, includeCards = true): ResearchPanelView",
+          "sha256": "259bd474b8934f5bed900e6a07e2e5d18c9381e576119e1d6876df873963ad58"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "55f4f6c61876d545fc70840ad3577b7424e4d8f5396cf427a16b25b4d721b0fa"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "2d96d7cbcd658f17a44eda6369b32aa7e74e451f99ed15efdf7cefc9d71b3691"
+      },
+      "patchSha256": "87ffcdc0ad598c8c16a0b1723996ba493bdf7cd2b156c142abbacaae50a70c0d",
+      "hunks": [
+        {
+          "header": "@@ -1,4 +1,5 @@",
+          "sha256": "1092ff3fd8bf815eec91ee0f52c0895c63181bcaf4dfeb38b967e47e30368ab5"
+        },
+        {
+          "header": "@@ -430,7 +431,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "eb451c2a069f6646bc6ad7e4ea579ada9d9d1ce186830cf93a89890a71f92e5a"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/view.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "a43d58639f1934be5d7b3b61c6479964759f73b4096b6175899baecdb6182907"
+      },
+      "patchSha256": "996f1b69a62c9c522ced7e0544d0eb7ad7bf2c57422608de0ba07ce856dfac15",
+      "hunks": [
+        {
+          "header": "@@ -25,6 +25,7 @@ import type { RunResult } from \"../game/arcade\";",
+          "sha256": "4dafec245402b149abbec501ed051768b545ae0206383c17b447c7e03650749c"
+        },
+        {
+          "header": "@@ -478,6 +479,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {",
+          "sha256": "587042f925ffaa3fe58bb5a4349bddf533daa055243f6a6df80df9340edc97d8"
+        },
+        {
+          "header": "@@ -977,6 +979,7 @@ function shellMarkup(): string {",
+          "sha256": "113fc41c831a99afe3ae5372c5fde3c29e5676cd7a3cfe591ca6fb61301977c0"
+        }
+      ]
+    }
+  ]
+}

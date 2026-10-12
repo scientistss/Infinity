@@ -226,6 +226,32 @@ NPC_REHEARSAL_FORMATION_COPY_UNCHANGED_PATHS = (
     'src/ui/npc-scout-comparison.css',
 )
 
+LAB_BLOCKERS_ADOPTION = 'c80a6728fe9e1769ca4e67fe794b8f0eedfb8627'
+LAB_BLOCKERS_MANIFEST = 'tests/fixtures/lab-blockers-provenance.json'
+# Exact read-only UI source adoption, not CI, native or release acceptance.
+LAB_BLOCKERS_MANIFEST_SHA256 = 'ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8'
+LAB_BLOCKERS_PRODUCTION_PATHS = ('src', 'public')
+LAB_BLOCKERS_CHANGED_PATHS = (
+    'src/style.css',
+    'src/ui/lab-blockers-model.ts',
+    'src/ui/lab-blockers-panel.ts',
+    'src/ui/present.ts',
+    'src/ui/space-panel.ts',
+    'src/ui/view.ts',
+)
+LAB_BLOCKERS_BASELINE_DELTAS = ('src/style.css', 'src/ui/view.ts')
+LAB_BLOCKERS_ORIGINAL_UI_HASHES = {
+    'src/style.css': '2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad',
+    'src/ui/view.ts': '4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264',
+}
+LAB_BLOCKERS_UNCHANGED_PATHS = (
+    'public', 'src/main.ts', 'src/space.css',
+    'src/ui/npc-battle-panel.ts', 'src/ui/npc-battle-present.ts',
+    'src/ui/npc-scout-comparison-model.ts', 'src/ui/npc-scout-comparison-panel.ts',
+    'src/ui/npc-scout-comparison.css', 'src/ui/npc-rehearsal-formation-model.ts',
+    'src/ui/npc-rehearsal-panel.ts',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -379,6 +405,8 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != LAB_BLOCKERS_ADOPTION and git('ls-tree', candidate, '--', LAB_BLOCKERS_MANIFEST):
+        return lab_blockers_provenance(repository, candidate, git, check)
     if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):
         return npc_rehearsal_formation_copy_provenance(repository, candidate, git, check)
     if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):
@@ -957,6 +985,96 @@ def npc_rehearsal_formation_copy_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': NPC_REHEARSAL_FORMATION_COPY_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact same-schema NPC rehearsal formation copy UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
+
+
+def lab_blockers_provenance(repository, candidate, git, check):
+    """Compose immutable c80 formation-copy bytes with only the exact laboratory-blockers UI delta."""
+    check('Laboratory blockers integrates the exact c80 source ancestor',
+          git('merge-base', LAB_BLOCKERS_ADOPTION, candidate).decode().strip() == LAB_BLOCKERS_ADOPTION)
+    prior = npc_rehearsal_formation_copy_provenance(repository, LAB_BLOCKERS_ADOPTION, git, check)
+    check('Laboratory blockers starts at the exact recursively verified c80 formation-copy source',
+          prior['contract'] == 'exact-declared-npc-rehearsal-formation-copy-ui-delta'
+          and prior['candidateSourceSha'] == LAB_BLOCKERS_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared Laboratory blockers path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256),
+                (ATTACK_MANIFEST, ATTACK_MANIFEST_SHA256),
+                (NPC_REPORT_UI_MANIFEST, NPC_REPORT_UI_MANIFEST_SHA256),
+                (NPC_SCOUT_REHEARSAL_MANIFEST, NPC_SCOUT_REHEARSAL_MANIFEST_SHA256),
+                (NPC_SCOUT_COMPARISON_MANIFEST, NPC_SCOUT_COMPARISON_MANIFEST_SHA256),
+                (NPC_REHEARSAL_FORMATION_COPY_MANIFEST, NPC_REHEARSAL_FORMATION_COPY_MANIFEST_SHA256)]
+    for path, digest in previous:
+        local = repository / path
+        check('Laboratory blockers preserves every earlier manifest byte and mode: ' + path,
+              local.is_file() and not local.is_symlink() and not (local.stat().st_mode & 0o111)
+              and sha(local.read_bytes()) == digest
+              and entry(candidate, path) == entry(LAB_BLOCKERS_ADOPTION, path)
+              == {'mode': '100644', 'sha256': digest})
+    local = repository / LAB_BLOCKERS_MANIFEST
+    raw = local.read_bytes()
+    check('Laboratory blockers manifest has its fixed digest and exact committed ordinary-file bytes',
+          local.is_file() and not local.is_symlink() and not (local.stat().st_mode & 0o111)
+          and sha(raw) == LAB_BLOCKERS_MANIFEST_SHA256
+          and entry(candidate, LAB_BLOCKERS_MANIFEST) == {'mode': '100644', 'sha256': LAB_BLOCKERS_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + LAB_BLOCKERS_MANIFEST))
+    manifest = json.loads(raw)
+    check('Laboratory blockers pins c80, all nine prior seals and the complete production and protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-lab-blockers-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == LAB_BLOCKERS_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(LAB_BLOCKERS_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactDomainDeltaPaths') == []
+          and manifest.get('exactRingCriticalDeltaPaths') == []
+          and manifest.get('unchangedPresentationPaths') == list(LAB_BLOCKERS_UNCHANGED_PATHS))
+    delta = changed(LAB_BLOCKERS_ADOPTION, candidate, LAB_BLOCKERS_PRODUCTION_PATHS)
+    check('complete src/public tree differs from c80 only at the exact six laboratory-blockers UI files',
+          delta == list(LAB_BLOCKERS_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, LAB_BLOCKERS_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(LAB_BLOCKERS_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('Laboratory blockers source files are ordinary non-executable files',
+          all(row['after'] is not None and row['after']['mode'] == '100644'
+              and (row['before'] is None or row['before']['mode'] == '100644') for row in rows))
+    check('each laboratory-blockers UI mode, byte, full patch and hunk is exact and anchored in sealed c80 bytes',
+          manifest.get('changedPaths') == rows)
+    baseline_rows = [row for row in rows if row['path'] in LAB_BLOCKERS_BASELINE_DELTAS]
+    check('Original UI baseline bytes permit only the exact two complete laboratory presentation deltas',
+          [row['path'] for row in baseline_rows] == list(LAB_BLOCKERS_BASELINE_DELTAS)
+          and manifest.get('originalUiBaseline') == {'baseline': '69eca71',
+              'expected': LAB_BLOCKERS_ORIGINAL_UI_HASHES, 'exactDeltaPaths': list(LAB_BLOCKERS_BASELINE_DELTAS),
+              'changedPaths': baseline_rows}
+          and all(row['before'] == {'mode': '100644', 'sha256': LAB_BLOCKERS_ORIGINAL_UI_HASHES[row['path']]}
+                  and row['after']['mode'] == '100644' and row['hunks'] for row in baseline_rows))
+    check('Laboratory blockers preserves entire domain, ring, original art, report and comparison scopes',
+          changed(LAB_BLOCKERS_ADOPTION, candidate, DOMAIN_PATHS) == []
+          and changed(LAB_BLOCKERS_ADOPTION, candidate, RING_CRITICAL_PATHS) == []
+          and changed(LAB_BLOCKERS_ADOPTION, candidate, LAB_BLOCKERS_UNCHANGED_PATHS) == [])
+    return {'contract': 'exact-declared-lab-blockers-ui-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': LAB_BLOCKERS_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': LAB_BLOCKERS_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact same-schema Laboratory blockers UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):
