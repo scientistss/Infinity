@@ -13,6 +13,7 @@ import { RESOURCE_IDS, type GameState, type ResourceAmounts } from "./types";
 import type { Fleet } from "./fleet";
 import type { ChargeOrder, ChargeReport, ShipCounts } from "./deep-state";
 import { storedRunLimit, retainChargeReports } from "./deep-state";
+import { calculateRecycleAmounts } from "./recycle-amounts";
 
 const zeroCargo=():ResourceAmounts=>({metal:big(0),crystal:big(0),deuterium:big(0)});
 const count=(ships:ShipCounts)=>Object.values(ships).reduce((n,v)=>n+(v??0),0);
@@ -64,12 +65,7 @@ export function addDebris(state:GameState,target:Coordinates,metal:BigNumber,cry
 export function recycleDebris(state:GameState,fleet:Fleet):{state:GameState;fleet:Fleet;summary:string} {
   const key=coordinateKey(fleet.target),field=state.deepSpace.debris.find(d=>coordinateKey(d.target)===key);
   if(!field)return {state,fleet,summary:"目标已无残骸，空载返航"};
-  const factor=1+.05*state.research.levels.hyperspace_tech;
-  const capacity=SHIP_IDS.reduce((s,id)=>s.add(big(unitById(id).cargo).mul(fleet.ships[id]??0).mul(factor)),big(0));
-  const collector=big(unitById("recycler").cargo).mul(fleet.ships.recycler??0).mul(factor);
-  const room=capacity.sub(cargoTotal(fleet.cargo)).max(0).min(collector),m=big(field.metal),c=big(field.crystal),total=m.add(c);
-  const take=room.min(total),metal=total.gt(0)?take.mul(m).div(total).floor():big(0),crystal=take.sub(metal).min(c).floor();
-  const leftM=m.sub(metal),leftC=c.sub(crystal);
+  const {metal,crystal,leftMetal:leftM,leftCrystal:leftC}=calculateRecycleAmounts({ships:fleet.ships,cargo:fleet.cargo,hyperspace:state.research.levels.hyperspace_tech,debris:field});
   const debris=state.deepSpace.debris.filter(d=>coordinateKey(d.target)!==key);
   if(leftM.gt(0)||leftC.gt(0))debris.push({...field,metal:leftM.toString(),crystal:leftC.toString()});
   return {state:{...state,deepSpace:{...state.deepSpace,debris}},fleet:{...fleet,cargo:{...fleet.cargo,metal:fleet.cargo.metal.add(metal),crystal:fleet.cargo.crystal.add(crystal)}},summary:`已回收金属 ${metal.toString()}、晶体 ${crystal.toString()}，返航后入库`};
