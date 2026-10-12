@@ -476,12 +476,17 @@ def lifecycle_and_hostile_dom():
     for action in ('tab-away','switch-planet-return','same-id-import','reset','duplicate','detach','detach-reinsert','crosslabel','ancestor-reinsert','quote-hidden','total-hidden','quote-hide-show','ancestor-hide-show','class-hide-show','style-visibility-hide-show','quote-text-tamper','total-text-tamper','same-text-hidden-child'):
         begin_case('SYNTHETIC-authority-'+action)
         with live_context(fixture['raw']) as (_context,page):
-            expected=save(page); prepare(page,unit,'count','1'); button=page.locator(b('upay',unit)).element_handle(); control=page.locator(b('ucard',unit)).element_handle()
+            expected=save(page); saved_raw=raw(page)
+            if action=='same-id-import':
+                saved_envelope=json.loads(saved_raw)
+                saved_ref=persist_json('same-id-real-save-import-source',{'raw':saved_raw,'rawSha256':digest(saved_raw.encode()),'envelope':saved_envelope,'expected':expected,'origin':'Exact bytes produced by this context real Save; no fixture serialization or unadopted setup raw.'})
+                check('same-id import source is the complete just-saved world with original world and planet identities',exact_json(saved_envelope['state'],expected) and saved_envelope['state']['universe']==fixture['expected']['universe'] and saved_envelope['state']['activePlanetId']==fixture['expected']['activePlanetId'] and [p['id'] for p in saved_envelope['state']['planets']]==[p['id'] for p in fixture['expected']['planets']],saved_ref)
+            prepare(page,unit,'count','1'); button=page.locator(b('upay',unit)).element_handle(); control=page.locator(b('ucard',unit)).element_handle()
             before_ref=persist_json('authority-before',{'state':expected,'card':card(page,unit),'storage':all_storage(page)})
             if action=='tab-away': tab(page,'overview')
             elif action=='switch-planet-return':
                 select(page,'#planet-select','colony-1'); select(page,'#planet-select','homeworld')
-            elif action=='same-id-import': import_file(page,fixture['raw'],'same-id-original')
+            elif action=='same-id-import': import_file(page,saved_raw,'same-id-original')
             elif action=='reset':
                 tab(page,'save'); dialogs=[]
                 def accept_reset(dialog):

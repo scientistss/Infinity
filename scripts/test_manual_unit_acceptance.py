@@ -351,12 +351,41 @@ class FixtureProvenanceTests(unittest.TestCase):
         self.assertIn("fixture['advanceSeconds']==len(fixture['tickAudit'])==10",definition('latest_plan'))
         self.assertIn("for tick in fixture['tickAudit']:",definition('latest_plan'))
 
+    def test_synthetic_oracles_share_real_zero_gap_cold_start_adoption(self):
+        source=FIXTURE.read_text()
+        put=source.split('function put(')[1].split('const unlocked=')[0]
+        self.assertIn('raw=exportSave(s,epoch), original=JSON.parse(raw), file=importSave(raw)',put)
+        self.assertIn('restored=deserializeState(file.state)',put)
+        self.assertIn('startup=catchUp(restored,0), adopted=startup.state, expected=serializeState(adopted)',put)
+        self.assertIn('extraExpected=extra(adopted)',put)
+        self.assertIn('originalEnvelope:original,readerEnvelope:file,readerState,adoptedState:expected',put)
+        self.assertIn('startup.appliedSeconds===0 && startup.rawSeconds===0',put)
+        self.assertIn('["computer_4","plasma_1","first_defense"]',put)
+        self.assertIn('500*expectedAchievements.length',put)
+        for value in ('paid(adopted,id,1)','paid(adopted,"small_cargo",2)','paid(adopted,"anti_ballistic_missile",1)','paid(adopted,"deathstar",1000000)','let afterPlanTick = adopted'):
+            self.assertIn(value,source)
+        positive=source.split('const unlocked=syntheticBase();')[1].split('let full=clone(unlocked);')[0]
+        self.assertNotIn('paid(clone(unlocked)',positive)
+        for forbidden in ('paid(clone(wide)','paid(clone(s),"anti_ballistic_missile"','let afterPlanTick = clone(plan)'):
+            self.assertNotIn(forbidden,source)
+        self.assertIn('Natural unchanged handoff must also be unchanged through actual zero-gap startup',source)
+
+    def test_same_id_import_uses_actual_saved_bytes_not_unadopted_setup(self):
+        source=definition('lifecycle_and_hostile_dom')
+        self.assertIn('expected=save(page); saved_raw=raw(page)',source)
+        self.assertIn("'rawSha256':digest(saved_raw.encode())",source)
+        self.assertIn("exact_json(saved_envelope['state'],expected)",source)
+        self.assertIn("import_file(page,saved_raw,'same-id-original')",source)
+        self.assertNotIn("import_file(page,fixture['raw'],'same-id-original')",source)
+        self.assertLess(source.index("persist_json('same-id-real-save-import-source'"),source.index("prepare(page,unit,'count','1')"))
+        self.assertLess(source.index("exact_json(saved_envelope['state'],expected)"),source.index("import_file(page,saved_raw"))
+
     def test_synthetic_funding_is_explicit_and_all_edges_are_present(self):
         source=FIXTURE.read_text()
         self.assertIn('classification:"EXPLICIT SYNTHETIC: "+detail',source)
         for edge in ('all-unlocked','queue-full','insufficient','owned-','queued-','silo-','unit-cap','latest-plan','full-price'):
             self.assertIn('"'+edge,source)
-        self.assertIn('paid(clone(s),"anti_ballistic_missile",1)',source)
+        self.assertIn('paid(adopted,"anti_ballistic_missile",1)',source)
         self.assertIn('unitById("solar_satellite").drives.length===0',source)
 
 

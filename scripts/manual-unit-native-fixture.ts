@@ -6,6 +6,7 @@
  */
 declare const process: { argv: string[]; version: string; stdout: { write(value: string): void } };
 import { SAVE_VERSION, SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
+import { catchUp } from "../src/core/offline";
 import { UNIT_IDS, unitById, type UnitId } from "../src/data/units";
 import { big } from "../src/game/decimal";
 import { activePlanet, selectPlanet } from "../src/game/empire";
@@ -43,6 +44,7 @@ for (const m of [m05, m09]) exact(importSave(JSON.stringify(m.save)), m.save, "H
 const epoch: number = m05.save.savedAt;
 const load = (save = m05.save): GameState => deserializeState(importSave(JSON.stringify(save)).state);
 const clone = (s: GameState): GameState => deserializeState(importSave(exportSave(s, epoch)).state);
+for (const milestone of [m05,m09]) exact(serializeState(catchUp(load(milestone.save),0).state),milestone.save.state,"Natural unchanged handoff must also be unchanged through actual zero-gap startup");
 const accepted = (r: { state: GameState; ok: boolean; reason: string }): GameState => { check(r.ok, r.reason); return r.state; };
 // Independent catalog golden: literal design prices, never derived from new quote code.
 const GOLDEN: Record<UnitId, readonly [number, number, number]> = {
@@ -125,14 +127,35 @@ function syntheticBase(): GameState {
   return selectPlanet(s,"homeworld");
 }
 const synthetic: Record<string, { classification: string; raw: string; expected: ReturnType<typeof serializeState>; [key: string]: unknown }> = {};
-function put(name: string, s: GameState, detail: string, extra: Record<string,unknown> = {}) {
-  const raw=exportSave(s,epoch), restored=importSave(raw);
-  exact(serializeState(deserializeState(restored.state)),restored.state,name+": strict synthetic roundtrip");
-  synthetic[name]={classification:"EXPLICIT SYNTHETIC: "+detail,raw,expected:restored.state,...extra};
+function put(name: string, s: GameState, detail: string, extra: (adopted: GameState) => Record<string,unknown> = () => ({})) {
+  // Preserve the exact setup bytes. Production SaveSession performs one strict
+  // reader adoption followed by catchUp(0), even when no elapsed time exists.
+  const raw=exportSave(s,epoch), original=JSON.parse(raw), file=importSave(raw);
+  const restored=deserializeState(file.state), readerState=serializeState(restored);
+  exact(readerState,file.state,name+": strict synthetic reader roundtrip");
+  const startup=catchUp(restored,0), adopted=startup.state, expected=serializeState(adopted);
+  check(startup.appliedSeconds===0 && startup.rawSeconds===0 && expected.totalTime===readerState.totalTime,
+    name+": synthetic startup must not advance time");
+  const defenseOwned=name.startsWith("owned-") || name.startsWith("silo-");
+  const expectedAchievements=defenseOwned?["computer_4","plasma_1","first_defense"]:["computer_4","plasma_1"];
+  exact(startup.newAchievementIds,expectedAchievements,name+": independent literal startup achievement census");
+  check(readerState.darkMatter==="6000" && readerState.stats.darkMatterEarned===6000
+    && expected.darkMatter===String(6000+500*expectedAchievements.length)
+    && expected.stats.darkMatterEarned===6000+500*expectedAchievements.length,
+    name+": old engine awards exactly 500 dark matter for each newly earned synthetic achievement");
+  exact(serializeState(catchUp(adopted,0).state),expected,name+": a detached zero-gap validation cannot reward twice");
+  const extraExpected=extra(adopted);
+  exact(serializeState(adopted),expected,name+": positive/boundary oracles must leave the shared adopted input unchanged");
+  synthetic[name]={classification:"EXPLICIT SYNTHETIC: "+detail,raw,expected,
+    startup:{sequence:["original setup raw","importSave(raw)","deserializeState(file.state)","catchUp(restored, 0)"],
+      originalEnvelope:original,readerEnvelope:file,readerState,adoptedState:expected,
+      appliedSeconds:startup.appliedSeconds,rawSeconds:startup.rawSeconds,newAchievementIds:startup.newAchievementIds,
+      origin:"Unchanged production SaveSession zero-gap startup; achievements arise from explicitly synthetic prerequisites/stock, never a clock step or manual reward grant."},
+    ...extraExpected};
 }
-const unlocked=syntheticBase(); put("all-unlocked",unlocked,"20,000,000 each resource and completed prerequisite levels are setup grants; never natural.",{
-  positive: Object.fromEntries(UNIT_IDS.map(id=>[id,{count:1,total:price(id,1),expected:serializeState(paid(clone(unlocked),id,1))}])),
-  legalRaw:{raw:" 0002 ",count:2,total:price("small_cargo",2),expected:serializeState(paid(clone(unlocked),"small_cargo",2))} });
+const unlocked=syntheticBase(); put("all-unlocked",unlocked,"20,000,000 each resource and completed prerequisite levels are setup grants; never natural.",adopted=>({
+  positive: Object.fromEntries(UNIT_IDS.map(id=>[id,{count:1,total:price(id,1),expected:serializeState(paid(adopted,id,1))}])),
+  legalRaw:{raw:" 0002 ",count:2,total:price("small_cargo",2),expected:serializeState(paid(adopted,"small_cargo",2))} }));
 let full=clone(unlocked); for(let i=0;i<10;i++) full=paid(full,"small_cargo",1);
 put("queue-full",full,"Explicit unlocked/funded setup, all ten queue slots paid via unchanged ordinary APIs.");
 const poor=clone(unlocked); activePlanet(poor).resources={metal:big(0),crystal:big(0),deuterium:big(0)};
@@ -144,15 +167,16 @@ for(const id of ["small_shield_dome","large_shield_dome"] as const) {
 for(const slots of [39,40]) {
   const s=clone(unlocked); activePlanet(s).units.anti_ballistic_missile=slots;
   put("silo-"+slots,s,"Explicit level-four silo and "+slots+" owned one-slot missiles; edge capacity fixture.",
-    slots===39?{abmExpected:serializeState(paid(clone(s),"anti_ballistic_missile",1))}:{});
+    adopted=>slots===39?{abmExpected:serializeState(paid(adopted,"anti_ballistic_missile",1))}:{});
 }
 const saturated=clone(unlocked); activePlanet(saturated).units.small_cargo=1000000000000000;
 put("unit-cap",saturated,"Explicit local 10^15 unit count; no natural claim.");
 let plan=clone(unlocked); plan=accepted(createOrderTask(plan,{kind:"shipyard",planetId:"homeworld",unit:"small_cargo",quantity:1000,
   budget:{metal:"2000000",crystal:"2000000",deuterium:"0"},expectedNextTaskId:plan.orders.nextTaskId,transport:null}));
-let afterPlanTick = clone(plan), planAdvanceSeconds = 0;
+function planContinuation(adopted: GameState) {
+let afterPlanTick = adopted, planAdvanceSeconds = 0;
 const planTickAudit: Array<Record<string,unknown>> = [];
-const planTaskId = plan.orders.nextTaskId-1;
+const planTaskId = adopted.orders.nextTaskId-1;
 while (afterPlanTick.orders.tasks.find(task=>task.id===planTaskId)?.activeJob === null) {
   check(planAdvanceSeconds < 12,"Real ten-second scheduler cadence must pay within twelve ordinary one-second steps");
   const before = serializeState(afterPlanTick); afterPlanTick = tick(afterPlanTick,1,"live"); planAdvanceSeconds++;
@@ -167,12 +191,13 @@ exact(Object.fromEntries(RES.map(r=>[r,paidPlanJob.paidPerUnit[r].toString()])),
 const freshMax = Math.min(...RES.flatMap((r,i) => GOLDEN.small_cargo[i] ? [Math.floor(activePlanet(afterPlanTick).resources[r].toNumber()/GOLDEN.small_cargo[i]!)] : []));
 const freshFill = 1500-activePlanet(afterPlanTick).units.small_cargo-activePlanet(afterPlanTick).shipyardQueue.filter(j=>j.unit==="small_cargo").reduce((sum,j)=>sum+j.count,0);
 check(freshMax===9000 && freshFill===498,"Literal changed max/fill quotes must follow the real scheduled payment");
-put("latest-plan",plan,"Explicit funded setup and real unpaid finite plan; ten ordinary one-second ticks reach its unchanged real scheduler cadence.",{
-  advanceSeconds:planAdvanceSeconds,tickAudit:planTickAudit,afterTick:serializeState(afterPlanTick),fresh:{max:{raw:"17",count:freshMax,expected:serializeState(paid(afterPlanTick,"small_cargo",freshMax))},
-    fill:{raw:"1500",count:freshFill,expected:serializeState(paid(afterPlanTick,"small_cargo",freshFill))}}});
+return {advanceSeconds:planAdvanceSeconds,tickAudit:planTickAudit,afterTick:serializeState(afterPlanTick),fresh:{max:{raw:"17",count:freshMax,expected:serializeState(paid(afterPlanTick,"small_cargo",freshMax))},
+    fill:{raw:"1500",count:freshFill,expected:serializeState(paid(afterPlanTick,"small_cargo",freshFill))}}};
+}
+put("latest-plan",plan,"Explicit funded setup and real unpaid finite plan; its actual cold-start adopted state precedes ten ordinary one-second ticks to the unchanged scheduler cadence.",planContinuation);
 const wide=clone(unlocked); activePlanet(wide).resources={metal:big("999999999999999"),crystal:big("999999999999999"),deuterium:big("999999999999999")};
-put("full-price",wide,"Explicit large wallets solely for complete untruncated three-resource display.",{
-  unit:"deathstar",count:1000000,total:price("deathstar",1000000),expectedPaid:serializeState(paid(clone(wide),"deathstar",1000000))});
+put("full-price",wide,"Explicit large wallets solely for complete untruncated three-resource display.",adopted=>({
+  unit:"deathstar",count:1000000,total:price("deathstar",1000000),expectedPaid:serializeState(paid(adopted,"deathstar",1000000))}));
 check(canBuildUnits(unlocked,"solar_satellite",1).ok && unitById("solar_satellite").drives.length===0,"Solar satellite remains buildable and non-flying");
 process.stdout.write(JSON.stringify({schema:"infinity-manual-unit-native-fixture-v1",key:STORAGE_KEY,
   source:{sourceSha,fullTree:git("rev-parse","HEAD^{tree}"),scriptSha256:hash(readFileSync(new URL(import.meta.url))),runtimeNode:process.version},
