@@ -24,7 +24,7 @@ from test_parallel_legacy_gate_split import GAME_JOBS, WORKFLOW_PATH, jobs, run,
 ROOT = Path(__file__).resolve().parents[1]
 BASE_SHA = 'c80a6728fe9e1769ca4e67fe794b8f0eedfb8627'
 BASE_WORKFLOW_SHA256 = '3aeeb66de96a12261f16cdf89fb68b3682752d4ab54329cce8434b0e2efb5cc1'
-CORRECTED_FORMATION_SHA = '241a51de31364e9086abcc304884bf9df7cd6912'
+CORRECTED_FORMATION_SHA = '54d1ff0896045d61464ca6de057da3706e2981ac'
 OLD_VERSION = '0.6.23-alpha.1'
 VERSION = '0.6.24-alpha.1'
 ALL_GAME_JOBS = (*GAME_JOBS, 'lab-blockers')
