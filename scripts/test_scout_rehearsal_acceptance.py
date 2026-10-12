@@ -642,6 +642,149 @@ class StorageDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("'infinity.ui.tab':'fleet'",body)
 
 
+class RetiredFillBoundaryTests(unittest.TestCase):
+    def state(self, same_node=False):
+        return {'initial':{'panelHidden':False,'fillDisabled':False,'fillConnected':True,
+                           'cardCount':3,'cardsConnected':True},
+                'samePanel':True,'sameResults':True,'sameFill':same_node,'fillCount':1,
+                'panelConnected':True,'panelHidden':True,'currentFillConnected':True,
+                'currentFillDisabled':same_node,'currentFillRectCount':0,
+                'originalFillConnected':same_node,'originalFillDisabled':True,
+                'originalCardsDetached':True,'resultsHidden':True,'resultCount':0,'runDisabled':True}
+
+    def run_boundary(self, before=None, after=None, *, same_node=False, visible=False, enabled=True,
+                     click_events=None, unexpected_events=None):
+        before=self.state(same_node) if before is None else before
+        after=copy.deepcopy(before) if after is None else after
+        owner=self;checks=[];calls=[];events=[]
+        class References:
+            reads=0
+            def evaluate(self, expression):
+                owner.assertEqual(expression,module.RETIRED_FILL_STATE)
+                self.reads+=1
+                return copy.deepcopy(before if self.reads==1 else after)
+        class Node:
+            def is_visible(self):return visible
+            def is_enabled(self):return enabled
+            def click(self):raise AssertionError('direct or forced click is forbidden')
+            def evaluate(self,*args):raise AssertionError('synthetic hidden click is forbidden')
+        class Page:
+            def locator(self, selector):
+                owner.assertEqual(selector,'#npc-rehearsal-fill');return Node()
+            def evaluate(self, expression, *args):
+                if expression=='window.__npcClicks.length':return len(events)
+                owner.assertEqual(expression,'(n)=>window.__npcClicks.slice(n)')
+                return copy.deepcopy(events[args[0]:] if unexpected_events is None else unexpected_events)
+        page=Page()
+        def trusted_click(actual,selector):
+            owner.assertIs(actual,page);owner.assertEqual(selector,'#npc-rehearsal-fill')
+            calls.append('trusted-click')
+            events.extend([{'id':'npc-rehearsal-fill','trusted':True}] if click_events is None else click_events)
+        def check(name, condition, detail=None):
+            checks.append({'name':name,'passed':bool(condition),'detail':detail})
+            if not condition:raise AssertionError(name)
+        with patch.object(module,'check',check),patch.object(module,'trusted_click',trusted_click,create=True):
+            module.retired_fill_boundary(page,References(),same_node=same_node)
+        return calls,checks
+
+    def test_hidden_enabled_clone_has_explicit_unavailable_zero_event_witness(self):
+        calls,checks=self.run_boundary()
+        self.assertEqual(calls,[])
+        witness=checks[-1]['detail']
+        self.assertEqual(witness['action'],'native-unavailable');self.assertEqual(witness['events'],[])
+        self.assertFalse(witness['visibleBefore']);self.assertTrue(witness['enabledBefore'])
+        self.assertTrue(witness['after']['originalFillDisabled'])
+        self.assertFalse(witness['after']['currentFillDisabled'])
+
+    def test_detach_and_leaf_aba_keep_original_identity_but_retire_authority(self):
+        calls,checks=self.run_boundary(same_node=True,enabled=False)
+        self.assertEqual(calls,[])
+        self.assertTrue(checks[-1]['detail']['after']['sameFill'])
+        self.assertTrue(checks[-1]['detail']['after']['originalFillConnected'])
+
+    def test_visible_enabled_fill_must_receive_one_trusted_click(self):
+        before=self.state();before.update(panelHidden=False,currentFillRectCount=1)
+        calls,checks=self.run_boundary(before,visible=True,enabled=True)
+        self.assertEqual(calls,['trusted-click'])
+        witness=checks[-1]['detail']
+        self.assertEqual(witness['action'],'trusted-click')
+        self.assertEqual(witness['events'],[{'id':'npc-rehearsal-fill','trusted':True}])
+
+    def test_visible_disabled_original_has_explicit_disabled_witness(self):
+        before=self.state(True);before.update(panelHidden=False,currentFillRectCount=1)
+        calls,checks=self.run_boundary(before,same_node=True,visible=True,enabled=False)
+        self.assertEqual(calls,[]);self.assertEqual(checks[-1]['detail']['action'],'native-unavailable')
+
+    def test_hidden_classification_never_accepts_missing_geometry_or_wrong_disabled_state(self):
+        for changes,visible,enabled in (({'panelHidden':False},False,True),
+                                       ({'currentFillRectCount':1},False,True),
+                                       ({'currentFillDisabled':False},True,False)):
+            with self.subTest(changes=changes):
+                before=self.state();before.update(changes)
+                with self.assertRaisesRegex(AssertionError,'explicitly disabled or hidden'):
+                    self.run_boundary(before,visible=visible,enabled=enabled)
+
+    def test_missing_or_wrong_original_identity_cannot_be_skipped(self):
+        for changes in ({'samePanel':False},{'sameResults':False},{'fillCount':0},{'fillCount':2},
+                        {'panelConnected':False},{'currentFillConnected':False},
+                        {'sameFill':True},{'originalFillConnected':True},
+                        {'initial':{**self.state()['initial'],'cardCount':0}}):
+            with self.subTest(changes=changes):
+                before=self.state();before.update(changes)
+                with self.assertRaisesRegex(AssertionError,'exact expected original/replacement Fill'):
+                    self.run_boundary(before)
+
+    def test_unretired_original_or_review_nodes_fail_even_when_native_control_unavailable(self):
+        for changes in ({'originalFillDisabled':False},{'runDisabled':False},
+                        {'originalCardsDetached':False},{'resultsHidden':False},{'resultCount':3},
+                        {'sameFill':True},{'originalFillConnected':True},{'samePanel':False},
+                        {'sameResults':False},{'fillCount':0},{'currentFillConnected':False}):
+            with self.subTest(changes=changes):
+                after=self.state();after.update(changes)
+                with self.assertRaisesRegex(AssertionError,'old Fill capability stays retired'):
+                    self.run_boundary(after=after)
+
+    def test_unavailable_branch_cannot_claim_zero_events_if_any_were_observed(self):
+        with self.assertRaisesRegex(AssertionError,'exact zero-event or trusted-event witness'):
+            self.run_boundary(unexpected_events=[{'id':'npc-rehearsal-fill','trusted':False}])
+
+    def test_unavailable_control_cannot_silently_become_actionable_during_witness(self):
+        after=self.state();after.update(panelHidden=False,currentFillRectCount=1)
+        with self.assertRaisesRegex(AssertionError,'exact zero-event or trusted-event witness'):
+            self.run_boundary(after=after)
+
+    def test_missing_untrusted_duplicate_or_wrong_target_click_never_proves_trusted_refusal(self):
+        for events in ([],[{'id':'npc-rehearsal-fill','trusted':False}],
+                       [{'id':'npc-rehearsal-run','trusted':True}],
+                       [{'id':'npc-rehearsal-fill','trusted':True}]*2):
+            with self.subTest(events=events):
+                with self.assertRaisesRegex(AssertionError,'exact zero-event or trusted-event witness'):
+                    self.run_boundary(visible=True,click_events=events)
+
+    def test_mutations_keep_native_negative_full_draft_storage_and_live_state_contracts(self):
+        source=SCRIPT.read_text()
+        authority=source.split('def authority_boundaries():',1)[1].split('def save_without_navigation',1)[0]
+        leaf=source.split('def leaf_retirement_boundaries():',1)[1].split('def curvature_and_eviction',1)[0]
+        for body in (authority,leaf):
+            self.assertIn('page.evaluate_handle(RETIRED_FILL_REFERENCES)',body)
+            self.assertIn('finally:dispose_capture_handles(refs)',body)
+            self.assertLess(body.index('retired_fill_boundary('),body.index('whole_state('))
+        self.assertIn("retired_fill_boundary(page,refs,same_node=kind=='detach')",authority)
+        self.assertIn('retired_fill_boundary(page,refs,same_node=True)',leaf)
+        self.assertIn('e.remove();p.insertBefore(e,n)',authority)
+        self.assertIn('e.cloneNode(true);e.replaceWith(c)',authority)
+        self.assertIn("storage_check('cloned detached or same-ID replacement cannot fill stale draft'",authority)
+        self.assertIn('condition=exact_json(draft_values(page), draft_before)',authority)
+        self.assertIn('condition=draft_values(page)==draft',leaf)
+        self.assertIn("unchanged_authority_draft(page, 'authority-' + kind, draft_before)",authority)
+        self.assertIn("unchanged_authority_draft(page, 'leaf-' + selector + '-' + attribute, draft)",leaf)
+        helper=source.split('def retired_fill_boundary(',1)[1].split('def authority_boundaries',1)[0]
+        for forbidden in ('.click(', 'force=', 'dispatchEvent', 'setAttribute', '.hidden=', 'except '):
+            self.assertNotIn(forbidden,helper)
+        for forbidden in ('if node.is_enabled(): node.click()', 'if fill.is_visible() and fill.is_enabled():fill.click()'):
+            self.assertNotIn(forbidden,source)
+
+
 class ScreenshotNoninterferenceTests(unittest.TestCase):
     def state(self):
         return {'samePanel':True,'sameNodes':True,'sameAncestors':True,'allOriginalNodesConnected':True,

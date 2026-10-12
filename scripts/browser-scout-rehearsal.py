@@ -817,6 +817,73 @@ def unchanged_authority_draft(page, name, expected):
           {'actual': actual, 'expected': expected})
 
 
+RETIRED_FILL_REFERENCES = r'''()=>{
+  const panel=document.querySelector('#npc-rehearsal-panel');
+  const fill=document.querySelector('#npc-rehearsal-fill');
+  const results=document.querySelector('#npc-rehearsal-results');
+  const cards=[...results.querySelectorAll('details.npc-battle-report')];
+  return {panel,fill,results,cards,initial:{panelHidden:panel.hidden,fillDisabled:fill.disabled,
+    fillConnected:fill.isConnected,cardCount:cards.length,cardsConnected:cards.every(e=>e.isConnected)}};
+}'''
+RETIRED_FILL_STATE = r'''refs=>{
+  const panel=document.querySelector('#npc-rehearsal-panel');
+  const fill=document.querySelector('#npc-rehearsal-fill');
+  const results=document.querySelector('#npc-rehearsal-results');
+  return {initial:refs.initial,samePanel:refs.panel===panel,sameResults:refs.results===results,
+    sameFill:refs.fill===fill,fillCount:document.querySelectorAll('#npc-rehearsal-fill').length,
+    panelConnected:panel?.isConnected??false,panelHidden:panel?.hidden??false,
+    currentFillConnected:fill?.isConnected??false,currentFillDisabled:fill?.disabled??null,
+    currentFillRectCount:fill?.getClientRects().length??null,
+    originalFillConnected:refs.fill.isConnected,originalFillDisabled:refs.fill.disabled,
+    originalCardsDetached:refs.cards.every(e=>!e.isConnected&&e.getClientRects().length===0),
+    resultsHidden:results?.hidden??false,resultCount:results?.querySelectorAll('details.npc-battle-report').length??null,
+    runDisabled:document.querySelector('#npc-rehearsal-run')?.disabled??null};
+}'''
+
+
+def retired_fill_boundary(page, refs, *, same_node):
+    """Distinguish an unavailable native control from a real trusted refusal.
+    Retain original capabilities across removal/ABA. A copied enabled property
+    does not make a button in a hidden panel actionable. Never force visibility,
+    script-click a hidden node, or treat absence as a passing negative case.
+    """
+    before=refs.evaluate(RETIRED_FILL_STATE)
+    check('retirement starts from three live samples and the exact expected original/replacement Fill',
+          before['initial']=={'panelHidden':False,'fillDisabled':False,'fillConnected':True,
+                              'cardCount':3,'cardsConnected':True}
+          and before['samePanel'] and before['sameResults'] and before['panelConnected']
+          and before['fillCount']==1 and before['currentFillConnected']
+          and before['sameFill'] is same_node and before['originalFillConnected'] is same_node,before)
+    node=page.locator('#npc-rehearsal-fill')
+    visible,enabled=node.is_visible(),node.is_enabled()
+    start=page.evaluate('window.__npcClicks.length')
+    if visible and enabled:
+        action='trusted-click'
+        trusted_click(page,'#npc-rehearsal-fill')
+    else:
+        action='native-unavailable'
+        check('retired Fill is explicitly disabled or hidden with no native target geometry',
+              (not enabled and before['currentFillDisabled'] is True)
+              or (not visible and before['panelHidden'] and before['currentFillRectCount']==0),
+              {'visible':visible,'enabled':enabled,'state':before})
+    after=refs.evaluate(RETIRED_FILL_STATE)
+    events=page.evaluate('(n)=>window.__npcClicks.slice(n)',start)
+    witness={'action':action,'visibleBefore':visible,'enabledBefore':enabled,
+             'before':before,'after':after,'events':events,
+             'boundary':'Unavailable means no native action was attempted; only trusted-click tests event refusal.'}
+    check('retired Fill native action has an exact zero-event or trusted-event witness',
+          (events==[] and (after['currentFillDisabled'] is True
+                          or after['panelHidden'] and after['currentFillRectCount']==0)
+           if action=='native-unavailable' else len(events)==1
+           and events[0]['trusted'] is True and events[0]['id']=='npc-rehearsal-fill'),witness)
+    check('old Fill capability stays retired with disabled original controls and detached review cards',
+          after['samePanel'] and after['sameResults'] and after['panelConnected']
+          and after['fillCount']==1 and after['currentFillConnected']
+          and after['sameFill'] is same_node and after['originalFillConnected'] is same_node
+          and after['originalFillDisabled'] is True and after['runDisabled'] is True
+          and after['originalCardsDetached'] and after['resultsHidden'] and after['resultCount']==0,witness)
+
+
 def authority_boundaries():
     before_row = next(r for r in fixtures['milestones'] if r['name'] == 'scout11-returned')
     for kind in ('forged', 'clone', 'detach', 'same-id-remount', 'planet', 'cancelled-import', 'corrupt-import', 'same-world-import', 'conflict'):
@@ -829,10 +896,12 @@ def authority_boundaries():
                           condition=exact_json(draft_values(page), draft_before))
         elif kind in ('clone', 'detach', 'same-id-remount'):
             selector = '#npc-rehearsal-fill'
-            page.locator(selector).evaluate('''(e,kind)=>{if(kind==='detach'){const p=e.parentNode,n=e.nextSibling;e.remove();p.insertBefore(e,n);}else{const c=e.cloneNode(true);e.replaceWith(c);}}''', kind)
-            advance(page)
-            node = page.locator(selector)
-            if node.is_enabled(): node.click(); advance(page)
+            refs=page.evaluate_handle(RETIRED_FILL_REFERENCES)
+            try:
+                page.locator(selector).evaluate('''(e,kind)=>{if(kind==='detach'){const p=e.parentNode,n=e.nextSibling;e.remove();p.insertBefore(e,n);}else{const c=e.cloneNode(true);e.replaceWith(c);}}''', kind)
+                advance(page)
+                retired_fill_boundary(page,refs,same_node=kind=='detach')
+            finally:dispose_capture_handles(refs)
             storage_check('cloned detached or same-ID replacement cannot fill stale draft', page, before,
                           condition=exact_json(draft_values(page), draft_before))
         elif kind == 'planet':
@@ -949,10 +1018,13 @@ def leaf_retirement_boundaries():
         for attribute in ('hidden','style','aria-hidden'):
             begin_case('EXPLICIT-DOM-own-leaf-retirement-'+selector+'-'+attribute)
             context,page=boot(row['raw']);open_report(page);run_six(page);before=storage(page);draft=draft_values(page)
-            page.locator(selector).evaluate('''(e,a)=>{const old=e.getAttribute(a);e.setAttribute(a,a==='style'?'display:none':a==='aria-hidden'?'true':'');if(old===null)e.removeAttribute(a);else e.setAttribute(a,old);}''',attribute)
-            advance(page)
+            refs=page.evaluate_handle(RETIRED_FILL_REFERENCES)
+            try:
+                page.locator(selector).evaluate('''(e,a)=>{const old=e.getAttribute(a);e.setAttribute(a,a==='style'?'display:none':a==='aria-hidden'?'true':'');if(old===null)e.removeAttribute(a);else e.setAttribute(a,old);}''',attribute)
+                advance(page)
+                retired_fill_boundary(page,refs,same_node=True)
+            finally:dispose_capture_handles(refs)
             fill=page.locator('#npc-rehearsal-fill')
-            if fill.is_visible() and fill.is_enabled():fill.click();advance(page)
             storage_check('same-turn own leaf hide/restore permanently retires old review capability', page, before,
                           condition=draft_values(page)==draft and (page.locator('#npc-rehearsal-panel').is_hidden() or fill.is_disabled()))
             unchanged_authority_draft(page, 'leaf-' + selector + '-' + attribute, draft)
