@@ -1,0 +1,68 @@
+name: Verify dormant NPC civilian growth preparation
+on:
+  push:
+    branches: ['codex/infinity-npc-growth-preparation-20261012']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: npc-growth-preparation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: 576e92910a07456a9b237b809e7c77d95203bbe5
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Require isolated preparation without application changes
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          expected = {
+              '.github/workflows/npc-growth-preparation.yml',
+              'docs/NPC_CIVILIAN_GROWTH_PREPARATION.md',
+              'preparation/npc-growth/README.md',
+              'preparation/npc-growth/domain.mjs',
+              'preparation/npc-growth/oracle.py',
+              'preparation/npc-growth/golden.json',
+              'preparation/npc-growth/test-domain.mjs',
+              'preparation/npc-growth/test-oracle.py',
+          }
+          base = os.environ['BASE_SHA']
+          subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
+          actual = set(subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines())
+          assert actual == expected, (actual - expected, expected - actual)
+          assert subprocess.check_output(['git', 'rev-parse', base + ':src']) == subprocess.check_output(['git', 'rev-parse', 'HEAD:src'])
+          print('Only the eight dormant preparation paths differ; application source remains the published baseline.')
+          PY
+      - name: Independent exact and binary64 goldens
+        run: |
+          python preparation/npc-growth/oracle.py --check
+          python preparation/npc-growth/test-oracle.py 2>&1 | tee npc-growth-oracle-tests.log
+      - name: Pure domain contracts without application integration
+        run: node --test preparation/npc-growth/test-domain.mjs > npc-growth-domain-tests.tap 2>&1
+      - name: Archive exact preparation source
+        if: always()
+        run: git archive --format=zip --output=npc-growth-preparation-source.zip "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npc-growth-preparation-${{ github.sha }}
+          path: |
+            npc-growth-oracle-tests.log
+            npc-growth-domain-tests.tap
+            npc-growth-preparation-source.zip
+          retention-days: 7
+          if-no-files-found: error
