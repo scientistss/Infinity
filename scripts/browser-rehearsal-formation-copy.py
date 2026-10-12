@@ -19,6 +19,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from contextlib import contextmanager
@@ -50,7 +51,7 @@ def load_reviewed_helpers():
     Reused helpers resolve this runner's own bounded append journal and witness.
     """
     names = {'valid_natural_report', 'load_shared_helpers', 'advance', 'tab', 'raw', 'storage',
-             'storage_check', 'capture_live_failure', 'live_failure_evidence', 'boot',
+             'storage_check', 'live_failure_evidence', 'boot',
              'configure_scout', 'import_file', 'draft_values', 'dispose_capture_handles',
              'snap', 'open_report', 'rehearsal_opener', 'natural_presenter_copy',
              'assert_natural_presenter_copy'}
@@ -143,7 +144,7 @@ def metadata(full=False):
 
 
 def flush(full=False, final=False):
-    global recorded_checks, recorded_evidence, recorded_sources, recorded_errors, recorded_requests, last_progress_at
+    global recorded_checks, recorded_evidence, recorded_sources, recorded_errors, recorded_requests, last_progress_at, completed
     for items, kind, counter in ((source_bindings, 'production-source-binding', 'recorded_sources'),
                                  (errors, 'application-error', 'recorded_errors'),
                                  (failed_requests, 'failed-request', 'recorded_requests')):
@@ -158,6 +159,13 @@ def flush(full=False, final=False):
         journal.append('check', {'index': recorded_checks, 'record': checks[recorded_checks], 'detailRef': None})
         recorded_checks += 1
     value = metadata(full=full)
+    if final:
+        try:
+            if not full: raise ValueError('Final evidence seal requires a complete report')
+            verify_file_references(value)
+        except BaseException:
+            completed = False
+            raise
     journal.append('snapshot', {key: item for key, item in value.items() if key not in ('checks', 'evidence')})
     if full:
         atomic_json(report_path, value)
@@ -185,13 +193,120 @@ def begin_case(label):
     case = label; flush()
 
 
+def scenario_directory():
+    """Case identity is an exact path component, never a lossy sanitized alias."""
+    if not isinstance(case, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,100}', case):
+        raise ValueError('Evidence case must be an unambiguous bounded path component')
+    path = out / case
+    if path.is_symlink(): raise ValueError('Evidence case directory cannot be a symlink')
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def publish_new_bytes(path, body):
+    """Publish complete bytes atomically and exclusively, including on a race.
+
+    A hard link refuses an existing destination without replacing any original.
+    The private temporary is never a referenced artifact and is always removed.
+    """
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.evidence-', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(body); stream.flush(); os.fsync(stream.fileno())
+        os.link(temporary, path)
+    finally:
+        if temporary is not None: temporary.unlink()
+
+
+def publish_new_json(path, value):
+    publish_new_bytes(path, (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
+
+
+def verify_file_references(value):
+    """Walk the entire final report, including nested check/before/after refs.
+
+    Repeated references may share an original only when every claimed digest
+    matches its actual bytes. Mutable progress/report snapshots are not evidence.
+    """
+    def visit(item, location):
+        if isinstance(item, dict):
+            if 'file' in item and 'sha256' in item:
+                filename, digest = item['file'], item['sha256']
+                if (not isinstance(filename, str) or not filename or '\\' in filename
+                        or Path(filename).is_absolute() or any(part in ('', '.', '..') for part in filename.split('/'))
+                        or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)):
+                    raise ValueError('Invalid artifact reference at ' + location)
+                path = out
+                for part in filename.split('/'):
+                    path /= part
+                    if path.is_symlink(): raise ValueError('Symlink artifact reference at ' + location)
+                if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    raise ValueError('Missing or mismatched artifact reference at ' + location + ': ' + filename)
+            for key, child in item.items(): visit(child, location + '.' + str(key))
+        elif isinstance(item, list):
+            for index, child in enumerate(item): visit(child, location + '[' + str(index) + ']')
+    visit(value, '$')
+
+
 def persist_json(label, value):
-    path = out / (re.sub(r'[^a-zA-Z0-9_-]', '-', label) + '.json')
-    atomic_json(path, value)
-    reference = {'kind': 'raw-before-assertion', 'case': case, 'file': path.name,
+    path = scenario_directory() / (re.sub(r'[^a-zA-Z0-9_-]', '-', label) + '.json')
+    publish_new_json(path, value)
+    reference = {'kind': 'raw-before-assertion', 'case': case, 'file': path.relative_to(out).as_posix(),
                  'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     evidence.append(reference); flush()
     return reference
+
+
+def capture_live_failure(page):
+    """Keep each bounded failure capture in a fresh, exclusively created folder.
+
+    Storage remains first, independent of HTML/screenshot failures. Retrying
+    diagnostics can never rewrite the collided original or an earlier failure.
+    """
+    directory = Path(tempfile.mkdtemp(prefix='failure-', dir=scenario_directory()))
+    result = {'schema': 'infinity-scout-live-failure-capture-v1', 'case': case,
+              'boundSeconds': 6, 'pageAvailable': page is not None, 'captures': []}
+    if page is not None:
+        expired = False
+        def timeout(*_):
+            nonlocal expired
+            expired = True
+            raise TimeoutError('Six-second live failure capture bound')
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+        signal.signal(signal.SIGALRM, timeout)
+        signal.setitimer(signal.ITIMER_REAL, min(6, previous_timer[0]) if previous_timer[0] else 6)
+        try:
+            captures = (
+                ('failure-storage.json', lambda path: publish_new_json(path, storage(page))),
+                ('failure.html', lambda path: publish_new_bytes(path, page.content().encode('utf-8'))),
+                ('failure.png', lambda path: publish_new_bytes(path, page.screenshot(timeout=2000, caret='initial'))),
+            )
+            for filename, capture in captures:
+                path = directory / filename; relative = path.relative_to(out).as_posix()
+                if expired:
+                    result['captures'].append({'file': relative, 'status': 'not-attempted', 'error': 'Live capture bound expired'})
+                    continue
+                try:
+                    capture(path)
+                    result['captures'].append({'file': relative, 'status': 'captured',
+                        'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+                except BaseException as error:
+                    result['captures'].append({'file': relative, 'status': 'failed',
+                        'error': f'{type(error).__name__}: {error}'})
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+            remaining = previous_timer[0] - (time.monotonic() - started)
+            result['workerDeadlineElapsedDuringCapture'] = bool(previous_timer[0] and remaining <= 0)
+            if previous_timer[0]: signal.setitimer(signal.ITIMER_REAL, max(.001, remaining), previous_timer[1])
+        result['boundExpired'] = expired
+    path = directory / 'failure-capture.json'; publish_new_json(path, result)
+    evidence.append({'kind': 'live-failure-capture', 'case': case, 'file': path.relative_to(out).as_posix(),
+                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'capture': result})
+    return result
 
 
 def save(page):

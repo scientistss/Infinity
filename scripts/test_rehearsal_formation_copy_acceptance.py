@@ -535,6 +535,73 @@ class DurableEvidenceContract(unittest.TestCase):
             self.assertEqual([row['passed'] for row in report['checks']], [True, False])
             self.assertEqual(report['checks'][1]['detail'], {'raw': 'unmodified bytes'})
             self.assertIsNone(metadata['error'])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); value = self.runner(root); events = []
+            original = value.persist_json('formation-3-save-after', {'original': 'retained'})
+            original_path = root / original['file']; original_bytes = original_path.read_bytes()
+            class Page:
+                def content(self): events.append('html'); raise RuntimeError('HTML unavailable')
+                def screenshot(self, *, timeout, caret):
+                    events.append('screenshot')
+                    self_test.assertEqual((timeout, caret), (2000, 'initial'))
+                    return b'offline-png-stub'
+            self_test = self; value.active_page = Page()
+            def storage(_): events.append('storage'); return {'all': 'unmodified failure raw\n'}
+            with patch.object(value, 'storage', storage):
+                for _ in range(2):
+                    frozen = {path: path.read_bytes() for path in root.rglob('*') if path.is_file()
+                              and path not in (value.report_path, value.progress_path, value.journal_path)}
+                    with self.assertRaises(FileExistsError):
+                        with value.live_failure_evidence():
+                            value.persist_json('formation-3-save-after', {'replacement': 'must fail'})
+                    for path, body in frozen.items(): self.assertEqual(path.read_bytes(), body)
+            self.assertEqual(events, ['storage', 'html', 'screenshot'] * 2)
+            self.assertEqual(original_path.read_bytes(), original_bytes)
+            captures = [row for row in value.evidence if row.get('kind') == 'live-failure-capture']
+            self.assertEqual(len(captures), 2)
+            self.assertNotEqual(captures[0]['file'], captures[1]['file'])
+            for row in captures:
+                record = json.loads((root / row['file']).read_bytes())
+                self.assertEqual(record, row['capture'])
+                self.assertEqual([item['status'] for item in record['captures']], ['captured', 'failed', 'captured'])
+                self.assertIn('HTML unavailable', record['captures'][1]['error'])
+                self.assertEqual(json.loads((root / record['captures'][0]['file']).read_bytes()), {'all': 'unmodified failure raw\n'})
+            report = json.loads(value.report_path.read_bytes())
+            value.verify_file_references(report)
+            self.assertFalse(report['completed']); self.assertIn('FileExistsError', report['failure'])
+            self.assertIsNone(value.replay_native_journal(value.journal_path)[1]['seal'])
+            with patch.object(value, 'capture_live_failure', side_effect=RuntimeError('diagnostics unavailable')):
+                with self.assertRaisesRegex(AssertionError, 'primary failure'):
+                    with value.live_failure_evidence(): raise AssertionError('primary failure')
+            report = json.loads(value.report_path.read_bytes())
+            self.assertIn('primary failure', report['failure'])
+            self.assertEqual(report['evidence'][-1]['kind'], 'live-failure-capture-error')
+            self.assertIn('diagnostics unavailable', report['evidence'][-1]['error'])
+        for previous, elapsed, restored in ((20, .5, 19.5), (.25, .5, .001)):
+            with self.subTest(worker_timer=previous), tempfile.TemporaryDirectory() as directory:
+                value = self.runner(Path(directory))
+                page = SimpleNamespace(content=lambda: '<html>offline</html>', screenshot=lambda **_: b'offline-png-stub')
+                with patch.object(value, 'storage', return_value={'exact': 'raw'}), \
+                     patch.object(value.signal, 'signal'), patch.object(value.signal, 'setitimer') as timer, \
+                     patch.object(value.signal, 'getitimer', return_value=(previous, 0)), \
+                     patch.object(value.time, 'monotonic', side_effect=[100, 100 + elapsed]):
+                    captured = value.capture_live_failure(page)
+                self.assertEqual(timer.call_args_list[0].args, (value.signal.ITIMER_REAL, min(6, previous)))
+                self.assertEqual(timer.call_args_list[-1].args, (value.signal.ITIMER_REAL, restored, 0))
+                self.assertEqual(captured['workerDeadlineElapsedDuringCapture'], elapsed >= previous)
+        with tempfile.TemporaryDirectory() as directory:
+            value = self.runner(Path(directory)); handler = None
+            def set_handler(_signal, callback):
+                nonlocal handler
+                handler = callback
+            def expired_storage(_): handler(None, None)
+            with patch.object(value, 'storage', expired_storage), patch.object(value.signal, 'signal', set_handler), \
+                 patch.object(value.signal, 'setitimer') as timer, patch.object(value.signal, 'getitimer', return_value=(0, 0)):
+                captured = value.capture_live_failure(object())
+            self.assertEqual(timer.call_args_list[0].args, (value.signal.ITIMER_REAL, 6))
+            self.assertTrue(captured['boundExpired'])
+            self.assertEqual([row['status'] for row in captured['captures']], ['failed', 'not-attempted', 'not-attempted'])
+            self.assertIn('Six-second', captured['captures'][0]['error'])
 
     def test_unsealed_success_snapshot_never_counts_as_native_completion(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -543,6 +610,43 @@ class DurableEvidenceContract(unittest.TestCase):
             result = value.recover_native_report(value.journal_path, value.report_path, value.progress_path, True)
             self.assertFalse(result['completed'])
             self.assertFalse(result['recording']['sealedReportVerified'])
+        for target in ('evidence', 'check-before', 'check-after', 'full-source', 'source-binding'):
+            for mutation in ('missing', 'changed', 'wrong-hash', 'symlink', 'parent-path'):
+                with self.subTest(target=target, mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory); value = self.runner(root); value.active_page = None
+                    reference = value.persist_json('exact-original', {'exact': 'bytes'})
+                    # Keep the reference exclusively at this depth, so another
+                    # top-level copy cannot hide a broken recursive traversal.
+                    nested = copy.deepcopy(reference)
+                    value.evidence.clear(); value.recorded_evidence = 0
+                    if target == 'evidence': value.evidence.append({'before': {'after': [nested]}})
+                    elif target.startswith('check-'):
+                        value.check('nested reference must verify', True, {target[6:]: [nested]})
+                    elif target == 'full-source': value.full_source_reference = nested
+                    else: value.source_bindings.append({'before': {'after': [nested]}})
+                    path = root / reference['file']
+                    if mutation == 'missing': path.unlink()
+                    elif mutation == 'changed': path.write_bytes(b'overwritten bytes')
+                    elif mutation == 'wrong-hash': nested['sha256'] = '0' * 64
+                    elif mutation == 'symlink':
+                        actual = root / 'untouched-original.json'; path.rename(actual); path.symlink_to(actual)
+                    else: nested['file'] = '../outside.json'
+                    with self.assertRaisesRegex(ValueError, 'artifact reference'):
+                        with value.live_failure_evidence():
+                            value.completed = True; value.flush(full=True, final=True)
+                    report = json.loads(value.report_path.read_bytes())
+                    self.assertFalse(value.completed); self.assertFalse(report['completed'])
+                    self.assertIn('artifact reference', report['failure'])
+                    self.assertIsNone(value.replay_native_journal(value.journal_path)[1]['seal'])
+                    self.assertFalse(value.recover_native_report(value.journal_path, value.report_path, value.progress_path, True)['completed'])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); value = self.runner(root)
+            reference = value.persist_json('exact-original', {'all': 'complete bytes'})
+            value.check('same original may be referenced repeatedly', True, {'before': reference, 'after': [reference]})
+            value.full_source_reference = reference
+            value.completed = True; value.flush(full=True, final=True)
+            result = value.recover_native_report(value.journal_path, value.report_path, value.progress_path, True)
+            self.assertTrue(result['completed']); self.assertTrue(result['recording']['sealedReportVerified'])
 
     def test_raw_before_assertion_is_persisted_and_hashed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -553,6 +657,45 @@ class DurableEvidenceContract(unittest.TestCase):
             self.assertEqual(reference['sha256'], hashlib.sha256(path.read_bytes()).hexdigest())
             self.assertEqual(reference['kind'], 'raw-before-assertion')
             self.assertEqual(value.checks, [])
+            self.assertEqual(reference['file'], 'offline/exact-raw.json')
+            frozen = path.read_bytes(); inode = path.stat().st_ino
+            for label in ('exact/raw', 'exact-raw'):
+                with self.subTest(collision=label), self.assertRaises(FileExistsError):
+                    value.persist_json(label, {'overwrites': 'forbidden even after sanitization'})
+                self.assertEqual(path.read_bytes(), frozen); self.assertEqual(path.stat().st_ino, inode)
+                self.assertEqual(len(value.evidence), 1)
+            # Both native branches deliberately issue ID 3 from the same world.
+            # Their pre-save bytes may match; their post-save bytes must coexist.
+            references = []
+            for case, state in (
+                ('natural-saved-1e6-targets-remain-unclipped-stock-shortage', {'ships': {ship: 1_000_000 for ship in module.SHIPS}}),
+                ('actual-native-64-codepoint-unbroken-source-name', {'name': 'W' * 64, 'ships': {'light_fighter': 6}}),
+            ):
+                value.begin_case(case)
+                for phase, data in (('before', {'same': 'original raw'}), ('after', state)):
+                    references.append(value.persist_json('formation-3-save-' + phase, data))
+            self.assertEqual(len({row['file'] for row in references}), 4)
+            self.assertEqual(references[0]['sha256'], references[2]['sha256'])
+            self.assertNotEqual(references[1]['sha256'], references[3]['sha256'])
+            value.verify_file_references({'references': references})
+            for bad_case in ('../escape', 'lossy/case', 'lossy.case', '', 'a' * 101):
+                value.case = bad_case
+                with self.subTest(case=bad_case), self.assertRaises(ValueError): value.persist_json('unused', {})
+            value.case = 'offline'
+            # The competing writer creates the destination only at publication:
+            # an exists()-then-replace implementation would lose these bytes.
+            racing = Path(directory) / 'offline' / 'raced.json'
+            real_link = os.link
+            def publish_competitor(source, destination):
+                destination.write_bytes(b'concurrent original')
+                return real_link(source, destination)
+            with patch.object(value.os, 'link', publish_competitor), self.assertRaises(FileExistsError):
+                value.persist_json('raced', {'replacement': 'forbidden'})
+            self.assertEqual(racing.read_bytes(), b'concurrent original')
+            with patch.object(value.os, 'fsync', side_effect=OSError('durability failed')), self.assertRaises(OSError):
+                value.persist_json('failed-fsync', {})
+            self.assertFalse((Path(directory) / 'offline' / 'failed-fsync.json').exists())
+            self.assertEqual(list(Path(directory).rglob('.evidence-*.tmp')), [])
 
 
 if __name__ == '__main__': unittest.main()
