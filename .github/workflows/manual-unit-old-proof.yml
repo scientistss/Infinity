@@ -1,0 +1,102 @@
+name: Prove old manual unit input bug
+on:
+  push:
+    branches: ['codex/infinity-research-manual-unit-repro-20261012']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: manual-unit-old-proof-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  BASE_SHA: 241a51de31364e9086abcc304884bf9df7cd6912
+jobs:
+  proof:
+    if: github.ref == 'refs/heads/codex/infinity-research-manual-unit-repro-20261012'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check dedicated proof structure
+        run: python -m unittest discover -s scripts -p 'test_manual_unit_proof.py' -v
+      - name: Reproduce exact public baseline from source
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p proof-evidence
+          git worktree add --detach "$RUNNER_TEMP/manual-unit-base" "$BASE_SHA"
+          git archive --format=zip --prefix=Infinity/ "$BASE_SHA" > proof-evidence/source-241a.zip
+          git rev-parse HEAD > proof-evidence/test-source-sha.txt
+          git rev-parse "$BASE_SHA" > proof-evidence/code-source-sha.txt
+          node --version > proof-evidence/node-version.txt
+          npm --version > proof-evidence/npm-version.txt
+          (cd "$RUNNER_TEMP/manual-unit-base" && npm ci) > proof-evidence/npm-ci.log 2>&1
+          (cd "$RUNNER_TEMP/manual-unit-base" && GITHUB_SHA="$BASE_SHA" npm run build) > proof-evidence/old-build.log 2>&1
+          # Generate from createInitialState using the unchanged old live-tick journey.
+          # No uploaded saved report, gzip, successor source, funds, or queue injection.
+          (cd "$RUNNER_TEMP/manual-unit-base" && node --import tsx scripts/natural-growth-journey.ts) > proof-evidence/fresh-natural-report.json 2> proof-evidence/fresh-natural-report.log
+          echo '9102da6f8fc52427b642883389d186726a8cf0c02747aa6c135150566458d8ea  proof-evidence/fresh-natural-report.json' | sha256sum -c -
+          python scripts/manual-unit-proof-source.py \
+            --proof-root "$GITHUB_WORKSPACE" \
+            --baseline-root "$RUNNER_TEMP/manual-unit-base" \
+            --source-archive proof-evidence/source-241a.zip \
+            --test-sha "$GITHUB_SHA" \
+            --dist "$RUNNER_TEMP/manual-unit-base/dist" \
+            --published-manifest scripts/manual-unit-published-241a-manifest.json \
+            --output proof-evidence/source-binding.json
+          cp -a "$RUNNER_TEMP/manual-unit-base/dist" proof-evidence/dist
+      - name: Official native browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Five isolated native counterexamples and normal control
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          "$CHROME" --version > proof-evidence/browser-version.txt
+          python scripts/browser-manual-unit-proof.py \
+            --source-root "$RUNNER_TEMP/manual-unit-base" \
+            --source-archive proof-evidence/source-241a.zip \
+            --source-binding proof-evidence/source-binding.json \
+            --natural-report proof-evidence/fresh-natural-report.json \
+            --dist "$RUNNER_TEMP/manual-unit-base/dist" \
+            --published-manifest scripts/manual-unit-published-241a-manifest.json \
+            --expected-source-sha "$BASE_SHA" --expected-test-sha "$GITHUB_SHA" \
+            --chromium "$CHROME" --output proof-evidence/native
+          python - <<'PY'
+          import json, os
+          report = json.load(open('proof-evidence/native/report.json'))
+          assert report['completed'] is True and report['bugConfirmed'] is True
+          assert report['codeSourceSha'] == os.environ['BASE_SHA']
+          assert report['testSourceSha'] == os.environ['GITHUB_SHA']
+          assert len(report['cases']) == 5 and all(case['completed'] for case in report['cases'])
+          print('PROOF PASS: old silent one-unit purchase confirmed. This is not a product safety gate.')
+          PY
+      - name: Capture preparation and test identities even on failure
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p proof-evidence
+          git rev-parse HEAD > proof-evidence/test-source-sha.txt
+          git status --porcelain > proof-evidence/worktree-status.txt
+          git diff --name-status "$BASE_SHA" HEAD > proof-evidence/test-only-diff.txt
+          cp scripts/browser-manual-unit-proof.py scripts/manual-unit-proof-source.py scripts/test_manual_unit_proof.py proof-evidence/
+          cp .github/workflows/manual-unit-old-proof.yml proof-evidence/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-unit-old-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: proof-evidence
+          if-no-files-found: error
+          retention-days: 7
