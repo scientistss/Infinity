@@ -281,6 +281,19 @@ class FixtureProvenanceTests(unittest.TestCase):
         self.assertIn('paid(afterPlanTick,"small_cargo",freshFill)',source)
         self.assertNotIn('paid(clone(afterPlanTick)',source)
 
+    def test_latest_plan_reaches_true_ten_second_cadence_and_literal_receipt(self):
+        source=FIXTURE.read_text()
+        self.assertIn('planAdvanceSeconds < 12',source)
+        self.assertIn('afterPlanTick = tick(afterPlanTick,1,"live")',source)
+        self.assertIn('planAdvanceSeconds===10',source)
+        self.assertIn('paidPlanJob?.jobId===87',source)
+        self.assertIn('afterPlanTick.orders.nextJobId===88',source)
+        self.assertIn('paidPlanJob.count===1000',source)
+        self.assertIn('paidPlanTask.charged,{metal:"2000000",crystal:"2000000",deuterium:"0"}',source)
+        self.assertIn('freshMax===9000 && freshFill===498',source)
+        self.assertIn("fixture['advanceSeconds']==len(fixture['tickAudit'])==10",definition('latest_plan'))
+        self.assertIn("for tick in fixture['tickAudit']:",definition('latest_plan'))
+
     def test_synthetic_funding_is_explicit_and_all_edges_are_present(self):
         source=FIXTURE.read_text()
         self.assertIn('classification:"EXPLICIT SYNTHETIC: "+detail',source)

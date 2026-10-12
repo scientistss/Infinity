@@ -141,12 +141,25 @@ const saturated=clone(unlocked); activePlanet(saturated).units.small_cargo=10000
 put("unit-cap",saturated,"Explicit local 10^15 unit count; no natural claim.");
 let plan=clone(unlocked); plan=accepted(createOrderTask(plan,{kind:"shipyard",planetId:"homeworld",unit:"small_cargo",quantity:1000,
   budget:{metal:"2000000",crystal:"2000000",deuterium:"0"},expectedNextTaskId:plan.orders.nextTaskId,transport:null}));
-const afterPlanTick = tick(clone(plan),1,"live");
+let afterPlanTick = clone(plan), planAdvanceSeconds = 0;
+const planTickAudit: Array<Record<string,unknown>> = [];
+const planTaskId = plan.orders.nextTaskId-1;
+while (afterPlanTick.orders.tasks.find(task=>task.id===planTaskId)?.activeJob === null) {
+  check(planAdvanceSeconds < 12,"Real ten-second scheduler cadence must pay within twelve ordinary one-second steps");
+  const before = serializeState(afterPlanTick); afterPlanTick = tick(afterPlanTick,1,"live"); planAdvanceSeconds++;
+  planTickAudit.push({second:planAdvanceSeconds,api:"tick(state, 1, live)",before,after:serializeState(afterPlanTick)});
+}
+const paidPlanTask = afterPlanTick.orders.tasks.find(task=>task.id===planTaskId)!;
+const paidPlanJob = activePlanet(afterPlanTick).shipyardQueue.find(job=>job.taskId===planTaskId)!;
+check(planAdvanceSeconds===10 && paidPlanTask.id===14 && paidPlanJob?.jobId===87 && afterPlanTick.orders.nextJobId===88
+  && paidPlanJob.count===1000 && paidPlanJob.orderedCount===1000 && paidPlanJob.source==="plan", "Literal first ten-second plan receipt/identity changed");
+exact(paidPlanTask.charged,{metal:"2000000",crystal:"2000000",deuterium:"0"},"Independent literal scheduled-plan charge changed");
+exact(Object.fromEntries(RES.map(r=>[r,paidPlanJob.paidPerUnit[r].toString()])),{metal:"2000",crystal:"2000",deuterium:"0"},"Scheduled plan literal unit quote changed");
 const freshMax = Math.min(...RES.flatMap((r,i) => GOLDEN.small_cargo[i] ? [Math.floor(activePlanet(afterPlanTick).resources[r].toNumber()/GOLDEN.small_cargo[i]!)] : []));
 const freshFill = 1500-activePlanet(afterPlanTick).units.small_cargo-activePlanet(afterPlanTick).shipyardQueue.filter(j=>j.unit==="small_cargo").reduce((sum,j)=>sum+j.count,0);
-check(freshMax>0 && freshFill>0,"Changed plan quotes must remain payable after explicit new selection");
-put("latest-plan",plan,"Explicit funded setup and real unpaid finite plan; first live second may pay its own authorized job.",{
-  afterTick:serializeState(afterPlanTick),fresh:{max:{raw:"17",count:freshMax,expected:serializeState(paid(afterPlanTick,"small_cargo",freshMax))},
+check(freshMax===9000 && freshFill===498,"Literal changed max/fill quotes must follow the real scheduled payment");
+put("latest-plan",plan,"Explicit funded setup and real unpaid finite plan; ten ordinary one-second ticks reach its unchanged real scheduler cadence.",{
+  advanceSeconds:planAdvanceSeconds,tickAudit:planTickAudit,afterTick:serializeState(afterPlanTick),fresh:{max:{raw:"17",count:freshMax,expected:serializeState(paid(afterPlanTick,"small_cargo",freshMax))},
     fill:{raw:"1500",count:freshFill,expected:serializeState(paid(afterPlanTick,"small_cargo",freshFill))}}});
 const wide=clone(unlocked); activePlanet(wide).resources={metal:big("999999999999999"),crystal:big("999999999999999"),deuterium:big("999999999999999")};
 put("full-price",wide,"Explicit large wallets solely for complete untruncated three-resource display.",{
@@ -155,7 +168,7 @@ check(canBuildUnits(unlocked,"solar_satellite",1).ok && unitById("solar_satellit
 process.stdout.write(JSON.stringify({schema:"infinity-manual-unit-native-fixture-v1",key:STORAGE_KEY,
   source:{sourceSha,fullTree:git("rev-parse","HEAD^{tree}"),scriptSha256:hash(readFileSync(new URL(import.meta.url))),runtimeNode:process.version},
   historical:{sourceSha:OLD_SHA,reportSha256:REPORT_SHA,sourceBindingSha256:hash(bindingBytes),freshProducer:"Unchanged exact241a scripts/natural-growth-journey.ts, executed in this CI job"},
-  base:m05.save,initialRaw:JSON.stringify(m05.save),natural:{classification:"Untouched fresh natural05 handoff; every later unit is paid; only one-second live funding/completion ticks.",tape,expected,elapsed,tickAudit:naturalTickAudit,finalRaw:naturalFinal},
+  base:m05.save,initialRaw:JSON.stringify(m05.save),natural:{classification:"Untouched fresh natural05 handoff; every later unit is paid; only one-second live funding/completion ticks.",tape,expected,elapsed,tickAudit:naturalTickAudit,progressionNote:"Actual paid continuation is 94 funding steps plus 2 partial-completion steps. Completing the first ship unlocks first_ship and raises natural production; this is a new paid continuation from the unchanged historical handoff, not the original historical action route.",finalRaw:naturalFinal},
   transit:{classification:"Untouched fresh natural09; real two-cargo transport launch; in-transit stock does not cover fill.",raw:JSON.stringify(m09.save),before:transitBefore,
     request:{mission:transitRequest.mission,target:transitRequest.target,ships:transitRequest.ships,cargo:{metal:"0",crystal:"0",deuterium:"0"},speedPercent:100},
     afterDispatch:transitBeforePay,expected:serializeState(transitPaid),total:price("small_cargo",1)},

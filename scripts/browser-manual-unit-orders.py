@@ -416,7 +416,15 @@ def latest_plan():
             before=save(page); whole_state('pending-plan-start',before,fixture['expected'])
             prepare(page,unit,mode,fresh['raw']); previous=card(page,unit); original=page.locator(b('upay',unit)).element_handle()
             persist_json('before-plan-live-tick',{'state':before,'card':previous,'expectedAfterTick':fixture['afterTick']})
-            advance(page,1000); changed=card(page,unit)
+            audit_ref=persist_json('real-plan-cadence-contract',{'seconds':fixture['advanceSeconds'],'steps':len(fixture['tickAudit']),'expected':fixture['afterTick']})
+            check('real scheduler change uses exact ten one-second live steps',fixture['advanceSeconds']==len(fixture['tickAudit'])==10,audit_ref)
+            for tick in fixture['tickAudit']:
+                observed=advance(page,1000)
+                ref=persist_json('plan-one-second-frame',{'step':tick['second'],'observedClock':observed,
+                    'domainOracleBeforeSha256':digest(json.dumps(tick['before'],ensure_ascii=False,sort_keys=True).encode()),
+                    'domainOracleAfterSha256':digest(json.dumps(tick['after'],ensure_ascii=False,sort_keys=True).encode())})
+                check('actual plan-cadence frame advances exactly one second',observed['afterAt']-observed['beforeAt']==1000,ref)
+            changed=card(page,unit)
             # The retained control is deliberately invoked without reselecting mode.
             original.evaluate('(e)=>e.click()'); advance(page)
             after=card(page,unit)
