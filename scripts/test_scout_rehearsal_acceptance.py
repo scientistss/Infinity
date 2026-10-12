@@ -338,6 +338,8 @@ class ConflictForegroundTests(unittest.TestCase):
         openers=self.protected_openers() if openers is None else openers
         class Row:
             def count(self):return row_count
+            def wait_for(self, **options):
+                owner.assertEqual(options, {'state':'attached','timeout':5000})
             def evaluate(self,expression):
                 owner.assertEqual(expression,m.MESSAGE_OPENERS_SAMPLE_JS)
                 events.append('read-openers');return copy.deepcopy(openers)
@@ -1305,6 +1307,94 @@ class LiveFailureDiagnosticsTests(unittest.TestCase):
             m=RecorderLinearityTests().runner(Path(directory));result=m.capture_live_failure(None);os.close(m.journal.fd)
             self.assertFalse(result['pageAvailable']);self.assertEqual(result['captures'],[])
             self.assertTrue((Path(directory)/'failure-capture.json').exists())
+
+
+class TypedOpenerReadinessTests(unittest.TestCase):
+    def run_case(self, root, counts=(0,1), *, failure=None, mutate=False):
+        m=RecorderLinearityTests().runner(root); events=[]; sequence=iter(counts)
+        sample=ConflictForegroundTests().protected_openers()
+        sample['controls'][1]['disabled']=False
+        sample['controls'][1]['html']=sample['controls'][1]['html'].replace(' disabled=""','')
+        if mutate:sample['controls'].pop()
+        class Row:
+            def count(self):
+                value=next(sequence);events.append(('count',value));return value
+            def wait_for(self,**options):
+                events.append(('wait',options))
+                if failure:raise RuntimeError(failure)
+            def evaluate(self,expression):
+                events.append(('sample',expression));return copy.deepcopy(sample)
+        class Page:
+            def locator(self,selector):
+                events.append(('locator',selector));return Row()
+        original=m.check
+        def check(name,condition,detail=None):
+            replay,meta=m.replay_native_journal(m.journal_path)
+            self.assertIsNone(meta['error'])
+            self.assertEqual(replay['evidence'][-1],m.evidence[-1])
+            self.assertEqual(m.evidence[-1]['finalSample'],detail)
+            events.append(('assert',condition));original(name,condition,detail)
+        try:
+            with patch.object(m,'check',check):result=m.rehearsal_opener(Page())
+        finally:
+            os.close(m.journal.fd)
+            self.last=(m,events,sample)
+        return result,m,events,sample
+
+    def test_missing_first_native_frame_waits_for_real_attachment_before_strict_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result,m,events,sample=self.run_case(Path(directory))
+            witness=m.evidence[-1]
+            self.assertEqual(result,'#space-message-list > article.space-message[data-message-id="scout-11"] > button:not([data-npc-scout-comparison])')
+            self.assertEqual([e[0] for e in events],['locator','count','wait','count','sample','assert'])
+            self.assertEqual(events[2][1],{'state':'attached','timeout':5000})
+            self.assertEqual((witness['initialCount'],witness['initialSample'],witness['finalCount']),(0,None,1))
+            self.assertTrue(witness['waited']);self.assertEqual(witness['finalSample'],sample)
+            self.assertIsNone(witness['error']);self.assertGreaterEqual(witness['elapsedMs'],0)
+
+    def test_existing_row_is_sampled_without_wait_or_clock_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _,m,events,sample=self.run_case(Path(directory),(1,1))
+            self.assertNotIn('wait',[e[0] for e in events])
+            self.assertFalse(m.evidence[-1]['waited'])
+            self.assertIsNone(m.evidence[-1]['initialSample'])
+            self.assertEqual(m.evidence[-1]['finalSample'],sample)
+
+    def test_duplicate_or_non_integer_counts_never_wait_themselves_valid(self):
+        for counts in ((2,1),(2,2),(True,1),(0,2)):
+            with self.subTest(counts=counts),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(AssertionError,'exactly ordered original'):
+                    self.run_case(Path(directory),counts)
+                m,events,_=self.last
+                self.assertEqual(m.evidence[-1]['initialCount'],counts[0])
+                self.assertEqual(m.evidence[-1]['finalCount'],counts[1])
+                if counts[0]!=0:self.assertNotIn('wait',[e[0] for e in events])
+
+    def test_timeout_keeps_first_null_and_error_before_original_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError,'native attachment timeout'):
+                self.run_case(Path(directory),failure='native attachment timeout')
+            m,events,_=self.last;witness=m.evidence[-1]
+            self.assertEqual(witness['initialCount'],0);self.assertIsNone(witness['initialSample'])
+            self.assertIsNone(witness['finalCount']);self.assertIsNone(witness['finalSample'])
+            self.assertEqual(witness['error'],'native attachment timeout')
+            self.assertNotIn('assert',[e[0] for e in events])
+
+    def test_attached_malformed_complete_shape_still_fails_with_original_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(AssertionError,'exactly ordered original'):
+                self.run_case(Path(directory),mutate=True)
+            m,_,sample=self.last
+            self.assertEqual(m.evidence[-1]['finalSample'],sample)
+            self.assertEqual(len(sample['controls']),1)
+
+    def test_preparation_precedes_metrics_without_sleep_or_synthetic_frame(self):
+        tree=ast.parse(SCRIPT.read_text())
+        functions={n.name:ast.get_source_segment(SCRIPT.read_text(),n) for n in tree.body if isinstance(n,ast.FunctionDef)}
+        body=functions['measured_upper_bound']
+        self.assertLess(body.index('rehearsal_opener(page)'),body.index("Performance.enable"))
+        for forbidden in ('sleep(', 'advance(', 'page.evaluate(', 'requestAnimationFrame', 'Date.now'):
+            self.assertNotIn(forbidden,functions['rehearsal_opener'])
 
 
 if __name__=='__main__':unittest.main()

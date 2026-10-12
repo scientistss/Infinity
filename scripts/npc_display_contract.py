@@ -54,13 +54,30 @@ def initial_rehearsal_html():
 
 
 def initial_comparison_html():
-    """Independent closed comparison literal, never imported from production."""
+    """Independent constructor literal, before any navigation closes the UI."""
     return '''<section id="npc-scout-comparison-panel" class="ov-card npc-scout-comparison" aria-labelledby="npc-scout-comparison-title" hidden="">
     <h3 id="npc-scout-comparison-title" tabindex="-1">历史侦察对照</h3>
     <p id="npc-scout-comparison-source" class="chip"></p>
     <label for="npc-scout-comparison-other">同坐标的另一份报告<select id="npc-scout-comparison-other" disabled=""><option value="">请明确选择一份报告</option></select></label>
     <div class="space-controls"><button id="npc-scout-comparison-run" type="button" disabled="">查看差值</button><button id="npc-scout-comparison-cancel" type="button">取消 / 返回消息</button></div>
     <p id="npc-scout-comparison-status" class="muted" role="status" aria-live="polite"></p>
+    <p id="npc-scout-comparison-warning" class="muted">只是两次观察差，不代表净产量、战利品或当前库存。</p>
+    <div id="npc-scout-comparison-results" hidden=""></div>
+  </section>'''
+
+
+def closed_comparison_html():
+    """Exact post-navigation state: close -> abandon clears options, sets status.
+
+    The render parity trace visits other tabs before messages. It must match
+    this one complete closed state, never either constructor/closed on demand.
+    """
+    return '''<section id="npc-scout-comparison-panel" class="ov-card npc-scout-comparison" aria-labelledby="npc-scout-comparison-title" hidden="">
+    <h3 id="npc-scout-comparison-title" tabindex="-1">历史侦察对照</h3>
+    <p id="npc-scout-comparison-source" class="chip"></p>
+    <label for="npc-scout-comparison-other">同坐标的另一份报告<select id="npc-scout-comparison-other" disabled=""></select></label>
+    <div class="space-controls"><button id="npc-scout-comparison-run" type="button" disabled="">查看差值</button><button id="npc-scout-comparison-cancel" type="button">取消 / 返回消息</button></div>
+    <p id="npc-scout-comparison-status" class="muted" role="status" aria-live="polite">对照已关闭；请从当前保留的侦察消息重新打开。</p>
     <p id="npc-scout-comparison-warning" class="muted">只是两次观察差，不代表净产量、战利品或当前库存。</p>
     <div id="npc-scout-comparison-results" hidden=""></div>
   </section>'''
@@ -94,7 +111,7 @@ def initial_message_panel_html(origin,message_html):
     return ('<section id="space-messages" class="tab-panel space-panel" data-tab-panel="messages" aria-labelledby="space-messages-title">'
       +f'<div class="panel-head"><h2 id="space-messages-title">航行消息</h2><p class="space-location">{dom_text(origin)}</p></div>'
       +f'<p class="muted">{INTRO}</p><div id="space-message-list">{message_html}</div>'
-      +initial_rehearsal_html()+COMPARISON_NOTICE_HTML+'\n  '+initial_comparison_html()+f'<h3 class="group-title">NPC 轨道战报</h3><p class="muted">{HISTORY}</p>'
+      +initial_rehearsal_html()+COMPARISON_NOTICE_HTML+'\n  '+closed_comparison_html()+f'<h3 class="group-title">NPC 轨道战报</h3><p class="muted">{HISTORY}</p>'
       +f'<details class="npc-battle-rules"><summary>战斗规则</summary><p class="muted">{RULES}</p></details>'
       +'<div id="npc-battle-reports"></div></section>')
 
@@ -368,7 +385,7 @@ def normalize_npc_display(snapshot,evidence,state,side):
             assert a['closed'] is True and a['reportHTML']=='' and a['exactOrder'] is True
             assert exact_copied_data(a['rehearsal'],{'count':1,'html':initial_rehearsal_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_rehearsal_controls()})
             assert exact_copied_data(a['comparisonNotice'],{'count':1,'html':COMPARISON_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True})
-            assert exact_copied_data(a['comparison'],{'count':1,'html':initial_comparison_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()})
+            assert exact_copied_data(a['comparison'],{'count':1,'html':closed_comparison_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()})
             parts_exact(a['headText'],['航行消息',origin])
             parts_exact(out['text'],[a['headText'],INTRO,evidence['messageText'],'NPC 轨道战报',HISTORY,'战斗规则'])
             out['text']=historical_text

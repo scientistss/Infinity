@@ -1,11 +1,28 @@
 """Copied-data contract tests only; formal native DOM remains a separate gate."""
 import copy
+import ast
+import hashlib
 import unittest
+from pathlib import Path
 from npc_display_contract import *
 
 # Independent native r14 golden, copied from the retained failed CI capture.
 # Do not construct this witness from the implementation's expected constant.
 CAPTURED_DRAFT_NOTICE_HTML = '<p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden=""></p>'
+
+# Independent complete native section from the failed 337c verify artifact:
+# panel-parity-npc-after-messages-32-raw.json, SHA256
+# cb12b4320728038188ac74cba9f66dd13cd0da3d0b98d1cb2ddd9de85a2d352b.
+# This is the state after real tab navigation, not freshly constructed markup.
+CAPTURED_CLOSED_COMPARISON_HTML = '''<section id="npc-scout-comparison-panel" class="ov-card npc-scout-comparison" aria-labelledby="npc-scout-comparison-title" hidden="">
+    <h3 id="npc-scout-comparison-title" tabindex="-1">历史侦察对照</h3>
+    <p id="npc-scout-comparison-source" class="chip"></p>
+    <label for="npc-scout-comparison-other">同坐标的另一份报告<select id="npc-scout-comparison-other" disabled=""></select></label>
+    <div class="space-controls"><button id="npc-scout-comparison-run" type="button" disabled="">查看差值</button><button id="npc-scout-comparison-cancel" type="button">取消 / 返回消息</button></div>
+    <p id="npc-scout-comparison-status" class="muted" role="status" aria-live="polite">对照已关闭；请从当前保留的侦察消息重新打开。</p>
+    <p id="npc-scout-comparison-warning" class="muted">只是两次观察差，不代表净产量、战利品或当前库存。</p>
+    <div id="npc-scout-comparison-results" hidden=""></div>
+  </section>'''
 
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'messages':[{'id':'send-1','at':3,'text':'原有消息。','npcScoutSnapshot':None},{'id':'scout-2','at':60,'text':'原有侦察情报。','npcScoutSnapshot':None}]}
@@ -207,7 +224,7 @@ class NpcDisplayTests(unittest.TestCase):
         a={'counts':{'panels':1,'lists':1,'titles':1,'reports':1,'rules':1},'headHTML':'<div class="panel-head"><h2 id="space-messages-title">航行消息</h2><p class="space-location">Home [1:50:8]</p></div>','heading':'航行消息','origin':'Home [1:50:8]','intro':INTRO,'title':'NPC 轨道战报','history':HISTORY,'rulesText':RULES,'summary':'战斗规则','closed':True,'reportHTML':'','exactOrder':True,'headText':head,
            'rehearsal':{'count':1,'html':initial_rehearsal_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_rehearsal_controls()},
            'comparisonNotice':{'count':1,'html':COMPARISON_NOTICE_HTML,'hidden':True,'visible':False,'exactOrder':True},
-           'comparison':{'count':1,'html':initial_comparison_html(),'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()}}
+           'comparison':{'count':1,'html':CAPTURED_CLOSED_COMPARISON_HTML,'hidden':True,'visible':False,'exactIds':True,'controls':initial_comparison_controls()}}
         return {'tab':'messages','text':text,'inputs':[]},{'tab':'messages','current':True,'panelHTML':initial_message_panel_html('Home [1:50:8]',rows['html']),'messageHTML':message and rows['html'],'messageText':message,'messages':rows,'addition':a}
     def test_all_original_message_html_and_text_retained(self):
         snapshot,evidence=self.messages();state=self.state();original=copy.deepcopy((snapshot,evidence,state))
@@ -560,7 +577,7 @@ class NpcDisplayTests(unittest.TestCase):
 
     def test_comparison_panel_and_notice_cannot_be_missing_duplicated_nested_or_reordered(self):
         for mutation in ('missing_panel','missing_notice','duplicate_panel','duplicate_notice','swap','before_rehearsal','after_battle','nested','order_witness','numeric_order'):
-            snapshot,evidence=self.messages();panel=initial_comparison_html();notice=COMPARISON_NOTICE_HTML;pair=notice+'\n  '+panel
+            snapshot,evidence=self.messages();panel=CAPTURED_CLOSED_COMPARISON_HTML;notice=COMPARISON_NOTICE_HTML;pair=notice+'\n  '+panel
             if mutation=='missing_panel':evidence['panelHTML']=evidence['panelHTML'].replace(panel,'')
             if mutation=='missing_notice':evidence['panelHTML']=evidence['panelHTML'].replace(notice,'')
             if mutation=='duplicate_panel':evidence['panelHTML']=evidence['panelHTML'].replace(panel,panel+panel)
@@ -594,5 +611,66 @@ class NpcDisplayTests(unittest.TestCase):
                 with self.subTest(index=index,field=field):
                     self.assertNotEqual(result,expected);self.assertEqual(changed,original)
                     self.assertEqual(result['inputs'],changed['inputs']);self.assertEqual(result['shared'],changed['shared'])
+
+    def test_constructor_comparison_literal_remains_distinct_and_exact(self):
+        expected='''<section id="npc-scout-comparison-panel" class="ov-card npc-scout-comparison" aria-labelledby="npc-scout-comparison-title" hidden="">
+    <h3 id="npc-scout-comparison-title" tabindex="-1">历史侦察对照</h3>
+    <p id="npc-scout-comparison-source" class="chip"></p>
+    <label for="npc-scout-comparison-other">同坐标的另一份报告<select id="npc-scout-comparison-other" disabled=""><option value="">请明确选择一份报告</option></select></label>
+    <div class="space-controls"><button id="npc-scout-comparison-run" type="button" disabled="">查看差值</button><button id="npc-scout-comparison-cancel" type="button">取消 / 返回消息</button></div>
+    <p id="npc-scout-comparison-status" class="muted" role="status" aria-live="polite"></p>
+    <p id="npc-scout-comparison-warning" class="muted">只是两次观察差，不代表净产量、战利品或当前库存。</p>
+    <div id="npc-scout-comparison-results" hidden=""></div>
+  </section>'''
+        self.assertEqual(initial_comparison_html(),expected)
+        self.assertNotEqual(initial_comparison_html(),closed_comparison_html())
+
+    def test_navigation_closed_comparison_matches_complete_captured_native_region(self):
+        self.assertEqual(hashlib.sha256(CAPTURED_CLOSED_COMPARISON_HTML.encode()).hexdigest(),
+                         '389e54e68380cc8dad0162240c970b6caaa426b8f6f80e4860516c740141f0d9')
+        self.assertEqual(closed_comparison_html(),CAPTURED_CLOSED_COMPARISON_HTML)
+        self.assertEqual(initial_comparison_controls(),[
+            {'id':'npc-scout-comparison-other','type':'select-one','value':'','disabled':True,'visible':False},
+            {'id':'npc-scout-comparison-run','type':'button','value':'','disabled':True,'visible':False},
+            {'id':'npc-scout-comparison-cancel','type':'button','value':'','disabled':False,'visible':False}])
+        snapshot,evidence=self.messages();original=copy.deepcopy((snapshot,evidence));result=normalize_npc_display(snapshot,evidence,self.state(),'after')
+        self.assertEqual((snapshot,evidence),original);self.assertEqual(result['inputs'],snapshot['inputs'])
+
+    def test_navigation_parity_rejects_constructor_mixed_or_arbitrary_closed_html(self):
+        for mutation in ('constructor','placeholder_only','empty_status','wrong_status','extra_option','source','visible_notice','hidden_result'):
+            snapshot,evidence=self.messages();region=evidence['addition']['comparison'];old=region['html']
+            if mutation=='constructor':region['html']=initial_comparison_html()
+            if mutation=='placeholder_only':region['html']=old.replace('</select>','<option value="">请明确选择一份报告</option></select>')
+            if mutation=='empty_status':region['html']=old.replace('对照已关闭；请从当前保留的侦察消息重新打开。','')
+            if mutation=='wrong_status':region['html']=old.replace('对照已关闭；请从当前保留的侦察消息重新打开。','历史消息身份无效，对照已关闭。')
+            if mutation=='extra_option':region['html']=old.replace('</select>','<option value="1">secret</option></select>')
+            if mutation=='source':region['html']=old.replace('class="chip"></p>','class="chip">secret</p>')
+            if mutation=='visible_notice':evidence['addition']['comparisonNotice']['hidden']=False
+            if mutation=='hidden_result':region['html']=old.replace('<div id="npc-scout-comparison-results" hidden=""></div>','<div id="npc-scout-comparison-results" hidden=""><p>secret</p></div>')
+            evidence['panelHTML']=evidence['panelHTML'].replace(old,region['html'],1)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_render_trace_navigates_tabs_before_sampling_and_controller_closes_exactly(self):
+        root=Path(__file__).resolve().parents[1]
+        source=(root/'scripts/browser-render-scheduling.py').read_text();tree=ast.parse(source)
+        tabs=next(node for node in ast.walk(tree) if isinstance(node,ast.Assign)
+                  and any(isinstance(target,ast.Name) and target.id=='tabs' for target in node.targets))
+        self.assertEqual(ast.literal_eval(tabs.value),('overview','facilities','research','shipyard','defense','darkmatter',
+                         'protocol','curvature','achievements','save','orders','galaxy','fleet','messages','deep','arcade'))
+        loop=next(node for node in ast.walk(tree) if isinstance(node,ast.For) and isinstance(node.iter,ast.Name) and node.iter.id=='tabs')
+        calls=[node for node in ast.walk(loop) if isinstance(node,ast.Call) and isinstance(node.func,ast.Name)]
+        navigate=next(node for node in calls if node.func.id=='tab');sample=next(node for node in calls if node.func.id=='snapshot')
+        self.assertLess((navigate.lineno,navigate.col_offset),(sample.lineno,sample.col_offset))
+        tab=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='tab')
+        self.assertIn("click(page,f'[data-tab=\"{name}\"]')",ast.get_source_segment(source,tab))
+        adapter=(root/'src/ui/space-panel.ts').read_text();controller=(root/'src/ui/npc-scout-comparison-panel.ts').read_text()
+        self.assertIn('if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();selected=null;return;}',adapter)
+        self.assertIn('close() { controller?.close(); comparison?.close(); }',adapter)
+        self.assertIn('close() { abandon(RETIRED, true); }',controller)
+        self.assertIn('const RETIRED = "对照已关闭；请从当前保留的侦察消息重新打开。";',controller)
+        abandon=controller.split('  function abandon(',1)[1].split('  function retireRegistration(',1)[0]
+        for statement in ('other.replaceChildren(); other.value = "";',
+                          'panel.hidden = true; text(source, ""); text(status, reason); disable();'):
+            self.assertIn(statement,abandon)
 
 if __name__=='__main__':unittest.main()

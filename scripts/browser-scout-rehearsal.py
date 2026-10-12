@@ -428,9 +428,35 @@ def rehearsal_opener(page, ident=11, comparison_disabled=False):
     """Bind both complete direct controls before selecting the original action."""
     row_selector = f'#space-message-list > article.space-message[data-message-id="scout-{ident}"]'
     row = page.locator(row_selector)
-    openers = row.evaluate(MESSAGE_OPENERS_SAMPLE_JS) if row.count() == 1 else None
+    started = time.monotonic()
+    # The first probe records count only; do not label a later DOM sample as
+    # if it had already been present at that first observation.
+    witness = {'kind':'typed-opener-readiness','case':case,'selector':row_selector,
+               'initialCount':row.count(),'initialSample':None,'waited':False,
+               'finalCount':None,'finalSample':None,'elapsedMs':None,'error':None}
+    openers = None
+    try:
+        # The old locator.click waited for the real row to be attached. A native
+        # clock can render it on the first frame after navigation. Restore that
+        # bounded preparation without waiting away a duplicate or changing RAF.
+        if type(witness['initialCount']) is int and witness['initialCount'] == 0:
+            witness['waited'] = True
+            row.wait_for(state='attached', timeout=5000)
+        witness['finalCount'] = row.count()
+        if type(witness['finalCount']) is int and witness['finalCount'] == 1:
+            openers = row.evaluate(MESSAGE_OPENERS_SAMPLE_JS)
+        witness['finalSample'] = openers
+    except BaseException as error:
+        witness['error'] = str(error)
+        raise
+    finally:
+        witness['elapsedMs'] = (time.monotonic() - started) * 1000
+        evidence.append(copy.deepcopy(witness))
+        flush()
     check('typed report has exactly ordered original rehearsal and comparison openers',
-          exact_copied_data(openers, typed_message_openers(comparison_disabled)), openers)
+          type(witness['initialCount']) is int and witness['initialCount'] in (0, 1)
+          and type(witness['finalCount']) is int and witness['finalCount'] == 1
+          and exact_copied_data(openers, typed_message_openers(comparison_disabled)), openers)
     return row_selector + ' > button:not([data-npc-scout-comparison])'
 
 
