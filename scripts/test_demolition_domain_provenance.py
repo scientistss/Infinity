@@ -736,6 +736,9 @@ class NpcReportUiSourceContractTests(unittest.TestCase):
         dump = lambda node: ast.dump(node, include_attributes=False)
         self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])], ['synchronized_domain_provenance'])
         old_dispatch, new_dispatch = old['synchronized_domain_provenance'], copy.deepcopy(new['synchronized_domain_provenance'])
+        formation_branch = new_dispatch.body.pop(1)
+        expected_formation = ast.parse("if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):\n    return npc_rehearsal_formation_copy_provenance(repository, candidate, git, check)").body[0]
+        self.assertEqual(dump(formation_branch), dump(expected_formation))
         comparison_branch = new_dispatch.body.pop(1)
         expected_comparison = ast.parse("if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):\n    return npc_scout_comparison_provenance(repository, candidate, git, check)").body[0]
         self.assertEqual(dump(comparison_branch), dump(expected_comparison))

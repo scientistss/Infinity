@@ -1,7 +1,9 @@
 """Offline fail-closed scout comparison wiring against the exact split release.
 
-No game, Node, browser or network is run. These tests establish only mandatory
-wiring. All four same-SHA game jobs and the unchanged aggregate must still pass.
+No game, Node, browser or network is run. The frozen be0 comparison workflow
+retains this exact historical contract; the successor's independently hash-pinned
+whole-workflow test must pass before that historical body is inspected below.
+All four same-SHA game jobs and the unchanged aggregate must still pass.
 """
 from pathlib import Path
 import subprocess
@@ -17,6 +19,7 @@ from test_parallel_legacy_gate_split import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SPLIT_SHA = 'e729c7ff3c4ef519bfd14da9dc132ba7d971de48'
+FROZEN_COMPARISON_SHA = 'be0e112b964179fc15b89daa4ae6f6a722b78a92'
 
 
 def assert_comparison_gate(workflow, baseline):
@@ -35,7 +38,13 @@ def assert_comparison_gate(workflow, baseline):
 class ScoutComparisonGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / WORKFLOW_PATH).read_text()
+        # Preserve the exact completed comparison-stage history, with no broad
+        # allowance for successor commands. Its current extension is separately
+        # audited against every byte of be0 before these historical tests run.
+        from test_rehearsal_formation_copy_gate import assert_formation_copy_gate
+        cls.workflow = subprocess.check_output(
+            ['git', '-C', str(ROOT), 'show', f'{FROZEN_COMPARISON_SHA}:{WORKFLOW_PATH}'], text=True)
+        assert_formation_copy_gate((ROOT / WORKFLOW_PATH).read_bytes().decode('utf-8'), cls.workflow)
         cls.baseline = subprocess.check_output(
             ['git', '-C', str(ROOT), 'show', f'{SPLIT_SHA}:{WORKFLOW_PATH}'], text=True)
         cls.current = jobs(cls.workflow)

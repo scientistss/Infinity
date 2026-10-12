@@ -203,7 +203,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G
     if (!controller) controller = installNpcRehearsalPanel(root, {
       readContext() {
         const current = state!, planet = activePlanet(current), levels = current.research.levels;
-        return { adoptedWorld: world, messages: current.messages, origin: { id: planet.id, name: planet.name, coordinates: planet.coordinates }, landedShips: planet.units,
+        return { adoptedWorld: world, messages: current.messages, origin: { id: planet.id, name: planet.name, coordinates: planet.coordinates }, landedShips: planet.units, formations: current.formations.entries,
           completedTech: { weapons: levels.weapons_tech, shields: levels.shielding_tech, armour: levels.armour_tech }, completedHyperspaceLevel: levels.hyperspace_tech, writable, protectionReason: protection };
       },
       quoteAttack(draft) {

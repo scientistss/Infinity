@@ -6,6 +6,7 @@ absolute paths. Only read-only Git operations run. No Node/build/browser runs.
 import copy
 import hashlib
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import shutil
@@ -109,6 +110,40 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
     def run_identity(self):
         self.sync()
         return m.scout_fixture_identity(self.workspace, self.current, self.runtime)
+
+    def test_original_three_argument_signature_is_unchanged(self):
+        self.assertEqual(str(inspect.signature(m.scout_fixture_identity)),
+                         '(workspace, clean_source_summary, runtime)')
+
+    def test_only_exact_candidate_lock_versions_and_original_dependencies_are_allowed(self):
+        path = self.workspace / 'package-lock.json'
+        original = path.read_bytes()
+        lock = json.loads(original)
+        self.assertEqual(lock['version'], '0.6.23-alpha.1')
+        self.assertEqual(lock['packages']['']['version'], '0.6.23-alpha.1')
+        for field in ('top', 'package'):
+            for version in ('0.6.22-alpha.2', '0.6.23-alpha.2', '0.6.23', True, None):
+                changed = copy.deepcopy(lock)
+                target = changed if field == 'top' else changed['packages']['']
+                target['version'] = version
+                body = json.dumps(changed).encode('utf-8')
+                path.write_bytes(body)
+                self.current['sourceCode']['package-lock.json'] = m._sha(body)
+                self.natural['source']['dependencyLockSha256'] = m._sha(body)
+                with self.subTest(field=field, version=version), self.assertRaisesRegex(ValueError, 'Wrong r14 lock release'):
+                    self.run_identity()
+        changed = copy.deepcopy(lock)
+        changed['packages']['node_modules/break_infinity.js']['version'] = '0.0.0'
+        body = json.dumps(changed).encode('utf-8')
+        path.write_bytes(body)
+        self.current['sourceCode']['package-lock.json'] = m._sha(body)
+        self.natural['source']['dependencyLockSha256'] = m._sha(body)
+        with self.assertRaisesRegex(ValueError, 'Dependency contents differ from fixture producer'):
+            self.run_identity()
+        path.write_bytes(original)
+        self.current['sourceCode']['package-lock.json'] = m._sha(original)
+        self.natural['source']['dependencyLockSha256'] = m._sha(original)
+        self.run_identity()
 
     def test_synthetic_contract_positive_full_hashes(self):
         value = self.run_identity()

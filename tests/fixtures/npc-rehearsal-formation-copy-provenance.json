@@ -1,0 +1,202 @@
+{
+  "schema": "infinity-ring-protection-npc-rehearsal-formation-copy-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "be0e112b964179fc15b89daa4ae6f6a722b78a92",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-comparison-provenance.json",
+      "sha256": "0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00"
+    }
+  ],
+  "referenceStatus": "Exact same-schema formation-copy UI adoption atop independently sealed be0 scout comparison source. This source seal is not native, CI or release acceptance.",
+  "scope": "All production src/public paths, file modes, before/after bytes, complete deterministic Git patches and individual hunks are bound. All eight historical manifests, full domain and ring-critical scopes, original public art, report and comparison UI remain unchanged.",
+  "approvedDelta": "Pure named-formation quantity-copy model, historical rehearsal quantity UI and scoped CSS, with exact narrow space-panel wiring. No game logic, persistence schema, combat, economy, wallet, dispatch or art changes.",
+  "productionPaths": [
+    "src",
+    "public"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "unchangedPresentationPaths": [
+    "public",
+    "src/main.ts",
+    "src/ui/npc-battle-panel.ts",
+    "src/ui/npc-battle-present.ts",
+    "src/ui/npc-scout-comparison-model.ts",
+    "src/ui/npc-scout-comparison-panel.ts",
+    "src/ui/npc-scout-comparison.css"
+  ],
+  "changedPaths": [
+    {
+      "path": "src/space.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "84eae9a4ae5f0ae0c9eefedf931fd04d32609d33373930a5e0ea23813ec0aef5"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "10bdef2cf43a38590a80732906647b9fb7e6a5ef9a2c64a0a48a135e589de0af"
+      },
+      "patchSha256": "4ddeaf28510e3d0e62cc7d55e644127defc253e04e88c17e09feb3005baf7801",
+      "hunks": [
+        {
+          "header": "@@ -70,3 +70,7 @@",
+          "sha256": "0db19e368091dbe03b9de8a2324202868e99a047114439bfd4850362a4089a55"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-rehearsal-formation-model.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "38d6370d5ead387e3e4466e150d7d8b95585bfef0a5bb5b171489cb07036e436"
+      },
+      "patchSha256": "c5c75361db91e3f9ddd6857dd755df32cf74e9e251f907489b6ffe6258f845de",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,131 @@",
+          "sha256": "b43066df3513699a0cd9ed859d736d314f1ade2e7454d743c1c38ff46e382aad"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/npc-rehearsal-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "5651f6098b3e536d4d39269b172758d1f314155153cbf9d9dfc13fb0ce9b1524"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "10a0a59aa8340aed34b2db3f73dd863f2e2f74016dd4de79375f50c789a4efc9"
+      },
+      "patchSha256": "946927285d90ef254c387de01500417b98c9c6410c91ad545edb2da7ecdc8259",
+      "hunks": [
+        {
+          "header": "@@ -3,6 +3,7 @@ import type { CombatTech } from \"../game/encounter-combat\";",
+          "sha256": "254840dbb02a634400f0bd158609c2ba8ffa38b4f521a6253bd6519e6a5a73c9"
+        },
+        {
+          "header": "@@ -22,6 +23,8 @@ export interface NpcRehearsalContext {",
+          "sha256": "887aa4b9b3b72fa697db8fe8bc53a01a93398fb2c04e1d804b158a1bab223958"
+        },
+        {
+          "header": "@@ -64,6 +67,9 @@ export function npcRehearsalPanelHtml(): string {",
+          "sha256": "426e18adebed5b9d25639168f99a6ca1b7f8f00004212e5a90dde422380cfb47"
+        },
+        {
+          "header": "@@ -95,7 +101,10 @@ export function readNpcRehearsalSelection(raw: Readonly<Record<string, string>>,",
+          "sha256": "409930ca8a5c5649c645929e8bc4770a79aca8ce1da45201ee1d18bbf2f58604"
+        },
+        {
+          "header": "@@ -109,11 +118,16 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "27194474d7fa76e14f39b6202028fb4f73a606bac6f1cae6774b2a025a41b84d"
+        },
+        {
+          "header": "@@ -124,7 +138,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "c943826a1461172d6ef320e49f48cab37e4e5e6fadef0993c9de12836b643a98"
+        },
+        {
+          "header": "@@ -134,8 +148,8 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "06ffd750ac6fd98a87b87e3ae16f834900b01809f3bd9b0ddc92b445fc197757"
+        },
+        {
+          "header": "@@ -154,13 +168,17 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "f86f5cade334462e65f9386ffde140757121bf814a0920971178f63e73360530"
+        },
+        {
+          "header": "@@ -183,6 +201,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "3348fec3c111cb26a3d1bf9fb7529f1beeb2b5cf404e6dc595a260ffc582f901"
+        },
+        {
+          "header": "@@ -195,6 +214,144 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "b879b83b302094970e742122ee0d5ddcdc8767199b17c89d1268090fa9b0cbee"
+        },
+        {
+          "header": "@@ -283,7 +440,10 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "25dc873392de7483e96c9c18a9bdd810587445fc9454d2a9cf3f830f3c23d51e"
+        },
+        {
+          "header": "@@ -301,7 +461,10 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "ce2af3d280298e6f6e5d702a688990337864b9fe52ec673702fdf313bdab02f5"
+        },
+        {
+          "header": "@@ -310,8 +473,12 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "3cedd2ed1f7fff925b20d155bfba5cf1a5faf98e48833677716a4a6169a9c8e7"
+        },
+        {
+          "header": "@@ -374,6 +541,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "d783c99270943123421ac9d2d9ae971b7db53a623ca3ad61f51064a0c8f6aa73"
+        },
+        {
+          "header": "@@ -394,6 +562,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo",
+          "sha256": "1c5e053f315fa9dddcf1d3e763d87d4b8138cdad55d9ca377b245dd8d25cd883"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "82b3766420952d917ed4ddabbde62cd0a5ced863de32dbf821ef45c540ea7f77"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "55f4f6c61876d545fc70840ad3577b7424e4d8f5396cf427a16b25b4d721b0fa"
+      },
+      "patchSha256": "c99479d984f72e7b040fd27aa10f328a25f3ba877e6cab7654573eac5550a6b3",
+      "hunks": [
+        {
+          "header": "@@ -203,7 +203,7 @@ export function installSpaceNpcRehearsal(root: HTMLElement, afterFill: (state: G",
+          "sha256": "50ebfe44b5c1f819e463f836d64df124a99cec0a11002165de50e7360b20c687"
+        }
+      ]
+    }
+  ]
+}

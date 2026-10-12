@@ -28,6 +28,8 @@ Scout/rehearsal adoption separately composes exact cc19 with r14 source bytes,
 complete patches and hunks; kernel/economy and all ring scope remain protected.
 Scout comparison composes exact e729 with only a frozen four-file presentation
 delta; the r14 schema, every historical seal, all domain bytes and art stay fixed.
+Formation copy composes exact be0 comparison bytes with only four frozen UI
+paths; all eight earlier seals, complete domain, original art and r14 stay fixed.
 """
 import argparse
 import hashlib
@@ -206,6 +208,24 @@ NPC_SCOUT_COMPARISON_UNCHANGED_PATHS = (
     'public', 'src/ui/npc-rehearsal-panel.ts',
 )
 
+NPC_REHEARSAL_FORMATION_COPY_ADOPTION = 'be0e112b964179fc15b89daa4ae6f6a722b78a92'
+NPC_REHEARSAL_FORMATION_COPY_MANIFEST = 'tests/fixtures/npc-rehearsal-formation-copy-provenance.json'
+# Frozen be0-to-formation-copy UI source seal; never native, CI or release acceptance.
+NPC_REHEARSAL_FORMATION_COPY_MANIFEST_SHA256 = '2143af16367f93160ef9250c18de2e87bb2791f4665159bd3d8f43d8ab9fdb39'
+NPC_REHEARSAL_FORMATION_COPY_PRODUCTION_PATHS = ('src', 'public')
+NPC_REHEARSAL_FORMATION_COPY_CHANGED_PATHS = (
+    'src/space.css',
+    'src/ui/npc-rehearsal-formation-model.ts',
+    'src/ui/npc-rehearsal-panel.ts',
+    'src/ui/space-panel.ts',
+)
+NPC_REHEARSAL_FORMATION_COPY_UNCHANGED_PATHS = (
+    'public', 'src/main.ts',
+    'src/ui/npc-battle-panel.ts', 'src/ui/npc-battle-present.ts',
+    'src/ui/npc-scout-comparison-model.ts', 'src/ui/npc-scout-comparison-panel.ts',
+    'src/ui/npc-scout-comparison.css',
+)
+
 RING_CRITICAL_PATHS = ('src/core', 'src/automation', 'src/game/arcade.ts',
                        'src/data/arcade.ts', 'src/data/protocol-cards.ts', 'src/data/ring-art.json',
                        'src/ui/arcade-panel.ts', 'src/ui/arcade-present.ts',
@@ -359,6 +379,8 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):
+        return npc_rehearsal_formation_copy_provenance(repository, candidate, git, check)
     if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):
         return npc_scout_comparison_provenance(repository, candidate, git, check)
     if candidate != NPC_SCOUT_REHEARSAL_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_REHEARSAL_MANIFEST):
@@ -859,6 +881,82 @@ def npc_scout_comparison_provenance(repository, candidate, git, check):
             'previousProvenance': prior, 'manifestPath': NPC_SCOUT_COMPARISON_MANIFEST,
             'manifestSha256': sha(raw), 'manifest': manifest,
             'verificationScope': 'Exact same-schema NPC scout comparison UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
+
+
+def npc_rehearsal_formation_copy_provenance(repository, candidate, git, check):
+    """Compose immutable be0 comparison bytes with only the exact formation-copy UI delta."""
+    prior = npc_scout_comparison_provenance(repository, NPC_REHEARSAL_FORMATION_COPY_ADOPTION, git, check)
+    check('NPC rehearsal formation copy starts at the exact independently sealed be0 comparison source',
+          prior['contract'] == 'exact-declared-npc-scout-comparison-ui-delta'
+          and prior['candidateSourceSha'] == NPC_REHEARSAL_FORMATION_COPY_ADOPTION)
+
+    def changed(before, after, paths):
+        return git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                   before, after, '--', *paths).decode().splitlines()
+
+    def entry(ref, path):
+        value = git('ls-tree', ref, '--', path)
+        if not value:
+            return None
+        mode, kind, oid = value.decode().split('\t')[0].split()
+        if kind != 'blob':
+            raise AssertionError('Declared NPC rehearsal formation copy path must be a file: ' + path)
+        return {'mode': mode, 'sha256': sha(git('cat-file', 'blob', oid))}
+
+    previous = [(DOMAIN_MANIFEST, DOMAIN_MANIFEST_SHA256), (IRN_MANIFEST, IRN_MANIFEST_SHA256),
+                (DEMOLITION_MANIFEST, DEMOLITION_MANIFEST_SHA256), (NPC_MANIFEST, NPC_MANIFEST_SHA256),
+                (ATTACK_MANIFEST, ATTACK_MANIFEST_SHA256),
+                (NPC_REPORT_UI_MANIFEST, NPC_REPORT_UI_MANIFEST_SHA256),
+                (NPC_SCOUT_REHEARSAL_MANIFEST, NPC_SCOUT_REHEARSAL_MANIFEST_SHA256),
+                (NPC_SCOUT_COMPARISON_MANIFEST, NPC_SCOUT_COMPARISON_MANIFEST_SHA256)]
+    for path, digest in previous:
+        local = repository / path
+        check('NPC rehearsal formation copy preserves every earlier manifest byte and mode: ' + path,
+              local.is_file() and not local.is_symlink() and not (local.stat().st_mode & 0o111)
+              and sha(local.read_bytes()) == digest
+              and entry(candidate, path) == entry(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, path)
+              == {'mode': '100644', 'sha256': digest})
+    local = repository / NPC_REHEARSAL_FORMATION_COPY_MANIFEST
+    raw = local.read_bytes()
+    check('NPC rehearsal formation copy manifest has its fixed digest and exact committed ordinary-file bytes',
+          local.is_file() and not local.is_symlink() and not (local.stat().st_mode & 0o111)
+          and sha(raw) == NPC_REHEARSAL_FORMATION_COPY_MANIFEST_SHA256
+          and entry(candidate, NPC_REHEARSAL_FORMATION_COPY_MANIFEST) == {'mode': '100644', 'sha256': NPC_REHEARSAL_FORMATION_COPY_MANIFEST_SHA256}
+          and raw == git('show', candidate + ':' + NPC_REHEARSAL_FORMATION_COPY_MANIFEST))
+    manifest = json.loads(raw)
+    check('NPC rehearsal formation copy pins be0, all eight prior seals and the complete production and protected scopes',
+          manifest.get('schema') == 'infinity-ring-protection-npc-rehearsal-formation-copy-provenance-v1'
+          and manifest.get('historicalBaselineSha') == BASELINE
+          and manifest.get('previousAdoptionSourceSha') == NPC_REHEARSAL_FORMATION_COPY_ADOPTION
+          and manifest.get('previousManifests') == [{'path': path, 'sha256': digest} for path, digest in previous]
+          and manifest.get('productionPaths') == list(NPC_REHEARSAL_FORMATION_COPY_PRODUCTION_PATHS)
+          and manifest.get('domainPaths') == list(DOMAIN_PATHS)
+          and manifest.get('originalRingCriticalPaths') == list(RING_CRITICAL_PATHS)
+          and manifest.get('exactDomainDeltaPaths') == []
+          and manifest.get('exactRingCriticalDeltaPaths') == []
+          and manifest.get('unchangedPresentationPaths') == list(NPC_REHEARSAL_FORMATION_COPY_UNCHANGED_PATHS))
+    delta = changed(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate, NPC_REHEARSAL_FORMATION_COPY_PRODUCTION_PATHS)
+    check('complete src/public tree differs from be0 only at the exact four formation-copy UI files',
+          delta == list(NPC_REHEARSAL_FORMATION_COPY_CHANGED_PATHS))
+    rows = []
+    for path in delta:
+        patch = source_delta_patch(git, NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate, path)
+        rows.append({'path': path, 'before': entry(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, path),
+                     'after': entry(candidate, path), 'patchSha256': sha(patch),
+                     'hunks': source_delta_hunks(patch)})
+    check('each formation-copy UI mode, byte, full patch and hunk is exact and anchored in sealed be0 bytes',
+          manifest.get('changedPaths') == rows)
+    check('NPC rehearsal formation copy preserves entire domain, ring, original art, report and comparison scopes',
+          changed(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate, DOMAIN_PATHS) == []
+          and changed(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate, RING_CRITICAL_PATHS) == []
+          and changed(NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate, NPC_REHEARSAL_FORMATION_COPY_UNCHANGED_PATHS) == [])
+    return {'contract': 'exact-declared-npc-rehearsal-formation-copy-ui-delta',
+            'historicalBaselineSha': BASELINE, 'historicalDomainByteIdentity': False,
+            'previousAdoptionSourceSha': NPC_REHEARSAL_FORMATION_COPY_ADOPTION, 'candidateSourceSha': candidate,
+            'historicalChangedPaths': changed(BASELINE, candidate, DOMAIN_PATHS),
+            'previousProvenance': prior, 'manifestPath': NPC_REHEARSAL_FORMATION_COPY_MANIFEST,
+            'manifestSha256': sha(raw), 'manifest': manifest,
+            'verificationScope': 'Exact same-schema NPC rehearsal formation copy UI source adoption only; not native or CI acceptance. Every historical protection, recovery, full-state and NPC native assertion remains required.'}
 
 
 def atomic_json(path, value):

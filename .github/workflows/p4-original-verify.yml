@@ -1383,8 +1383,8 @@ jobs:
           before_lock = json.loads(original_lock)
           after_lock = json.loads((repo / 'package-lock.json').read_text())
           assert before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1'
-          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.22-alpha.2'
-          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.22-alpha.2'
+          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.23-alpha.1'
+          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.23-alpha.1'
           assert before_lock == after_lock
           roots = {}
           for key, original in fixture['sourceBindings'].items():
@@ -1415,6 +1415,11 @@ jobs:
           python -m unittest discover -s scripts -p 'test_scout_comparison_provenance.py' -v
           python -m unittest discover -s scripts -p 'test_scout_comparison_acceptance.py' -v
           python -m unittest discover -s scripts -p 'test_scout_comparison_gate.py' -v
+      - name: Offline exact formation copy acceptance source seal and mandatory gate
+        run: |
+          python -m unittest discover -s scripts -p 'test_rehearsal_formation_copy_acceptance.py' -v
+          python scripts/test_rehearsal_formation_copy_provenance.py --verify-candidate "$GITHUB_SHA" -v
+          python -m unittest discover -s scripts -p 'test_rehearsal_formation_copy_gate.py' -v
       - name: Bind exact scout source assets runtime and complete fixture outputs
         id: common_identity
         run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/scout-current" --scout-fixtures
@@ -1435,6 +1440,7 @@ jobs:
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           python scripts/browser-scout-rehearsal.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence
           python scripts/browser-scout-comparison.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-comparison-evidence
+          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.23-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
       - name: Archive exact readable rehearsal source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > scout-rehearsal-source.zip
@@ -1450,6 +1456,7 @@ jobs:
             scout-rehearsal-source-evidence
             scout-rehearsal-evidence
             scout-comparison-evidence
+            rehearsal-formation-copy-evidence
             scout-rehearsal-preview.log
           retention-days: 7
           if-no-files-found: error

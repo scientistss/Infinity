@@ -3,9 +3,10 @@
 All synthetic commits and index writes use a temporary object database. The real
 repository is read-only except when the explicit --build-manifest command writes
 its named output file. No browser, Node process, refs or production files change.
-The final test verifies a committed candidate (HEAD by default), not a synthetic
-replacement for the candidate. This is source provenance, never native or CI
-acceptance. Before the candidate is committed, run ScoutComparisonSyntheticTests.
+The final test revalidates the frozen be0 comparison source, not a mutable
+successor candidate. The separate formation-copy suite certifies that candidate.
+This is source provenance, never native or CI acceptance. The synthetic class
+keeps every historical comparison negative and source-identity assertion.
 """
 import ast
 import copy
@@ -24,7 +25,7 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / 'scripts/browser-ring-protection.py'
 REFERENCE = 'e729c7ff3c4ef519bfd14da9dc132ba7d971de48'
-CANDIDATE = 'HEAD'
+FROZEN_COMPARISON_SOURCE = 'be0e112b964179fc15b89daa4ae6f6a722b78a92'
 
 
 def module():
@@ -375,6 +376,11 @@ class ScoutComparisonSyntheticTests(unittest.TestCase):
         self.assertEqual([name for name in old if dump(old[name]) != dump(new[name])],
                          ['synchronized_domain_provenance'])
         restored = copy.deepcopy(new['synchronized_domain_provenance'])
+        formation_branch = restored.body.pop(1)
+        expected_formation = ast.parse(
+            "if candidate != NPC_REHEARSAL_FORMATION_COPY_ADOPTION and git('ls-tree', candidate, '--', NPC_REHEARSAL_FORMATION_COPY_MANIFEST):\n"
+            '    return npc_rehearsal_formation_copy_provenance(repository, candidate, git, check)\n').body[0]
+        self.assertEqual(dump(formation_branch), dump(expected_formation))
         branch = restored.body.pop(1)
         expected_branch = ast.parse(
             "if candidate != NPC_SCOUT_COMPARISON_ADOPTION and git('ls-tree', candidate, '--', NPC_SCOUT_COMPARISON_MANIFEST):\n"
@@ -395,15 +401,14 @@ class ScoutComparisonSyntheticTests(unittest.TestCase):
                           'src/ui/npc-scout-comparison.css', 'src/ui/space-panel.ts'))
 
 
-class ScoutComparisonCommittedCandidateTests(unittest.TestCase):
-    def test_current_committed_candidate_matches_its_exact_source_seal(self):
+class ScoutComparisonFrozenSourceTests(unittest.TestCase):
+    def test_frozen_be0_comparison_source_matches_its_exact_source_seal(self):
         ring = module()
         def git(*args):
             return subprocess.check_output(['git', *args], cwd=ROOT, stderr=subprocess.PIPE)
-        candidate = git('rev-parse', CANDIDATE + '^{commit}').decode().strip()
-        self.assertNotEqual(candidate, REFERENCE, 'Comparison candidate must be committed before final verification')
-        self.assertEqual(SCRIPT.read_bytes(), git('show', candidate + ':scripts/browser-ring-protection.py'),
-                         'The executed source gate must be the committed candidate gate')
+        candidate = git('rev-parse', FROZEN_COMPARISON_SOURCE + '^{commit}').decode().strip()
+        self.assertEqual(candidate, FROZEN_COMPARISON_SOURCE)
+        self.assertEqual(ring.NPC_REHEARSAL_FORMATION_COPY_ADOPTION, candidate)
         self.assertRegex(ring.NPC_SCOUT_COMPARISON_MANIFEST_SHA256, r'^[0-9a-f]{64}$')
         self.assertNotEqual(ring.NPC_SCOUT_COMPARISON_MANIFEST_SHA256, '0' * 64)
         manifest_path = ROOT / ring.NPC_SCOUT_COMPARISON_MANIFEST
@@ -417,19 +422,21 @@ class ScoutComparisonCommittedCandidateTests(unittest.TestCase):
         self.assertEqual(result['contract'], 'exact-declared-npc-scout-comparison-ui-delta')
         self.assertEqual(result['previousProvenance']['candidateSourceSha'], REFERENCE)
         self.assertGreater(len(checks), 50)
-        # No mutable source or manifest may quietly differ from the commit being certified.
-        paths = ['src', 'public', ring.NPC_SCOUT_COMPARISON_MANIFEST,
-                 *(path for path, _ in previous_manifests(ring))]
-        self.assertEqual(git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
-                             candidate, '--', *paths), b'')
-        self.assertEqual(git('ls-files', '--others', '--exclude-standard', '--', 'src', 'public'), b'')
+        # A new stage cannot reinterpret this old four-file comparison delta.
+        # The real successor's worktree and committed gate are checked separately.
+        self.assertEqual(git('show', candidate + ':' + ring.NPC_SCOUT_COMPARISON_MANIFEST),
+                         manifest_path.read_bytes())
+        tracked = git('diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv',
+                      REFERENCE, candidate, '--', *ring.NPC_SCOUT_COMPARISON_PRODUCTION_PATHS).decode().splitlines()
+        self.assertEqual(tracked, list(ring.NPC_SCOUT_COMPARISON_CHANGED_PATHS))
+        for path, expected in previous_manifests(ring):
+            raw = (ROOT / path).read_bytes()
+            self.assertEqual(digest(raw), expected)
+            self.assertEqual(git('show', candidate + ':' + path), raw)
 
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--build-manifest':
         build_worktree_manifest(sys.argv[2])
     else:
-        if len(sys.argv) >= 3 and sys.argv[1] == '--verify-candidate':
-            CANDIDATE = sys.argv[2]
-            del sys.argv[1:3]
         unittest.main()

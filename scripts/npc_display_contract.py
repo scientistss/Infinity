@@ -32,6 +32,12 @@ FLYING_SHIPS=[('small_cargo','小型运输舰'),('large_cargo','大型运输舰'
  ('espionage_probe','间谍卫星'),('colony_ship','殖民船')]
 # The dedicated class must not join the shared .space-status renderer.
 DRAFT_NOTICE_HTML='<p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden=""></p>'
+# Independent closed-state literals for the only formation-copy addition.
+# The complete panel comparison binds their one position, every ID and all
+# hidden content; the control witness also binds native disabled/value state.
+REHEARSAL_FORMATION_CONTROLS_HTML='<div class="space-controls"><label for="npc-rehearsal-formation">保存编成<select id="npc-rehearsal-formation" aria-label="保存编成" disabled=""><option value="">选择命名编成</option></select></label><button id="npc-rehearsal-copy" type="button" disabled="">填入演练数量</button></div>'
+REHEARSAL_FORMATION_SOURCE_HTML='<p id="npc-rehearsal-formation-source" class="muted"></p>'
+REHEARSAL_FORMATION_DEFICITS_HTML='<details id="npc-rehearsal-deficits"><summary id="npc-rehearsal-deficit-summary">数量与当前停泊库存</summary><div id="npc-rehearsal-deficit-body" class="npc-report-details"></div></details>'
 
 
 def initial_rehearsal_html():
@@ -43,6 +49,9 @@ def initial_rehearsal_html():
     <p id="npc-rehearsal-source" class="muted"></p><p id="npc-rehearsal-origin" class="chip"></p>
     <details id="npc-rehearsal-history"><summary>侦察抵达时的精确情报</summary><div id="npc-rehearsal-history-body" class="npc-report-details"></div></details>
     <p class="muted">仅选择当前星球已停泊舰船。演练不派遣、不付款；排队建造与研究不计入。</p>
+    {REHEARSAL_FORMATION_CONTROLS_HTML}
+    {REHEARSAL_FORMATION_SOURCE_HTML}
+    {REHEARSAL_FORMATION_DEFICITS_HTML}
     <div class="space-ships">{ships}</div>
     <div class="space-controls"><label>草稿速度<select id="npc-rehearsal-speed" disabled="">{options}</select></label>
     <button id="npc-rehearsal-run" type="button" disabled="">运行三个公开种子示例</button><button id="npc-rehearsal-cancel" type="button">取消 / 返回消息</button></div>
@@ -117,7 +126,10 @@ def initial_message_panel_html(origin,message_html):
 
 
 def initial_rehearsal_controls():
-    return [{'id':'npc-rehearsal-ship-'+ident,'type':'number','value':'0','disabled':True,'visible':False} for ident,_ in FLYING_SHIPS]+[
+    return [
+      {'id':'npc-rehearsal-formation','type':'select-one','value':'','disabled':True,'visible':False},
+      {'id':'npc-rehearsal-copy','type':'button','value':'','disabled':True,'visible':False}]+[
+      {'id':'npc-rehearsal-ship-'+ident,'type':'number','value':'0','disabled':True,'visible':False} for ident,_ in FLYING_SHIPS]+[
       {'id':'npc-rehearsal-speed','type':'select-one','value':'100','disabled':True,'visible':False},
       {'id':'npc-rehearsal-run','type':'button','value':'','disabled':True,'visible':False},
       {'id':'npc-rehearsal-cancel','type':'button','value':'','disabled':False,'visible':False},

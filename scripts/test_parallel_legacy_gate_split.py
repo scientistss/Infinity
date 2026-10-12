@@ -242,7 +242,14 @@ class ParallelLegacyGateSplitTests(unittest.TestCase):
 
     def test_orbital_unchanged_and_scout_has_only_exact_comparison_additions(self):
         self.assertEqual(self.current['npc-orbital'], self.original['npc-orbital'])
-        assert_scout_comparison_preserved(self.current['scout-rehearsal'], self.original['scout-rehearsal'])
+        # The successor adds one separately specified mandatory stage. Before
+        # reverting to the frozen comparison job, independently check the entire
+        # current workflow against be0 and its exact enumerated additions.
+        # This never strips arbitrary lines, commands, metadata or differences.
+        from test_rehearsal_formation_copy_gate import assert_formation_copy_gate, baseline_workflow
+        comparison_workflow = assert_formation_copy_gate(self.workflow, baseline_workflow())
+        assert_scout_comparison_preserved(jobs(comparison_workflow)['scout-rehearsal'],
+                                         self.original['scout-rehearsal'])
 
     def test_common_and_fixture_identity_wiring_covers_every_job(self):
         for name in GAME_JOBS:

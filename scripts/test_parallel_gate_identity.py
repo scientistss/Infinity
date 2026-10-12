@@ -95,7 +95,7 @@ class ExactIdentityTests(unittest.TestCase):
         dist=self.root/'dist';dist.mkdir();files={}
         for i in range(62):
             raw=f'synthetic asset {i}'.encode();name=f'asset-{i}.js';(dist/name).write_bytes(raw);files[name]=M.sha(raw)
-        self.release={'sourceSha':self.sha,'saveVersion':9,'saveRevision':14,'version':'0.6.22-alpha.2','files':files}
+        self.release={'sourceSha':self.sha,'saveVersion':9,'saveRevision':14,'version':'0.6.23-alpha.1','files':files}
         self.write_release()
 
     def tearDown(self):self.tmp.cleanup()
@@ -130,7 +130,7 @@ class ExactIdentityTests(unittest.TestCase):
         with self.assertRaises(AssertionError):M.common_identity(self.root,self.root,'a'*40,'v22.20.0')
         for runtime in ('v24.19.0','22.20.0','v22.20.0\nother','unknown'):
             with self.subTest(runtime=runtime),self.assertRaises(AssertionError):M.common_identity(self.root,self.root,self.sha,runtime)
-        for key,value in (('saveRevision',13),('saveRevision',True),('saveVersion',True),('sourceSha','a'*40),('version','0.6.21-alpha.1')):
+        for key,value in (('saveRevision',13),('saveRevision',True),('saveVersion',True),('sourceSha','a'*40),('version','0.6.21-alpha.1'),('version','0.6.22-alpha.2'),('version','0.6.23-alpha.2'),('version','0.6.23'),('version',None),('version',True)):
             before=self.release[key];self.release[key]=value;self.write_release()
             with self.subTest(key=key,value=value),self.assertRaises(AssertionError):M.exact_assets(self.root,self.sha)
             self.release[key]=before;self.write_release()

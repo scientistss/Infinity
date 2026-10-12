@@ -5,6 +5,7 @@ import { quoteFlight, sendFleet, type FleetMessage, type FleetRequest } from "..
 import * as fleet from "../src/game/fleet";
 import { tick, evaluatePrestige } from "../src/game/logic";
 import * as rehearsal from "../src/game/npc-rehearsal";
+import { createFormation, deleteFormation, editFormation } from "../src/game/formations";
 import { enqueueResearch } from "../src/game/research";
 import { createInitialState } from "../src/game/state";
 import { installNpcAttackControls, type NpcAttackUiAction } from "../src/ui/npc-attack-controls";
@@ -18,11 +19,15 @@ import panelSource from "../src/ui/space-panel.ts?raw";
 type Listener = (event: { target: NodeDouble; isTrusted: boolean; key?: string; preventDefault(): void }) => void;
 class NodeDouble {
   id = ""; className = ""; dataset: Record<string, string> = {}; attributes: Record<string, string> = {};
-  tagName: string; value = ""; max = ""; disabled = false; title = ""; open = false; tabIndex = -1;
+  tagName: string; private valueText = ""; private typeText = "number"; max = ""; disabled = false; title = ""; open = false; tabIndex = -1;
   connectedRoot = false; parentElement: NodeDouble | null = null; children: NodeDouble[] = [];
   listeners = new Map<string, Listener[]>(); ownText = ""; private hiddenValue = false;
   constructor(tag = "div") { this.tagName = tag; }
   get parentNode() { return this.parentElement; }
+  get type() { return this.typeText; }
+  set type(value: string) { this.typeText = value; }
+  get value() { return this.valueText; }
+  set value(value: string) { this.valueText = value; }
   get hidden() { return this.hiddenValue; }
   set hidden(value: boolean) {
     if (value === this.hiddenValue) return;
@@ -94,6 +99,8 @@ function fixture() {
   function make(id: string, tag = "div", parent = root) { const node = new NodeDouble(tag); node.id = id; parent.append(node); return node; }
   const messages = make("space-messages"), list = make("space-message-list", "div", messages), panel = make("npc-rehearsal-panel", "section", messages); panel.hidden = true;
   for (const id of ["title", "source", "origin", "status", "results", "fill-explanation"]) make(`npc-rehearsal-${id}`, "div", panel);
+  make("npc-rehearsal-formation", "select", panel); make("npc-rehearsal-copy", "button", panel); make("npc-rehearsal-formation-source", "p", panel);
+  const deficits = make("npc-rehearsal-deficits", "details", panel); make("npc-rehearsal-deficit-summary", "summary", deficits); make("npc-rehearsal-deficit-body", "div", deficits);
   const history = make("npc-rehearsal-history", "details", panel); make("npc-rehearsal-history-body", "div", history);
   for (const id of ["run", "cancel", "fill"]) make(`npc-rehearsal-${id}`, "button", panel);
   make("npc-rehearsal-speed", "select", panel).value = "100";
@@ -131,7 +138,7 @@ function fixture() {
 
 beforeEach(() => {
   const doc = new NodeDouble(), win = new NodeDouble(); Object.assign(doc, { activeElement: null, createElement: (tag: string) => new NodeDouble(tag) });
-  vi.stubGlobal("document", doc); vi.stubGlobal("window", win); vi.stubGlobal("Element", NodeDouble); vi.stubGlobal("HTMLSelectElement", NodeDouble); vi.stubGlobal("MutationObserver", ObserverDouble); ObserverDouble.instances = [];
+  vi.stubGlobal("document", doc); vi.stubGlobal("window", win); vi.stubGlobal("Element", NodeDouble); vi.stubGlobal("HTMLInputElement", NodeDouble); vi.stubGlobal("HTMLSelectElement", NodeDouble); vi.stubGlobal("MutationObserver", ObserverDouble); ObserverDouble.instances = [];
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -254,5 +261,54 @@ describe("main host adoption and pre-confirmation wiring", () => {
     const ready = createInitialState(42, 42); ready.lifetime.metal = big("1e30"); ready.stats.launches = 1e20;
     const next = evaluatePrestige(ready).next;
     expect(next).not.toBe(ready); expect(next.stats.launches).toBe(ready.stats.launches); expect(next.universe.seed).toBe(ready.universe.seed); expect(next.universe).not.toBe(ready.universe);
+  });
+});
+
+
+describe("saved formation to real historical rehearsal adapter", () => {
+  function save(f: ReturnType<typeof fixture>, ships = { light_fighter: 4 }) {
+    const result = createFormation(f.state(), { expectedNextFormationId: 1, name: "历史演练编成", ships });
+    expect(result.ok).toBe(true); f.setState(result.state); f.observe();
+  }
+  function choose(f: ReturnType<typeof fixture>) { f.node("npc-rehearsal-formation").value = "1"; f.node("npc-rehearsal-formation").emit("change"); }
+  function copy(f: ReturnType<typeof fixture>) { f.node("npc-rehearsal-copy").emit("click"); }
+  it("copies a saved design into dense13 with no quote/payment/order or real-draft change", () => {
+    const f = fixture(); save(f); f.open();
+    for (const id of NPC_REHEARSAL_FLYING_IDS) f.node(`npc-rehearsal-ship-${id}`).value = "9";
+    f.node("npc-rehearsal-speed").value = "70";
+    const stateBefore = JSON.stringify(f.state()), draftBefore = JSON.stringify(f.read()), quote = vi.spyOn(fleet, "quoteFlight"), simulate = vi.spyOn(rehearsal, "rehearseNpcScout");
+    choose(f); expect(f.node("npc-rehearsal-ship-light_fighter").value).toBe("9"); copy(f);
+    for (const id of NPC_REHEARSAL_FLYING_IDS) expect(f.node(`npc-rehearsal-ship-${id}`).value).toBe(id === "light_fighter" ? "4" : "0");
+    expect(f.node("npc-rehearsal-speed").value).toBe("70"); expect(JSON.stringify(f.read())).toBe(draftBefore); expect(JSON.stringify(f.state())).toBe(stateBefore);
+    expect(quote).not.toHaveBeenCalled(); expect(simulate).not.toHaveBeenCalled(); expect(f.actions).toEqual([]); expect(f.afterCalls()).toBe(0);
+    f.node("npc-rehearsal-run").emit("click"); expect(simulate).toHaveBeenCalledTimes(1); f.fill();
+    expect(f.afterCalls()).toBe(1); expect(f.read().ships.light_fighter).toBe(4); expect(JSON.stringify(f.state())).toBe(stateBefore); expect(f.actions).toEqual([]);
+  });
+  it("keeps copied quantities independent and permits deletion of an unreferenced source", () => {
+    const f = fixture(); save(f); f.open(); choose(f); copy(f);
+    const edited = editFormation(f.state(), { formationId: 1, expectedRevision: 1, name: "新名称", ships: { light_fighter: 7 } });
+    expect(edited.ok).toBe(true); f.setState(edited.state); f.observe(); expect(f.node("npc-rehearsal-ship-light_fighter").value).toBe("4");
+    const deleted = deleteFormation(f.state(), { formationId: 1, expectedRevision: 2 }); expect(deleted.ok).toBe(true);
+    f.setState(deleted.state); f.observe(); expect(f.node("npc-rehearsal-ship-light_fighter").value).toBe("4");
+    expect(f.node("npc-rehearsal-formation-source").textContent).toBe("来自 #1 历史演练编成 · r1"); expect(f.state().orders.tasks).toEqual([]);
+  });
+  it("keeps saved shortages exact and does not rerun when inventory rises", () => {
+    const f = fixture(); save(f, { light_fighter: 101 }); f.open(); choose(f); copy(f);
+    const simulate = vi.spyOn(rehearsal, "rehearseNpcScout"), before = JSON.stringify(f.read()); f.node("npc-rehearsal-run").emit("click");
+    expect(simulate).not.toHaveBeenCalled(); expect(f.node("npc-rehearsal-ship-light_fighter").value).toBe("101"); expect(f.node("npc-rehearsal-deficit-summary").textContent).toContain("缺额 1 艘");
+    activePlanet(f.state()).units.light_fighter = 101; f.observe(); expect(simulate).not.toHaveBeenCalled(); expect(f.node("npc-rehearsal-fill").disabled).toBe(true); expect(JSON.stringify(f.read())).toBe(before);
+    f.node("npc-rehearsal-run").emit("click"); expect(simulate).toHaveBeenCalledTimes(1);
+  });
+  it.each(["weapons", "fuel", "slots"])("can Run stocked copied numbers with insufficient %s, while Fill still uses the ordinary quote", kind => {
+    const f = fixture(); save(f); f.open(); choose(f); copy(f);
+    if (kind === "weapons") f.state().research.levels.weapons_tech = 0;
+    else if (kind === "fuel") activePlanet(f.state()).resources.deuterium = big(0);
+    else {
+      const sent = sendFleet(f.state(), { mission: "attack", target: { ...TARGET }, ships: { light_fighter: 1 }, speedPercent: 100, cargo: { metal: big(0), crystal: big(0), deuterium: big(0) } });
+      expect(sent.ok).toBe(true); f.setState(sent.state);
+    }
+    f.observe(); const before = JSON.stringify(f.state()), draft = JSON.stringify(f.read()); f.node("npc-rehearsal-run").emit("click");
+    expect(f.node("npc-rehearsal-results").querySelectorAll(".npc-battle-report")).toHaveLength(3); expect(f.node("npc-rehearsal-fill").disabled).toBe(true);
+    f.node("npc-rehearsal-fill").disabled = false; f.fill(); expect(JSON.stringify(f.state())).toBe(before); expect(JSON.stringify(f.read())).toBe(draft); expect(f.afterCalls()).toBe(0);
   });
 });

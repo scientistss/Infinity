@@ -3,6 +3,7 @@ import type { CombatTech } from "../game/encounter-combat";
 import type { FleetMessage } from "../game/fleet";
 import { rehearseNpcScout, type NpcRehearsalResult, type NpcRehearsalSample } from "../game/npc-rehearsal";
 import type { NpcScoutSnapshotV1 } from "../game/npc-scout-state";
+import { buildNpcRehearsalFormationCopy, listNpcRehearsalFormations } from "./npc-rehearsal-formation-model";
 
 export const NPC_REHEARSAL_FLYING_IDS = Object.freeze(SHIP_IDS.filter(id => id !== "solar_satellite"));
 type FlyingId = (typeof NPC_REHEARSAL_FLYING_IDS)[number];
@@ -22,6 +23,8 @@ export interface NpcRehearsalContext {
   readonly messages: readonly FleetMessage[];
   readonly origin: Readonly<{ id: string; name: string; coordinates: Coordinates }>;
   readonly landedShips: ShipCounts;
+  /** Read-only saved-design subgraph, never GameState or order/payment data. */
+  readonly formations: unknown;
   readonly completedTech: Readonly<CombatTech>;
   readonly completedHyperspaceLevel: number;
   readonly writable: boolean;
@@ -64,6 +67,9 @@ export function npcRehearsalPanelHtml(): string {
     <p id="npc-rehearsal-source" class="muted"></p><p id="npc-rehearsal-origin" class="chip"></p>
     <details id="npc-rehearsal-history"><summary>侦察抵达时的精确情报</summary><div id="npc-rehearsal-history-body" class="npc-report-details"></div></details>
     <p class="muted">仅选择当前星球已停泊舰船。演练不派遣、不付款；排队建造与研究不计入。</p>
+    <div class="space-controls"><label for="npc-rehearsal-formation">保存编成<select id="npc-rehearsal-formation" aria-label="保存编成"><option value="">选择命名编成</option></select></label><button id="npc-rehearsal-copy" type="button" disabled>填入演练数量</button></div>
+    <p id="npc-rehearsal-formation-source" class="muted"></p>
+    <details id="npc-rehearsal-deficits"><summary id="npc-rehearsal-deficit-summary">数量与当前停泊库存</summary><div id="npc-rehearsal-deficit-body" class="npc-report-details"></div></details>
     <div class="space-ships">${NPC_REHEARSAL_FLYING_IDS.map(id => `<label class="space-ship"><span>${unitById(id).nameZh}<small id="npc-rehearsal-stock-${id}"></small></span><input id="npc-rehearsal-ship-${id}" type="number" min="0" max="${MAX_SHIPS}" step="1" value="0" aria-label="${unitById(id).nameZh}演练数量" /></label>`).join("")}</div>
     <div class="space-controls"><label>草稿速度<select id="npc-rehearsal-speed">${[100, 90, 80, 70, 60, 50, 40, 30, 20, 10].map(n => `<option value="${n}">${n}%</option>`).join("")}</select></label>
     <button id="npc-rehearsal-run" type="button">运行三个公开种子示例</button><button id="npc-rehearsal-cancel" type="button">取消 / 返回消息</button></div>
@@ -95,7 +101,10 @@ export function readNpcRehearsalSelection(raw: Readonly<Record<string, string>>,
 
 type Registration = { readonly button: HTMLButtonElement; readonly message: FleetMessage; readonly snapshot: NpcScoutSnapshotV1; readonly world: object; retired: boolean };
 type Review = { readonly result: NpcRehearsalResult; readonly draft: NpcRehearsalDraft; readonly fingerprint: string; readonly available: readonly number[]; readonly nodes: HTMLElement[]; stale: boolean; quote: NpcRehearsalDecision };
-type Session = { readonly registration: Registration; readonly originId: string; readonly world: object; readonly snapshot: NpcScoutSnapshotV1; historyShown: boolean; review: Review | null };
+type FormationCopy = NonNullable<ReturnType<typeof buildNpcRehearsalFormationCopy>>;
+type FormationOption = { readonly node: HTMLOptionElement; readonly value: string; readonly source: unknown; readonly ships: unknown; readonly mark: string; retired: boolean };
+type FormationChoice = { readonly option: FormationOption; readonly copy: FormationCopy };
+type Session = { readonly registration: Registration; readonly originId: string; readonly world: object; readonly snapshot: NpcScoutSnapshotV1; historyShown: boolean; review: Review | null; formation: FormationChoice | null };
 
 /** Capabilities are original object references, never datasets or persisted IDs.
  * observe is a cheap lifecycle/stock/technology check; combat runs only on a
@@ -109,11 +118,16 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
   const history = get<HTMLDetailsElement>("npc-rehearsal-history"), historyBody = get("npc-rehearsal-history-body"), results = get("npc-rehearsal-results");
   const run = get<HTMLButtonElement>("npc-rehearsal-run"), cancel = get<HTMLButtonElement>("npc-rehearsal-cancel"), fill = get<HTMLButtonElement>("npc-rehearsal-fill");
   const speed = get<HTMLSelectElement>("npc-rehearsal-speed");
+  const formation = get<HTMLSelectElement>("npc-rehearsal-formation"), copy = get<HTMLButtonElement>("npc-rehearsal-copy"), formationSource = get("npc-rehearsal-formation-source");
+  const deficits = get<HTMLDetailsElement>("npc-rehearsal-deficits"), deficitSummary = get("npc-rehearsal-deficit-summary"), deficitBody = get("npc-rehearsal-deficit-body");
+  const inputPrototype = HTMLInputElement.prototype, inputValue = Object.getOwnPropertyDescriptor(inputPrototype, "value"), inputType = Object.getOwnPropertyDescriptor(inputPrototype, "type");
   const fields = NPC_REHEARSAL_FLYING_IDS.map(id => ({ id, input: get<HTMLInputElement>(`npc-rehearsal-ship-${id}`), available: get(`npc-rehearsal-stock-${id}`) }));
-  const mounted = [panel, messagesPanel, title, source, origin, status, history, historyBody, results, run, cancel, fill, speed, ...fields.flatMap(field => [field.input, field.available])];
+  const mounted = [panel, messagesPanel, title, source, origin, status, history, historyBody, results, run, cancel, fill, speed, formation, copy, formationSource, deficits, deficitSummary, deficitBody, ...fields.flatMap(field => [field.input, field.available])];
   const registrations = new WeakMap<HTMLButtonElement, Registration>(), live = new Set<Registration>();
   const watched = new Set<Node>();
   let session: Session | null = null, busy = false, mountRetired = false, disposed = false, watchDirty = false;
+  let formationEntries: unknown, formationOptions: FormationOption[] = [], emptyOption: HTMLOptionElement | null = null;
+  let deficitKey = "";
   let previousWorld: object | null = null, previousOrigin = "", previousWritable: boolean | null = null;
   const fingerprint = () => JSON.stringify([...fields.map(field => field.input.value), speed.value]);
   const available = (context: NpcRehearsalContext) => fields.map(field => context.landedShips[field.id] ?? 0);
@@ -124,7 +138,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     const current = session, context = host.readContext();
     const enabled = !!current && !mountRetired && !disposed && visible() && context.writable && !busy;
     for (const field of fields) field.input.disabled = !enabled;
-    speed.disabled = !enabled;
+    speed.disabled = !enabled; formation.disabled = !enabled || !formationOptions.length; copy.disabled = !enabled || !current?.formation;
     run.disabled = !enabled;
     text(run, current?.review && !current.review.stale && current.review.fingerprint === fingerprint() ? "重新核对出征条件" : "运行三个公开种子示例");
     fill.disabled = !enabled || !current?.review || current.review.stale || !current.review.quote.ok;
@@ -134,8 +148,8 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     const opener = session?.registration.button;
     session = null; busy = false; watchDirty = true; results.replaceChildren(); results.hidden = true;
     historyBody.replaceChildren(); history.open = false; panel.hidden = true; text(status, reason);
-    for (const field of fields) field.input.value = "0";
-    speed.value = "100"; controlsDisabled();
+    formation.value = ""; text(formationSource, ""); deficitBody.replaceChildren(); deficits.open = false; deficitKey = "";
+    controlsDisabled();
     if (returnFocus && opener?.isConnected && root.contains(opener) && !messagesPanel.hidden && !document.hidden && !opener.disabled) opener.focus();
   }
   function invalidate(reason = RETIRED) {
@@ -154,13 +168,17 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
         // The optional result region is intentionally hidden when editing.
         // Only hiding current controls/their ancestors or reviewed result
         // nodes retires the session, not that internal empty-region update.
-        const anchors = [panel, run, fill, speed, ...fields.map(field => field.input), ...(session?.review?.nodes ?? [])];
+        const anchors = [panel, run, fill, speed, formation, copy, ...formationOptions.map(option => option.node), ...fields.map(field => field.input), ...(session?.review?.nodes ?? [])];
         if (hides && session && target instanceof Element && anchors.some(node => target === node || target.contains(node))) abandon();
       }
       for (const node of record.removedNodes) {
         if (!(node instanceof Element)) continue;
         if (mounted.some(control => node === control || node.contains(control))) { mountRetired = true; invalidate("演练控件已被替换，请重新载入页面。"); observer.disconnect(); return; }
         if (session?.review?.nodes.some(control => node === control || node.contains(control))) abandon();
+        for (const option of formationOptions) if (node === option.node || node.contains(option.node)) {
+          option.retired = true;
+          if (session?.formation?.option === option) retireChoice(session);
+        }
         for (const registration of live) if (node === registration.button || node.contains(registration.button)) {
           registration.retired = true; registration.button.disabled = true; live.delete(registration); watchDirty = true;
           if (session?.registration === registration) abandon();
@@ -183,6 +201,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
       observer.disconnect(); watched.clear();
       for (const node of mounted) watch(node);
       for (const registration of live) watch(registration.button);
+      for (const option of formationOptions) watch(option.node);
       for (const node of session?.review?.nodes ?? []) watch(node);
       watchDirty = false;
     }
@@ -195,6 +214,144 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     if (writable && !context.writable) { invalidate(context.protectionReason || "存档受保护，无法运行或填入。"); return null; }
     return context;
   }
+  // A bounded selected-object signature catches edits even when an adapter keeps
+  // the same array or revision. Never invoke a getter while checking authority.
+  function formationMark(value: unknown): string | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return null;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== 4 || keys.some(key => typeof key !== "string" || !["id", "revision", "name", "ships"].includes(key))) return null;
+    const data = ["id", "revision", "name", "ships"].map(key => Object.getOwnPropertyDescriptor(value, key));
+    if (data.some(field => !field || !("value" in field) || !field.enumerable)) return null;
+    const ships: unknown = data[3]!.value;
+    if (!ships || typeof ships !== "object" || Array.isArray(ships)) return null;
+    const shipProto = Object.getPrototypeOf(ships), shipKeys = Reflect.ownKeys(ships);
+    if ((shipProto !== Object.prototype && shipProto !== null) || shipKeys.some(key => typeof key !== "string" || !NPC_REHEARSAL_FLYING_IDS.includes(key as FlyingId))) return null;
+    const values: unknown[] = [];
+    for (const id of NPC_REHEARSAL_FLYING_IDS) {
+      const field = Object.getOwnPropertyDescriptor(ships, id);
+      if (field && (!("value" in field) || !field.enumerable || typeof field.value !== "number")) return null;
+      values.push(field ? field.value : null);
+    }
+    if (typeof data[0]!.value !== "number" || typeof data[1]!.value !== "number" || typeof data[2]!.value !== "string") return null;
+    return JSON.stringify([data[0]!.value, data[1]!.value, data[2]!.value, values]);
+  }
+  function landedProjection(context: NpcRehearsalContext): unknown {
+    const original = context.landedShips;
+    if (!original || typeof original !== "object" || Array.isArray(original)) return null;
+    const prototype = Object.getPrototypeOf(original);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (!Array.isArray(context.formations) || context.formations.length > 32) return null;
+    for (let index = 0; index < context.formations.length; index++) {
+      const entry = Object.getOwnPropertyDescriptor(context.formations, String(index));
+      if (!entry || !("value" in entry) || !entry.value || typeof entry.value !== "object") return null;
+      if (entry.value === original || Object.getOwnPropertyDescriptor(entry.value, "ships")?.value === original) return null;
+    }
+    const value: Record<string, number> = {};
+    for (const id of NPC_REHEARSAL_FLYING_IDS) {
+      const field = Object.getOwnPropertyDescriptor(context.landedShips, id);
+      if (field && (!("value" in field) || !field.enumerable || typeof field.value !== "number")) return null;
+      value[id] = field?.value ?? 0;
+    }
+    return value;
+  }
+  function optionNodesIntact() {
+    const nodes = Array.from(formation.children);
+    return nodes.length === formationOptions.length + 1 && nodes[0] === emptyOption && emptyOption?.value === ""
+      && formationOptions.every((option, index) => nodes[index + 1] === option.node && option.node.value === option.value);
+  }
+  function retireChoice(current: Session) {
+    current.formation = null; formation.value = ""; copy.disabled = true;
+  }
+  function refreshFormations(context: NpcRehearsalContext, force = false) {
+    if (!force && formationEntries === context.formations) return;
+    formationEntries = context.formations;
+    if (session?.formation) retireChoice(session);
+    formationOptions = [];
+    emptyOption = document.createElement("option"); emptyOption.value = ""; emptyOption.textContent = "选择命名编成";
+    formation.replaceChildren(emptyOption);
+    for (const item of listNpcRehearsalFormations(context.formations)) {
+      const entry = Object.getOwnPropertyDescriptor(context.formations as object, String(item.index));
+      if (!entry || !("value" in entry)) continue;
+      const mark = formationMark(entry.value); if (mark === null) continue;
+      const node = document.createElement("option"), value = String(item.index + 1);
+      node.value = value; node.textContent = `#${item.id} ${item.name} · r${item.revision}`; formation.append(node);
+      formationOptions.push({ node, value, source: entry.value, ships: Object.getOwnPropertyDescriptor(entry.value, "ships")!.value, mark, retired: false }); watch(node);
+    }
+    formation.value = ""; watchDirty = true;
+  }
+  function choiceCurrent(current: Session, context: NpcRehearsalContext): boolean {
+    const choice = current.formation;
+    if (!choice || !Array.isArray(context.formations) || context.formations.length > 32 || choice.option.retired || Object.getOwnPropertyDescriptor(choice.option.source as object, "ships")?.value !== choice.option.ships || formation.value !== choice.option.value || !optionNodesIntact() || formationMark(choice.option.source) !== choice.option.mark) return false;
+    // Only reference checks here; complete library validation happens on the
+    // explicit selection/copy paths, never a 32-design deep scan per frame.
+    let matches = 0;
+    for (let i = 0; i < context.formations.length; i++) {
+      const entry = Object.getOwnPropertyDescriptor(context.formations, String(i));
+      if (!entry || !("value" in entry)) return false;
+      if (entry.value === choice.option.source) matches++;
+    }
+    return matches === 1;
+  }
+  function retireReview(current: Session) {
+    current.review = null; watchDirty = true; results.replaceChildren(); results.hidden = true;
+  }
+  function paintDeficits(context: NpcRehearsalContext) {
+    const rows = fields.map(field => ({ id: field.id, raw: field.input.value, stock: Object.getOwnPropertyDescriptor(context.landedShips, field.id) }));
+    const key = JSON.stringify(rows.map(row => [row.raw, row.stock && "value" in row.stock ? row.stock.value : null]));
+    if (key === deficitKey) return;
+    deficitKey = key; deficitBody.replaceChildren();
+    let total = 0, valid = true;
+    for (const row of rows) {
+      const stock = row.stock && "value" in row.stock ? row.stock.value : 0, target = Number(row.raw);
+      if (!/^\d{1,13}$/.test(row.raw) || !Number.isSafeInteger(target) || target > MAX_SHIPS || !Number.isSafeInteger(stock) || stock < 0) { valid = false; continue; }
+      const missing = Math.max(0, target - stock); total += missing;
+      if (missing) { const line = paragraph(deficitBody, `${unitById(row.id).nameZh}：目标 ${target} · 停泊 ${stock} · 缺 ${missing}`); line.dataset.rehearsalDeficitUnit = row.id; }
+    }
+    text(deficitSummary, !valid ? "数量待核对" : total ? `停泊缺额 ${total} 艘 · 展开查看` : "停泊库存充足");
+  }
+  const formationChange = (event: Event) => {
+    if (!event.isTrusted || event.target !== formation || formation.disabled || busy) return;
+    const current = session, context = current && currentContext(current);
+    if (!current || !context) return;
+    const selected = formation.value;
+    retireChoice(current); retireReview(current);
+    // The trusted event records a value only through original option nodes.
+    // retireChoice clears the UI value; restore only an authenticated option.
+    const option = formationOptions.find(value => value.value === selected);
+    if (!option || option.retired || !optionNodesIntact() || Object.getOwnPropertyDescriptor(option.source as object, "ships")?.value !== option.ships || formationMark(option.source) !== option.mark) { controlsDisabled(); return; }
+    const value = buildNpcRehearsalFormationCopy(context.formations, option.source, landedProjection(context));
+    if (!value) { text(status, "编成已改变，请重新选择。"); controlsDisabled(); return; }
+    formation.value = option.value; current.formation = { option, copy: value }; text(status, "已选择编成；点击填入演练数量，再显式运行。"); controlsDisabled();
+  };
+  const copyClick = (event: Event) => {
+    if (!event.isTrusted || event.target !== copy || copy.disabled || busy) return;
+    const current = session, context = current && currentContext(current), choice = current?.formation;
+    if (!current || !context || !choice) return;
+    const fail = () => { retireChoice(current); text(status, "编成或演练控件已改变，数量未填入；请重新选择。"); controlsDisabled(); };
+    if (!choiceCurrent(current, context)) { fail(); return; }
+    const value = buildNpcRehearsalFormationCopy(context.formations, choice.option.source, landedProjection(context));
+    if (!value || JSON.stringify(value.origin) !== JSON.stringify(choice.copy.origin) || JSON.stringify(value.values) !== JSON.stringify(choice.copy.values)) { fail(); return; }
+    const latest = currentContext(current);
+    if (!latest || !choiceCurrent(current, latest)) { if (session === current) fail(); return; }
+    const verified = buildNpcRehearsalFormationCopy(latest.formations, choice.option.source, landedProjection(latest));
+    if (!verified || JSON.stringify(verified.origin) !== JSON.stringify(value.origin) || JSON.stringify(verified.values) !== JSON.stringify(value.values)
+      || new Set(fields.map(field => field.input)).size !== NPC_REHEARSAL_FLYING_IDS.length
+      || !inputValue?.get || !inputValue.set || !inputType?.get
+      || Object.getOwnPropertyDescriptor(inputPrototype, "value")?.get !== inputValue.get || Object.getOwnPropertyDescriptor(inputPrototype, "value")?.set !== inputValue.set
+      || Object.getOwnPropertyDescriptor(inputPrototype, "type")?.get !== inputType.get
+      || fields.some(field => !(field.input instanceof HTMLInputElement) || Object.getPrototypeOf(field.input) !== inputPrototype
+        || Object.hasOwn(field.input, "type") || inputType.get!.call(field.input) !== "number" || Object.hasOwn(field.input, "value") || field.input.id !== `npc-rehearsal-ship-${field.id}` || root.querySelectorAll(`#npc-rehearsal-ship-${field.id}`).length !== 1)) { fail(); return; }
+    // All authority and all 13 destinations passed. Consume before any write.
+    busy = true; current.formation = null; current.review = null;
+    try { for (const field of fields) inputValue.set.call(field.input, verified.values[field.id]); }
+    finally { busy = false; }
+    retireChoice(current); retireReview(current);
+    text(formationSource, `来自 #${verified.origin.id} ${verified.origin.name} · r${verified.origin.revision}`);
+    text(status, "数量已填入；请核对停泊库存后显式运行。");
+    busy = false; paintDeficits(latest); controlsDisabled();
+  };
   function captureTech(context: NpcRehearsalContext) {
     const levels = context.completedTech, hyperspace = context.completedHyperspaceLevel;
     if (!TECH_KEYS.every(key => Number.isInteger(levels[key]) && levels[key] >= 0 && levels[key] <= 1000)
@@ -283,7 +440,10 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     if (!visible()) { abandon(); return; }
     if (!currentContext(current, false)) return;
     text(origin, `当前所选星球：${context.origin.name} [${coordinates(context.origin.coordinates)}] → 历史目标 [${coordinates(current.snapshot.target)}]`);
-    for (const field of fields) { const stock = context.landedShips[field.id] ?? 0; text(field.available, `可用 ${stock}`); field.input.max = String(Math.min(MAX_SHIPS, stock)); }
+    for (const field of fields) { const stock = context.landedShips[field.id] ?? 0; text(field.available, `可用 ${stock}`); field.input.max = String(MAX_SHIPS); }
+    refreshFormations(context);
+    if (current.formation && !choiceCurrent(current, context)) retireChoice(current);
+    paintDeficits(context);
     const review = current.review;
     if (review && !reviewCurrent(current, context)) {
       review.stale = true; text(status, "当前库存或已完成科技已改变；以上仍是原输入的历史示例。请重新运行后再填入。");
@@ -301,7 +461,10 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     // Drain our own hide/show records before creating a new session.
     removed(observer.takeRecords());
     if (mountRetired || disposed) return;
-    session = { registration, originId: context.origin.id, world: context.adoptedWorld, snapshot: registration.snapshot, historyShown: false, review: null };
+    for (const field of fields) field.input.value = "0";
+    speed.value = "100";
+    session = { registration, originId: context.origin.id, world: context.adoptedWorld, snapshot: registration.snapshot, historyShown: false, review: null, formation: null };
+    refreshFormations(context, true);
     text(source, `历史情报，之后可能变化 · 侦察抵达时间 ${registration.snapshot.observedAt} 秒 · ${registration.snapshot.model}`);
     text(status, context.writable ? "选择当前停泊舰船，再显式运行三个公开种子示例。" : context.protectionReason || "存档受保护，仅可阅读历史情报。");
     observe(); title.focus();
@@ -310,8 +473,12 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     if (!fields.some(field => field.input === event.target) && event.target !== speed) return;
     const current = session;
     if (!current || !currentContext(current)) return;
+    if (fields.some(field => field.input === event.target)) {
+      text(formationSource, formationSource.textContent ? "数量已手改" : "");
+      paintDeficits(host.readContext());
+    }
     if (current.review?.fingerprint !== fingerprint()) {
-      current.review = null; watchDirty = true; results.replaceChildren(); results.hidden = true;
+      retireReview(current);
       text(status, "编成或速度已改变；请显式重新运行。"); controlsDisabled();
     }
   };
@@ -374,6 +541,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
   const hidden = () => { if (document.hidden) abandon(); };
   const back = () => abandon();
   root.addEventListener("input", edit); root.addEventListener("change", edit); root.addEventListener("keydown", keydown);
+  formation.addEventListener("change", formationChange); copy.addEventListener("click", copyClick);
   run.addEventListener("click", runClick); fill.addEventListener("click", fillClick); cancel.addEventListener("click", cancelClick);
   history.addEventListener("toggle", showHistory); document.addEventListener("visibilitychange", hidden); window.addEventListener("popstate", back);
   controlsDisabled();
@@ -394,6 +562,7 @@ export function installNpcRehearsalPanel(root: HTMLElement, host: NpcRehearsalHo
     dispose() {
       invalidate(); disposed = true; observer.disconnect(); watched.clear();
       root.removeEventListener("input", edit); root.removeEventListener("change", edit); root.removeEventListener("keydown", keydown);
+      formation.removeEventListener("change", formationChange); copy.removeEventListener("click", copyClick);
       run.removeEventListener("click", runClick); fill.removeEventListener("click", fillClick); cancel.removeEventListener("click", cancelClick);
       history.removeEventListener("toggle", showHistory); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("popstate", back);
     },

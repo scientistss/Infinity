@@ -9,6 +9,13 @@ from npc_display_contract import *
 # Independent native r14 golden, copied from the retained failed CI capture.
 # Do not construct this witness from the implementation's expected constant.
 CAPTURED_DRAFT_NOTICE_HTML = '<p id="npc-rehearsal-draft-notice" class="npc-rehearsal-draft-notice muted" role="status" hidden=""></p>'
+# Independent reviewed closed-state addition, not a native-execution claim.
+# Keep this literal separate from the contract's construction and production.
+FORMATION_ADDITION_HTML = '''<div class="space-controls"><label for="npc-rehearsal-formation">保存编成<select id="npc-rehearsal-formation" aria-label="保存编成" disabled=""><option value="">选择命名编成</option></select></label><button id="npc-rehearsal-copy" type="button" disabled="">填入演练数量</button></div>
+    <p id="npc-rehearsal-formation-source" class="muted"></p>
+    <details id="npc-rehearsal-deficits"><summary id="npc-rehearsal-deficit-summary">数量与当前停泊库存</summary><div id="npc-rehearsal-deficit-body" class="npc-report-details"></div></details>'''
+FORMATION_ADDITION_IDS = ('npc-rehearsal-formation', 'npc-rehearsal-copy', 'npc-rehearsal-formation-source',
+                          'npc-rehearsal-deficits', 'npc-rehearsal-deficit-summary', 'npc-rehearsal-deficit-body')
 
 # Independent complete native section from the failed 337c verify artifact:
 # panel-parity-npc-after-messages-32-raw.json, SHA256
@@ -274,6 +281,117 @@ class NpcDisplayTests(unittest.TestCase):
             if mutation=='extra':region['controls'].append(copy.deepcopy(region['controls'][0]))
             if mutation=='missing':region['controls'].pop()
             with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_closed_formation_addition_has_one_exact_position_and_all_original_controls(self):
+        snapshot,evidence=self.messages();state=self.state();original=copy.deepcopy((snapshot,evidence,state))
+        region=evidence['addition']['rehearsal'];html=region['html']
+        before='<p class="muted">仅选择当前星球已停泊舰船。演练不派遣、不付款；排队建造与研究不计入。</p>\n    '
+        after='\n    <div class="space-ships">'
+        self.assertEqual(html.count(FORMATION_ADDITION_HTML),1)
+        self.assertIn(before+FORMATION_ADDITION_HTML+after,html)
+        for ident in FORMATION_ADDITION_IDS:self.assertEqual(html.count(f'id="{ident}"'),1)
+        self.assertEqual(region['controls'][:2],[
+            {'id':'npc-rehearsal-formation','type':'select-one','value':'','disabled':True,'visible':False},
+            {'id':'npc-rehearsal-copy','type':'button','value':'','disabled':True,'visible':False}])
+        self.assertEqual(region['controls'][2:15],[
+            {'id':'npc-rehearsal-ship-'+ident,'type':'number','value':'0','disabled':True,'visible':False}
+            for ident,_ in FLYING_SHIPS])
+        self.assertEqual(region['controls'][15:],[
+            {'id':'npc-rehearsal-speed','type':'select-one','value':'100','disabled':True,'visible':False},
+            {'id':'npc-rehearsal-run','type':'button','value':'','disabled':True,'visible':False},
+            {'id':'npc-rehearsal-cancel','type':'button','value':'','disabled':False,'visible':False},
+            {'id':'npc-rehearsal-fill','type':'button','value':'','disabled':True,'visible':False}])
+        self.assertEqual(len(region['controls']),19)
+        self.assertEqual(html.count(' max="1000000000000"'),13)
+        self.assertEqual(html.count('演练数量'),14) # Copy label is not a fourteenth input.
+        projected=normalize_npc_display(snapshot,evidence,state,'after')
+        old_messages=[{key:value for key,value in row.items() if key!='npcScoutSnapshot'} for row in state['messages']]
+        old=self.copied_rows(old_messages,False)
+        self.assertEqual(projected['text'],old['text']);self.assertEqual(projected['historicalMessageHTML'],old['html'])
+        self.assertEqual((snapshot,evidence,state),original)
+
+    def test_formation_addition_rejects_missing_duplicate_or_relocated_complete_regions(self):
+        for mutation in ('missing','duplicate','source_first','details_first','after_ships','outside_panel','nested'):
+            snapshot,evidence=self.messages();region=evidence['addition']['rehearsal'];old_html=region['html']
+            blocks=FORMATION_ADDITION_HTML.split('\n    ')
+            if mutation=='missing':region['html']=old_html.replace(FORMATION_ADDITION_HTML,'')
+            if mutation=='duplicate':region['html']=old_html.replace(FORMATION_ADDITION_HTML,FORMATION_ADDITION_HTML*2)
+            if mutation=='source_first':region['html']=old_html.replace(FORMATION_ADDITION_HTML,'\n    '.join([blocks[1],blocks[0],blocks[2]]))
+            if mutation=='details_first':region['html']=old_html.replace(FORMATION_ADDITION_HTML,'\n    '.join([blocks[2],blocks[0],blocks[1]]))
+            if mutation=='after_ships':
+                region['html']=old_html.replace(FORMATION_ADDITION_HTML+'\n    ','').replace('<div class="space-controls"><label>草稿速度',FORMATION_ADDITION_HTML+'\n    <div class="space-controls"><label>草稿速度')
+            if mutation=='outside_panel':region['html']=old_html.replace(FORMATION_ADDITION_HTML,'')
+            if mutation=='nested':region['html']=old_html.replace(FORMATION_ADDITION_HTML,'<div>'+FORMATION_ADDITION_HTML+'</div>')
+            evidence['panelHTML']=evidence['panelHTML'].replace(old_html,region['html'],1)
+            if mutation=='outside_panel':evidence['panelHTML']=evidence['panelHTML'].replace(region['html'],region['html']+FORMATION_ADDITION_HTML,1)
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,state=self.state(),side='after')
+
+    def test_formation_addition_binds_every_complete_node_and_empty_initial_content(self):
+        mutations={
+            'missing_label_for':lambda h:h.replace(' for="npc-rehearsal-formation"',''),
+            'forged_label_for':lambda h:h.replace(' for="npc-rehearsal-formation"',' for="npc-rehearsal-copy"'),
+            'enabled_select':lambda h:h.replace('aria-label="保存编成" disabled=""','aria-label="保存编成"'),
+            'enabled_copy':lambda h:h.replace('type="button" disabled=""','type="button"'),
+            'select_label':lambda h:h.replace('aria-label="保存编成"','aria-label="任意编成"'),
+            'selected_option':lambda h:h.replace('<option value="">','<option value="1" selected="">'),
+            'option_text':lambda h:h.replace('选择命名编成','已选编成'),
+            'extra_option':lambda h:h.replace('</select>','<option value="1">unexpected</option></select>'),
+            'copy_type':lambda h:h.replace('type="button"','type="submit"'),
+            'copy_text':lambda h:h.replace('填入演练数量','付费派遣'),
+            'copy_value':lambda h:h.replace('type="button"','type="button" value="secret"'),
+            'source_text':lambda h:h.replace('class="muted"></p>','class="muted">来自保存编成</p>'),
+            'source_hidden_data':lambda h:h.replace('class="muted"></p>','class="muted"><span hidden="">secret</span></p>'),
+            'source_status':lambda h:h.replace('class="muted"></p>','class="space-status"></p>'),
+            'details_open':lambda h:h.replace('<details id="npc-rehearsal-deficits">','<details id="npc-rehearsal-deficits" open="">'),
+            'details_hidden':lambda h:h.replace('<details id="npc-rehearsal-deficits">','<details id="npc-rehearsal-deficits" hidden="">'),
+            'summary_text':lambda h:h.replace('数量与当前停泊库存','自动补造缺额'),
+            'summary_nested':lambda h:h.replace('数量与当前停泊库存','<span>数量与当前停泊库存</span>'),
+            'body_class':lambda h:h.replace('class="npc-report-details"','class="unknown"'),
+            'body_data':lambda h:h.replace('class="npc-report-details"></div>','class="npc-report-details"><p>secret</p></div>'),
+            'extra_control':lambda h:h.replace('</details>','<input value="secret"></details>'),
+            'extra_attribute':lambda h:h.replace('<div class="space-controls">','<div class="space-controls" data-other="secret">'),
+        }
+        for ident in FORMATION_ADDITION_IDS:
+            mutations['id-'+ident]=lambda h,ident=ident:h.replace(f'id="{ident}"',f'id="forged-{ident}"')
+            mutations['duplicate-'+ident]=lambda h,ident=ident:h+f'<p id="{ident}"></p>'
+        for name,mutate in mutations.items():
+            snapshot,evidence=self.messages();region=evidence['addition']['rehearsal'];old_html=region['html']
+            changed=mutate(FORMATION_ADDITION_HTML);self.assertNotEqual(changed,FORMATION_ADDITION_HTML)
+            region['html']=old_html.replace(FORMATION_ADDITION_HTML,changed,1)
+            evidence['panelHTML']=evidence['panelHTML'].replace(old_html,region['html'],1)
+            with self.subTest(mutation=name),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_formation_initial_controls_require_native_empty_disabled_properties_and_exact_order(self):
+        for index in (0,1):
+            for field,value in (('id','forged'),('type','number'),('value','1'),('value',None),
+                                ('disabled',False),('disabled',1),('visible',True),('visible',0)):
+                snapshot,evidence=self.messages();evidence['addition']['rehearsal']['controls'][index][field]=value
+                with self.subTest(index=index,field=field,value=value),self.assertRaises(AssertionError):
+                    normalize_npc_display(snapshot,evidence,self.state(),'after')
+        for mutation in ('missing','duplicate','reorder','after_inputs','extra_field','missing_field','duplicate_global_id'):
+            snapshot,evidence=self.messages();region=evidence['addition']['rehearsal'];controls=region['controls']
+            if mutation=='missing':del controls[0]
+            if mutation=='duplicate':controls.insert(0,copy.deepcopy(controls[0]))
+            if mutation=='reorder':controls[:2]=reversed(controls[:2])
+            if mutation=='after_inputs':controls[:15]=controls[2:15]+controls[:2]
+            if mutation=='extra_field':controls[0]['unknown']='secret'
+            if mutation=='missing_field':del controls[1]['disabled']
+            if mutation=='duplicate_global_id':region['exactIds']=False
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,self.state(),'after')
+
+    def test_formation_display_projection_never_hides_economy_or_inventory_changes(self):
+        for mutation in ('rights','site','report','typed_snapshot'):
+            snapshot,evidence=self.messages();state=self.state()
+            if mutation=='rights':state['planets'][0]['npcResourceRemainder']['metal']='0.1'
+            if mutation=='site':state['npcEconomy']['sites']['1:56:15']={'stock':[1,2,3]}
+            if mutation=='report':state['npcBattles']['reports'].append({'id':1})
+            if mutation=='typed_snapshot':state['messages'][0]['npcScoutSnapshot']={}
+            with self.subTest(mutation=mutation),self.assertRaises(AssertionError):normalize_npc_display(snapshot,evidence,state,'after')
+        snapshot,evidence=self.messages();snapshot['shared']={'stock-light_fighter':'6','amount-metal':'7.80e4'}
+        expected=normalize_npc_display(snapshot,evidence,self.state(),'after')
+        snapshot['shared']['stock-light_fighter']='5';original=copy.deepcopy(snapshot)
+        actual=normalize_npc_display(snapshot,evidence,self.state(),'after')
+        self.assertNotEqual(actual,expected);self.assertEqual(actual['shared'],snapshot['shared']);self.assertEqual(snapshot,original)
     def test_typed_message_is_exactly_checked_but_never_historical_projection(self):
         state=self.state();m=state['messages'][1]
         m['npcScoutSnapshot']={'model':'npc-scout-snapshot-v1','fleetId':2,'originId':'homeworld','target':{'galaxy':1,'system':56,'position':6},'observedAt':'60','stock':[800,400,60],'garrison':{'light_fighter':4,'heavy_fighter':0},'defenderTech':{'weapons':0,'shields':0,'armour':0}}

@@ -131,8 +131,8 @@ def scout_fixture_identity(workspace, clean_source_summary, runtime):
     current_lock_raw = _source_file(workspace, current, 'package-lock.json')
     after_lock = _json(current_lock_raw)
     _require(before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1', 'Wrong original lock release')
-    _require(after_lock['version'] == after_lock['packages']['']['version'] == '0.6.22-alpha.2', 'Wrong r14 lock release')
-    before_lock['version'] = before_lock['packages']['']['version'] = '0.6.22-alpha.2'
+    _require(after_lock['version'] == after_lock['packages']['']['version'] == '0.6.23-alpha.1', 'Wrong r14 lock release')
+    before_lock['version'] = before_lock['packages']['']['version'] = '0.6.23-alpha.1'
     _require(before_lock == after_lock, 'Dependency contents differ from fixture producer')
     _require(generated['decimalPackageVersion'] == after_lock['packages']['node_modules/break_infinity.js']['version'], 'Historical decimal package mismatch')
     bindings = _historical_source_bindings(workspace, pool)

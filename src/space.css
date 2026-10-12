@@ -70,3 +70,7 @@
 .space-panel .npc-report-details,.space-panel .npc-battle-report > details[data-npc-rounds] { margin:.6rem .7rem; min-width:0; max-width:100%; }
 .space-panel .npc-report-details p { margin:.3rem 0; }
 .space-panel .npc-battle-report > details[data-npc-rounds] > summary { padding:.35rem 0; min-height:44px; }
+
+/* Saved-design copies keep long names inside the existing rehearsal card. */
+.space-panel label[for="npc-rehearsal-formation"] { min-width:0; max-width:100%; }
+.space-panel #npc-rehearsal-formation-source { overflow-wrap:anywhere; }

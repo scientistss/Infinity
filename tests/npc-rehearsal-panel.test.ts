@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SHIP_IDS } from "../src/data/units";
 import type { FleetMessage } from "../src/game/fleet";
 import * as rehearsal from "../src/game/npc-rehearsal";
+import * as formationModel from "../src/ui/npc-rehearsal-formation-model";
+import type { FleetFormation } from "../src/game/formation-state";
 import type { NpcScoutSnapshotV1 } from "../src/game/npc-scout-state";
 import {
   installNpcRehearsalPanel, npcRehearsalPanelHtml, readNpcRehearsalSelection,
@@ -15,11 +17,15 @@ import source from "../src/ui/npc-rehearsal-panel.ts?raw";
 type Listener = (event: { target: NodeDouble; isTrusted: boolean; key?: string; preventDefault(): void }) => void;
 class NodeDouble {
   id = ""; className = ""; dataset: Record<string, string> = {}; attributes: Record<string, string> = {};
-  tagName: string; value = ""; max = ""; disabled = false; title = ""; open = false; tabIndex = -1;
+  tagName: string; private valueText = ""; private typeText = "number"; max = ""; disabled = false; title = ""; open = false; tabIndex = -1;
   connectedRoot = false; parentElement: NodeDouble | null = null; children: NodeDouble[] = [];
   listeners = new Map<string, Listener[]>(); ownText = ""; private hiddenValue = false;
   constructor(tag = "div") { this.tagName = tag; }
   get parentNode() { return this.parentElement; }
+  get type() { return this.typeText; }
+  set type(value: string) { this.typeText = value; }
+  get value() { return this.valueText; }
+  set value(value: string) { this.valueText = value; }
   get hidden() { return this.hiddenValue; }
   set hidden(value: boolean) {
     if (value === this.hiddenValue) return;
@@ -83,11 +89,13 @@ function fixture() {
   messages.append(panel); panel.id = "npc-rehearsal-panel"; panel.hidden = true;
   function make(id: string, tag = "div", parent = panel) { const node = new NodeDouble(tag); node.id = id; parent.append(node); return node; }
   for (const id of ["title", "source", "origin", "status", "results", "fill-explanation"]) make(`npc-rehearsal-${id}`);
+  make("npc-rehearsal-formation", "select"); make("npc-rehearsal-copy", "button"); make("npc-rehearsal-formation-source");
+  const deficits = make("npc-rehearsal-deficits", "details"); make("npc-rehearsal-deficit-summary", "summary", deficits); make("npc-rehearsal-deficit-body", "div", deficits);
   const history = make("npc-rehearsal-history", "details"); make("npc-rehearsal-history-body", "div", history);
   const run = make("npc-rehearsal-run", "button"), cancel = make("npc-rehearsal-cancel", "button"), fill = make("npc-rehearsal-fill", "button"), speed = make("npc-rehearsal-speed", "select"); speed.value = "100";
   for (const id of NPC_REHEARSAL_FLYING_IDS) { make(`npc-rehearsal-stock-${id}`, "small"); make(`npc-rehearsal-ship-${id}`, "input").value = "0"; }
   const message: FleetMessage = Object.freeze({ id: "scout-1", at: 10, text: '<img src=x onerror="bad"> 历史文本不解析', npcScoutSnapshot: snapshot() });
-  let context: NpcRehearsalContext = { adoptedWorld: {}, messages: [message], origin: { id: "current-origin", name: "当前星球", coordinates: { galaxy: 1, system: 56, position: 11 } }, landedShips: Object.fromEntries(NPC_REHEARSAL_FLYING_IDS.map(id => [id, 100])), completedTech: { weapons: 1, shields: 0, armour: 0 }, completedHyperspaceLevel: 8, writable: true, protectionReason: "" };
+  let context: NpcRehearsalContext = { adoptedWorld: {}, messages: [message], origin: { id: "current-origin", name: "当前星球", coordinates: { galaxy: 1, system: 56, position: 11 } }, landedShips: Object.fromEntries(NPC_REHEARSAL_FLYING_IDS.map(id => [id, 100])), formations: [], completedTech: { weapons: 1, shields: 0, armour: 0 }, completedHyperspaceLevel: 8, writable: true, protectionReason: "" };
   let fleetDraft: NpcRehearsalDraft | null = null;
   const quote = vi.fn(() => ({ ok: true, reason: "可出征" }));
   const commit = vi.fn<NpcRehearsalHost["fillDraft"]>((draft, consume) => {
@@ -110,7 +118,7 @@ function fixture() {
 beforeEach(() => {
   const documentDouble = new NodeDouble(), windowDouble = new NodeDouble();
   Object.assign(documentDouble, { activeElement: null, createElement: (tag: string) => new NodeDouble(tag) });
-  vi.stubGlobal("document", documentDouble); vi.stubGlobal("window", windowDouble); vi.stubGlobal("Element", NodeDouble); vi.stubGlobal("MutationObserver", ObserverDouble); ObserverDouble.instances = [];
+  vi.stubGlobal("document", documentDouble); vi.stubGlobal("window", windowDouble); vi.stubGlobal("Element", NodeDouble); vi.stubGlobal("HTMLInputElement", NodeDouble); vi.stubGlobal("MutationObserver", ObserverDouble); ObserverDouble.instances = [];
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -118,7 +126,7 @@ describe("historical rehearsal selection and markup", () => {
   it("offers the existing 13 flying types at zero without touching ordinary ship fields", () => {
     const html = npcRehearsalPanelHtml();
     expect(NPC_REHEARSAL_FLYING_IDS).toEqual(SHIP_IDS.filter(id => id !== "solar_satellite"));
-    expect(html.match(/演练数量/g)).toHaveLength(13); expect(html.match(/value="0"/g)).toHaveLength(13);
+    expect(html.match(/aria-label="[^"]+演练数量"/g)).toHaveLength(13); expect(html.match(/value="0"/g)).toHaveLength(13);
     expect(html).not.toContain("data-ship="); expect(html).not.toContain("solar_satellite"); expect(html).toContain("全部 13 类舰船数量");
     expect(html).toContain("aria-describedby=\"npc-rehearsal-fill-explanation\""); expect(html).toContain("填入攻击草稿（空载）");
   });
@@ -308,5 +316,141 @@ describe("historical rehearsal panel authority", () => {
   it("dispose retires every remaining callback without changing the current draft", () => {
     const f = fixture(); f.runFleet(); f.controller.dispose(); f.opener.disabled = false; f.open(); f.run.disabled = false; f.run.emit("click"); f.fill.disabled = false; f.fill.emit("click");
     expect(f.commit).not.toHaveBeenCalled(); expect(f.draft()).toBeNull();
+  });
+});
+
+
+const savedFormation = (ships: FleetFormation["ships"] = { light_fighter: 4 }): FleetFormation => ({ id: 1, revision: 1, name: "巡航编成", ships });
+function withFormation(ships?: FleetFormation["ships"]) {
+  const f = fixture(), saved = savedFormation(ships);
+  f.setContext({ formations: [saved] });
+  const choose = () => { f.node("formation").value = "1"; f.node("formation").emit("change"); };
+  const copy = () => f.node("copy").emit("click");
+  const values = () => NPC_REHEARSAL_FLYING_IDS.map(id => f.ship(id).value);
+  return { ...f, saved, choose, copy, values };
+}
+
+describe("one-shot saved formation rehearsal copy", () => {
+  it("selects explicitly without changing any draft and retires an equal-valued review", () => {
+    const f = withFormation(), simulate = vi.spyOn(rehearsal, "rehearseNpcScout"); f.runFleet();
+    const before = JSON.stringify(f.context()), values = f.values(), speed = f.speed.value, quoteCalls = f.quote.mock.calls.length;
+    expect(f.fill.disabled).toBe(false); f.choose();
+    expect(f.values()).toEqual(values); expect(f.speed.value).toBe(speed); expect(f.draft()).toBeNull();
+    expect(f.fill.disabled).toBe(true); expect(f.node("results").hidden).toBe(true); expect(f.node("copy").disabled).toBe(false);
+    expect(simulate).toHaveBeenCalledTimes(1); expect(f.quote).toHaveBeenCalledTimes(quoteCalls); expect(JSON.stringify(f.context())).toBe(before);
+    f.fill.disabled = false; f.fill.emit("click"); expect(f.commit).not.toHaveBeenCalled();
+  });
+  it("copies dense13 from sparse saved quantities, preserves report/speed and consumes only once", () => {
+    const f = withFormation({ light_fighter: 4, small_cargo: 3 }); f.open();
+    for (const id of NPC_REHEARSAL_FLYING_IDS) f.edit("9", id);
+    f.speed.value = "70"; f.speed.emit("change"); const before = JSON.stringify(f.context()), source = f.node("source").textContent;
+    const simulate = vi.spyOn(rehearsal, "rehearseNpcScout"); f.choose(); f.copy();
+    expect(f.values()).toEqual(NPC_REHEARSAL_FLYING_IDS.map(id => id === "light_fighter" ? "4" : id === "small_cargo" ? "3" : "0"));
+    expect(f.speed.value).toBe("70"); expect(f.node("source").textContent).toBe(source); expect(f.node("formation-source").textContent).toBe("来自 #1 巡航编成 · r1");
+    expect(f.node("formation").value).toBe(""); expect(f.node("copy").disabled).toBe(true); expect(f.fill.disabled).toBe(true);
+    expect(simulate).not.toHaveBeenCalled(); expect(f.quote).not.toHaveBeenCalled(); expect(f.commit).not.toHaveBeenCalled(); expect(JSON.stringify(f.context())).toBe(before);
+    f.edit("7"); f.node("copy").disabled = false; f.copy(); expect(f.ship().value).toBe("7"); expect(f.node("formation-source").textContent).toBe("数量已手改");
+  });
+  it("retires a review created after selection when Copy writes the same thirteen values", () => {
+    const f = withFormation(), simulate = vi.spyOn(rehearsal, "rehearseNpcScout"); f.open(); f.edit("4"); f.choose(); f.run.emit("click");
+    const values = f.values(), quotes = f.quote.mock.calls.length; expect(f.fill.disabled).toBe(false); f.copy();
+    expect(f.values()).toEqual(values); expect(f.node("results").hidden).toBe(true); expect(f.fill.disabled).toBe(true); expect(simulate).toHaveBeenCalledTimes(1); expect(f.quote).toHaveBeenCalledTimes(quotes);
+    f.fill.disabled = false; f.fill.emit("click"); expect(f.commit).not.toHaveBeenCalled();
+    f.run.emit("click"); expect(simulate).toHaveBeenCalledTimes(2); expect(f.fill.disabled).toBe(false);
+  });
+  it("copies shortage without clipping and waits for an explicit Run after stock grows", () => {
+    const f = withFormation({ light_fighter: 150 }); f.open(); const simulate = vi.spyOn(rehearsal, "rehearseNpcScout"); f.choose(); f.copy();
+    expect(f.ship().value).toBe("150"); expect(f.node("deficit-summary").textContent).toBe("停泊缺额 50 艘 · 展开查看");
+    expect(f.node("deficit-body").textContent).toContain("目标 150 · 停泊 100 · 缺 50"); f.run.emit("click");
+    expect(simulate).not.toHaveBeenCalled(); expect(f.node("status").textContent).toContain("库存"); expect(f.quote).not.toHaveBeenCalled();
+    f.setContext({ landedShips: { ...f.context().landedShips, light_fighter: 150 } }); f.controller.observe();
+    expect(f.ship().value).toBe("150"); expect(f.node("deficit-summary").textContent).toBe("停泊库存充足"); expect(simulate).not.toHaveBeenCalled(); expect(f.fill.disabled).toBe(true);
+    f.run.emit("click"); expect(simulate).toHaveBeenCalledTimes(1);
+  });
+  it("copied numbers survive source edit/deletion and manual counts retain the 1e12 limit", () => {
+    const f = withFormation(); f.open(); f.choose(); f.copy();
+    f.saved.ships.light_fighter = 8; f.saved.revision = 2; f.setContext({ formations: [] }); f.controller.observe();
+    expect(f.ship().value).toBe("4"); expect(f.node("formation-source").textContent).toBe("来自 #1 巡航编成 · r1");
+    f.setContext({ landedShips: { ...f.context().landedShips, light_fighter: 1e12 } }); f.edit("1000000000000");
+    expect(f.node("formation-source").textContent).toBe("数量已手改"); f.run.emit("click"); expect(f.fill.disabled).toBe(false);
+  });
+  it.each(["delete", "same-id", "revision", "counts", "ships-object", "name", "alias", "getter", "prototype"])("rejects pending source %s atomically without a render", kind => {
+    const f = withFormation(); f.open(); f.edit("9"); f.speed.value = "30"; f.choose(); const before = f.values();
+    const getter = vi.fn(() => 4);
+    if (kind === "delete") f.setContext({ formations: [] });
+    else if (kind === "same-id") f.setContext({ formations: [{ ...f.saved, ships: { ...f.saved.ships } }] });
+    else if (kind === "revision") f.saved.revision++;
+    else if (kind === "counts") f.saved.ships.light_fighter = 5;
+    else if (kind === "ships-object") f.saved.ships = { ...f.saved.ships };
+    else if (kind === "name") f.saved.name = "新名称";
+    else if (kind === "alias") f.setContext({ formations: [f.saved, { id: 2, revision: 1, name: "别名", ships: f.saved.ships }] });
+    else if (kind === "getter") Object.defineProperty(f.saved.ships, "light_fighter", { get: getter, enumerable: true });
+    else Object.setPrototypeOf(f.saved.ships, { forged: true });
+    f.copy(); expect(f.values()).toEqual(before); expect(f.speed.value).toBe("30"); expect(f.node("copy").disabled).toBe(true);
+    expect(f.quote).not.toHaveBeenCalled(); expect(f.commit).not.toHaveBeenCalled(); expect(getter).not.toHaveBeenCalled();
+  });
+  it.each(["world", "origin", "protection", "message", "hidden", "new-report"])("retires selected copy across %s without modifying previous numbers", kind => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values();
+    if (kind === "world") f.setContext({ adoptedWorld: {} });
+    else if (kind === "origin") f.setContext({ origin: { ...f.context().origin, id: "elsewhere" } });
+    else if (kind === "protection") f.setContext({ writable: false });
+    else if (kind === "message") f.setContext({ messages: [{ ...f.message }] });
+    else if (kind === "hidden") { f.panel.hidden = true; f.panel.hidden = false; }
+    else f.open();
+    f.copy(); expect(f.values()).toEqual(kind === "new-report" ? NPC_REHEARSAL_FLYING_IDS.map(() => "0") : before); expect(f.commit).not.toHaveBeenCalled(); expect(f.quote).not.toHaveBeenCalled();
+  });
+  it.each(["copy", "formation", "last-input", "option"])("rejects %s detach/reinsert even before observer delivery", kind => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values();
+    const node = kind === "option" ? f.node("formation").children[1]! : kind === "last-input" ? f.ship(NPC_REHEARSAL_FLYING_IDS.at(-1)!) : f.node(kind), parent = node.parentElement!;
+    node.remove(); parent.append(node); f.node("copy").disabled = false; f.copy();
+    expect(f.values()).toEqual(before); expect(f.quote).not.toHaveBeenCalled(); expect(f.commit).not.toHaveBeenCalled();
+  });
+  it("rejects a duplicate final input before any of the thirteen writes", () => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values();
+    const duplicate = f.make(`npc-rehearsal-ship-${NPC_REHEARSAL_FLYING_IDS.at(-1)!}`, "input"); duplicate.value = "77"; f.copy();
+    expect(f.values()).toEqual(before); expect(duplicate.value).toBe("77"); expect(f.node("copy").disabled).toBe(true);
+  });
+  it.each(["setter", "prototype", "file-type", "file-masked-type"])("rejects a final input %s before any partial write", kind => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values(), last = f.ship(NPC_REHEARSAL_FLYING_IDS.at(-1)!);
+    const setter = vi.fn(() => { throw Error("must not write"); });
+    if (kind === "setter") Object.defineProperty(last, "value", { get: () => before.at(-1)!, set: setter, configurable: true });
+    else if (kind === "prototype") Object.setPrototypeOf(last, Object.create(Object.getPrototypeOf(last)));
+    else { last.type = "file"; if (kind === "file-masked-type") Object.defineProperty(last, "type", { value: "number", configurable: true }); }
+    f.copy(); expect(f.values()).toEqual(before); expect(setter).not.toHaveBeenCalled(); expect(f.node("copy").disabled).toBe(true);
+  });
+  it.each(["source-alias", "prototype", "getter"])("rejects the original landed-stock %s without laundering it through projection", kind => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values(), getter = vi.fn(() => 100);
+    if (kind === "source-alias") f.setContext({ landedShips: f.saved.ships });
+    else if (kind === "prototype") f.setContext({ landedShips: Object.assign(Object.create({ extra: 1 }), f.context().landedShips) });
+    else { const stock = { ...f.context().landedShips }; Object.defineProperty(stock, "light_fighter", { get: getter, enumerable: true }); f.setContext({ landedShips: stock }); }
+    f.copy(); expect(f.values()).toEqual(before); expect(getter).not.toHaveBeenCalled(); expect(f.node("copy").disabled).toBe(true);
+  });
+  it("rejects saved counts above 1e6 instead of borrowing the manual 1e12 limit", () => {
+    const f = withFormation({ light_fighter: 1000001 }); f.open(); expect(f.node("formation").children).toHaveLength(1); expect(f.node("formation").disabled).toBe(true);
+    f.node("copy").disabled = false; f.copy(); expect(f.values()).toEqual(NPC_REHEARSAL_FLYING_IDS.map(() => "0"));
+  });
+  it("retires an option hidden and restored before the next event", () => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const before = f.values(), option = f.node("formation").children[1]!;
+    option.hidden = true; option.hidden = false; f.copy(); expect(f.values()).toEqual(before); expect(f.panel.hidden).toBe(true);
+  });
+  it("does not restore pending choice after protection recovers", () => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); f.setContext({ writable: false }); f.controller.observe(); f.setContext({ writable: true }); f.controller.observe();
+    f.node("copy").disabled = false; f.copy(); expect(f.ship().value).toBe("9"); expect(f.panel.hidden).toBe(true); expect(f.quote).not.toHaveBeenCalled();
+  });
+  it("rejects a renamed original input before changing any quantity", () => {
+    const f = withFormation(); f.open(); f.edit("9"); f.choose(); const inputs = NPC_REHEARSAL_FLYING_IDS.map(id => f.ship(id)), before = inputs.map(node => node.value);
+    inputs.at(-1)!.id += "-renamed"; f.copy(); expect(inputs.map(node => node.value)).toEqual(before); expect(f.node("copy").disabled).toBe(true); expect(f.quote).not.toHaveBeenCalled();
+  });
+  it("ignores forged buttons and untrusted selection/copy events", () => {
+    const f = withFormation(); f.open(); f.edit("9"); const fake = f.make("forged-copy", "button"); fake.dataset.action = "npc-rehearsal-copy";
+    f.node("formation").value = "1"; f.node("formation").emit("change", false); f.node("copy").disabled = false; f.copy(); expect(f.ship().value).toBe("9");
+    f.choose(); fake.emit("click"); f.node("copy").emit("click", true, undefined, fake); f.node("copy").emit("click", false); expect(f.ship().value).toBe("9");
+    f.copy(); expect(f.ship().value).toBe("4");
+  });
+  it("does not deep-scan/rebuild saved designs, quote or run during ordinary observation", () => {
+    const f = withFormation(); f.open(); f.choose();
+    const listing = vi.spyOn(formationModel, "listNpcRehearsalFormations"), build = vi.spyOn(formationModel, "buildNpcRehearsalFormationCopy"), simulate = vi.spyOn(rehearsal, "rehearseNpcScout");
+    const option = f.node("formation").children[1]; for (let i = 0; i < 20; i++) f.controller.observe();
+    expect(f.node("formation").children[1]).toBe(option); expect(listing).not.toHaveBeenCalled(); expect(build).not.toHaveBeenCalled(); expect(simulate).not.toHaveBeenCalled(); expect(f.quote).not.toHaveBeenCalled();
   });
 });
