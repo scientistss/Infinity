@@ -403,3 +403,28 @@ node --import tsx scripts/check-original-parity.mjs /tmp/infinity-original-p3
 NPC另有独立准备检查点 [1b648fca](https://github.com/scientistss/Infinity/commit/1b648fca6f5124ff13acf2f41664dc5d16831428)／[CI38131736893](https://github.com/scientistss/Infinity/actions/runs/38131736893)及 [e3ca1123](https://github.com/scientistss/Infinity/commit/e3ca112323889b8190802cbfd01d3b75c6c640fd)／[CI38133994773](https://github.com/scientistss/Infinity/actions/runs/38133994773)，均完整成功。e3范围为2039单元、68纯函数金标、1769项旧r10自然身份侦察续程及原应用回归；生产src/资源仍为ac3。NPC经济没有接入tick、存档、到达库存或UI，也未作为新版游戏发布。
 
 [27项路线图](ROADMAP_ACCEPTANCE.md)现按已发布、部分、未实现与机制未定义更新；原始交接全文缺失和旧R12不可验证仍明确记录。本轮文档提交只记录上述代码及发布事实，它自己的CI待独立完成；不因文档后继检查再循环生成“完成”提交。
+
+
+## 阶段 22A 到 24
+
+2026-10-12，以下三个界面增量已分别完成精确提交验收与发布，均沿用 v9/r14。当前已发布游戏为 [9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13](https://github.com/scientistss/Infinity/commit/9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13) / **0.6.24-alpha.1**。下列 CI 是源码与验收身份；发布另行核对精确产物，不据此宣称 GitHub Pages 或所有站点已同步。文档后继提交不继承应用提交的检查结果。
+
+- **A，同目标历史侦察观察差：** [be0e112b964179fc15b89daa4ae6f6a722b78a92](https://github.com/scientistss/Infinity/commit/be0e112b964179fc15b89daa4ae6f6a722b78a92) / 0.6.22-alpha.2；[CI 38291221143](https://github.com/scientistss/Infinity/actions/runs/38291221143)原四个必需作业与 aggregate 成功，[独立推广 38295920178](https://github.com/scientistss/Infinity/actions/runs/38295920178)也成功。消息页明确选两份同目标报告，展示历史观察差及原值；不推算实时库存或净产量。玩家步骤、数值语义与受控时钟边界见 [观察差合同](NPC_SCOUT_COMPARISON.md)。
+- **B，命名编成一次复制到演练：** [241a51de31364e9086abcc304884bf9df7cd6912](https://github.com/scientistss/Infinity/commit/241a51de31364e9086abcc304884bf9df7cd6912) / 0.6.23-alpha.1；[CI 38299142438](https://github.com/scientistss/Infinity/actions/runs/38299142438)原四个必需作业与 aggregate 成功，[独立推广 38304192850](https://github.com/scientistss/Infinity/actions/runs/38304192850)也全部成功。选择编成后再明确复制，保留完整目标及缺额；新复制清除旧示例，付款派遣保持独立。原归档只有一份 after 文件被后 case 同名覆盖，限定补证从不可变包中的真实 storage／后续手动保存重建，SHA-256 与原封存目标精确相等，未使用 expected 生成。原缺陷保持记录，详见 [归档缺陷与补证](NPC_REHEARSAL_FORMATION_COPY.md#原归档缺陷与精确补证)。
+- **C，跨星实验室占用定位：** 9a27ed8 / 0.6.24-alpha.1；[CI 38304895277](https://github.com/scientistss/Infinity/actions/runs/38304895277)的 `verify`、`verify-continuation`、`npc-orbital`、`scout-rehearsal`、`lab-blockers` 及 aggregate 全部成功。研究页展开真实已付款实验室工作，只读定位，不新增切星、取消或研究权限。准确产物已完成发布，发布终态为 succeeded。自然付费升级／取消、合成拆除／队尾演示和同名单元覆盖分别列明，见 [实验室合同与验收](LAB_BLOCKERS.md)。
+
+### 本次证据与历史缺口
+
+C 的五份证据包绑定相同源码归档、release 与 62 个应用资源，569 个源码文件逐一核对。4164 项单元测试全部通过；34 份原生报告共 38633 项检查，其中新增实验室 1233 项，原接续 23 份报告／7816 项。数量用于定位已执行证据，不能换算玩法完成百分比、替代独立预期或宣称任意场景完备。
+
+B 证据写入缺陷由 [54d1ff0896045d61464ca6de057da3706e2981ac](https://github.com/scientistss/Infinity/commit/54d1ff0896045d61464ca6de057da3706e2981ac)修正为场景唯一路径、排他创建及最终引用复核／封存，其[完整 CI 38304279011](https://github.com/scientistss/Infinity/actions/runs/38304279011)成功。C 已包含修复并实际复跑：编成原生报告的 514 个文件、872 次引用全核，无冲突摘要；这证明新包修好，不将旧包的覆盖缺陷改写为不存在。
+
+e729 首发及[推广 CI 38207609186](https://github.com/scientistss/Infinity/actions/runs/38207609186)的 `globalFull` 失败保留为历史事实，后续成功不追认该运行；详见 [r14 首发记录](NPC_SCOUT_REHEARSAL_ACCEPTANCE.md)。后继运输计划来源库存辅助 `c9604c00bc1e1a083822851d99028d727b2be01c` 仅完成本地 4193 项单元检查，正式 CI 尚未运行、未发布；研究／防御的 32 组探索未采纳到生产。r15 未发布，不并入本次完成范围。
+
+### 性能与覆盖边界
+
+本次原生性能有 12 个完整样本／6 对配对。正常三页 Task 中位约 37.8–48.9ms/s；9 个约 1.5 秒稳态窗口未观察到 ≥50ms 长任务，导航输入 EventTiming P95 为 40ms。极端组合的舰队页 Task 中位约 702ms/s、帧间隔 P95 为 50ms；该组合导航输入 P95 为 192ms，手动保存原生事件窗口为 101.7–110.8ms。极端负载仍有明显卡顿。
+
+固定对照为 [4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b](https://github.com/scientistss/Infinity/commit/4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b) / 0.6.11-alpha.1 / r8，跨越多个版本，不是 C 的直接前驱。TaskDuration 反映该主线程任务占用，不能称整机 CPU；结果不能归因为实验室界面，也没有证明提速、60fps 或所有设备流畅。短样本 P95 是描述值，不是长期上界。
+
+功能原生检查使用真实 HTTP、浏览器存储／文件交互和明确受控的模拟时间，合成状态、故障注入及真实付费续程分别标注。后台另有两段至少 32 秒的原生隐藏窗口，每段观察到至少两次 15 秒自动保存；不证明多小时、系统休眠、墙钟跳变或手机挂起。四宽截图与操作证据不等于 Windows、Safari 或实体手机验收。
