@@ -1,8 +1,14 @@
-# NPC remainder settlement: candidate r13 design
+# NPC remainder settlement: r13 contract
 
-2026-10-11. This document specifies the integrated r13 candidate contract for exact NPC fuel and loot settlement using a bounded nonnegative subunit entitlement. The remainder is an explicit new rule of this project. It changes NPC transfer representation, not battle rewards, old payment rules, or save-protection policy. The independent settlement matrix and natural-route engine checks pass; native-browser acceptance, final CI and immutable release-artifact gates remain pending.
+Current status, **2026-10-12**: this integrated contract is accepted and published
+at **576e929 / 0.6.21-alpha.1 / v9/r13**. The exact native, full-CI and immutable
+artifact results are in [orbital acceptance](NPC_ORBITAL_ACCEPTANCE.md).
+The remainder is an explicit project rule for exact NPC fuel and loot settlement;
+it does not change battle rewards, old payment rules or save-protection policy.
+The following motivation and candidate results preserve their **2026-10-11
+pre-acceptance context**, including then-pending gates and historical failures.
 
-## Status and measured motivation
+## Historical candidate status and measured motivation
 
 The playable, supported release is `0.6.19-alpha.1`/r12 at `eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81`. Public commit `c66bc826f3e74a6261cba78a8038fe7ee0515c68` is an explicitly unverified, unpublishable r13 work-in-progress candidate, not a published or supported r13 save contract. The first supported r13 format will require the remainder field. Earlier unreleased r13 candidates must not silently receive zero remainders or be treated as supported historical migrations.
 

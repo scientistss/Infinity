@@ -1,9 +1,12 @@
 # Compact NPC orbital reports
 
-The `0.6.21-alpha.1` candidate changes report presentation only. Its complete
-native acceptance and publication are separate gates; this document does not
-claim they have passed. It builds on source checkpoint
-[`7554c662`](https://github.com/scientistss/Infinity/commit/7554c662e3ac1f27876a60d8aa706e5d4a4dcd52).
+The compact display is accepted and published in **0.6.21-alpha.1 / v9/r13**
+at [576e929](https://github.com/scientistss/Infinity/commit/576e92910a07456a9b237b809e7c77d95203bbe5).
+See [the exact acceptance record](NPC_ORBITAL_ACCEPTANCE.md) for its own completed
+CI, immutable artifact, publication checkpoint and remaining scope. This display
+increment builds on orbital source checkpoint
+[`7554c662`](https://github.com/scientistss/Infinity/commit/7554c662e3ac1f27876a60d8aa706e5d4a4dcd52);
+that earlier full run remained failed despite its completed orbital sub-suite.
 
 ## Reading a report
 
@@ -37,7 +40,7 @@ now: normal spending and the separate subunit-right rules still apply.
 - Original artwork and protected UI files remain unchanged. A separate source
   seal binds exactly the presenter, panel and scoped space stylesheet, composed
   with the unchanged earlier orbital source seal.
-- Native acceptance must prove closed summaries and opened exact details at
+- Native acceptance verified closed summaries and opened exact details at
   320, 390, 768 and 1440 pixels, alongside the complete existing battle,
   settlement, protection and persistence checks.
 - The natural paid battle route remains unchanged. An additional explicitly

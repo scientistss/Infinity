@@ -1,62 +1,35 @@
-# NPC orbital r13 candidate status
+# NPC orbital r13 status
 
-2026-10-11. The remainder-settlement repair is integrated and has passed the
-independent settlement matrix and natural-route engine checks below. This is
-still an unreleased candidate, not a native-browser acceptance or release claim.
-The published fixed-production/scouting baseline remains
-[`eefc0706`](https://github.com/scientistss/Infinity/commit/eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81),
-version `0.6.19-alpha.1`, save revision 12.
-[`c66bc826`](https://github.com/scientistss/Infinity/commit/c66bc826f3e74a6261cba78a8038fe7ee0515c68)
-preserved the earlier ordinary-return blocker as an unverified work-in-progress
-checkpoint; it did not publish or establish a supported r13 save format.
+**2026-10-12: accepted and published at 576e929 / 0.6.21-alpha.1 / v9/r13.**
+The bounded paid battle, permanent losses, exact loot return and compact-report
+loop passed its own [full CI 38179829606](https://github.com/scientistss/Infinity/actions/runs/38179829606).
+Exact source, artifact hashes, publication checkpoint, historical failures and
+coverage limits are recorded in [NPC orbital acceptance](NPC_ORBITAL_ACCEPTANCE.md).
+This replaces the obsolete pending-native status in the historical candidate
+version of this file; it does not change that earlier evidence.
 
-## Integrated scope
+## Verified scope
 
-The candidate connects wallet/garrison state, six-round combat, integer loot,
-paid dispatch, arrival, return, recall, persistence and a compact UI. NPC fuel and
-loot now settle an exact main-wallet-plus-subunit-right equation. Each planet
-owns three canonical remainder strings, each nonnegative and less than one;
-ordinary purchases and production continue to use the main wallet alone.
-Source canonical text is authoritative: different source mantissa bits are
-allowed only if reading preserves that text. Outputs must still pass strict
-wallet representation stability and exact remainder validation. See
-[the settlement contract](NPC_REMAINDER_SETTLEMENT.md) and
-[orbital persistence](NPC_ORBITAL_ATTACK.md).
+- 3,465 unit tests in 99 files; two independent 948-check natural-route schedules.
+- 6,590 native orbital/report checks, 5,721 SaveSession checks and 1,944 render
+  checks; all required earlier gates completed on the exact game SHA.
+- One natural paid economic continuation, with actual native controls and
+  four-width report witnesses. Browser timestamps are controlled; the separate
+  native-clock pressure evidence remains separately identified.
+- Canonical main-wallet-plus-subunit rights preserve exact NPC fuel/loot value.
+  Current r13 requires those fields; validated r2–r12 migration initializes zero
+  rights, while earlier unsupported r13 candidates missing them reject safely.
+- 512 persistent sites, 64 unfinished attacks and 60 terminal reports, plus
+  necessary pinned live reports. Blocked return preserves cargo and survivors.
+- Compact summaries remain read-only; expanded receipts retain exact combat
+  details. Historical loaded loot is not a second claim or current-wallet total.
 
-Current r13 saves require valid `npcResourceRemainder` fields. Supported r2–r12
-migrations initialize them to zero; missing fields in earlier unreleased r13
-candidates reject under save protection rather than silently losing rights.
-Raw attack-ship symbols, hidden fields and custom prototypes are checked before
-normalization; ordinary mission normalization remains unchanged.
+This completes only the bounded orbital stage. NPC spending-led growth,
+retaliation, full planetary warfare and battle rehearsal remain unfinished;
+r14 work is separate preparation. There is no general speedup or 60-fps claim.
 
-Attack-only launch checks distinguish landed inventory (at most `1e15` per
-ship type per planet) from flight inventory (at most `1e12` per ship type), while
-requiring safe-integer empire totals. Old mission checks remain unchanged.
-The UI exposes nonzero local rights and explicitly warns about their loss on
-curvature reset or colony abandonment. Native-click verification is pending.
-
-## Verified candidate evidence
-
-- The independent 6,006-case settlement matrix reports 5,782 exact successes,
-  224 correct insufficient-funds rejections and zero unexpected results.
-  All 1,210 sufficient-funds route fuel cases and all 935 route credit cases
-  now pass, compared with 168 and 137 precision rejections respectively under
-  the preceding strict single-Decimal approach.
-- A fresh continuation of the same genuine public r12 natural origin adopted
-  31 game seconds and passed all 905 engine assertions. No wallet, technology,
-  ship or clock values were injected into the route.
-- Attack #7 drew after six rounds, permanently losing one player light fighter
-  and two NPC light fighters. Attack #8 then won and delivered integer loot
-  `265 / 132 / 23` (metal/crystal/deuterium) at the actual first dock boundary,
-  `18.79955725610165` seconds into the continuation.
-- After production and another scout, attack #10 collected `44 / 22 / 4` from
-  the empty garrison and docked at approximately `30.799557` seconds. Its crystal
-  settlement retained ordinary wallet `452477.4625733589` plus exact remainder
-  `0.00000000006`. All three resource equations were proved, and the continuation
-  ended with no active fleets.
-
-These are candidate engine results, not results for the historical failed
-checkpoint or a substitute for native browser interaction.
+Contracts: [settlement](NPC_REMAINDER_SETTLEMENT.md),
+[persistence](NPC_ORBITAL_ATTACK.md), [display](NPC_REPORT_DISPLAY.md).
 
 ## Historical failure retained; dock timing corrected
 
@@ -73,22 +46,3 @@ loot `265` produced `2911292.7122565303` rather than the exact
 before a later balance happened to accept the transfer. Neither that accidental
 retry nor the repaired candidate retrospectively makes the old route pass.
 There is no epsilon allowance, discarded loot or compensating grant.
-
-## Remaining release gates
-
-- The full unit suite passed `3,424 / 3,424`, including the real paid release
-  and once-only retry regression; the production build also passed locally.
-- An enhanced engine rerun passed `939 / 939` assertions across the unchanged
-  main route and all six branches. Its main 31-second final state hash remained
-  `51b5fe6f28226e48ec087261d8876eddbc9f830967e2e442ea0bcd8d1d7c3241`.
-  The three added reset/capacity cases below have engine evidence, not browser evidence.
-- The actual-click native browser runner is wired but has not been run or
-  passed. Native route and persistence/protection acceptance remain pending.
-  Three added native branches are also unverified: curvature reset from the
-  natural 31-second state with its real remainder; colony abandonment with an
-  explicitly synthetic metal remainder of `0.25`; and an explicitly synthetic
-  `1e15`-fighter full port, followed by actual dispatch of six fighters and a
-  blocked-dock retry. The synthetic branch setups are boundary fixtures, not
-  milestones of the natural route.
-- Final CI, exact candidate-commit/source binding and a verified immutable
-  release artifact remain pending. No r13 deployment is approved by this status.
