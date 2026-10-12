@@ -652,13 +652,25 @@ def manual_limit_boundary():
 def retired_copy(page, original, label):
     """Native attempt only if genuinely visible/enabled; never force stale nodes."""
     before = rehearsal_values(page); draft = draft_values(page)
-    visible = original.is_visible(); enabled = original.is_enabled()
+    # Read the retained node in one task, including after removal. Playwright's
+    # is_enabled() throws on a detached handle; resolving its old ID instead
+    # would silently replace the capability under test with a different node.
+    control = original.evaluate('''e=>{const rect=e.getBoundingClientRect(),style=getComputedStyle(e);
+      return {connected:e.isConnected,visible:style.visibility==='visible'&&rect.width>0&&rect.height>0,
+        enabled:!e.matches(':disabled'),html:e.outerHTML,
+        rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}};}''')
+    connected, visible, enabled = (control[key] for key in ('connected', 'visible', 'enabled'))
+    persist_json(f'{len(checks):05d}-retired-copy-before-{label}',
+                 {'control': control, 'values': before, 'draft': draft, 'storage': storage(page)})
     clicks = page.evaluate('window.__npcClicks.length')
     action = 'native-unavailable'
-    if visible and enabled:
+    if connected and visible and enabled:
+        # Native actionability remains authoritative; do not swallow a timeout
+        # or skip an enabled clone merely because its source selection retired.
         original.click(timeout=2000); advance(page); action = 'actual-native-click'
     events = page.evaluate('(n)=>window.__npcClicks.slice(n)', clicks)
-    reference = persist_json(f'{len(checks):05d}-retired-copy-{label}', {'action': action, 'visible': visible,
+    reference = persist_json(f'{len(checks):05d}-retired-copy-{label}', {'action': action, 'control': control,
+        'connected': connected, 'visible': visible,
         'enabled': enabled, 'events': events, 'beforeValues': before, 'afterValues': rehearsal_values(page),
         'beforeDraft': draft, 'afterDraft': draft_values(page), 'storage': storage(page)})
     check(label + ': retired control has no copy, Run or real-draft authority',
@@ -709,7 +721,19 @@ def lifecycle_boundaries(natural_raw):
             retired_copy(page, original, kind)
             if kind == 'same-id-copy-replacement':
                 replacement = page.locator(PREFIX + 'copy').element_handle()
-                try: retired_copy(page, replacement, 'forged same-ID replacement')
+                try:
+                    identity = original.evaluate('''(e,replacement)=>({sameNode:e===replacement,
+                      originalConnected:e.isConnected,replacementConnected:replacement.isConnected,
+                      originalId:e.id,replacementId:replacement.id,
+                      replacementIsCurrent:document.getElementById(e.id)===replacement,
+                      sameIdCount:document.querySelectorAll('#npc-rehearsal-copy').length})''', replacement)
+                    reference = persist_json('same-id-copy-replacement-exact-identity', identity)
+                    check('same-ID copy replacement is distinct and connected while the exact original is detached',
+                          identity['sameNode'] is False and identity['originalConnected'] is False
+                          and identity['replacementConnected'] is True and identity['replacementIsCurrent'] is True
+                          and identity['originalId'] == identity['replacementId'] == 'npc-rehearsal-copy'
+                          and identity['sameIdCount'] == 1, reference)
+                    retired_copy(page, replacement, 'forged same-ID replacement')
                 finally: replacement.dispose()
         finally: original.dispose()
         if kind != 'same-world-import':

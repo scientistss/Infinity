@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts/browser-rehearsal-formation-copy.py'
@@ -320,9 +320,86 @@ class NativeContract(unittest.TestCase):
                      'option-hidden-aba', 'option-style-aba', 'option-aria-hidden-aba', 'forged-option-value',
                      'same-node-detach', 'same-id-copy-replacement', 'same-id-input-replacement', 'option-clone'):
             self.assertIn(kind, text)
-        self.assertIn('if visible and enabled:', definition('retired_copy'))
-        self.assertIn("action = 'native-unavailable'", definition('retired_copy'))
-        self.assertIn('events == [] if action', definition('retired_copy'))
+        for required in ('identity = original.evaluate(', 'sameNode:e===replacement',
+                         'originalConnected:e.isConnected', 'replacementConnected:replacement.isConnected',
+                         "identity['sameNode'] is False and identity['originalConnected'] is False",
+                         "identity['replacementConnected'] is True and identity['replacementIsCurrent'] is True",
+                         "identity['originalId'] == identity['replacementId'] == 'npc-rehearsal-copy'",
+                         "identity['sameIdCount'] == 1", "retired_copy(page, replacement, 'forged same-ID replacement')",
+                         "condition=draft_values(page) == draft", "save(page), baseline"):
+            self.assertIn(required, text)
+        retired = definition('retired_copy')
+        for required in ('control = original.evaluate(', 'connected:e.isConnected',
+                         "style.visibility==='visible'&&rect.width>0&&rect.height>0",
+                         "enabled:!e.matches(':disabled')", 'if connected and visible and enabled:',
+                         "action = 'native-unavailable'", 'original.click(timeout=2000)',
+                         'events == [] if action', "events[0]['trusted'] is True"):
+            self.assertIn(required, retired)
+        for forbidden in ('.is_enabled(', '.is_visible(', '.element_handle(', 'force=', 'except ',
+                          'document.querySelector', 'document.getElementById'):
+            self.assertNotIn(forbidden, retired)
+        self.assertLess(retired.index('retired-copy-before-'), retired.index('original.click('))
+        # Offline doubles deliberately do not expose Playwright state methods or
+        # a same-ID lookup. This executes Python control flow, not browser JS.
+        value = load_runner(); value.load_reviewed_helpers(); value.checks = []
+        def exercise(control, effect=None):
+            live = {'values': {ship: '0' for ship in value.SHIPS}, 'draft': {'ships': ['unchanged']},
+                    'results': 0, 'fillDisabled': True, 'events': []}
+            persisted = []
+            def native_click(*, timeout):
+                self.assertEqual(timeout, 2000)
+                live['events'].append({'trusted': True, 'id': 'npc-rehearsal-copy'})
+                if effect == 'values': live['values']['light_fighter'] = '6'
+                elif effect == 'draft': live['draft']['ships'] = ['changed']
+                elif effect == 'results': live['results'] = 3
+                elif effect == 'fill': live['fillDisabled'] = False
+                elif effect == 'untrusted': live['events'][0]['trusted'] = False
+                elif effect == 'missing-event': live['events'].clear()
+                elif effect == 'duplicate-event': live['events'] *= 2
+                elif effect == 'click-error': raise RuntimeError('native actionability failure')
+            original = SimpleNamespace(evaluate=Mock(return_value=control), click=Mock(side_effect=native_click))
+            if effect == 'read-error': original.evaluate.side_effect = RuntimeError('handle read failure')
+            def evaluate(expression, *args):
+                if expression == 'window.__npcClicks.length': return len(live['events'])
+                self.assertEqual(expression, '(n)=>window.__npcClicks.slice(n)')
+                return live['events'][args[0]:]
+            def locator(selector):
+                if selector == value.PREFIX + 'results .npc-battle-report':
+                    return SimpleNamespace(count=lambda: live['results'])
+                self.assertEqual(selector, value.PREFIX + 'fill')
+                return SimpleNamespace(is_disabled=lambda: live['fillDisabled'])
+            page = SimpleNamespace(evaluate=evaluate, locator=locator)
+            def persist(label, data):
+                persisted.append((label, copy.deepcopy(data))); return {'file': label}
+            def check(name, passed, detail=None): self.assertTrue(passed, name)
+            with patch.object(value, 'rehearsal_values', side_effect=lambda _: copy.deepcopy(live['values'])), \
+                 patch.object(value, 'draft_values', side_effect=lambda _: copy.deepcopy(live['draft'])), \
+                 patch.object(value, 'storage', return_value={'complete': 'unchanged bytes'}), \
+                 patch.object(value, 'persist_json', side_effect=persist), patch.object(value, 'check', check), \
+                 patch.object(value, 'advance') as advance:
+                value.retired_copy(page, original, 'offline-exact-handle')
+                original.evaluate.assert_called_once()
+                actionable = all(control[key] for key in ('connected', 'visible', 'enabled'))
+                self.assertEqual(original.click.call_count, int(actionable))
+                self.assertEqual(advance.call_count, int(actionable))
+                self.assertEqual(persisted[0][1]['control'], control)
+                witness = persisted[-1][1]
+                self.assertEqual(witness['control'], control)
+                self.assertEqual(witness['action'], 'actual-native-click' if actionable else 'native-unavailable')
+                self.assertEqual(witness['beforeValues'], witness['afterValues'])
+                self.assertEqual(witness['beforeDraft'], witness['afterDraft'])
+                self.assertEqual(witness['storage'], {'complete': 'unchanged bytes'})
+                self.assertEqual(witness['events'], live['events'] if actionable else [])
+        for connected in (False, True):
+            for visible in (False, True):
+                for enabled in (False, True):
+                    control = {'connected': connected, 'visible': visible, 'enabled': enabled}
+                    with self.subTest(control=control): exercise(control)
+        actionable = {'connected': True, 'visible': True, 'enabled': True}
+        for effect in ('values', 'draft', 'results', 'fill', 'untrusted', 'missing-event', 'duplicate-event'):
+            with self.subTest(effect=effect), self.assertRaises(AssertionError): exercise(actionable, effect)
+        for effect in ('click-error', 'read-error'):
+            with self.subTest(effect=effect), self.assertRaises(RuntimeError): exercise(actionable, effect)
         text = definition('protection_boundary')
         for required in ("row['trusted'] is True", "row['oldValue'] == before[KEY]", "row['newValue'] == competing_raw",
                          'reload_bound(page)', 'recovery cannot revive', 'whole_state('):
