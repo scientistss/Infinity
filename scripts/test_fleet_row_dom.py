@@ -35,6 +35,7 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertEqual(len(D.SCENARIOS),8);self.assertEqual(len(set(D.SCENARIOS)),8)
         self.assertEqual(sum(len(D.steps(s)) for s in D.SCENARIOS),40)
         self.assertEqual(1+2*len(D.SCENARIOS)+2*sum(len(D.steps(s)) for s in D.SCENARIOS),97)
+        self.assertEqual(len(D.GROUPS)+2*len(D.SCENARIOS)+2*sum(len(D.steps(s)) for s in D.SCENARIOS),98)
         self.assertEqual((D.BODY_SECONDS,D.CLEANUP_SECONDS,D.OUTER_SECONDS),(120,5,150))
         self.assertLess(D.BODY_SECONDS+4*D.CLEANUP_SECONDS,D.OUTER_SECONDS)
         self.assertLess(D.OUTER_SECONDS+4,160)
@@ -132,11 +133,11 @@ class DiagnosticContracts(unittest.TestCase):
         b['handles']['refs']['list']['hidden']=False
         with self.assertRaisesRegex(AssertionError,'Hidden'):D.qualify_paint('hidden-list','painted',a,b,{'error':None,'callbacks':1})
 
-    def make_report(self):
-        report={'runs':[]}
-        for scenario in D.SCENARIOS:
+    def make_report(self,scenarios=D.SCENARIOS,root=None):
+        root=root or self.root;report={'runs':[]}
+        for scenario in scenarios:
             for side in ('baseline','candidate'):
-                case=scenario+'-'+side;directory=self.root/case;directory.mkdir()
+                case=scenario+'-'+side;directory=root/case;directory.mkdir()
                 row={'case':case,'scenario':scenario,'side':side,'valid':True,'cleanupComplete':True,'snapshots':{}}
                 for step in D.steps(scenario):
                     path=directory/(step+'.json');D.P.exclusive_json(path,{'full':'DOM','allState':{'lateField':'retained'},'raw':'complete save'})
@@ -187,6 +188,139 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertIn("all(after[p]==entry for p,entry in before.items())",source)
         self.assertIn('C.verify_sources(args.baseline,args.target,TARGET)',source)
         self.assertIn('C.STRICT_READERS',source)
+
+    def group_report(self,group,root,driver='f'*40):
+        report=self.make_report(D.GROUPS[group],root)
+        watch={'workerExitCode':0,'timedOut':False,'error':None,'remainingLiveOwnedPids':[],
+               'noObservedLiveOwnedDescendants':True,'outerDeadlineSeconds':150}
+        report.update(group=group,mode='real-dom-boundaries',completed=True,observationsComplete=True,globalCleanupComplete=True,errors=[],
+                      baselineSourceSha=D.P.BASELINE_SHA,candidateSourceSha=D.TARGET,driverSourceSha=driver,
+                      settings={'bodySeconds':120,'outerSeconds':150,'playwright':'1.57.0'},supervisor=watch)
+        return report,watch
+
+    def test_fixed_groups_are_disjoint_complete_and_equal_size(self):
+        self.assertEqual(tuple(D.GROUPS),('A','B'))
+        self.assertEqual(D.GROUPS['A'],D.SCENARIOS[:4]);self.assertEqual(D.GROUPS['B'],D.SCENARIOS[4:])
+        self.assertFalse(set(D.GROUPS['A'])&set(D.GROUPS['B']))
+        self.assertEqual(D.GROUPS['A']+D.GROUPS['B'],D.SCENARIOS)
+        self.assertEqual([sum(len(D.steps(s)) for s in values) for values in D.GROUPS.values()],[20,20])
+        workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()
+        self.assertIn('for group in A B; do',workflow);self.assertIn('--group "$group"',workflow)
+        self.assertIn('--output "$EVIDENCE/browser/group-$group"',workflow)
+        self.assertIn('exit "$status"',workflow);self.assertIn('Required full aggregate',workflow)
+
+    def test_group_headers_reject_missing_duplicate_false_completed_and_identity_changes(self):
+        report,watch=self.group_report('A',self.root)
+        D.validate_group_header(report,watch,'A','f'*40)
+        for kind in ('missing','duplicate','completed','cleanup','source','group','bounds','watch'):
+            changed=copy.deepcopy(report);w=copy.deepcopy(watch)
+            if kind=='missing':changed['runs'].pop()
+            if kind=='duplicate':changed['runs'][-1]=copy.deepcopy(changed['runs'][0])
+            if kind=='completed':changed['completed']=False
+            if kind=='cleanup':changed['globalCleanupComplete']=False
+            if kind=='source':changed['candidateSourceSha']='e'*40
+            if kind=='group':changed['group']='B'
+            if kind=='bounds':changed['settings']['bodySeconds']=121
+            if kind=='watch':w['workerExitCode']=False;changed['supervisor']=w
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):D.validate_group_header(changed,w,'A','f'*40)
+
+    def test_raw_inventory_binds_bytes_and_rejects_symlinks(self):
+        path=self.root/'original.json';path.write_text('original raw')
+        before=D.evidence_inventory(self.root);path.write_text('modified raw')
+        self.assertNotEqual(before,D.evidence_inventory(self.root))
+        (self.root/'alias.json').symlink_to(path)
+        with self.assertRaisesRegex(AssertionError,'Symlink'):D.evidence_inventory(self.root)
+
+    def test_runtime_validation_recomputes_original_v8_http_and_dist_bytes(self):
+        dist=self.root/'dist';dist.mkdir();(dist/'app.js').write_bytes(b'exact production source')
+        case=self.root/'case';case.mkdir();url='http://127.0.0.1:4173/Infinity/app.js'
+        variant={'url':'http://127.0.0.1:4173/Infinity/','dist':dist,'release':{'scripts':{'app.js':D.digest(b'exact production source')}}}
+        row={'productionScripts':{'18':{'url':url,'kind':'production','sha256':D.digest(b'exact production source')}}}
+        D.P.exclusive_json(case/'initial-script-inventory.json',[{'url':url,'scriptId':'18'},{'url':'','scriptId':'19'}])
+        for name in ('http-app.js','v8-script-18.js'):(case/name).write_bytes(b'exact production source')
+        D.validate_runtime_evidence(case,row,variant)
+        (case/'v8-script-18.js').write_bytes(b'changed runtime source')
+        with self.assertRaisesRegex(AssertionError,'source mismatch'):D.validate_runtime_evidence(case,row,variant)
+        (case/'v8-script-18.js').write_bytes(b'exact production source');row['productionScripts']['18']['sha256']='forged'
+        with self.assertRaisesRegex(AssertionError,'identity differs'):D.validate_runtime_evidence(case,row,variant)
+
+    def aggregate_fixture(self):
+        output=self.root/'browser';output.mkdir();driver='f'*40
+        fixture=self.root/'fixture.json';fixture.write_bytes(b'complete original fixture')
+        source={'source':'recomputed exact identity'};D.P.exclusive_json(self.root/'driver-source-check.json',source)
+        work={'raw':'{"full":"save"}','profile':'combined'}
+        for group in D.GROUPS:
+            root=output/('group-'+group);root.mkdir();report,watch=self.group_report(group,root,driver)
+            report['environment']={'browser':'same official browser'};report['fixture']={'profile':'combined'}
+            D.P.exclusive_bytes(root/'combined-original-fixture.json',fixture.read_bytes())
+            D.P.exclusive_bytes(root/'combined-original-afterSave.json',work['raw'].encode())
+            D.P.exclusive_bytes(root/'controlled-clock-source.js',D.P.CONTROLLED_SOURCE.encode())
+            D.compare_runs(report,root,D.GROUPS[group]);report['evidenceInventory']=D.evidence_inventory(root)
+            D.P.exclusive_json(root/'report.json',report);D.P.exclusive_json(root/'watchdog.json',watch)
+        args=SimpleNamespace(output=output,driver_sha=driver,combined_fixture=fixture,baseline=self.root,target=self.root,
+                             baseline_dist=self.root,candidate_dist=self.root,baseline_url='http://127.0.0.1:4176/Infinity/',candidate_url='http://127.0.0.1:4173/Infinity/')
+        return args,source,work
+
+    def run_aggregate_fixture(self,args,source,work):
+        with patch.object(D,'source_identity',return_value=source),patch.object(D.C,'verify_sources'), \
+             patch.object(D.P,'release_identity',return_value={}),patch.object(D.P,'qualify_release_pair'), \
+             patch.object(D.P,'workload',return_value=work),patch.object(D,'validate_release_evidence'), \
+             patch.object(D,'validate_case_evidence'):
+            return D.aggregate_groups(args)
+
+    def test_required_aggregate_recomputes_complete_union_and_retains_both_origins(self):
+        args,source,work=self.aggregate_fixture();result=self.run_aggregate_fixture(args,source,work)
+        self.assertTrue(result['completed']);self.assertEqual(len(result['runs']),16)
+        self.assertEqual(sum(len(r['checkpoints']) for r in result['comparison'].values()),40)
+        self.assertEqual(len(result['fixtureOrigins']),2)
+        self.assertEqual((args.output/result['canonicalFixtureOrigin']['file']).read_text(),work['raw'])
+        self.assertEqual([json.loads((args.output/origin['file']).read_text()) for origin in result['fixtureOrigins']],[json.loads(work['raw'])]*2)
+        self.assertTrue(all(row['case'].startswith('group-') for row in result['runs']))
+
+    def test_aggregate_rejects_changed_raw_even_when_pair_claim_still_true(self):
+        args,source,work=self.aggregate_fixture()
+        (args.output/'group-A/ordinary-baseline/painted.json').write_text('{"changed":"raw"}')
+        with self.assertRaisesRegex(AssertionError,'raw group evidence'):self.run_aggregate_fixture(args,source,work)
+        self.assertFalse(json.loads((args.output/'report.json').read_bytes())['completed'])
+
+    def test_aggregate_rejects_forged_equal_claim_after_raw_hashes_are_updated(self):
+        args,source,work=self.aggregate_fixture();root=args.output/'group-A';path=root/'ordinary-baseline/painted.json'
+        path.write_text('{"changed":"raw"}');report=json.loads((root/'report.json').read_bytes())
+        report['runs'][0]['snapshots']['painted']['sha256']=D.digest(path.read_bytes());report['evidenceInventory']=D.evidence_inventory(root)
+        (root/'report.json').write_text(json.dumps(report))
+        with self.assertRaisesRegex(AssertionError,'semantic mismatch'):self.run_aggregate_fixture(args,source,work)
+
+    def test_aggregate_rejects_missing_group(self):
+        args,source,work=self.aggregate_fixture();(args.output/'group-B').rename(args.output/'wrong-group')
+        with self.assertRaisesRegex(AssertionError,'both fixed groups'):self.run_aggregate_fixture(args,source,work)
+
+    def test_aggregate_rejects_disagreeing_group_original_after_updated_inventory(self):
+        args,source,work=self.aggregate_fixture();root=args.output/'group-B'
+        (root/'combined-original-afterSave.json').write_text('{"different":"origin"}')
+        report=json.loads((root/'report.json').read_bytes());report['evidenceInventory']=D.evidence_inventory(root);(root/'report.json').write_text(json.dumps(report))
+        with self.assertRaisesRegex(AssertionError,'afterSave differs'):self.run_aggregate_fixture(args,source,work)
+
+    def test_aggregate_rejects_runtime_environment_disagreement(self):
+        args,source,work=self.aggregate_fixture();path=args.output/'group-B/report.json'
+        report=json.loads(path.read_bytes());report['environment']['browser']='different browser';path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(AssertionError,'runtime environments differ'):self.run_aggregate_fixture(args,source,work)
+
+    def test_both_physical_origins_receive_all_196_reader_receipts(self):
+        args,source,work=self.aggregate_fixture();report=self.run_aggregate_fixture(args,source,work)
+        for row in report['runs']:(args.output/row['case']/'seeded-current.json').write_text(work['raw'])
+        def readers(command,**kwargs):
+            self.assertEqual(command[:3],['node','--import','tsx']);self.assertEqual(kwargs['cwd'],args.target)
+            inputs=json.loads(kwargs['input']);self.assertEqual(len(inputs['saves']),98)
+            self.assertEqual([item['relative'] for item in inputs['saves'][:2]],['group-A/combined-original-afterSave.json','group-B/combined-original-afterSave.json'])
+            receipts=[{'source':source['side'],'path':item['relative'],'strictReaderAccepted':True,'fullEnvelopeEqual':True,'canonicalFixedPoint':True}
+                      for source in inputs['sources'] for item in inputs['saves']]
+            return SimpleNamespace(returncode=0,stdout=json.dumps(receipts),stderr='')
+        with patch.object(D,'aggregate_groups',return_value=report),patch.object(D.P,'workload',return_value={**work,'key':'synthetic'}), \
+             patch.object(D,'qualify_snapshot'),patch.object(D.subprocess,'run',side_effect=readers):D.saves(args)
+        value=json.loads((args.output/'strict-saves-check.json').read_bytes())
+        self.assertTrue(value['completed']);self.assertEqual(value['physicalEnvelopeOccurrences'],98)
+        self.assertEqual(value['actualReaderExportChecks'],196);self.assertEqual(len(value['checks']),196)
+        self.assertEqual(value['logicalEnvelopeOccurrences'],97);self.assertEqual(value['logicalReaderExportChecks'],194)
 
     def test_every_tsx_loader_starts_in_an_installed_worktree(self):
         workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()

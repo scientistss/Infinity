@@ -44,7 +44,9 @@ adapter recreate the existing combined fixture:
 
 Only the two envelope timestamps are rebased at seed time, with exact validation
 of every other value. No private save or paused/protected-state fixture is used.
-All 16 contexts start fresh from those same full bytes.
+All 16 contexts start fresh from those same full bytes. They run in two fixed
+groups: A contains scenarios 1–4 below; B contains scenarios 5–8. Both groups
+are required and independently bind the same original source and fixture.
 
 ## Eight explicit DOM-tampering scenarios
 
@@ -96,12 +98,15 @@ and offsets. Unexpected page errors and request failures fail the run.
 
 All 40 baseline/candidate checkpoint pairs must match exactly; no subset pass,
 error suppression or state projection is accepted. The two original source
-readers/exporters subsequently validate all 97 complete save envelopes (194
-reader/export checks), including every checkpoint, every initial seed and the
-original afterSave. This runs only after owned browser/process cleanup.
+readers/exporters subsequently validate all 98 physical complete-envelope
+occurrences (196 actual reader/export checks), including every checkpoint,
+every initial seed and both group copies of the original afterSave. The two
+byte-identical origins map to 97 logical envelope occurrences / 194 logical
+checks; both actual receipts remain. This runs only after owned cleanup.
 
-The body is bounded to 120 seconds, with five-second cleanup operations, a
-150-second owned-process watchdog and a 160-second shell timeout. PID/start-time
+Each fixed four-scenario group body is bounded to 120 seconds, with five-second
+cleanup operations, a 150-second owned-process watchdog and a 160-second shell
+timeout. The group boundaries are independent; neither extends a running body. PID/start-time
 ancestry limits cleanup to observed owned processes; unobserved reparented
 processes cannot be proven absent. Failure snapshots and original exceptions
 are retained before cleanup. The independent job has a ten-minute limit and
@@ -125,3 +130,44 @@ The adapter already starts there; the later strict-reader process already uses
 the installed target worktree as its cwd. A static regression test checks all
 three loader calls. The original failed run remains failed evidence; no browser
 assertion, timeout, source boundary or original performance result is changed.
+
+## Fixed groups and mandatory recomputed aggregate
+
+Run 38339722107 at `e71f16f725b1b8601ec7189d2d587b73c7bd12f6` reached the real
+browser and completed fourteen contexts with successful teardown. Its original
+raw evidence contains 34 exact full checkpoint pairs. The 120-second total body
+alarm fired during the hidden-list baseline snapshot, after its 500 ms real RAF
+had already returned successfully; the hidden-list candidate never started.
+This remains an incomplete failed run. Later TargetClosed warnings occurred
+during deadline cleanup, and do not establish a production-render failure.
+
+The harness now partitions the unchanged eight scenarios into fixed A/B groups
+of four, each with eight fresh contexts and twenty checkpoint pairs. Every
+original snapshot field, mutation, trusted action, assertion and per-body timing
+bound remains unchanged. No readback serialization optimization, case removal,
+field projection or performance-evidence change is included. The workflow runs
+both groups even if one fails, retains each failure, then requires both to pass.
+
+The post-browser aggregate independently rereads the groups' original artifacts.
+It verifies exact current driver/target/baseline source, both 62-asset releases,
+all recorded HTTP identities, and actual archived V8/HTTP source bytes for every
+context. It requires both exact group identities, all completed/cleanup flags,
+matching runtime environments and the precise disjoint union of 8 scenarios,
+16 contexts and 40 checkpoint pairs. Every group's raw evidence inventory is
+hashed; missing/changed raw files, forged comparison summaries, missing groups,
+duplicate cases, altered runtime source or failed cleanup reject aggregation.
+
+The aggregate replays the original snapshot/paint/exception qualifications on
+stored data and recomputes all equalities from complete snapshots. It does not
+accept a group's self-reported equality as sufficient proof. Original exception
+stacks remain archived and integrity-bound; semantic comparison still uses exact
+names/messages because source URLs and minified offsets legitimately differ.
+
+Both groups retain their complete identical fixture and afterSave origins. The
+aggregate byte-checks both copies against the hard-pinned full workload and
+records their shared logical origin. Both physical origins, all sixteen seeds
+and all eighty checkpoint saves are checked by both actual original readers:
+98 physical occurrences / 196 actual reader-export receipts. The duplicate
+origin maps to 97 logical occurrences / 194 logical checks, without deleting
+either receipt. These are occurrence counts, not claims of distinct byte values.
+No successful subset is a full pass.

@@ -34,6 +34,7 @@ ADDITIONS={'.github/workflows/fleet-row-dom.yml','scripts/browser-fleet-row-dom.
            'scripts/test_fleet_row_dom.py','docs/FLEET_ROW_DOM_DIAGNOSTIC.md'}
 SCENARIOS=('ordinary','nested-duplicate','raw-id-root','removed-duplicate',
            'removed-last-match','missing-child','remount-old-handles','hidden-list')
+GROUPS={'A':SCENARIOS[:4],'B':SCENARIOS[4:]}
 SECOND_PHASE={'nested-duplicate','raw-id-root','remount-old-handles','hidden-list'}
 require,digest,exact=P.require,P.digest,P.strict_equal
 
@@ -237,11 +238,11 @@ def run_case(browser,scenario,work,variant,output,deadline):
     return row
 
 
-def compare_runs(report,output):
-    planned=[(s,side) for s in SCENARIOS for side in ('baseline','candidate')]
+def compare_runs(report,output,scenarios=SCENARIOS):
+    planned=[(s,side) for s in scenarios for side in ('baseline','candidate')]
     require([(r['scenario'],r['side']) for r in report['runs']]==planned,'Incomplete/reordered real-DOM schedule')
     result={}
-    for scenario in SCENARIOS:
+    for scenario in scenarios:
         a,b=[r for r in report['runs'] if r['scenario']==scenario]
         require(all(r['valid'] is True and r['cleanupComplete'] is True and list(r['snapshots'])==steps(scenario) for r in (a,b)),'Invalid/incomplete real-DOM context: '+scenario)
         checks={}
@@ -261,7 +262,7 @@ def compare_runs(report,output):
 def body(args):
     output=args.output;deadline=time.monotonic()+BODY_SECONDS
     report={'completed':False,'observationsComplete':False,'mode':'real-dom-boundaries','baselineSourceSha':P.BASELINE_SHA,'candidateSourceSha':TARGET,
-            'driverSourceSha':args.driver_sha,'runs':[],'errors':[],'globalCleanupComplete':False,
+            'driverSourceSha':args.driver_sha,'group':args.group,'runs':[],'errors':[],'globalCleanupComplete':False,
             'settings':{'bodySeconds':BODY_SECONDS,'outerSeconds':OUTER_SECONDS,'playwright':'1.57.0'},
             'scope':'Controlled-clock DOM tampering; full body DOM, forms, focus, detached handles, error name/message and every native storage byte. Independent diagnostic, not release or timing evidence.',
             'limitations':['Error stacks retain differing production bundle URLs/offsets in raw frame files; semantic comparisons retain exact names/messages.',
@@ -285,11 +286,12 @@ def body(args):
         browser=playwright.chromium.launch(executable_path=chrome,headless=True,timeout=15000,args=['--no-sandbox'])
         report['environment']={'browser':browser.version,'python':platform.python_version(),'platform':platform.platform(),'executable':chrome,'headless':True}
         P.exclusive_bytes(output/'controlled-clock-source.js',P.CONTROLLED_SOURCE.encode())
-        for scenario in SCENARIOS:
+        for scenario in GROUPS[args.group]:
             for variant in variants.values():
                 require(time.monotonic()<deadline,'Body deadline exhausted')
                 report['runs'].append(run_case(browser,scenario,work,variant,output,deadline));persist()
-        compare_runs(report,output);report['observationsComplete']=True
+        compare_runs(report,output,GROUPS[args.group])
+        report['evidenceInventory']=evidence_inventory(output);report['observationsComplete']=True
     except BaseException as error:report['errors'].append({'type':type(error).__name__,'message':str(error)[:2400]})
     finally:
         clean=True
@@ -317,47 +319,161 @@ def supervise(args):
     finally:P.__file__,P.EQUIVALENCE_OUTER_SECONDS=previous
 
 
+def source_identity(args):
+    require(C.git(args.driver,'rev-parse','HEAD').decode().strip()==args.driver_sha,'Wrong driver HEAD')
+    require(C.git(args.target,'rev-parse','HEAD').decode().strip()==TARGET,'Wrong exact target HEAD')
+    before=C.tree(args.target,TARGET);after=C.tree(args.driver,args.driver_sha)
+    require(set(after)-set(before)==ADDITIONS and not(set(before)-set(after)),'Driver additions differ')
+    require(all(after[p]==entry for p,entry in before.items()),'Existing 535 file changed in driver')
+    require(not list(args.driver.glob('.env*')),'Unexpected driver environment file')
+    return {'completed':True,'driverSourceSha':args.driver_sha,'targetSourceSha':TARGET,
+            'allDriverFiles':C.verify_files(args.driver,after),'allTargetFiles':C.verify_files(args.target,before)}
+
+
 def source(args):
     result={'completed':False,'driverSourceSha':args.driver_sha,'targetSourceSha':TARGET}
-    try:
-        require(C.git(args.driver,'rev-parse','HEAD').decode().strip()==args.driver_sha,'Wrong driver HEAD')
-        require(C.git(args.target,'rev-parse','HEAD').decode().strip()==TARGET,'Wrong exact target HEAD')
-        before=C.tree(args.target,TARGET);after=C.tree(args.driver,args.driver_sha)
-        require(set(after)-set(before)==ADDITIONS and not(set(before)-set(after)),'Driver additions differ')
-        require(all(after[p]==entry for p,entry in before.items()),'Existing 535 file changed in driver')
-        require(not list(args.driver.glob('.env*')),'Unexpected driver environment file')
-        result['allDriverFiles']=C.verify_files(args.driver,after)
-        result['allTargetFiles']=C.verify_files(args.target,before);result['completed']=True
+    try:result=source_identity(args)
     finally:P.exclusive_json(args.output/'driver-source-check.json',result)
+
+
+def evidence_inventory(root):
+    require(root.is_dir() and not root.is_symlink(),'Missing/symlink group evidence')
+    entries=list(root.rglob('*'));require(not any(p.is_symlink() for p in entries),'Symlink in group evidence')
+    excluded={'report.json','watchdog.json','.fleet-row-owner'}
+    return {str(p.relative_to(root)):digest(p.read_bytes()) for p in sorted(entries) if p.is_file() and str(p.relative_to(root)) not in excluded}
+
+
+def validate_group_header(report,watch,group,driver_sha):
+    require(group in GROUPS and report['group']==group and report['mode']=='real-dom-boundaries','Wrong fixed group identity')
+    require(report['completed'] is True and report['observationsComplete'] is True and report['globalCleanupComplete'] is True and report['errors']==[],'Incomplete browser group')
+    require(report['driverSourceSha']==driver_sha and report['candidateSourceSha']==TARGET and report['baselineSourceSha']==P.BASELINE_SHA,'Wrong group source identities')
+    require(exact(report['settings'],{'bodySeconds':BODY_SECONDS,'outerSeconds':OUTER_SECONDS,'playwright':'1.57.0'}),'Changed group bounds/settings')
+    require(exact(watch,report['supervisor']) and type(watch['workerExitCode']) is int and watch['workerExitCode']==0 and watch['timedOut'] is False and watch['error'] is None
+            and watch['remainingLiveOwnedPids']==[] and watch['noObservedLiveOwnedDescendants'] is True and watch['outerDeadlineSeconds']==OUTER_SECONDS,'Incomplete owned-process cleanup')
+    planned=[(s,side,s+'-'+side) for s in GROUPS[group] for side in ('baseline','candidate')]
+    require([(r['scenario'],r['side'],r['case']) for r in report['runs']]==planned,'Missing/duplicate/reordered group case')
+
+
+def validate_release_evidence(root,variant):
+    directory=root/(variant['side']+'-release');release=variant['release']
+    require((directory/'release.json').read_bytes()==release['raw'],'Archived group release differs from actual distribution')
+    records=json.loads((directory/'http-asset-bindings.json').read_bytes());expected=[]
+    for relative,sha in sorted({**release['manifest']['files'],'release.json':release['releaseSha256']}.items()):
+        expected.append({'path':relative,'url':urljoin(variant['url'],relative),'status':200,'sha256':sha,'bytes':len(P.asset_path(variant['dist'],relative).read_bytes())})
+    require(exact(records,expected),'Group HTTP asset identity differs')
+
+
+def validate_runtime_evidence(directory,row,variant):
+    inventory=json.loads((directory/'initial-script-inventory.json').read_bytes())
+    named=[entry for entry in inventory if entry.get('url')];expected=variant['release']['scripts'];seen={}
+    require(len(named)==len(expected),'Missing/duplicate named runtime script')
+    for entry in named:
+        script_id=entry.get('scriptId');url=entry['url'];relative=P.relative_asset(url,variant['url'])
+        require(isinstance(script_id,str) and script_id.isdigit() and script_id not in seen and relative in expected,'Unknown/duplicate runtime identity')
+        native=(directory/('v8-script-'+script_id+'.js')).read_bytes();http=(directory/('http-'+Path(relative).name)).read_bytes()
+        require(native==http==P.asset_path(variant['dist'],relative).read_bytes() and digest(native)==expected[relative],'Runtime/HTTP/distribution source mismatch')
+        seen[script_id]={'url':url,'sha256':digest(native),'kind':'production'}
+    require(exact(seen,row['productionScripts']) and {r['url'] for r in seen.values()}=={urljoin(variant['url'],p) for p in expected},'Reported runtime source identity differs')
+
+
+def validate_case_evidence(root,row,work,variant):
+    directory=root/row['case'];scenario=row['scenario']
+    require(exact(json.loads((directory/'case-result.json').read_bytes()),row),'Original case result differs')
+    require(exact(json.loads((directory/'cleanup.json').read_bytes()),{'required':True,'completed':True}),'Case cleanup incomplete')
+    require(json.loads((directory/'page-errors.json').read_bytes())==[] and json.loads((directory/'request-failures.json').read_bytes())==[],'Original page/request errors present')
+    validate_runtime_evidence(directory,row,variant)
+    seed=(directory/'seeded-current.json').read_text();P.qualify_seed({'raw':seed,'now':1792000000000},work)
+    names=['initial','tab-overview','tab-orders','tab-fleet','draft','painted']+(['repainted'] if scenario in SECOND_PHASE else [])
+    require(list(row['frames'])==names,'Missing/reordered real app frames')
+    frames={}
+    for name in names:
+        raw=json.loads((directory/('frame-'+name+'.json')).read_bytes());frames[name]=semantic_frame(raw)
+        require(exact(frames[name],row['frames'][name]),'Original frame result differs')
+        require(type(raw['at']) is int and raw['at']==(500 if name=='repainted' else 250 if name=='painted' else 0),'Wrong frame clock')
+        if name not in ('painted','repainted'):require(raw['error'] is None and type(raw['callbacks']) is int and raw['callbacks']>=1,'Initial/navigation real RAF failed')
+        if raw['error'] is not None:require(isinstance(raw['error'].get('stack'),str) and raw['error']['stack'],'Original exception stack missing')
+    snapshots={}
+    for step in steps(scenario):
+        record=row['snapshots'][step];raw=(root/record['file']).read_bytes();require(digest(raw)==record['sha256'],'Changed raw checkpoint')
+        value=json.loads(raw);qualify_snapshot(value,work['key']);snapshots[step]=value
+        upto=5 if step in ('ready','tampered') else 6 if step in ('painted','retampered') else len(names)
+        require(exact(value['frames'],{name:frames[name] for name in names[:upto]}),'Snapshot/frame transcript differs')
+    qualify_paint(scenario,'painted',snapshots['tampered'],snapshots['painted'],frames['painted'])
+    if scenario in SECOND_PHASE:qualify_paint(scenario,'repainted',snapshots['retampered'],snapshots['repainted'],frames['repainted'])
+    value=snapshots['manual-save'];saved=json.loads(value['raw'])
+    require(saved['savedAt']==saved['lastTickAt']==1792000000000+value['at'] and saved['version']==9 and saved['revision']==14,'Original native Save envelope invalid')
+    require(len(saved['state']['fleets'])==1000 and len(saved['state']['planets'])==100 and value['raw']!=seed,'Original complete economy/Save missing')
+    require(any(e['type']=='click' and e['target']=='save' for e in value['events']),'Native Save click missing')
+
+
+def aggregate_groups(args):
+    output=args.output;report={'completed':False,'observationsComplete':False,'globalCleanupComplete':False,'mode':'real-dom-boundaries-aggregate',
+        'baselineSourceSha':P.BASELINE_SHA,'candidateSourceSha':TARGET,'driverSourceSha':args.driver_sha,'groups':{},'runs':[],'errors':[]}
+    try:
+        require({p.name for p in output.iterdir() if p.is_dir()}=={'group-A','group-B'},'Require exactly both fixed groups')
+        source=source_identity(args);require(exact(source,json.loads((output.parent/'driver-source-check.json').read_bytes())),'Driver source proof changed')
+        C.verify_sources(args.baseline,args.target,TARGET)
+        variants={side:{'side':side,'dist':getattr(args,side+'_dist'),'url':getattr(args,side+'_url'),
+                       'release':P.release_identity(getattr(args,side+'_dist'),P.BASELINE_SHA if side=='baseline' else TARGET,side=='baseline')} for side in ('baseline','candidate')}
+        P.qualify_release_pair(variants['baseline']['release'],variants['candidate']['release'])
+        work=P.workload(args.combined_fixture,'combined');environment=None;origins=[]
+        for group in GROUPS:
+            root=output/('group-'+group);raw=(root/'report.json').read_bytes();value=json.loads(raw);watch=json.loads((root/'watchdog.json').read_bytes())
+            validate_group_header(value,watch,group,args.driver_sha)
+            require(exact(evidence_inventory(root),value['evidenceInventory']),'Changed/missing raw group evidence')
+            require((root/'controlled-clock-source.js').read_text()==P.CONTROLLED_SOURCE,'Controlled clock source changed')
+            require(exact(value['fixture'],{k:v for k,v in work.items() if k not in ('ready','raw')}),'Group fixture identity differs')
+            require((root/'combined-original-fixture.json').read_bytes()==args.combined_fixture.read_bytes(),'Group original fixture bytes differ')
+            original=root/'combined-original-afterSave.json';require(original.read_text()==work['raw'],'Group original full afterSave differs')
+            origins.append({'group':group,'file':str(original.relative_to(output)),'sha256':digest(original.read_bytes())})
+            if environment is None:environment=value['environment']
+            require(exact(environment,value['environment']),'Group browser/runtime environments differ')
+            for variant in variants.values():validate_release_evidence(root,variant)
+            claimed=value.get('comparison');actual=compare_runs(value,root,GROUPS[group]);require(exact(claimed,actual),'Claimed group comparison differs from original snapshots')
+            for row in value['runs']:
+                validate_case_evidence(root,row,work,variants[row['side']])
+                adopted=json.loads(json.dumps(row));adopted['case']='group-'+group+'/'+row['case']
+                for record in adopted['snapshots'].values():record['file']='group-'+group+'/'+record['file']
+                report['runs'].append(adopted)
+            report['groups'][group]={'reportSha256':digest(raw),'supervisor':watch,'scenarios':list(GROUPS[group]),'recomputed':True}
+        report['environment']=environment;report['fixtureOrigins']=origins
+        require(len({x['sha256'] for x in origins})==1,'Duplicate group origins disagree')
+        compare_runs(report,output)
+        require(len(report['runs'])==16 and sum(len(v['checkpoints']) for v in report['comparison'].values())==40,'Incomplete full aggregate census')
+        report['canonicalFixtureOrigin']=origins[0]
+        report.update(completed=True,observationsComplete=True,globalCleanupComplete=True,
+                      scope='Required recomputation of both disjoint fixed groups: all 8 scenarios, 16 contexts, 40 exact pairs; both physical fixture origins retained; logical duplicate mapped only after byte equality.')
+        return report
+    except BaseException as error:
+        report['errors'].append({'type':type(error).__name__,'message':str(error)});raise
+    finally:P.exclusive_json(output/'report.json',report)
 
 
 def saves(args):
     result={'completed':False,'checks':[]}
     try:
-        report=json.loads((args.output/'report.json').read_bytes());watch=json.loads((args.output/'watchdog.json').read_bytes())
-        require(report['completed'] is True and report['observationsComplete'] is True and report['globalCleanupComplete'] is True and report['errors']==[],'Incomplete browser report')
-        require(report['driverSourceSha']==args.driver_sha and report['candidateSourceSha']==TARGET and report['baselineSourceSha']==P.BASELINE_SHA,'Wrong report source identities')
-        require(exact(watch,report['supervisor']) and type(watch['workerExitCode']) is int and watch['workerExitCode']==0 and watch['timedOut'] is False and watch['error'] is None
-                and watch['remainingLiveOwnedPids']==[] and watch['noObservedLiveOwnedDescendants'] is True,'Incomplete owned-process cleanup')
-        C.verify_sources(args.baseline,args.target,TARGET);compare_runs(report,args.output)
+        report=aggregate_groups(args)
         items=[]
         def add(path):
             items.append({'path':str(path.resolve()),'relative':str(path.relative_to(args.output)),'planets':100,'fleets':1000,'sha256':digest(path.read_bytes())})
-        work=P.workload(args.combined_fixture,'combined');original=args.output/'combined-original-afterSave.json'
-        require(original.read_text()==work['raw'],'Original full fixture differs');add(original)
+        work=P.workload(args.combined_fixture,'combined')
+        for origin in report['fixtureOrigins']:
+            original=args.output/origin['file'];require(original.read_text()==work['raw'],'Original full fixture differs');add(original)
         for row in report['runs']:
             add(args.output/row['case']/'seeded-current.json')
             for step,record in row['snapshots'].items():
                 value=json.loads((args.output/record['file']).read_bytes());qualify_snapshot(value,work['key'])
                 path=args.output/'strict-snapshot-saves'/row['case']/(step+'.json');path.parent.mkdir(parents=True,exist_ok=True)
                 P.exclusive_bytes(path,value['raw'].encode());add(path)
-        require(len(items)==1+2*len(SCENARIOS)+2*sum(len(steps(s)) for s in SCENARIOS),'Incomplete whole-save inventory')
+        require(len(items)==len(GROUPS)+2*len(SCENARIOS)+2*sum(len(steps(s)) for s in SCENARIOS),'Incomplete physical whole-save inventory')
         inputs={'sources':[{'side':side,'module':str(root.resolve()/'src/game/save.ts')} for side,root in [('baseline',args.baseline),('candidate',args.target)]],'saves':items}
         checked=subprocess.run(['node','--import','tsx','--input-type=module','-e',C.STRICT_READERS],input=json.dumps(inputs),text=True,capture_output=True,cwd=args.target,timeout=75)
         result['readerStdout']=checked.stdout;result['readerStderr']=checked.stderr
         require(checked.returncode==0,'Actual dual whole-save readers/exporters failed')
         result['checks']=json.loads(checked.stdout);require(len(result['checks'])==2*len(items),'Incomplete dual-reader results')
-        result.update(rawSaves=items,completed=True,scope='Both exact original source readers/exporters accept every complete snapshot envelope after owned browser cleanup.')
+        result.update(rawSaves=items,completed=True,physicalEnvelopeOccurrences=len(items),actualReaderExportChecks=len(result['checks']),
+                      logicalEnvelopeOccurrences=len(items)-1,logicalReaderExportChecks=len(result['checks'])-2,duplicateFixtureOrigins=report['fixtureOrigins'],
+                      scope='Both exact original readers/exporters check all 98 physical envelope occurrences (196 receipts); byte-identical origins map to 97 logical occurrences (194 logical checks), without deleting either receipt.')
     finally:P.exclusive_json(args.output/'strict-saves-check.json',result)
 
 
@@ -366,14 +482,16 @@ def main():
     parser.add_argument('--driver-sha',required=True);parser.add_argument('--output',required=True,type=Path)
     for name in ('driver','target','baseline','candidate-dist','baseline-dist','combined-fixture'):parser.add_argument('--'+name,type=Path)
     for name in ('baseline-url','candidate-url','chromium'):parser.add_argument('--'+name)
+    parser.add_argument('--group',choices=tuple(GROUPS))
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS);args=parser.parse_args()
     require(re.fullmatch('[a-f0-9]{40}',args.driver_sha) and args.driver_sha!=TARGET,'Exact separate diagnostic driver SHA required')
     args.output.mkdir(parents=True,exist_ok=True)
     if args.command=='source':source(args);return 0
-    if args.command=='saves':saves(args);return 0
     for url in (args.baseline_url,args.candidate_url):
         p=urlparse(url);require(p.scheme=='http' and p.hostname in ('127.0.0.1','localhost') and p.path=='/Infinity/' and not p.username and not p.password and not p.query and not p.fragment,'Use exact loopback app origins')
     require(args.baseline_url!=args.candidate_url,'Distinct origins required')
+    if args.command=='saves':saves(args);return 0
+    require(args.group in GROUPS,'Choose the fixed browser group A or B')
     return body(args) if args.worker else supervise(args)
 
 
