@@ -2,6 +2,7 @@ import { DEEP } from "../data/deep-space";
 import { activePlanet, withPlanet } from "./empire";
 import { economy } from "./economy";
 import { big, isValidAmount } from "./decimal";
+import { checkedMerchantTransfer } from "./merchant-transfer";
 import { Rng } from "./rng";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "./types";
 import type { MerchantOffer } from "./deep-state";
@@ -40,8 +41,9 @@ export function summonMerchant(state:GameState) {
   const result=createOffer({...state,darkMatter:state.darkMatter.sub(DEEP.merchantCallDm),deepSpace:{...state.deepSpace,seed:rng.seed}},state.activePlanetId,seed,true);
   return {state:result.state,ok:true,reason:"商人已到港，报价固定 10 分钟，可分次成交"};
 }
-export function tradeQuote(state:GameState,id:string,sell:ResourceId,buy:ResourceId,amount:string) {
-  const fail=(reason:string)=>({ok:false,reason,received:big(0),spent:big(0),volume:big(0)});
+/** Quote and commit share one captured three-leg preflight. No leg can commit alone. */
+function prepareTrade(state:GameState,id:string,sell:ResourceId,buy:ResourceId,amount:string) {
+  const fail=(reason:string)=>({quote:{ok:false,reason,received:big(0),spent:big(0),volume:big(0)},candidate:null});
   const offer=state.deepSpace.offers.find(o=>o.id===id),now=state.totalTime.toNumber();
   if(!offer||offer.startsAt<0||offer.startsAt>now||offer.expiresAt<=now)return fail("报价不存在、未到港或已过期");
   if(offer.planetId!==state.activePlanetId)return fail("请先切换到商人停靠的星球");
@@ -54,12 +56,21 @@ export function tradeQuote(state:GameState,id:string,sell:ResourceId,buy:Resourc
   if(volume.gt(offer.remainingMe))return fail("超出商人剩余交易额度");
   const planet=activePlanet(state);
   if(planet.resources[sell].lt(spent))return fail("出售资源不足");
-  if(planet.resources[buy].add(received).gt(economy(state).caps[buy]))return fail("接收仓库容量不足");
-  return {ok:true,reason:`可换取 ${received.toString()}（已扣 3% 手续费）`,received,spent,volume};
+  const buyerCandidate=planet.resources[buy].add(received);
+  if(buyerCandidate.gt(economy(state).caps[buy]))return fail("接收仓库容量不足");
+  const sold=checkedMerchantTransfer(planet.resources[sell],spent,false);
+  const bought=checkedMerchantTransfer(planet.resources[buy],received,true,buyerCandidate);
+  const remaining=checkedMerchantTransfer(big(offer.remainingMe),volume,false);
+  if(sold===null||bought===null||remaining===null)return fail("交易精度不足，资源或额度无法可靠转移");
+  return {quote:{ok:true,reason:`可换取 ${received.toString()}（已扣 3% 手续费）`,received,spent,volume},
+    candidate:{resources:{...planet.resources,[sell]:sold,[buy]:bought},remainingMe:remaining.toString(),offer}};
+}
+export function tradeQuote(state:GameState,id:string,sell:ResourceId,buy:ResourceId,amount:string) {
+  return prepareTrade(state,id,sell,buy,amount).quote;
 }
 export function trade(state:GameState,id:string,sell:ResourceId,buy:ResourceId,amount:string) {
-  const q=tradeQuote(state,id,sell,buy,amount);if(!q.ok)return {state,ok:false,reason:q.reason};
-  const resources={...activePlanet(state).resources};resources[sell]=resources[sell].sub(q.spent);resources[buy]=resources[buy].add(q.received);
-  const next=withPlanet(state,{resources});
-  return {state:{...next,deepSpace:{...next.deepSpace,offers:next.deepSpace.offers.map(o=>o.id===id?{...o,remainingMe:big(o.remainingMe).sub(q.volume).max(0).toString()}:o)}},ok:true,reason:"交易已完成，未计入自然产出"};
+  const prepared=prepareTrade(state,id,sell,buy,amount),candidate=prepared.candidate;
+  if(candidate===null)return {state,ok:false,reason:prepared.quote.reason};
+  const next=withPlanet(state,{resources:candidate.resources});
+  return {state:{...next,deepSpace:{...next.deepSpace,offers:next.deepSpace.offers.map(o=>o===candidate.offer?{...o,remainingMe:candidate.remainingMe}:o)}},ok:true,reason:"交易已完成，未计入自然产出"};
 }
