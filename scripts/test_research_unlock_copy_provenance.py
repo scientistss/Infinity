@@ -217,7 +217,11 @@ def previous_bytes(path, repository=None):
     transitions = {ADAPTER_PATHS[0]: ring_transition,
                    ADAPTER_PATHS[1]: lambda raw: ui_transition(raw, MANIFEST_SHA256),
                    ADAPTER_PATHS[2]: fleet_transition, ADAPTER_PATHS[3]: formation_transition}
-    assert ordinary_bytes(repository/path) == transitions[path](before), ('Unapproved research compatibility adapter drift', path)
+    current = ordinary_bytes(repository/path)
+    if current != transitions[path](before):
+        from test_building_batch_provenance import previous_bytes as batch_previous_bytes
+        current = batch_previous_bytes(path, repository)
+    assert current == transitions[path](before), ('Unapproved research compatibility adapter drift', path)
     return before
 
 
@@ -254,6 +258,9 @@ def build_worktree_manifest(destination):
 
 
 def verify_ui_baseline():
+    if (ROOT/'tests/fixtures/building-batch-provenance.json').exists():
+        from test_building_batch_provenance import verify_previous_ui_baseline
+        return verify_previous_ui_baseline()
     db = ObjectDatabase()
     try:
         candidate, expected = capture_worktree(db)
@@ -275,6 +282,11 @@ def verify_ui_baseline():
 
 def verify_candidate(candidate):
     candidate = git_read('rev-parse', candidate+'^{commit}').decode().strip()
+    if git_read('ls-tree', candidate, '--', 'tests/fixtures/building-batch-provenance.json'):
+        from test_building_batch_provenance import verify_candidate as verify_batch_candidate
+        result = verify_batch_candidate(candidate)
+        assert result['contract'] == 'exact-declared-building-batch-source-delta'
+        return result['previousProvenance']
     assert candidate != REFERENCE, 'Research unlock candidate must be committed separately from its public baseline'
     for path in (*ADAPTER_PATHS, *UNCHANGED_CHECKER_PATHS, 'scripts/test_research_unlock_copy_provenance.py', MANIFEST):
         assert ordinary_bytes(ROOT/path) == git_read('show', candidate+':'+path), ('Executed seal differs from committed candidate', path)

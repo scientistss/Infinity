@@ -10,6 +10,7 @@ synthetic hidden state and native File.text completion gates are clearly labeled
 import argparse
 from npc_display_contract import SAMPLE_JS as NPC_DISPLAY_SAMPLE_JS, normalize_npc_display, normalize_empty_lab_blockers, normalize_manual_unit_display
 from demolition_display_contract import FACILITY_DEMOLITION_SAMPLE_JS, normalize_demolition_display
+from building_batch_display_contract import SAMPLE_JS as BUILDING_BATCH_SAMPLE_JS, assert_building_batch_source_contract, normalize_building_batch_display, normalize_legacy_building_library
 from r14_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r14
 import base64
 import copy
@@ -31,6 +32,7 @@ parser.add_argument('--output',default='render-scheduling-evidence')
 parser.add_argument('--chromium')
 args=parser.parse_args()
 CURRENT_PACKAGE_VERSION=json.loads((Path(__file__).resolve().parents[1]/'package.json').read_text())['version']
+assert_building_batch_source_contract()
 fixtures=json.loads(Path(args.fixture).read_text())
 KEY,BACKUP,EPOCH=fixtures['key'],fixtures['backupKey'],fixtures['epoch']
 HOME,COLONY=fixtures['homeId'],fixtures['colonyId']
@@ -364,20 +366,20 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         const visibility=getComputedStyle(e).visibility;
         return e.getClientRects().length>0&&visibility!=='hidden'&&visibility!=='collapse';
       };
-      let text=panel?.innerText;
-      if(omitBuilding){
-        const addition=panel.querySelector('#building-templates');
-        const summary='建筑意图模板 · 保存目标，按需创建有限计划';
-        if(panel.dataset.tabPanel!=='orders'||!addition||addition.parentElement!==panel||panel.lastElementChild!==addition||addition.open||addition.innerText!==summary)
-          throw Error('New building-library parity exception must be the exact closed final region');
-        const suffix='\\n'+summary;
-        if(!text.endsWith(suffix)||text.indexOf(summary)!==text.lastIndexOf(summary))throw Error('Unexpected new-region text boundary');
-        text=text.slice(0,-suffix.length);
-      }
+      const text=panel?.innerText;
+      // Keep the complete raw orders text. Both exact closed additions are
+      // validated and projected only from copied evidence after it is archived.
+      const library=omitBuilding?panel.querySelector('#building-templates'):null;
+      const buildingLibraryEvidence=omitBuilding?{
+        count:document.querySelectorAll('#building-templates').length,html:library?.outerHTML,
+        native:library instanceof HTMLDetailsElement,connected:library?.isConnected,
+        parentId:library?.parentElement?.id,open:library?.open,text:library?.innerText,
+        summary:library?.querySelector(':scope > summary')?.textContent}:null;
       const inputs=[...panel.querySelectorAll('input,select,textarea,button')].filter(visible);
       const result={tab:panel?.dataset.tabPanel,text,
        shared:Object.fromEntries(['amount-metal','amount-crystal','amount-deuterium','energy-top','played','status','gain','score','multiplier'].map(k=>[k,document.querySelector(`[data-bind="${k}"]`)?.textContent])),
        inputs:inputs.map(e=>({id:e.id,action:e.dataset.action??e.dataset.space??null,type:e.type,value:e.value,disabled:e.disabled,checked:e.checked??null,text:e.tagName==='BUTTON'?e.textContent:null}))};
+      if(omitBuilding)result.buildingLibraryEvidence=buildingLibraryEvidence;
       if(researchBase){
         const later=panel.querySelector('[data-bind="rlater-intergalactic_research_network"]');
         const card=panel.querySelector('[data-bind="rcard-intergalactic_research_network"]');
@@ -485,6 +487,23 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         'panelHTML':page.locator('[data-tab-panel="'+result['tab']+'"]').evaluate('(node)=>node.outerHTML'),
         'stored':raw(page),'controlledClock':page.evaluate('window.__renderProbe.at()')},ensure_ascii=False,indent=2))
     parity_captures.append({'side':side,'tab':result['tab'],'rawArtifact':artifact})
+    if result['tab']=='orders':
+        stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+        evidence=page.evaluate(BUILDING_BATCH_SAMPLE_JS)
+        artifact=f'panel-parity-building-batch-{side}-{len(audits)}-raw.json'
+        (out/artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+        check('batch display exception starts from the complete unchanged old base state: '+side,
+              exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
+        result,projected_panel_html=normalize_building_batch_display(result,evidence,json.loads(stored)['state'],side)
+        if omit_building_addition:
+            library=result.pop('buildingLibraryEvidence')
+            result=normalize_legacy_building_library(result,library,projected_panel_html)
+        check('batch display adapter never writes native DOM, storage or controlled time: '+side,
+              raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and
+              page.locator('#space-orders').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
+        audits.append({'kind':'exact-unopened-building-batch-display-delta','side':side,'rawArtifact':artifact,
+            'projectedPanelHTML':projected_panel_html,
+            'constraint':'The source-bound full initial native block, all fifteen globally unique identities, exact summary/text/attributes, one enabled unselected select and five disabled hidden controls, empty draft/review contents, closed state and unique final position immediately after the original building library are checked before only that complete block is removed from copied evidence. Every old text/control/shared amount/state and raw panel byte is retained. The original building-library last-child proof is then applied to the exact copied remainder; the later quote adapter still compares the unmodified native full panel.'})
     if npc_base:
         stored=raw(page);at=page.evaluate('window.__renderProbe.at()');evidence=page.evaluate(NPC_DISPLAY_SAMPLE_JS)
         artifact=f'panel-parity-npc-{npc_base}-{result["tab"]}-{len(audits)}-raw.json'
@@ -1020,7 +1039,8 @@ def run_cases():
         check('served save revision matches the exact before/after reader metadata',release.json()['saveRevision']==(8 if label=='before' else CURRENT_REVISION))
         check('only current bundle has the exact default-folded new building region',page.locator('#building-templates').count()==(1 if label=='after' else 0))
         if label=='after':
-            check('new building region is last and folded with original explanatory text',page.locator('#building-templates').evaluate('(node)=>node.parentElement.id==="space-orders"&&node.parentElement.lastElementChild===node&&!node.open') and page.locator('#building-templates > summary').text_content()=='建筑意图模板 · 保存目标，按需创建有限计划')
+            check('new building region immediately precedes the unique final folded batch addition with original explanatory text',page.locator('#building-templates').evaluate('(node)=>node.parentElement.id==="space-orders"&&node.nextElementSibling?.id==="building-template-batch"&&node.parentElement.lastElementChild===node.nextElementSibling&&!node.nextElementSibling.open&&!node.open') and page.locator('#building-templates > summary').text_content()=='建筑意图模板 · 保存目标，按需创建有限计划')
+        check('only current bundle has the unique new batch disclosure',page.locator('#building-template-batch').count()==(1 if label=='after' else 0))
         # Observe the new reader's migration above, then perform the same genuine
         # manual save on both bundles. This sets the same status through real UI
         # work; no status text or other visible field is projected away.
@@ -1286,6 +1306,7 @@ with sync_playwright() as playwright:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
             'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r14/r13) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded count-one manual-unit delta, manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
+            'parityBuildingBatchException':'At every folded/open/reopened orders capture, the full source-bound unopened batch block is independently checked and archived, including all IDs, native controls, values, permission states, attributes, exact text and final sibling boundary. Only its literal copied HTML and unique final summary suffix are projected; the former building-library last-child proof then runs on the exact remaining tree. Existing native full-panel immutability checks and every old state, shared amount, text and control comparison remain unchanged. No CPU trace/probe/model input is modified.',
             'parityNpcDisplayException':'The copied r8 base comparison retains every original message HTML node, text, time, and order. Only independently bound keyed old scout unavailable notices and the exact initial hidden rehearsal region are removed after full node-count/order/HTML/control-value checks; typed observations cannot use this projection. The copied evidence records all hidden data. Current state receives only validated null snapshot fields, and raw bytes, DOM and clock remain unchanged.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. The exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Separately, all actual planet queues and demolitions must contain no paid lab work; only the unique complete empty, hidden, closed lab-blocker disclosure in its exact intro-to-queue position is removed. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityShipyardDefenseException':'Alongside the separately verified manual-unit delta, each complete literal old/new NPC explanation in the unique p.blurb introductory node is compared through a copied-text adapter. Its exact class, native heading/queue/grid/status sibling identities, order and counts are asserted; the complete remaining panel DOM, all visible controls, queue/card content, costs, timers, status, stored state and controlled time remain exact. Every raw panel is saved before adapters and all paired snapshots/mismatches before the first parity assertion.',

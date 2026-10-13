@@ -140,7 +140,7 @@ def verify_report(report_raw, fixture_raw, common_raw, group, expected_sha, runt
     require(report['schema']=='infinity-manual-unit-native-v2' and report['group']==group,'Native report schema/group mismatch')
     require(report['completed'] is True and report['result']=='passed' and report['failure'] is None and report['failureLifecycle'] is None,'Native report is not completed successfully')
     require(report['case']=='suite-integrity' and report['errors']==[] and report['failedRequests']==[],'Native report final integrity failed')
-    require(report['sourceSha']==expected_sha and report['candidateVersion']=='0.6.30-alpha.1','Native report source/version mismatch')
+    require(report['sourceSha']==expected_sha and report['candidateVersion']=='0.6.31-alpha.1','Native report source/version mismatch')
     require(report['sourceIdentity']=={key:identity['source'][key] for key in SOURCE_KEYS},'Actual native full source identity differs from common identity')
     require(type(runtime_identity) is dict and set(runtime_identity)==set(RUNTIME_KEYS)
         and all(type(value) is str and value for value in runtime_identity.values()),'Actual runtime identity is missing')
@@ -258,7 +258,7 @@ def verify_artifacts(jobs,roots,expected_sha,invocations):
         report=strict_json(read_regular(root,'manual-unit-evidence/manual-unit-browser-report.json'))
         release=strict_json(read_regular(root,'dist/release.json'))
         require(report['releaseMetadata']==release,'Actual native release metadata differs from archived production')
-        require(release['sourceSha']==expected_sha and release['version']=='0.6.30-alpha.1' and type(release['saveVersion']) is int and release['saveVersion']==9 and type(release['saveRevision']) is int and release['saveRevision']==14,'Actual production release identity differs')
+        require(release['sourceSha']==expected_sha and release['version']=='0.6.31-alpha.1' and type(release['saveVersion']) is int and release['saveVersion']==9 and type(release['saveRevision']) is int and release['saveRevision']==14,'Actual production release identity differs')
         require(type(release['files']) is dict and len(release['files'])==62,'Complete 62-file production release required')
         actual={str(path.relative_to(root/'dist')):sha(read_regular(root,'dist/'+str(path.relative_to(root/'dist')))) for path in (root/'dist').rglob('*') if path.is_file()}
         require(len(actual)==63 and actual==common['identity']['assets'] and {key:value for key,value in actual.items() if key!='release.json'}==release['files'],'Actual full production assets differ from common identity')

@@ -32,6 +32,9 @@ DISPLAY_CONTRACT_PATCH_SHA = '3fe0000c2a36ae2bbf79d32bf69c799dd0e55bf0a1e7088ad0
 def assert_display_contract_source_transition(current):
     # Only the approved offline benchmark source-proof adapter and its six
     # negative tests changed. No UI projection or old assertion is discarded.
+    if hashlib.sha256(current).hexdigest() != DISPLAY_CONTRACT_AFTER_SHA:
+        from test_building_batch_provenance import previous_display_contract_bytes
+        current = previous_display_contract_bytes(current)
     assert hashlib.sha256(current).hexdigest() == DISPLAY_CONTRACT_AFTER_SHA, 'Complete approved display test required'
     before = subprocess.check_output(['git', '--no-replace-objects', '-C', str(ROOT),
                                       'show', DISPLAY_CONTRACT_BASE+':'+DISPLAY_CONTRACT_PATH])
@@ -171,6 +174,8 @@ class BrowserContracts(unittest.TestCase):
         fixture = (ROOT / 'scripts/render-scheduling-fixture.ts').read_text()
         self.assertIn('Object.assign(base.research.levels, {astrophysics:4,computer_tech:8,combustion_drive:6,impulse_drive:4});', fixture)
         source = (ROOT / 'scripts/browser-render-scheduling.py').read_bytes()
+        from building_batch_display_contract import building_batch_render_contract_before
+        source = building_batch_render_contract_before(source.decode('utf-8')).encode('utf-8')
         self.assertEqual(hashlib.sha256(source).hexdigest(), '6e7e4e40acc8ac6ba8edc2bb450919612d8b19e287aa97057305ee6ee65af044')
         self.assertNotIn(b'normalize_astrophysics', source)
         # The renderer remains byte-exact. Its offline test only adopted the

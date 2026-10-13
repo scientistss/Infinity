@@ -40,6 +40,15 @@ HANDLER_R13_FIXED = 'async function JE(e){var i;ge.cancelPendingImport();const t
 # This exact parser specimen is not release or native acceptance.
 HANDLER_MANUAL_UNIT_CURRENT = 'async function h_(e){var i;["import-text","import-file","reset","prestige"].includes(e.type)&&(Ee.retireNpcRehearsal(),Ee.retireManualUnits()),Me.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(Me.mode!=="ready"&&!t){fe=Me.message,vr();return}const n=W,r=W.unlocked;'
 
+# Explicit synthetic approved triple shape, independently written for parser
+# acceptance. This is not an actual emitted bundle or a native/browser pass.
+HANDLER_BUILDING_BATCH_SYNTHETIC = 'async function batchHandle(e){var i;["import-text","import-file","reset","prestige"].includes(e.type)&&($view.retireNpcRehearsal(),$view.retireManualUnits(),$view.retireBuildingTemplateBatch()),$session.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if($session.mode!=="ready"&&!t){message=$session.message,render();return}const n=state,r=state.unlocked;'
+
+# Actual local dirty integration asset index-DZAe7ucv.js, 802309 bytes,
+# SHA-256 be563d4c3601fe493f49debe35baa6058d713331d14c478afc63e7c7cc21224a.
+# Extracted from the Node 24 build on 2026-10-13; not release or browser evidence.
+HANDLER_BUILDING_BATCH_CURRENT = 'async function tN(e){var i;["import-text","import-file","reset","prestige"].includes(e.type)&&(we.retireNpcRehearsal(),we.retireManualUnits(),we.retireBuildingTemplateBatch()),Pe.cancelPendingImport();const t=["save","export","export-legacy","import-text","import-file","reset","dismiss-notice","dismiss-offline"].includes(e.type);if(Pe.mode!=="ready"&&!t){ge=Pe.message,Lr();return}const n=Q,r=Q.unlocked;'
+
 class ProductionActionHandlerTests(unittest.TestCase):
     def assert_unique(self, text, name='Z1', action='e', session='ge', state='j'):
         matches = RING.production_action_handlers(text)
@@ -91,6 +100,74 @@ class ProductionActionHandlerTests(unittest.TestCase):
             with self.subTest(before=before, after=after):
                 self.assertIn(before, HANDLER_MANUAL_UNIT_CURRENT)
                 self.assertEqual(RING.production_action_handlers(HANDLER_MANUAL_UNIT_CURRENT.replace(before, after, 1)), [])
+
+    def test_exact_emitted_building_batch_triple_preserves_numbered_handler_bindings(self):
+        text = HANDLER_BUILDING_BATCH_CURRENT
+        match = self.assert_unique(text, 'tN', 'e', 'Pe', 'Q')
+        self.assertEqual(match.re.groups, 5)
+        self.assertEqual(match.group('recovery'), 't')
+        self.assertIn('(we.retireNpcRehearsal(),we.retireManualUnits(),we.retireBuildingTemplateBatch()),Pe.cancelPendingImport();', match.group())
+        for replacement in ('other.retireBuildingTemplateBatch()', 'we.retireBuildingTemplateBatch(e)',
+                            'we.retireBuildingTemplateBatch(),sideEffect()'):
+            with self.subTest(replacement=replacement):
+                self.assertEqual(RING.production_action_handlers(text.replace('we.retireBuildingTemplateBatch()', replacement)), [])
+        self.assertEqual(len(RING.production_action_handlers(text+text)), 2)
+
+    def test_explicit_synthetic_building_batch_triple_preserves_all_native_captures(self):
+        text = HANDLER_BUILDING_BATCH_SYNTHETIC
+        match = self.assert_unique(text, 'batchHandle', 'e', '$session', 'state')
+        self.assertEqual(match.re.groups, 5)
+        for receiver in ('view', '_view', '$otherView'):
+            self.assert_unique(text.replace('$view.', receiver+'.'), 'batchHandle', 'e', '$session', 'state')
+        for other in (text, HANDLER_MANUAL_UNIT_CURRENT, HANDLER_R14_CURRENT, HANDLER_R13_FIXED, HANDLER_R11, HANDLER_R10):
+            with self.subTest(other=other):
+                self.assertEqual(len(RING.production_action_handlers(text+other)), 2)
+        # Removing the entire new suffix is still precisely the older paired
+        # grammar, which remains supported rather than silently weakened.
+        paired = text.replace(',$view.retireBuildingTemplateBatch()', '')
+        self.assert_unique(paired, 'batchHandle', 'e', '$session', 'state')
+        position = text.index('{', match.start())+1
+        self.assertTrue(text[position:].startswith('var i;'))
+        self.assertEqual(text[:position].count('{'), 1)
+
+    def test_batch_retirement_requires_exact_order_same_view_no_arguments_or_effects(self):
+        text = HANDLER_BUILDING_BATCH_SYNTHETIC
+        for before, after in (
+            ('"import-text","import-file","reset","prestige"', '"import-text","reset","prestige"'),
+            ('"reset","prestige"', '"reset","prestige","save"'),
+            ('"import-text","import-file"', '"import-file","import-text"'),
+            ('includes(e.type)', 'includes(other.type)'),
+            ('&&($view.', '||($view.'),
+            ('$view.retireNpcRehearsal()', 'other.retireNpcRehearsal()'),
+            ('$view.retireManualUnits()', 'other.retireManualUnits()'),
+            ('$view.retireBuildingTemplateBatch()', 'other.retireBuildingTemplateBatch()'),
+            ('retireNpcRehearsal()', 'retireNpcRehearsal(e)'),
+            ('retireManualUnits()', 'retireManualUnits(e)'),
+            ('retireBuildingTemplateBatch()', 'retireBuildingTemplateBatch(e)'),
+            ('$view.retireBuildingTemplateBatch()', '$view.sendFleet()'),
+            ('$view.retireBuildingTemplateBatch()', '$view.retireBuildingTemplateBatch(),sideEffect()'),
+            ('$view.retireBuildingTemplateBatch()', '(sideEffect(),$view.retireBuildingTemplateBatch())'),
+            ('$view.retireBuildingTemplateBatch()', '$view.retireBuildingTemplateBatch(),$view.retireBuildingTemplateBatch()'),
+            ('$view.retireManualUnits(),', '$view.retireManualUnits(),sideEffect(),'),
+            ('$view.retireNpcRehearsal(),', ''),
+            ('$view.retireManualUnits(),', ''),
+            ('retireBuildingTemplateBatch', 'retireBuildingTemplateBatchOther'),
+            ('$view.retireBuildingTemplateBatch()', '$view?.retireBuildingTemplateBatch()'),
+            ('$view.retireBuildingTemplateBatch()', '$view["retireBuildingTemplateBatch"]()'),
+            ('&&($view.retireNpcRehearsal(),$view.retireManualUnits(),$view.retireBuildingTemplateBatch()),',
+             '&&$view.retireNpcRehearsal(),$view.retireManualUnits(),$view.retireBuildingTemplateBatch(),'),
+            ('var i;', 'var i=sideEffect();'),
+            ('$session.cancelPendingImport();', '$session.cancelPendingImport();sideEffect();'),
+            ('$session.mode', 'other.mode'), ('$session.message', 'other.message'),
+            ('const n=state,r=state.unlocked;', 'const n=state,r=other.unlocked;'),
+        ):
+            with self.subTest(before=before, after=after):
+                self.assertIn(before, text)
+                self.assertEqual(RING.production_action_handlers(text.replace(before, after, 1)), [])
+        calls = ('$view.retireNpcRehearsal()', '$view.retireManualUnits()', '$view.retireBuildingTemplateBatch()')
+        for order in ((0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)):
+            changed = text.replace(','.join(calls), ','.join(calls[index] for index in order))
+            with self.subTest(order=order): self.assertEqual(RING.production_action_handlers(changed), [])
 
     def test_r14_retirement_admits_only_exact_actions_method_and_arguments(self):
         for before, after in (

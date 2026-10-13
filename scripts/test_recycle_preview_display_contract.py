@@ -74,6 +74,8 @@ def baseline(path):
 
 
 def assert_exact_runner_transition(current):
+    from building_batch_display_contract import building_batch_render_contract_before
+    current = building_batch_render_contract_before(current)
     start = current.index('# This is an independently reviewed DOM literal, not the production constructor.')
     end = current.index('def snapshot(page, ', start)
     addition = current[start:end]
@@ -91,6 +93,9 @@ def assert_exact_runner_transition(current):
 
 
 def research_unlock_benchmark_before(current):
+    if digest(current) != RESEARCH_BENCHMARK_AFTER_SHA:
+        from test_building_batch_provenance import previous_benchmark_bytes
+        current = previous_benchmark_bytes(current.encode('utf-8')).decode('utf-8')
     assert digest(current) == RESEARCH_BENCHMARK_AFTER_SHA, 'Exact complete reviewed research benchmark required'
     before = subprocess.check_output(['git', '--no-replace-objects', '-C', str(ROOT),
                                       'show', RESEARCH_BENCHMARK_BASE+':'+BENCHMARK]).decode('utf-8')
@@ -267,7 +272,8 @@ class RecycleDisplayContractTests(unittest.TestCase):
 
 class ResearchBenchmarkSourceTransitionTests(unittest.TestCase):
     def source(self):
-        return (ROOT/BENCHMARK).read_bytes().decode('utf-8')
+        from test_building_batch_provenance import previous_benchmark_bytes
+        return previous_benchmark_bytes((ROOT/BENCHMARK).read_bytes()).decode('utf-8')
 
     def test_exact_new_script_reads_complete_493_then_continues_original_recycle_and_baseline_checks(self):
         source = self.source()

@@ -171,16 +171,19 @@ def ordinary_source(path):
 
 
 def assert_release_transitions():
+    from test_building_batch_gate import previous_release_files as successor_release_files
+    projected = successor_release_files()
     for path, count in RELEASE_FILES.items():
         local = ordinary_source(path)
         before = baseline_bytes(path)
         assert before.count(OLD_VERSION.encode()) == count, ('Pinned research-copy release literal cardinality', path)
-        assert local.read_bytes() == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('Exact research-copy release-only transition', path)
+        assert projected[path] == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('Exact research-copy release-only transition', path)
 
 
 def previous_workflow(workflow=None):
     """Expose frozen 493 only after all actual current workflow/release bytes pass."""
-    current = ordinary_source(WORKFLOW_PATH).read_bytes().decode('utf-8')
+    from test_building_batch_gate import previous_workflow as successor_workflow
+    current = successor_workflow()
     baseline = baseline_workflow()
     assert_research_gate(current, baseline)
     if workflow is not None:
@@ -287,7 +290,8 @@ class ResearchCopyBaselineBlobTests(unittest.TestCase):
         previous_workflow()
         self.assertEqual(immutable_baseline_blob.cache_info().currsize, 15)
         original_read = Path.read_bytes
-        workflow = original_read(ROOT/WORKFLOW_PATH).decode()
+        from test_building_batch_gate import previous_workflow as successor_workflow
+        workflow = successor_workflow()
         for relative in (WORKFLOW_PATH, *RELEASE_FILES):
             target = ROOT/relative
             changed = original_read(target)+b'\n'
@@ -301,7 +305,8 @@ class ResearchCopyBaselineBlobTests(unittest.TestCase):
 class ResearchCopyGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT/WORKFLOW_PATH).read_bytes().decode('utf-8')
+        from test_building_batch_gate import previous_workflow as successor_workflow
+        cls.workflow = successor_workflow()
         cls.baseline = baseline_workflow()
         cls.current, cls.original = jobs(cls.workflow), jobs(cls.baseline)
 
@@ -459,13 +464,14 @@ class ResearchCopyGateTests(unittest.TestCase):
         self.assertEqual(len(RELEASE_FILES), 14)
         old = json.loads(baseline_bytes('package-lock.json'))
         old['version'] = old['packages']['']['version'] = VERSION
-        self.assertEqual(json.loads((ROOT/'package-lock.json').read_bytes()), old)
+        from test_building_batch_gate import previous_release_bytes as successor_release_bytes, VERSION as CURRENT_VERSION
+        self.assertEqual(json.loads(successor_release_bytes('package-lock.json')), old)
         for relative, count in RELEASE_FILES.items():
             target = ROOT/relative
             original = target.read_bytes()
-            self.assertEqual(original.count(VERSION.encode()), count, relative)
-            for changed in (original+b'\n', original.replace(VERSION.encode(), OLD_VERSION.encode(), 1),
-                            original.replace(VERSION.encode(), b'0.6.30-alpha.2', 1)):
+            self.assertEqual(successor_release_bytes(relative).count(VERSION.encode()), count, relative)
+            for changed in (original+b'\n', original.replace(CURRENT_VERSION.encode(), OLD_VERSION.encode(), 1),
+                            original.replace(CURRENT_VERSION.encode(), b'0.6.30-alpha.2', 1)):
                 with self.subTest(relative=relative), self.altered_read(target, changed):
                     with self.assertRaises(AssertionError): previous_workflow()
                     with self.assertRaises(AssertionError): previous_release_bytes(relative)

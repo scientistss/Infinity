@@ -27,7 +27,7 @@ from urllib.parse import urljoin, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 HOST_STARTED_MONOTONIC = time.monotonic()
 WIDTHS = (320, 390, 768, 1440)
-CANDIDATE_VERSION = '0.6.30-alpha.1'
+CANDIDATE_VERSION = '0.6.31-alpha.1'
 NATIVE_CLASSIFICATION = 'Explicit synthetic-origin real-engine paid battle/debris/return checkpoint; native readonly UI evidence only. Zero-only controlled functional clock. No natural progression, native payment, timing or paint claim.'
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 PANEL = '#recycle-preview'

@@ -1,0 +1,23 @@
+/* Separate, collapsed addition to the original finite-plan cards. */
+.building-template-batch { box-sizing:border-box; min-width:0; max-width:100%; margin-top:18px; padding:16px; border:1px solid var(--line,var(--border,#2b3547)); border-radius:12px; overflow-wrap:anywhere; }
+.building-template-batch > summary { cursor:pointer; font-weight:700; font-size:1.05rem; }
+.building-template-batch p { line-height:1.6; }
+.building-template-batch [hidden] { display:none !important; }
+.building-template-batch label { min-width:0; }
+.building-template-batch .batch-template-label { display:grid; gap:6px; margin:12px 0; }
+.building-template-batch select,.building-template-batch input[type="text"] { box-sizing:border-box; width:100%; min-width:0; }
+.building-template-batch .batch-planet-choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.building-template-batch .batch-planet-choice { display:flex; gap:8px; align-items:flex-start; }
+.building-template-batch .batch-planet-choice input { flex:0 0 auto; margin-top:4px; }
+.building-template-batch .batch-budgets,.building-template-batch .batch-review-planets { display:grid; gap:10px; margin:12px 0; }
+.building-template-batch .batch-budget-planet,.building-template-batch .batch-review-planet { min-width:0; padding:10px; border:1px solid var(--line,var(--border,#2b3547)); border-radius:8px; }
+.building-template-batch details > summary { cursor:pointer; }
+.building-template-batch fieldset { box-sizing:border-box; min-width:0; max-width:100%; margin:10px 0; padding:10px; border:1px solid var(--line,var(--border,#2b3547)); border-radius:8px; }
+.building-template-batch legend { max-width:100%; }
+.building-template-batch .batch-budget-resources { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.building-template-batch .batch-budget-resources label { display:grid; gap:5px; }
+.building-template-batch .batch-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.building-template-batch button { max-width:100%; white-space:normal; }
+.building-template-batch .batch-review-row { padding:8px 0; border-top:1px solid var(--line,var(--border,#2b3547)); }
+@media(max-width:640px) { .building-template-batch .batch-planet-choices { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:420px) { .building-template-batch { padding:10px; } .building-template-batch .batch-budget-resources { grid-template-columns:minmax(0,1fr); } }

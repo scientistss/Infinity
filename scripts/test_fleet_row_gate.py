@@ -359,7 +359,8 @@ class FleetRowGateTests(unittest.TestCase):
         self.assertEqual(len(RELEASE_FILES), 14)
         old = json.loads(baseline_bytes('package-lock.json'))
         old['version'] = old['packages']['']['version'] = VERSION
-        from test_research_unlock_copy_gate import previous_release_bytes as successor_release_bytes, VERSION as CURRENT_VERSION
+        from test_research_unlock_copy_gate import previous_release_bytes as successor_release_bytes
+        from test_building_batch_gate import VERSION as CURRENT_VERSION
         self.assertEqual(json.loads(successor_release_bytes('package-lock.json')), old)
         for relative, count in RELEASE_FILES.items():
             target = ROOT/relative

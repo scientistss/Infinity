@@ -247,7 +247,13 @@ class NativeReloadScheduleContract(unittest.TestCase):
         fleet_adapter = b'    from test_fleet_row_gate import previous_workflow as successor_workflow\n'
         fleet_gate = original_read(ROOT / 'scripts/test_fleet_row_gate.py')
         research_adapter = b'    from test_research_unlock_copy_gate import previous_workflow as successor_workflow\n'
-        if research_adapter in fleet_gate:
+        batch_adapter = b'    from test_building_batch_gate import previous_workflow as successor_workflow\n'
+        research_gate = original_read(ROOT / 'scripts/test_research_unlock_copy_gate.py')
+        if batch_adapter in research_gate:
+            self.assertIn(research_adapter, fleet_gate)
+            self.assertIn(fleet_adapter, recycle_gate)
+            expected_error = 'Unapproved building-batch eight-job workflow drift'
+        elif research_adapter in fleet_gate:
             self.assertIn(fleet_adapter, recycle_gate)
             expected_error = 'Unapproved research-unlock-copy workflow drift'
         elif fleet_adapter in recycle_gate:

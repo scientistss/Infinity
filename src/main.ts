@@ -3,6 +3,7 @@ import { applyFormationAction } from "./game/formations";
 import { commitDemolition, cancelDemolition, demolitionProtocolProblem } from "./game/demolition";
 import { applyResearchTemplateAction } from "./game/research-templates";
 import { applyBuildingTemplateAction } from "./game/building-templates";
+import { applyBuildingTemplateBatchAction } from "./game/building-template-batch";
 import { applyOrderAction } from "./game/orders";
 import { ordersView } from "./ui/orders-present";
 import { summonMerchant, trade } from "./game/merchant";
@@ -184,6 +185,7 @@ function render(urgent = true, now = performance.now()): void {
   if (tab === "orders") view.updateOrders(ordersView(state), ready);
   view.updateResearchTemplates(state, ready);
   view.updateBuildingTemplates(state, ready);
+  view.updateBuildingTemplateBatch(state, ready);
   view.updateFormations(state, ready);
   // Their hidden paths are cheap and must observe leaving their surfaces.
   view.updatePrestigePreview(state, ready);
@@ -198,6 +200,7 @@ async function handleAction(action: UiAction): Promise<void> {
   if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) {
     view.retireNpcRehearsal();
     view.retireManualUnits();
+    view.retireBuildingTemplateBatch();
   }
   saveSession.cancelPendingImport();
   const recoveryAction = ["save", "export", "export-legacy", "import-text", "import-file", "reset", "dismiss-notice", "dismiss-offline"].includes(action.type);
@@ -233,6 +236,30 @@ async function handleAction(action: UiAction): Promise<void> {
     state = result.state; status = result.reason;
     if (changed) persist();
     view.completeResearchTemplateAction(status, result.ok && saveSession.mode === "ready");
+  } else if (action.type === "building-template-batch-apply") {
+    // A batch registers fixed local budgets; later paid jobs charge each planet.
+    // Consume the displayed one-shot authority before any validation or write.
+    if (!view.consumeBuildingTemplateBatchAction(action, state)) {
+      status = "多星核对已失效，请重新核对";
+      view.completeBuildingTemplateBatchAction(status, false);
+    } else {
+      const source = state;
+      const result = applyBuildingTemplateBatchAction(source, action);
+      let accepted = result.ok;
+      status = result.reason;
+      if (result.ok && result.state !== source) {
+        // Reuse SaveSession's compare/write/readback transaction. An uncertain
+        // write freezes the original visible state; it is not a disk rollback.
+        const saved = saveSession.save(result.state, Date.now(), accountedClock.lastTickAt);
+        accepted = saved.ok;
+        if (saved.ok) state = result.state;
+        else {
+          status = `多星计划未采用，当前可见进度保持原样：${saved.message}`;
+          notice = saveSession.notice;
+        }
+      }
+      view.completeBuildingTemplateBatchAction(status, accepted);
+    }
   } else if (action.type === "building-template-create" || action.type === "building-template-edit" || action.type === "building-template-delete" || action.type === "building-template-apply") {
     const result = applyBuildingTemplateAction(state, action);
     const changed = result.state !== state;
@@ -481,6 +508,7 @@ async function handleAction(action: UiAction): Promise<void> {
     // Retire that review too before presenting this still-current result/dialog.
     view.retireNpcRehearsal();
     view.retireManualUnits();
+    view.retireBuildingTemplateBatch();
     if (!prepared.ok) {
       status = `导入失败，当前进度未改动：${prepared.message}`;
       notice = saveSession.notice;

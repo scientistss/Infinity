@@ -455,7 +455,7 @@ jobs:
           node --import tsx scripts/recycle-preview-fixture.ts deep-fixtures/pirate.json "$PIRATE_INPUT_SHA256" "$GITHUB_SHA" > recycle-preview-source-evidence/native-fixture.json 2> recycle-preview-source-evidence/fixture-producer.log
           sha256sum recycle-preview-source-evidence/native-fixture.json > recycle-preview-source-evidence/native-fixture.sha256.txt
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          timeout --signal=TERM --kill-after=5s 235s xvfb-run -a python scripts/browser-recycle-preview.py --url http://127.0.0.1:4173/Infinity/ --fixture recycle-preview-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum recycle-preview-source-evidence/native-fixture.json | cut -d' ' -f1)" --pirate-input deep-fixtures/pirate.json --expected-input-sha256 "$PIRATE_INPUT_SHA256" --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output recycle-preview-evidence > recycle-preview-browser.log 2>&1
+          timeout --signal=TERM --kill-after=5s 235s xvfb-run -a python scripts/browser-recycle-preview.py --url http://127.0.0.1:4173/Infinity/ --fixture recycle-preview-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum recycle-preview-source-evidence/native-fixture.json | cut -d' ' -f1)" --pirate-input deep-fixtures/pirate.json --expected-input-sha256 "$PIRATE_INPUT_SHA256" --expected-sha "$GITHUB_SHA" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output recycle-preview-evidence > recycle-preview-browser.log 2>&1
           # Remaining independent old suites and complete performance samples run in verify-continuation.
       - name: Prepare exact public 493 and independent first-lab natural copy source
         run: |
@@ -1441,8 +1441,8 @@ jobs:
           before_lock = json.loads(original_lock)
           after_lock = json.loads((repo / 'package-lock.json').read_text())
           assert before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1'
-          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.30-alpha.1'
-          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.30-alpha.1'
+          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.31-alpha.1'
+          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.31-alpha.1'
           assert before_lock == after_lock
           roots = {}
           for key, original in fixture['sourceBindings'].items():
@@ -1498,7 +1498,7 @@ jobs:
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           python scripts/browser-scout-rehearsal.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence
           python scripts/browser-scout-comparison.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-comparison-evidence
-          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
+          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
       - name: Archive exact readable rehearsal source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > scout-rehearsal-source.zip
@@ -1583,7 +1583,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          python scripts/browser-lab-blockers.py --url http://127.0.0.1:4173/Infinity/ --fixture lab-blockers-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum lab-blockers-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report lab-blockers-source-evidence/natural-report.json --expected-report-sha256 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output lab-blockers-evidence
+          python scripts/browser-lab-blockers.py --url http://127.0.0.1:4173/Infinity/ --fixture lab-blockers-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum lab-blockers-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report lab-blockers-source-evidence/natural-report.json --expected-report-sha256 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d --expected-sha "$GITHUB_SHA" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output lab-blockers-evidence
       - name: Archive exact readable lab source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > lab-blockers-source.zip
@@ -1674,7 +1674,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          xvfb-run -a python scripts/browser-manual-unit-orders.py --group payments --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group payments --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
       - name: Verify actual completed native group census and complete original fixture binding
         id: manual_census
         run: python scripts/manual_unit_census.py report --group payments --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json
@@ -1776,7 +1776,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          xvfb-run -a python scripts/browser-manual-unit-orders.py --group authority --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group authority --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
       - name: Verify actual completed native group census and complete original fixture binding
         id: manual_census
         run: python scripts/manual_unit_census.py report --group authority --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json
@@ -1807,22 +1807,101 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  building-batch:
+    # Independent mandatory multi-planet application; never borrowed legacy evidence.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      building-batch-fixture-sha256: ${{ steps.batch_census.outputs.building-batch-fixture-sha256 }}
+      building-batch-census-sha256: ${{ steps.batch_census.outputs.building-batch-census-sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Offline exact batch source, fixture, authority and mandatory gate contracts
+        run: |
+          python scripts/test_building_batch_provenance.py --verify-candidate "$GITHUB_SHA" -v
+          python -m unittest discover -s scripts -p 'test_building_batch_*.py' -v
+      - name: Prepare independently clean exact batch execution source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/building-batch-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/building-batch-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/building-batch-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact batch source assets and actual Node runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/building-batch-current"
+      - name: Generate fresh-start real-colonization source and independent finite-payment goldens
+        run: |
+          (cd "$RUNNER_TEMP/building-batch-current" && node --import tsx scripts/building-batch-natural-fixture.mjs --out "$GITHUB_WORKSPACE/building-batch-source-evidence/fixture") > building-batch-producer.log 2>&1
+          python scripts/check-building-batch-fixture.py --fixture building-batch-source-evidence/fixture/fixture.json --require-clean --check-current-source --mutation-self-test
+          sha256sum building-batch-source-evidence/fixture/fixture.json > building-batch-source-evidence/fixture.sha256.txt
+          test -z "$(git -C "$RUNNER_TEMP/building-batch-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory bounded real multi-planet confirmation and lifecycle acceptance
+        id: batch_census
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > building-batch-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          timeout --signal=TERM --kill-after=5s 660s xvfb-run -a python scripts/browser-building-batch.py --url http://127.0.0.1:4173/Infinity/ --fixture building-batch-source-evidence/fixture/fixture.json --expected-fixture-sha256 "$(sha256sum building-batch-source-evidence/fixture/fixture.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --expected-version 0.6.31-alpha.1 --runtime-node "$(node --version)" --common-identity common-identity.json --chromium "$CHROME" --output building-batch-evidence
+          python scripts/building_batch_census.py report --report building-batch-evidence/report.json --fixture building-batch-source-evidence/fixture/fixture.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output building-batch-census.json
+      - name: Archive exact readable batch source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > building-batch-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: building-batch-${{ github.sha }}
+          path: |
+            dist
+            building-batch-source.zip
+            common-identity.json
+            building-batch-source-evidence
+            building-batch-evidence
+            building-batch-census.json
+            building-batch-producer.log
+            building-batch-preview.log
+          retention-days: 7
+          if-no-files-found: error
+
   required-gates:
     # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
     # The existing [deep-source] source-only convention never constitutes release acceptance.
     if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
-    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority]
+    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority, building-batch]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require all seven jobs and exact source asset runtime and fixture identities
+      - name: Require all eight jobs and exact source asset runtime and fixture identities
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python - <<'PYCODE'
           import json, os, re
           jobs = json.loads(os.environ['JOB_RESULTS'])
-          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority'}, jobs
+          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch'}, jobs
           for name, job in jobs.items():
               assert job['result'] == 'success', (name, job['result'])
           def hashes_for(names, key):
@@ -1860,5 +1939,21 @@ jobs:
         with:
           name: manual-unit-aggregate-census-${{ github.sha }}
           path: manual-unit-aggregate-census.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Download exact same-run building batch artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: building-batch-${{ github.sha }}
+          path: ${{ runner.temp }}/building-batch-artifact
+      - name: Independently recompute complete batch scenario and raw evidence census
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/building_batch_census.py aggregate --artifact "$RUNNER_TEMP/building-batch-artifact" --expected-sha "$GITHUB_SHA" --output building-batch-aggregate-census.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: building-batch-aggregate-census-${{ github.sha }}
+          path: building-batch-aggregate-census.json
           retention-days: 7
           if-no-files-found: error

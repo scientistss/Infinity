@@ -299,7 +299,8 @@ def production_action_handlers(text):
         rf'(?:\["import-text","import-file","reset","prestige"\]'
         rf'\.includes\((?P=action)\.type\)&&'
         rf'(?:{identifier}\.retireNpcRehearsal\(\)|'
-        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\)\)),)?'
+        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\)\)|'
+        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\),{identifier}\.retireBuildingTemplateBatch\(\)\)),)?'
         rf'(?P<session>{identifier})\.cancelPendingImport\(\);'
         rf'const (?P<recovery>{identifier})={recovery}\.includes\((?P=action)\.type\);'
         rf'if\((?P=session)\.mode!=="ready"&&!(?P=recovery)\)\{{'
@@ -316,6 +317,13 @@ def production_action_handlers(text):
             rf'&&\(({identifier})\.retireNpcRehearsal\(\),({identifier})\.retireManualUnits\(\)\),',
             match.group(0))
         if paired is not None and paired.group(1) != paired.group(2):
+            continue
+        # The new triple is exact and all three no-argument calls share one view.
+        # These separate validation captures cannot shift native match groups.
+        triple = re.search(
+            rf'&&\(({identifier})\.retireNpcRehearsal\(\),({identifier})\.retireManualUnits\(\),({identifier})\.retireBuildingTemplateBatch\(\)\),',
+            match.group(0))
+        if triple is not None and len(set(triple.groups())) != 1:
             continue
         valid.append(match)
     return valid
@@ -419,6 +427,9 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != '6f73735534ffc1b0e47a01935d8c6e3ff786c989' and git('ls-tree', candidate, '--', 'tests/fixtures/building-batch-provenance.json'):
+        from test_building_batch_provenance import building_batch_provenance
+        return building_batch_provenance(repository, candidate, git, check)
     if candidate != '49303d3740cf223955386ff984b335ca9b110087' and git('ls-tree', candidate, '--', 'tests/fixtures/research-unlock-copy-provenance.json'):
         from test_research_unlock_copy_provenance import research_unlock_copy_provenance
         return research_unlock_copy_provenance(repository, candidate, git, check)
