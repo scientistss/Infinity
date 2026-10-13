@@ -245,8 +245,15 @@ class NativeReloadScheduleContract(unittest.TestCase):
         current = original_read(workflow_path).decode('utf-8')
         recycle_gate = original_read(ROOT / 'scripts/test_recycle_preview_gate.py')
         fleet_adapter = b'    from test_fleet_row_gate import previous_workflow as successor_workflow\n'
-        expected_error = ('Unapproved fleet-row workflow drift' if fleet_adapter in recycle_gate
-                          else 'Unapproved recycle workflow drift')
+        fleet_gate = original_read(ROOT / 'scripts/test_fleet_row_gate.py')
+        research_adapter = b'    from test_research_unlock_copy_gate import previous_workflow as successor_workflow\n'
+        if research_adapter in fleet_gate:
+            self.assertIn(fleet_adapter, recycle_gate)
+            expected_error = 'Unapproved research-unlock-copy workflow drift'
+        elif fleet_adapter in recycle_gate:
+            expected_error = 'Unapproved fleet-row workflow drift'
+        else:
+            expected_error = 'Unapproved recycle workflow drift'
         start, end = current.index('  lab-blockers:\n'), current.index('  required-gates:\n')
         mutations = (
             current[:start] + current[end:],

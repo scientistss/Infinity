@@ -419,6 +419,9 @@ def scout_production_serializers(text):
 
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if candidate != '49303d3740cf223955386ff984b335ca9b110087' and git('ls-tree', candidate, '--', 'tests/fixtures/research-unlock-copy-provenance.json'):
+        from test_research_unlock_copy_provenance import research_unlock_copy_provenance
+        return research_unlock_copy_provenance(repository, candidate, git, check)
     if candidate != '7ab569045996a1a6ad8ce1aee477092144dfad74' and git('ls-tree', candidate, '--', 'tests/fixtures/fleet-row-provenance.json'):
         from test_fleet_row_provenance import fleet_row_provenance
         return fleet_row_provenance(repository, candidate, git, check)

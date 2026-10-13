@@ -260,7 +260,7 @@ class RecyclePreviewGateTests(unittest.TestCase):
         self.assertEqual(RUNTIME_KEYS['githubSha'],'GITHUB_SHA')
 
     def test_any_source_drift_or_version_decrease_fails_before_old_projection(self):
-        from test_fleet_row_gate import VERSION as CURRENT_VERSION
+        from test_research_unlock_copy_gate import VERSION as CURRENT_VERSION
         original_read=Path.read_bytes
         for relative in RELEASE_FILES:
             target=ROOT/relative;original=original_read(target)

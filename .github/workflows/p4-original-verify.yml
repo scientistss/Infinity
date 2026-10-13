@@ -73,6 +73,9 @@ jobs:
           python -m unittest discover -s scripts -p 'test_recycle_preview_display_contract.py' -v
           python -m unittest discover -s scripts -p 'test_fleet_row_gate.py' -v
           python scripts/test_fleet_row_provenance.py --verify-candidate "$GITHUB_SHA" -v
+          python -m unittest discover -s scripts -p 'test_research_unlock_copy_gate.py' -v
+          python -m unittest discover -s scripts -p 'test_research_unlock_copy_browser.py' -v
+          python scripts/test_research_unlock_copy_provenance.py --verify-candidate "$GITHUB_SHA" -v
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log
       - name: Natural manual-to-bounded ring progression
@@ -452,8 +455,39 @@ jobs:
           node --import tsx scripts/recycle-preview-fixture.ts deep-fixtures/pirate.json "$PIRATE_INPUT_SHA256" "$GITHUB_SHA" > recycle-preview-source-evidence/native-fixture.json 2> recycle-preview-source-evidence/fixture-producer.log
           sha256sum recycle-preview-source-evidence/native-fixture.json > recycle-preview-source-evidence/native-fixture.sha256.txt
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          timeout --signal=TERM --kill-after=5s 235s xvfb-run -a python scripts/browser-recycle-preview.py --url http://127.0.0.1:4173/Infinity/ --fixture recycle-preview-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum recycle-preview-source-evidence/native-fixture.json | cut -d' ' -f1)" --pirate-input deep-fixtures/pirate.json --expected-input-sha256 "$PIRATE_INPUT_SHA256" --expected-sha "$GITHUB_SHA" --expected-version 0.6.29-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output recycle-preview-evidence > recycle-preview-browser.log 2>&1
+          timeout --signal=TERM --kill-after=5s 235s xvfb-run -a python scripts/browser-recycle-preview.py --url http://127.0.0.1:4173/Infinity/ --fixture recycle-preview-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum recycle-preview-source-evidence/native-fixture.json | cut -d' ' -f1)" --pirate-input deep-fixtures/pirate.json --expected-input-sha256 "$PIRATE_INPUT_SHA256" --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output recycle-preview-evidence > recycle-preview-browser.log 2>&1
           # Remaining independent old suites and complete performance samples run in verify-continuation.
+      - name: Prepare exact public 493 and independent first-lab natural copy source
+        run: |
+          mkdir -p research-unlock-copy-source-evidence
+          git worktree add --detach "$RUNNER_TEMP/research-copy-before" 49303d3740cf223955386ff984b335ca9b110087
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/research-copy-before/node_modules"
+          git archive --format=zip --prefix=Infinity/ 49303d3740cf223955386ff984b335ca9b110087 > research-unlock-copy-source-evidence/source-493.zip
+          (cd "$RUNNER_TEMP/research-copy-before" && GITHUB_SHA=49303d3740cf223955386ff984b335ca9b110087 npm run build) > research-unlock-copy-source-evidence/before-build.log 2>&1
+          test -z "$(git -C "$RUNNER_TEMP/research-copy-before" status --porcelain=v1 --untracked-files=all)"
+          node --import tsx scripts/research-unlock-copy-fixture.mjs generate --out research-unlock-copy-fixture > research-unlock-copy-source-evidence/fixture-producer.log 2>&1
+          sha256sum research-unlock-copy-fixture/receipt.json > research-unlock-copy-source-evidence/receipt.sha256.txt
+          node --import tsx scripts/research-unlock-copy-fixture.mjs read --source-root "$RUNNER_TEMP/research-copy-before" --input research-unlock-copy-fixture/raw-first-lab.json --out research-unlock-copy-source-evidence/before-reader.json > research-unlock-copy-source-evidence/before-reader.log 2>&1
+          node --import tsx scripts/research-unlock-copy-fixture.mjs read --source-root "$GITHUB_WORKSPACE" --input research-unlock-copy-fixture/raw-first-lab.json --out research-unlock-copy-source-evidence/candidate-reader.json > research-unlock-copy-source-evidence/candidate-reader.log 2>&1
+          test -z "$(git -C "$RUNNER_TEMP/research-copy-before" status --porcelain=v1 --untracked-files=all)"
+      - name: Bounded native research unlock copy against exact public 493
+        timeout-minutes: 4
+        run: |
+          node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4179 --strictPort > research-unlock-copy-preview.log 2>&1 &
+          RESEARCH_COPY_PID=$!
+          (cd "$RUNNER_TEMP/research-copy-before" && exec node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4178 --strictPort) > research-unlock-copy-before-preview.log 2>&1 &
+          RESEARCH_COPY_BEFORE_PID=$!
+          trap 'kill "$RESEARCH_COPY_PID" "$RESEARCH_COPY_BEFORE_PID" || true' EXIT
+          RESEARCH_COPY_READY=0
+          for i in $(seq 1 10); do
+            kill -0 "$RESEARCH_COPY_PID" "$RESEARCH_COPY_BEFORE_PID"
+            if curl --max-time 1 -fsS http://127.0.0.1:4179/Infinity/release.json > /dev/null && curl --max-time 1 -fsS http://127.0.0.1:4178/Infinity/release.json > /dev/null; then RESEARCH_COPY_READY=1; break; fi
+            sleep 1
+          done
+          test "$RESEARCH_COPY_READY" = 1
+          kill -0 "$RESEARCH_COPY_PID" "$RESEARCH_COPY_BEFORE_PID"
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          timeout --signal=TERM --kill-after=5s 235s xvfb-run -a python scripts/browser-research-unlock-copy.py --url http://127.0.0.1:4179/Infinity/ --before-url http://127.0.0.1:4178/Infinity/ --expected-sha "$GITHUB_SHA" --before-sha 49303d3740cf223955386ff984b335ca9b110087 --source-root "$GITHUB_WORKSPACE" --before-root "$RUNNER_TEMP/research-copy-before" --fixture-dir research-unlock-copy-fixture --expected-receipt-sha256 "$(sha256sum research-unlock-copy-fixture/receipt.json | cut -d' ' -f1)" --output research-unlock-copy-browser-evidence --chromium "$CHROME" > research-unlock-copy-browser.log 2>&1
       - name: Archive exact readable source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > source.zip
@@ -462,6 +496,12 @@ jobs:
         with:
           name: original-deep-${{ github.sha }}
           path: |
+            research-unlock-copy-source-evidence
+            research-unlock-copy-fixture
+            research-unlock-copy-browser-evidence
+            research-unlock-copy-browser.log
+            research-unlock-copy-preview.log
+            research-unlock-copy-before-preview.log
             recycle-preview-source-evidence
             recycle-preview-evidence
             recycle-preview-browser.log
@@ -1401,8 +1441,8 @@ jobs:
           before_lock = json.loads(original_lock)
           after_lock = json.loads((repo / 'package-lock.json').read_text())
           assert before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1'
-          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.29-alpha.1'
-          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.29-alpha.1'
+          assert after_lock['version'] == after_lock['packages']['']['version'] == '0.6.30-alpha.1'
+          before_lock['version'] = before_lock['packages']['']['version'] = '0.6.30-alpha.1'
           assert before_lock == after_lock
           roots = {}
           for key, original in fixture['sourceBindings'].items():
@@ -1458,7 +1498,7 @@ jobs:
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           python scripts/browser-scout-rehearsal.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-rehearsal-evidence
           python scripts/browser-scout-comparison.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --output scout-comparison-evidence
-          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.29-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
+          python scripts/browser-rehearsal-formation-copy.py --url http://127.0.0.1:4173/Infinity/ --natural-report scout-rehearsal-source-evidence/natural-report.json --expected-report-sha256 "$(sha256sum scout-rehearsal-source-evidence/natural-report.json | cut -d' ' -f1)" --expected-sha "$GITHUB_SHA" --chromium "$CHROME" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --output rehearsal-formation-copy-evidence
       - name: Archive exact readable rehearsal source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > scout-rehearsal-source.zip
@@ -1543,7 +1583,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          python scripts/browser-lab-blockers.py --url http://127.0.0.1:4173/Infinity/ --fixture lab-blockers-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum lab-blockers-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report lab-blockers-source-evidence/natural-report.json --expected-report-sha256 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d --expected-sha "$GITHUB_SHA" --expected-version 0.6.29-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output lab-blockers-evidence
+          python scripts/browser-lab-blockers.py --url http://127.0.0.1:4173/Infinity/ --fixture lab-blockers-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum lab-blockers-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report lab-blockers-source-evidence/natural-report.json --expected-report-sha256 1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output lab-blockers-evidence
       - name: Archive exact readable lab source
         if: always()
         run: git archive --format=zip --prefix=Infinity/ HEAD > lab-blockers-source.zip
@@ -1634,7 +1674,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          xvfb-run -a python scripts/browser-manual-unit-orders.py --group payments --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.29-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group payments --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
       - name: Verify actual completed native group census and complete original fixture binding
         id: manual_census
         run: python scripts/manual_unit_census.py report --group payments --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json
@@ -1736,7 +1776,7 @@ jobs:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          xvfb-run -a python scripts/browser-manual-unit-orders.py --group authority --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.29-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
+          xvfb-run -a python scripts/browser-manual-unit-orders.py --group authority --url http://127.0.0.1:4173/Infinity/ --fixture manual-unit-source-evidence/native-fixture.json --expected-fixture-sha256 "$(sha256sum manual-unit-source-evidence/native-fixture.json | cut -d' ' -f1)" --natural-report manual-unit-source-evidence/fresh-natural-report.json --source-binding manual-unit-source-evidence/old-source-binding.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.30-alpha.1 --runtime-node "$(node --version)" --chromium "$CHROME" --output manual-unit-evidence
       - name: Verify actual completed native group census and complete original fixture binding
         id: manual_census
         run: python scripts/manual_unit_census.py report --group authority --report manual-unit-evidence/manual-unit-browser-report.json --fixture manual-unit-source-evidence/native-fixture.json --source-binding manual-unit-source-evidence/old-source-binding.json --common-identity common-identity.json --expected-sha "$GITHUB_SHA" --output manual-unit-census.json

@@ -478,6 +478,13 @@ class RehearsalFormationCopyCommittedCandidateTests(unittest.TestCase):
             checks.append(name)
             self.assertTrue(passed, name)
         result = ring.synchronized_domain_provenance(ROOT, candidate, git, check)
+        if result['contract'] == 'exact-declared-research-unlock-copy-source-delta':
+            from test_research_unlock_copy_provenance import verify_candidate as verify_research_candidate, REFERENCE as research_base
+            self.assertEqual(result, verify_research_candidate(candidate))
+            self.assertEqual(result['previousAdoptionSourceSha'], research_base)
+            result = result['previousProvenance']
+            self.assertEqual(result['contract'], 'exact-declared-fleet-row-source-delta')
+            self.assertEqual(result['candidateSourceSha'], research_base)
         if result['contract'] == 'exact-declared-fleet-row-source-delta':
             from test_fleet_row_provenance import verify_candidate as verify_fleet_candidate, REFERENCE as fleet_base
             self.assertEqual(result, verify_fleet_candidate(candidate))

@@ -251,7 +251,11 @@ def previous_bytes(path, repository=None):
     transitions = {ADAPTER_PATHS[0]: ring_transition,
                    ADAPTER_PATHS[1]: lambda raw: ui_transition(raw, MANIFEST_SHA256),
                    ADAPTER_PATHS[2]: recycle_transition, ADAPTER_PATHS[3]: formation_transition}
-    assert ordinary_bytes(repository/path) == transitions[path](before), ('Unapproved fleet compatibility adapter drift', path)
+    current = ordinary_bytes(repository/path)
+    if current != transitions[path](before):
+        from test_research_unlock_copy_provenance import previous_bytes as research_previous_bytes
+        current = research_previous_bytes(path, repository)
+    assert current == transitions[path](before), ('Unapproved fleet compatibility adapter drift', path)
     return before
 
 
@@ -308,6 +312,11 @@ def verify_ui_baseline():
 
 def verify_candidate(candidate):
     candidate = git_read('rev-parse', candidate+'^{commit}').decode().strip()
+    if git_read('ls-tree', candidate, '--', 'tests/fixtures/research-unlock-copy-provenance.json'):
+        from test_research_unlock_copy_provenance import verify_candidate as verify_research_candidate
+        result = verify_research_candidate(candidate)
+        assert result['contract'] == 'exact-declared-research-unlock-copy-source-delta'
+        return result['previousProvenance']
     assert candidate != REFERENCE, 'Fleet candidate must be committed separately from its public baseline'
     for path in (*ADAPTER_PATHS, *UNCHANGED_CHECKER_PATHS, 'scripts/test_fleet_row_provenance.py', MANIFEST):
         assert ordinary_bytes(ROOT/path) == git_read('show', candidate+':'+path), ('Executed seal differs from committed candidate', path)

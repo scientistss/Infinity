@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
-CANDIDATE_VERSION = '0.6.29-alpha.1'
+CANDIDATE_VERSION = '0.6.30-alpha.1'
 OLD_SHA = '241a51de31364e9086abcc304884bf9df7cd6912'
 REPORT_SHA = '9102da6f8fc52427b642883389d186726a8cf0c02747aa6c135150566458d8ea'
 WIDTHS = (320, 390, 768, 1440)

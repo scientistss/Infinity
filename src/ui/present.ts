@@ -689,7 +689,6 @@ function researchView(state: GameState, def: ResearchDef): ResearchView {
 }
 
 function researchEffect(state: GameState, def: ResearchDef, target: number): string {
-  const levels = state.research.levels;
   if (def.id === "energy_tech") {
     const b = activePlanet(state).buildings.fusion_reactor;
     const now = fusionOutputPerHour(b, target - 1);
@@ -704,7 +703,6 @@ function researchEffect(state: GameState, def: ResearchDef, target: number): str
     const pct = (rate: number) => `${(rate * target * 100).toFixed(2)}%`;
     return `${def.effect}。下一级合计：金属 +${pct(PLASMA_BONUS.metal)}、晶体 +${pct(PLASMA_BONUS.crystal)}、重氢 +${pct(PLASMA_BONUS.deuterium)}`;
   }
-  if (def.id === "astrophysics" && levels.astrophysics < 1) return `${def.effect}（第 2 阶段后续版本开放）`;
   return def.effect;
 }
 

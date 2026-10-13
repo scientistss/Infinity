@@ -50,10 +50,10 @@ const expected = {
   "public/icons/warp_core.webp": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
 };
 // The original baseline map above is immutable. The two changed UI files are
-// explicitly adopted through the complete original-to-fleet-row cumulative source seal; no asset or
+// explicitly adopted through the complete original-to-research-unlock-copy cumulative source seal; no asset or
 // directory is exempted and neither changed file is called original-byte-identical.
-const FLEET_ROW_MANIFEST_SHA256 = "beccaeedea8e7783665f7b32cbc09131c112ad9653cfd16d5e8914bff5e133dd";
-const manifestPath = "tests/fixtures/fleet-row-provenance.json";
+const RESEARCH_UNLOCK_COPY_MANIFEST_SHA256 = "ee3d929da35f41aef0aad587a11ab6acba0726abde44f0de5f753a74c4cb6999";
+const manifestPath = "tests/fixtures/research-unlock-copy-provenance.json";
 const deltaPaths = ["src/style.css", "src/ui/view.ts"];
 const hash = value => createHash("sha256").update(value).digest("hex");
 let sourceAudit = null;
@@ -61,31 +61,31 @@ let approvedRows = [];
 if (existsSync(manifestPath)) {
   const local = lstatSync(manifestPath);
   if (!local.isFile() || local.isSymbolicLink() || (local.mode & 0o111))
-    throw new Error("舰队行 UI 来源清单必须为普通只读来源文件");
+    throw new Error("研究解锁文案 UI 来源清单必须为普通只读来源文件");
   const raw = readFileSync(manifestPath);
-  if (hash(raw) !== FLEET_ROW_MANIFEST_SHA256)
-    throw new Error("舰队行 UI 来源清单摘要不匹配");
+  if (hash(raw) !== RESEARCH_UNLOCK_COPY_MANIFEST_SHA256)
+    throw new Error("研究解锁文案 UI 来源清单摘要不匹配");
   // Python/Git-only verification covers the entire current src/public tree,
-  // exact ancestry, twelve earlier seals, modes, full patches and every hunk.
+  // exact ancestry, thirteen earlier seals, modes, full patches and every hunk.
   sourceAudit = JSON.parse(execFileSync("python3",
-    ["-B", "scripts/test_fleet_row_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
+    ["-B", "scripts/test_research_unlock_copy_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
   const manifest = JSON.parse(raw);
   const baseline = sourceAudit.originalUiBaseline;
-  if (sourceAudit.contract !== "exact-declared-fleet-row-source-delta"
-      || sourceAudit.sourceBaseline !== "7ab569045996a1a6ad8ce1aee477092144dfad74"
-      || sourceAudit.manifestSha256 !== FLEET_ROW_MANIFEST_SHA256
+  if (sourceAudit.contract !== "exact-declared-research-unlock-copy-source-delta"
+      || sourceAudit.sourceBaseline !== "49303d3740cf223955386ff984b335ca9b110087"
+      || sourceAudit.manifestSha256 !== RESEARCH_UNLOCK_COPY_MANIFEST_SHA256
       || JSON.stringify(baseline) !== JSON.stringify(manifest.originalUiBaseline)
       || baseline.baseline !== "69eca71"
       || JSON.stringify(baseline.exactDeltaPaths) !== JSON.stringify(deltaPaths)
       || JSON.stringify(baseline.changedPaths.map(row => row.path)) !== JSON.stringify(deltaPaths))
-    throw new Error("舰队行 UI 增量范围或完整来源核验不匹配");
+    throw new Error("研究解锁文案 UI 增量范围或完整来源核验不匹配");
   approvedRows = baseline.changedPaths;
   for (const row of approvedRows) {
     if (baseline.expected[row.path] !== expected[row.path]
         || row.before.mode !== "100644" || row.before.sha256 !== expected[row.path]
         || row.after.mode !== "100644" || !row.hunks.length
         || !/^[0-9a-f]{64}$/.test(row.patchSha256))
-      throw new Error(`舰队行 UI 增量不是原版精确来源：${row.path}`);
+      throw new Error(`研究解锁文案 UI 增量不是原版精确来源：${row.path}`);
   }
 }
 for (const [path, digest] of Object.entries(expected)) {
@@ -96,9 +96,9 @@ for (const [path, digest] of Object.entries(expected)) {
 }
 console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length,
   result: "passed", scope: sourceAudit
-    ? "all original public assets unchanged; view.ts/style.css have exact approved unchanged public-7ab cumulative UI deltas with exact fleet-row adoption"
+    ? "all original public assets unchanged; view.ts/style.css have exact approved unchanged public-493 cumulative UI deltas with exact research unlock copy adoption"
     : "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate",
   ...(sourceAudit ? { approvedUiDeltaPaths: deltaPaths,
     approvedSourceDeltaPaths: sourceAudit.approvedSourceDeltaPaths,
-    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: FLEET_ROW_MANIFEST_SHA256 } : {})
+    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: RESEARCH_UNLOCK_COPY_MANIFEST_SHA256 } : {})
 }, null, 2));
