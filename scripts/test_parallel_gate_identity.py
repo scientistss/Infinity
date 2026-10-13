@@ -99,7 +99,7 @@ class ExactIdentityTests(unittest.TestCase):
         dist=self.root/'dist';dist.mkdir();files={}
         for i in range(62):
             raw=f'synthetic asset {i}'.encode();name=f'asset-{i}.js';(dist/name).write_bytes(raw);files[name]=M.sha(raw)
-        self.release={'sourceSha':self.sha,'saveVersion':9,'saveRevision':14,'version':'0.6.27-alpha.1','files':files}
+        self.release={'sourceSha':self.sha,'saveVersion':9,'saveRevision':14,'version':'0.6.29-alpha.1','files':files}
         self.write_release()
 
     def tearDown(self):self.tmp.cleanup()

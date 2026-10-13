@@ -173,7 +173,7 @@ class NativeContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, str(SCRIPT), '--natural-report', 'unused',
                 '--expected-report-sha256', '0' * 64, '--expected-sha', 'a' * 40,
-                '--expected-version', '0.6.27-alpha.1', '--runtime-node', 'v22.18.0', '--output', directory],
+                '--expected-version', '0.6.29-alpha.1', '--runtime-node', 'v22.18.0', '--output', directory],
                 env={**os.environ, 'CI': 'false', 'GITHUB_ACTIONS': 'false', 'PYTHONDONTWRITEBYTECODE': '1'},
                 capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
@@ -451,7 +451,7 @@ class FullSourceMutationTests(unittest.TestCase):
                  'package-lock.json', 'src/index.ts', '.github/workflows/verify.yml', 'public/a.txt')
         for name in names:
             path = self.root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('independent offline fixture\n')
-        (self.root / 'package.json').write_text(json.dumps({'version': '0.6.27-alpha.1'}))
+        (self.root / 'package.json').write_text(json.dumps({'version': '0.6.29-alpha.1'}))
         (self.root / '.gitignore').write_text('scripts/ignored.py\n')
         def git(*args): return subprocess.check_output(['git', '-C', str(self.root), *args], stderr=subprocess.DEVNULL)
         self.git = git
@@ -461,7 +461,7 @@ class FullSourceMutationTests(unittest.TestCase):
         self.identity = {'identitySha256': 'b' * 64, 'identity': {'rawSha256': {'natural': 'c' * 64}}}
 
     def call(self, **overrides):
-        args = {'workspace': self.root, 'expected_sha': self.sha, 'expected_version': '0.6.27-alpha.1',
+        args = {'workspace': self.root, 'expected_sha': self.sha, 'expected_version': '0.6.29-alpha.1',
                 'runtime_node': 'v22.18.0', 'natural_sha256': 'c' * 64, **overrides}
         with patch.object(module, 'scout_fixture_identity', return_value=self.identity) as identity:
             result = module.source_identity(**args)

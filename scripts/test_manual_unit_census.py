@@ -33,7 +33,7 @@ def sample(group):
         'hostStartedMonotonic':index*10,'hostCompletedMonotonic':index*10+2,'hostElapsedSeconds':2,
         'phases':[{'phase':'started','hostMonotonic':index*10},{'phase':'completed','hostMonotonic':index*10+2}]} for index,name in enumerate(names)]
     report={'schema':'infinity-manual-unit-native-v2','group':group,'completed':True,'result':'passed','failure':None,'failureLifecycle':None,'case':'suite-integrity',
-        'errors':[],'failedRequests':[],'sourceSha':SHA,'candidateVersion':'0.6.27-alpha.1','sourceIdentity':source,'runtimeNode':RUNTIME,
+        'errors':[],'failedRequests':[],'sourceSha':SHA,'candidateVersion':'0.6.29-alpha.1','sourceIdentity':source,'runtimeNode':RUNTIME,
         'runtimeIdentity':runtime,'sourceBindingSha256':M.sha(M.canonical(binding)),'fixtureSha256':M.sha(fixture_raw),'caseCensus':{'completedCases':list(M.GROUP_CASES[group]),'infrastructureCases':list(M.INFRASTRUCTURE),'records':records},
         'checks':[{'case':name,'name':'actual complete independent native check','passed':True,'detail':None} for name in names],
         'evidence':[{'file':'actual-native.json','sha256':'e'*64}],'sourceBindings':[{'assets':['actual HTTP and V8 binding']} ]}
@@ -195,7 +195,7 @@ def artifact_samples(parent):
         root=parent/group;root.mkdir();roots[group]=root
         r,f,c,runtime=sample(group);binding,binding_runtime=binding_sample(group)
         dist={f'asset-{index}.js':f'exact production {index}'.encode() for index in range(62)}
-        release={'sourceSha':SHA,'version':'0.6.27-alpha.1','saveVersion':9,'saveRevision':14,'files':{key:M.sha(value) for key,value in dist.items()}}
+        release={'sourceSha':SHA,'version':'0.6.29-alpha.1','saveVersion':9,'saveRevision':14,'files':{key:M.sha(value) for key,value in dist.items()}}
         dist['release.json']=M.canonical(release)
         c['identity']['assets']={key:M.sha(value) for key,value in dist.items()}
         c['identity']['sourceZipSha256']=M.sha(b'complete exact source archive')

@@ -113,12 +113,15 @@ def assert_release_transitions():
         assert local.is_file() and not local.is_symlink() and not (local.stat().st_mode & 0o111), ('Expected ordinary nonexecutable release source', path)
         before = baseline_bytes(path)
         assert before.count(OLD_VERSION.encode()) == count, ('Pinned release literal cardinality', path)
-        assert local.read_bytes() == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('Exact recycle release-only transition', path)
+        from test_fleet_row_gate import previous_release_bytes as successor_release_bytes
+        assert successor_release_bytes(path) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('Exact recycle release-only transition', path)
 
 
 def previous_workflow(workflow=None):
     """Expose public 6b only after every actual successor workflow/release byte passes."""
-    if workflow is None: workflow = (ROOT/WORKFLOW_PATH).read_bytes().decode('utf-8')
+    from test_fleet_row_gate import previous_workflow as successor_workflow
+    actual_previous = successor_workflow()
+    if workflow is None: workflow = actual_previous
     baseline = baseline_workflow()
     assert_recycle_gate(workflow, baseline)
     assert_release_transitions()
@@ -134,7 +137,8 @@ def previous_release_bytes(path):
 class RecyclePreviewGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT/WORKFLOW_PATH).read_bytes().decode('utf-8')
+        from test_fleet_row_gate import previous_workflow as successor_workflow
+        cls.workflow = successor_workflow()
         cls.baseline = baseline_workflow()
         cls.current, cls.original = jobs(cls.workflow), jobs(cls.baseline)
 
@@ -245,7 +249,8 @@ class RecyclePreviewGateTests(unittest.TestCase):
     def test_current_versions_and_all_dependency_runtime_and_job_binder_bytes_exact(self):
         assert_release_transitions()
         old_lock=json.loads(baseline_bytes('package-lock.json'))
-        current=json.loads((ROOT/'package-lock.json').read_bytes())
+        from test_fleet_row_gate import previous_release_bytes as successor_release_bytes
+        current=json.loads(successor_release_bytes('package-lock.json'))
         old_lock['version']=old_lock['packages']['']['version']=VERSION
         self.assertEqual(current,old_lock)
         for path in RELEASE_FILES:
@@ -255,10 +260,12 @@ class RecyclePreviewGateTests(unittest.TestCase):
         self.assertEqual(RUNTIME_KEYS['githubSha'],'GITHUB_SHA')
 
     def test_any_source_drift_or_version_decrease_fails_before_old_projection(self):
+        from test_fleet_row_gate import VERSION as CURRENT_VERSION
         original_read=Path.read_bytes
         for relative in RELEASE_FILES:
             target=ROOT/relative;original=original_read(target)
-            for changed in (original+b'\n',original.replace(VERSION.encode(),OLD_VERSION.encode(),1),original.replace(VERSION.encode(),b'0.6.28-alpha.1',1)):
+            for changed in (original+b'\n',original.replace(CURRENT_VERSION.encode(),OLD_VERSION.encode(),1),original.replace(CURRENT_VERSION.encode(),VERSION.encode(),1)):
+                self.assertNotEqual(changed,original,relative)
                 def altered(path,target=target,changed=changed):
                     return changed if path==target else original_read(path)
                 with self.subTest(relative=relative),patch.object(Path,'read_bytes',altered),self.assertRaises(AssertionError):

@@ -1,0 +1,1022 @@
+{
+  "schema": "infinity-ring-protection-fleet-row-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "7ab569045996a1a6ad8ce1aee477092144dfad74",
+  "reviewedPrototypeSourceSha": "5359676473c3b55e09acce33487ffd5f3ce8925a",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-comparison-provenance.json",
+      "sha256": "0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00"
+    },
+    {
+      "path": "tests/fixtures/npc-rehearsal-formation-copy-provenance.json",
+      "sha256": "2143af16367f93160ef9250c18de2e87bb2791f4665159bd3d8f43d8ab9fdb39"
+    },
+    {
+      "path": "tests/fixtures/lab-blockers-provenance.json",
+      "sha256": "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8"
+    },
+    {
+      "path": "tests/fixtures/manual-unit-provenance.json",
+      "sha256": "0b48b25de339ee749b43d881e41c4da85df64798a978989000efde831ed3650b"
+    },
+    {
+      "path": "tests/fixtures/recycle-preview-provenance.json",
+      "sha256": "b9e0d5f457580c0ea5fb5afae30baf3a37247c7b876c29830ccbb4db372c46f8"
+    }
+  ],
+  "referenceStatus": "Exact fleet-row source adoption on recursively verified public 7ab recycle-preview source. The prototype is a source identity reference; its measured evidence is separate from release acceptance.",
+  "scope": "Every src/public file and mode, complete production inventory, exact before/after bytes, deterministic patch and every hunk are bound. All twelve prior seals and the original cumulative UI rows remain unchanged.",
+  "approvedDelta": "Only the reviewed fresh per-render first-match fleet-row lookup and detached-row fallback. No control authority, game, core, data, automation, save schema, economy, dispatch, style, view or public asset change.",
+  "productionPaths": [
+    "src",
+    "public"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [],
+  "exactRingCriticalDeltaPaths": [],
+  "productionInventory": {
+    "public/apple-touch-icon.png": {
+      "mode": "100644",
+      "sha256": "239a16008ed6aedb142e185c9875b4e68c0b10f205be837ba88fbe2f1a504a4d"
+    },
+    "public/favicon-32.png": {
+      "mode": "100644",
+      "sha256": "8f21fa12d58f0c908b8ba87783f97d765c37f2d3e19fca925161cbff19ea399f"
+    },
+    "public/favicon-64.png": {
+      "mode": "100644",
+      "sha256": "0129c8fbb389ed27f217ff932a625c54d959a9467bf0d1b304bea8944ba45d0e"
+    },
+    "public/icons/achievement.webp": {
+      "mode": "100644",
+      "sha256": "5e0f18491fa0eea3e3155eb2bab083d10107587a18a18db212d96f45f0355041"
+    },
+    "public/icons/card_auto_build.svg": {
+      "mode": "100644",
+      "sha256": "3e7871b3c38d8718fb8ba208f8deaafb539a873cd4ee8f83d32278a1e02b8511"
+    },
+    "public/icons/card_auto_collect.svg": {
+      "mode": "100644",
+      "sha256": "d1c3afa762f96d598d6de4a2654f4512a165ba4e6ec9b4d0990b9cfa762d7376"
+    },
+    "public/icons/card_auto_prestige.svg": {
+      "mode": "100644",
+      "sha256": "cf310006d5d1ca5acb22d3819c3e4602f1b54af57e389d09405e964571ed870c"
+    },
+    "public/icons/card_auto_runner.svg": {
+      "mode": "100644",
+      "sha256": "38af555ae8c4a53eb671724710667992d1d48c2251625e6f230f4c5d9f001f38"
+    },
+    "public/icons/card_cheapest_first.svg": {
+      "mode": "100644",
+      "sha256": "2a88d8081d4850fcd63e230a0b9eb876b0b9107d8e9d463e5ccddce61c66094a"
+    },
+    "public/icons/card_cost_ratio_guard.svg": {
+      "mode": "100644",
+      "sha256": "b95881adccf8027593be6dc730ff42fa001114f7b8a66984a3400b4b78f08763"
+    },
+    "public/icons/card_defense_keeper.svg": {
+      "mode": "100644",
+      "sha256": "60bb9aaa8bc70205c05f23e922a2b139456016c134180173c0b618875073c4ff"
+    },
+    "public/icons/card_energy_eff_gate.svg": {
+      "mode": "100644",
+      "sha256": "09de56736be5eb55630b72e2cc129ae9d349015ab4b144c61cb78a11db7545b0"
+    },
+    "public/icons/card_production_tuner.svg": {
+      "mode": "100644",
+      "sha256": "a7df4671c89cab92cc85beb9daaf018871c2af277dbe204a4ee4b0e63e91573d"
+    },
+    "public/icons/card_queue_scheduler.svg": {
+      "mode": "100644",
+      "sha256": "9f4e6064845d55bf35083172f1f6f8b8f7d951dada6726f48e4ea798f7203ec3"
+    },
+    "public/icons/card_research_scheduler.svg": {
+      "mode": "100644",
+      "sha256": "0db36b66bc89c535d4436ac121f3e4e46d9729bd816ba8e8d30f9cd1e56d0192"
+    },
+    "public/icons/card_resource_gate.svg": {
+      "mode": "100644",
+      "sha256": "7cc9ca013d4736a0545eb8a4726827072a1c09e3064b8a5f4fe9f9acc465d668"
+    },
+    "public/icons/card_satellite_power.svg": {
+      "mode": "100644",
+      "sha256": "2f57e6d2b8f7126d91aecd80497f37b744f6552cfbccd66f1a578a4b09c5e207"
+    },
+    "public/icons/crystal.webp": {
+      "mode": "100644",
+      "sha256": "b97f0ff65ef99a9fcbfa4520b46609999bf987ad6ce15177be9eb3f3c119252b"
+    },
+    "public/icons/crystal_mine-256.webp": {
+      "mode": "100644",
+      "sha256": "18edbc9054b389eea2814354cc803faa2a410cfd8e0f4824504cdeb5a4bb8efc"
+    },
+    "public/icons/crystal_mine.webp": {
+      "mode": "100644",
+      "sha256": "e31b4b200cc022396047bac8490d51319768f01ec607bd38f1cf706750c2d43d"
+    },
+    "public/icons/dark_matter.svg": {
+      "mode": "100644",
+      "sha256": "2e0f23ca4d48ed9838ea09211dea35238738d6b2918016f08929daa6b5b2b877"
+    },
+    "public/icons/defense.svg": {
+      "mode": "100644",
+      "sha256": "520203a9f9c13b15241178ed1c6d0b7c9bd562b7d2fd311e73ceb132d4e4b006"
+    },
+    "public/icons/deuterium.webp": {
+      "mode": "100644",
+      "sha256": "4fc51d1b3c2111564f4ade6b3f96a95f539f0c1574a8124358aab83027bd0637"
+    },
+    "public/icons/deuterium_synth-256.webp": {
+      "mode": "100644",
+      "sha256": "150a0f9aa11862b3c8b874befe4f2557966122b42c5c8bb5c570e3637a71ccf8"
+    },
+    "public/icons/deuterium_synth.webp": {
+      "mode": "100644",
+      "sha256": "21eb9f08c248a30040e10c5cb147a0d16c559021d4cfd01c54f1f435a77788a4"
+    },
+    "public/icons/energy.webp": {
+      "mode": "100644",
+      "sha256": "c8e72d3a5da94a122251d4bb57b64bf361b45965fbba6852ad9834b5433b77a8"
+    },
+    "public/icons/launch-256.webp": {
+      "mode": "100644",
+      "sha256": "9d493013b1edb6af0dfaf61d7fa67000a44deb0b4fff5afc9aac557d23cc2a39"
+    },
+    "public/icons/launch.webp": {
+      "mode": "100644",
+      "sha256": "94008d2c81d5aeecf560f098ff7d2d63d47bcb0581ebe915aa2c4aac9a714392"
+    },
+    "public/icons/logo.webp": {
+      "mode": "100644",
+      "sha256": "9cb7e7275ff5b68f856aef33115e738c2a9c531735b128023f26fe8261e579fb"
+    },
+    "public/icons/metal.webp": {
+      "mode": "100644",
+      "sha256": "f3b48ec6baef01014509c52a9f3dffc95e38f89bf3fa86821a373273e58d2085"
+    },
+    "public/icons/metal_mine-256.webp": {
+      "mode": "100644",
+      "sha256": "ceaafce8c7bb160d2a5d2d20378d6541f017f5b5a9541120470e8654781b7018"
+    },
+    "public/icons/metal_mine.webp": {
+      "mode": "100644",
+      "sha256": "8ab9f993700d3323fd59f854185d188d32284e4a9ad13887e9c225e8aa8cff60"
+    },
+    "public/icons/protocol_card.webp": {
+      "mode": "100644",
+      "sha256": "e75f31fd4a590cbd3d855af19f7db37626535bfea460b09cd16659c7ae96179a"
+    },
+    "public/icons/ring-v1/alien.65535645ff.svg": {
+      "mode": "100644",
+      "sha256": "65535645ffa5d6f21df7cd2785dc7ffe3dbacbbcdb2bfbb7287713cedbeeca03"
+    },
+    "public/icons/ring-v1/blackhole.e046f8cdb8.svg": {
+      "mode": "100644",
+      "sha256": "e046f8cdb858d2976dc385a643e3759b0a4a8eb493a561f5484c78dd1d6e4378"
+    },
+    "public/icons/ring-v1/crystal.2adcb5ed14.svg": {
+      "mode": "100644",
+      "sha256": "2adcb5ed1482dc201ddc9e15e1ce65949e3039730067f1b9a6fa3c285675ad7c"
+    },
+    "public/icons/ring-v1/dark_matter.527b74f95b.svg": {
+      "mode": "100644",
+      "sha256": "527b74f95bdeccef7f461c72a5960d9a12f877eb47e8fadc65bb08c49b06c862"
+    },
+    "public/icons/ring-v1/deuterium.909cfc200e.svg": {
+      "mode": "100644",
+      "sha256": "909cfc200ea0e925ce3df8f868f8ad1bcff44b5b5b2c6647d4cadc8cf6bb2c0c"
+    },
+    "public/icons/ring-v1/drifter.50ea60aac1.svg": {
+      "mode": "100644",
+      "sha256": "50ea60aac19996e98b6cf3c7bef047f9d07dc01f700ad6007d69b9186872f1db"
+    },
+    "public/icons/ring-v1/empty.0bb9887319.svg": {
+      "mode": "100644",
+      "sha256": "0bb9887319cbc8c47ceb8b8f51ca4ad020200380524edabd7d2524c02b38131e"
+    },
+    "public/icons/ring-v1/jackpot.7f56d06845.svg": {
+      "mode": "100644",
+      "sha256": "7f56d0684550516bf406c38d405f1d9a0e7459e135fdf4d941f80945514ac031"
+    },
+    "public/icons/ring-v1/lucky.c9b1d3600b.svg": {
+      "mode": "100644",
+      "sha256": "c9b1d3600ba5498c969ac2712fd1961f2def549d55c640bd60d7410368969ab8"
+    },
+    "public/icons/ring-v1/merchant.b4df961886.svg": {
+      "mode": "100644",
+      "sha256": "b4df961886b26da68deb3c822ec0f601da99fea4d0b82a1710e473f478f96f34"
+    },
+    "public/icons/ring-v1/metal.aa9b20b977.svg": {
+      "mode": "100644",
+      "sha256": "aa9b20b977f3ea81c5f7453b7a2bee9ed344337e2167ee2979bf5726f46f9e2f"
+    },
+    "public/icons/ring-v1/pirate.694604e49f.svg": {
+      "mode": "100644",
+      "sha256": "694604e49f018ee9a556f7e0a7696a56ae8248f3cbc6fa7f6cd22ba5ee3ac97b"
+    },
+    "public/icons/ring-v1/supply.e7d03627e3.svg": {
+      "mode": "100644",
+      "sha256": "e7d03627e31a66c0cb8758f5c5a00d11b5576520e7b6bdeb5f1494c3cf55cdc2"
+    },
+    "public/icons/ring-v1/tailwind.68d76a24f4.svg": {
+      "mode": "100644",
+      "sha256": "68d76a24f4ea10063c41eee4048a27412712c9875c56bb960620f065ce10dc23"
+    },
+    "public/icons/ring-v1/turbulence.8ead5b5ff4.svg": {
+      "mode": "100644",
+      "sha256": "8ead5b5ff422c7ce3cb1ab8aedcec057b70392cf9769595be45184450795149b"
+    },
+    "public/icons/ring_machine-256.webp": {
+      "mode": "100644",
+      "sha256": "dd48c2fe96d2bb42b31eb8fc412ae037814b4a0e3f722e68f26ee75657e45f3c"
+    },
+    "public/icons/ring_machine.webp": {
+      "mode": "100644",
+      "sha256": "aff36255f121511a1f089f0537bc3aedd4d33bb4c34e14663b1e751c0dbd89b1"
+    },
+    "public/icons/robotics_factory-256.webp": {
+      "mode": "100644",
+      "sha256": "eaac1c88e67bfb406b785c5a2791cbe1e0e17e262448b565e38e53330592d556"
+    },
+    "public/icons/robotics_factory.webp": {
+      "mode": "100644",
+      "sha256": "6d4f24a934d861162be609f76f27c219f29b53f339ea4a33242199290e6e72c8"
+    },
+    "public/icons/save.webp": {
+      "mode": "100644",
+      "sha256": "ad7a72e961f8fa8bfbb472bf34149c2c327d8e58778cd12ca1ed19135c26bc8e"
+    },
+    "public/icons/shipyard.svg": {
+      "mode": "100644",
+      "sha256": "53a6a3400dd3cb6f739040a1a17db2d8e8ff1252a33abe7a2eab11a4a7aae801"
+    },
+    "public/icons/solar_plant-256.webp": {
+      "mode": "100644",
+      "sha256": "33fe3fa3f78408dfdd7e9171145402fa08cce83f8e9ceacdab568906a9bebb56"
+    },
+    "public/icons/solar_plant.webp": {
+      "mode": "100644",
+      "sha256": "3c8d2b1dcf894f4ca7af85b5acb835e190344b68fc6374ad2f2055d745f9d6dc"
+    },
+    "public/icons/tech.webp": {
+      "mode": "100644",
+      "sha256": "eb7ca4862421bf3d8f3e2e5c2842a03c59f1c01fc38848a0c7cfaef7c7d1eaba"
+    },
+    "public/icons/warp_core-256.webp": {
+      "mode": "100644",
+      "sha256": "7835cccad47495a90a36f117755ff098e2625a979ffeabed9865c4462d913d3f"
+    },
+    "public/icons/warp_core.webp": {
+      "mode": "100644",
+      "sha256": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
+    },
+    "src/automation/engine.ts": {
+      "mode": "100644",
+      "sha256": "9ea2fa38e8f9f333a530189691897902aee94995b172f435a42b44a850f44498"
+    },
+    "src/core/accounted-clock.ts": {
+      "mode": "100644",
+      "sha256": "4d281d453a7e785171133a5f0f8557cb475c3e60684ff801bb26fe80e04c3c5a"
+    },
+    "src/core/offline.ts": {
+      "mode": "100644",
+      "sha256": "313e8c5fbfc62da19093e6a99ce2d63eafc0f0ba0ddb1b30f54f714811fe09f2"
+    },
+    "src/data/achievements.ts": {
+      "mode": "100644",
+      "sha256": "ba5ac871d2c6122cd6b499114d8796b4bdfdfb6950d54d86a7e45a50d9756ade"
+    },
+    "src/data/arcade.ts": {
+      "mode": "100644",
+      "sha256": "ce2f8f43ccb598265e7f863a70132586a6a948e3612cd42bec32280e6847eb8b"
+    },
+    "src/data/balance.json": {
+      "mode": "100644",
+      "sha256": "6f4baaaf8a46b81e1e1c4239dcf70ca975551eb8b002ac23b0c720efcb96b49b"
+    },
+    "src/data/buildings.ts": {
+      "mode": "100644",
+      "sha256": "a06d1e477c219f468113c176c3fc6053e55296e84024eada1f4fe586cddb0221"
+    },
+    "src/data/curvature-tech.ts": {
+      "mode": "100644",
+      "sha256": "b5bd47125779bb7dc33d366d059149d3b1f346d5cd40dd31c2cf33c7a3dab0ab"
+    },
+    "src/data/dark-matter.ts": {
+      "mode": "100644",
+      "sha256": "4e632e23924dc66811443da9d34cfd66cd227f3ba898d610c88d7e97c1746c9f"
+    },
+    "src/data/deep-space.ts": {
+      "mode": "100644",
+      "sha256": "fa046392140e027e4b87dea7acabca9c45332ff42f39dea06e4ca4d95b24ab62"
+    },
+    "src/data/protocol-cards.ts": {
+      "mode": "100644",
+      "sha256": "d67b53a01af1e07ffcc4a1135c1299b0c1f977ee7a200a27f9d6f2dde55797dc"
+    },
+    "src/data/research.ts": {
+      "mode": "100644",
+      "sha256": "e4ed6dea12da0c90cb2c1834afe9af3482639b89e9db072b67f1a38fd9579c36"
+    },
+    "src/data/ring-art.json": {
+      "mode": "100644",
+      "sha256": "064674d15f1d2638d29b1bdad3900c5893052203cd2ad40482b114d15d0601ec"
+    },
+    "src/data/space-balance.json": {
+      "mode": "100644",
+      "sha256": "a509a351efe9c9b988ed2d30e21bf8db7e864c42e980bdd59d0c83a8e363d2d9"
+    },
+    "src/data/units.ts": {
+      "mode": "100644",
+      "sha256": "9d6eef103927e9f24cb308b3b83fa2df0066ee2993dce6fc04d026d975b36a4b"
+    },
+    "src/game/arcade.ts": {
+      "mode": "100644",
+      "sha256": "c8f511c11364dbe6ba61b8e81aad8ed887cc2770d2d48889f5a8a5296abc0cc2"
+    },
+    "src/game/boosters.ts": {
+      "mode": "100644",
+      "sha256": "a102cb70e9a407e794e2461fe16f3e741b8b2c8ee69d033dc90504e36117130c"
+    },
+    "src/game/building-template-state.ts": {
+      "mode": "100644",
+      "sha256": "daf4e191c83c01bfb81bb759a6ced6c9ed8ce3d0611bf3c2303ebbd26cbc18c0"
+    },
+    "src/game/building-templates-save.ts": {
+      "mode": "100644",
+      "sha256": "2448f73a096706ef1a07cbb90c2ffc7ae9e5b443d0a513243623381f7fe02233"
+    },
+    "src/game/building-templates.ts": {
+      "mode": "100644",
+      "sha256": "a922e64198088765d0788d757dcfe34ad3979f5e2228f3e0c67d2e76a3bd3b0e"
+    },
+    "src/game/content.ts": {
+      "mode": "100644",
+      "sha256": "3e707050e4d6dff58c427991e5a075c83534e4ae4e8788ebffa152c78e24dbcb"
+    },
+    "src/game/dark-matter.ts": {
+      "mode": "100644",
+      "sha256": "01e5f77d7f44a1e236389028787701398fc4dfa118a09ece10be71b792fa44c9"
+    },
+    "src/game/decimal.ts": {
+      "mode": "100644",
+      "sha256": "0cec28f5a541b7be83a3f48d9568134a2cb155548918efbd61fb663717d587c9"
+    },
+    "src/game/deep-integrity.ts": {
+      "mode": "100644",
+      "sha256": "ec8b878620671b244a5eb3237c89edbcaa2a1ea7265d82464f09f7936b52b463"
+    },
+    "src/game/deep-save.ts": {
+      "mode": "100644",
+      "sha256": "ca2d7a1318e89ea539e571c25bd35d95757d69a9fe863ad315cc2e2e3621e74f"
+    },
+    "src/game/deep-space.ts": {
+      "mode": "100644",
+      "sha256": "666f44b86f495411286e92fb650997a1f747d2cf2d1e99350777ca96da966689"
+    },
+    "src/game/deep-state.ts": {
+      "mode": "100644",
+      "sha256": "dc56e4126e513ef88f223145c6b8e5aefdacb8b047c026342a3ad78497afd379"
+    },
+    "src/game/demolition-pricing.ts": {
+      "mode": "100644",
+      "sha256": "7b59d1c012c04efda488d7e397ef4718645309044164ac30dbaa97ab29648bb0"
+    },
+    "src/game/demolition-save.ts": {
+      "mode": "100644",
+      "sha256": "d5c7afc29953f19592a561f4fcd59645162361bc752e113a84c079ed03d28b92"
+    },
+    "src/game/demolition-state.ts": {
+      "mode": "100644",
+      "sha256": "c7a0f6d14af5e0a023863d2945746ef661137054f9cb31aa089697c18f299d7a"
+    },
+    "src/game/demolition.ts": {
+      "mode": "100644",
+      "sha256": "6cde8dc11342d9dbacfa9579e7749dacb5253797555c67d0f1c3ecc244f30392"
+    },
+    "src/game/economy.ts": {
+      "mode": "100644",
+      "sha256": "2dee5829200722affbc894a327961e6dc852b05c6dff9fc04e58e18595b75250"
+    },
+    "src/game/empire.ts": {
+      "mode": "100644",
+      "sha256": "80a1e9b3d513e27c6ecff3485970929964ed619c0138fde1cbde4966b489bc8f"
+    },
+    "src/game/encounter-combat.ts": {
+      "mode": "100644",
+      "sha256": "9b28fcdf6d4808834280181d298a2cb1965ed6e4a6b4b4d79a5cadf4831a3e35"
+    },
+    "src/game/fleet.ts": {
+      "mode": "100644",
+      "sha256": "c5b25d99b72f83cfab9448025f8f2184b0b4fc05cc61fa5365c69caa8c3ac298"
+    },
+    "src/game/format.ts": {
+      "mode": "100644",
+      "sha256": "23c689e2de9c6af4e427bd578cf6337128ba62e185f20e6edc24b1d6e3fae816"
+    },
+    "src/game/formation-state.ts": {
+      "mode": "100644",
+      "sha256": "f50825ae8afc7b5dd762d7e7d20b6dbe71e61e324f52c719dd5dd4b7369d3e7f"
+    },
+    "src/game/formations-save.ts": {
+      "mode": "100644",
+      "sha256": "68c5a12eb8c01f2a66cc2b4f29440642ab5c68342411bf33de00136797892641"
+    },
+    "src/game/formations.ts": {
+      "mode": "100644",
+      "sha256": "dee7e1fb4c25804a9e661cfad4bce9c2f53280834a3f060cd28e6803f429aa24"
+    },
+    "src/game/formulas.ts": {
+      "mode": "100644",
+      "sha256": "0a11723385f2732eda5f8d0f9ec9bc8902e92f5e37ba0a6878945624d590e575"
+    },
+    "src/game/galaxy.ts": {
+      "mode": "100644",
+      "sha256": "d07979c478eea7ad02b83379023e3c1640b910a5fcd6e485b5e19378dd7e1a8c"
+    },
+    "src/game/logic.ts": {
+      "mode": "100644",
+      "sha256": "69332f1d3cb92dab366e8d625ab60b6a4ac17955d8059ded61cd3e6138e6f4a3"
+    },
+    "src/game/merchant.ts": {
+      "mode": "100644",
+      "sha256": "f94913a80e3f175df1a64a6af2b4570930df0ab0b81105d1739952d5c8f37bde"
+    },
+    "src/game/npc-attack-state.ts": {
+      "mode": "100644",
+      "sha256": "fcc6baf90c7e8dd7c9f1b81577546a4858bf21f44d889882fd7fd10f9dc4d280"
+    },
+    "src/game/npc-attack.ts": {
+      "mode": "100644",
+      "sha256": "706b6eace5593f7617bef2e6e7dc09d90cfda050f6959c86145db179b462bdc5"
+    },
+    "src/game/npc-battle.ts": {
+      "mode": "100644",
+      "sha256": "117c27433b58049b732a17c9a4804d11bfb7251417a96ee1f562368badb0e6cb"
+    },
+    "src/game/npc-economy-save.ts": {
+      "mode": "100644",
+      "sha256": "331a83b444e47539909a794a02c08b33427cf264a9dfb8d31e0316af73fd65a6"
+    },
+    "src/game/npc-economy.ts": {
+      "mode": "100644",
+      "sha256": "b831e53b7c258f66bcc8c0a55d5a7192c0a6185c0c84fc11d6c8f20d9ae25137"
+    },
+    "src/game/npc-fuel.ts": {
+      "mode": "100644",
+      "sha256": "f61c9ab5e16a6d9337584b157e3bd8dfff323e987c3fb31cb1efc58cede8fd34"
+    },
+    "src/game/npc-garrison.ts": {
+      "mode": "100644",
+      "sha256": "e7c6a3dd45f805b295ca04c9d6011e034b91c5eabc9fd99b4d59d990981ff294"
+    },
+    "src/game/npc-loot.ts": {
+      "mode": "100644",
+      "sha256": "5a33c9aff0133a5611e8403949c8efc0b55725a9f62ba7b7125f43f4083255bc"
+    },
+    "src/game/npc-rehearsal.ts": {
+      "mode": "100644",
+      "sha256": "d537afacb60f9371f24494a27ec9fdb4a8eda7d9af4ab2946103315acc01140c"
+    },
+    "src/game/npc-remainder.ts": {
+      "mode": "100644",
+      "sha256": "98428fea172a8e98e7c45a5145174596e4c3b5667f2b7f2f2a5448870b3e8bfe"
+    },
+    "src/game/npc-scout-save.ts": {
+      "mode": "100644",
+      "sha256": "89fb8b74fa921d6e61b45c838a1548e507d467cff7bd412935aa08816abcf036"
+    },
+    "src/game/npc-scout-state.ts": {
+      "mode": "100644",
+      "sha256": "bb76897e412fed45d2a56deb2cffe6822c5bb4b31b9107b4de98f74c28ecc910"
+    },
+    "src/game/npc-scout.ts": {
+      "mode": "100644",
+      "sha256": "80bc15246918cf7d1307179e9ac1de7b801a198aaf44089f64c1f2d412cd4492"
+    },
+    "src/game/npc-transfer.ts": {
+      "mode": "100644",
+      "sha256": "8da3ba9700d09c43cc2d11dcf03f81d5c7f3afe2473ceaf6516809f298677ce2"
+    },
+    "src/game/npc-wallet.ts": {
+      "mode": "100644",
+      "sha256": "2a4f8fceae4562b975d7be2bde9ad62432aa5d5e9ce1aa44e38518f95d25408d"
+    },
+    "src/game/order-ledger.ts": {
+      "mode": "100644",
+      "sha256": "c3894e7f15a0abf6997b2dad358930bf84c99791a4927a5ab7cf80c9069f2748"
+    },
+    "src/game/order-money.ts": {
+      "mode": "100644",
+      "sha256": "6319268f063288e91e2af7bf1a76017ef9b747d6a78c7ac6f9db5761ed656b86"
+    },
+    "src/game/order-state.ts": {
+      "mode": "100644",
+      "sha256": "921dd250ad7108f06a19a6c24bc4645467ed4200b70f5b7a93ee8db1c551cc7a"
+    },
+    "src/game/order-transport-ledger.ts": {
+      "mode": "100644",
+      "sha256": "5890230cc21863341e11cd380ad827349d2bc7a44011194234f42e276922deb9"
+    },
+    "src/game/order-transport-state.ts": {
+      "mode": "100644",
+      "sha256": "f2eb87842a8a29a1ebc8ba5225cdd0fd825581f3c0fb12cb9c1251868d7b8b9b"
+    },
+    "src/game/order-transport.ts": {
+      "mode": "100644",
+      "sha256": "f55321f394758f201697ccdd9a12cf6187af20fdaf1087b7b8292988007d54cf"
+    },
+    "src/game/order-wallet.ts": {
+      "mode": "100644",
+      "sha256": "d9edde6c9f3ee32fb2c1af106da7c96a323f37ea813b76d699793982d7f59e96"
+    },
+    "src/game/orders-save.ts": {
+      "mode": "100644",
+      "sha256": "abb353b6f0240e15ae293ef4ee0362ca16142db6bd46e912b3991fbb7ae9bc62"
+    },
+    "src/game/orders.ts": {
+      "mode": "100644",
+      "sha256": "3cda58eb0edddf5b4c1697b107df6517fd31bcd85fc1dc6065f0734f60e21ae2"
+    },
+    "src/game/paid-job-identity.ts": {
+      "mode": "100644",
+      "sha256": "2171208e1d0fb3089b0849e1b83c408aea3fd966ff33d95d3dad92b26d2a9e3b"
+    },
+    "src/game/planet.ts": {
+      "mode": "100644",
+      "sha256": "35989439274225266a8d9a7b9612d2495e70b3e6b50f76e17a7d143663c8c5f9"
+    },
+    "src/game/queue.ts": {
+      "mode": "100644",
+      "sha256": "34447fd8a8b6e286037e9fde54fe5099e1b48b7112a466f2dfaa620c69fed9ee"
+    },
+    "src/game/recycle-amounts.ts": {
+      "mode": "100644",
+      "sha256": "d82ca844dc40b27e08c7d47a6f12620524aac6d4cee94e1a92f33f8aec3db823"
+    },
+    "src/game/requirements.ts": {
+      "mode": "100644",
+      "sha256": "517903d8935d713e9c52d2a6485e4dceb283c435fd0ba4c0ed6d7d618e005c8b"
+    },
+    "src/game/research-template-state.ts": {
+      "mode": "100644",
+      "sha256": "b16a3f03b6f0ae1439647bfebf4d8ab63556877a31473dbc7f6c662de99b8f9b"
+    },
+    "src/game/research-templates-save.ts": {
+      "mode": "100644",
+      "sha256": "3cfbbd0e67f0e492e810aa5d36666871cb5def292492fd3e2df3cf91025b7952"
+    },
+    "src/game/research-templates.ts": {
+      "mode": "100644",
+      "sha256": "319905fc4296e6fc64586363501ad1ccac09761182d7228dc3dba8bd267f8a97"
+    },
+    "src/game/research.ts": {
+      "mode": "100644",
+      "sha256": "46ea4dfc3607dca2513b09cc0231fec9196754d57362901426928a42e9ca354d"
+    },
+    "src/game/rng.ts": {
+      "mode": "100644",
+      "sha256": "38c9493f13c83d320f77c55bc8dcd50c610f36afd7f8be458ec9bd21c2c3229a"
+    },
+    "src/game/save-session.ts": {
+      "mode": "100644",
+      "sha256": "8991e4dfea97a3079bd309c71827da7973f9aea8b45f4876f119409018d69124"
+    },
+    "src/game/save.ts": {
+      "mode": "100644",
+      "sha256": "13146617b969d5d9d74cf430b1a7bb233e70e56692529b612d5ecaa46ad44944"
+    },
+    "src/game/shipyard.ts": {
+      "mode": "100644",
+      "sha256": "9790b0b3a0c087c870c1ef8772983f2e7d7e92a1a8775aa2f82b670f8b558f39"
+    },
+    "src/game/space-save.ts": {
+      "mode": "100644",
+      "sha256": "6eed2a427c594ed784e0ad5821c9c9c1229aa2fb7e4bb354bc34bd7026509a49"
+    },
+    "src/game/state.ts": {
+      "mode": "100644",
+      "sha256": "2f08b5597d2669a3c783cb4b0bf5a645e056e36a147949faf722ca616f79715d"
+    },
+    "src/game/terraformer-save.ts": {
+      "mode": "100644",
+      "sha256": "8a8de85b2b6efe931b2a54e2555fd0722cae82174947e2f3b83cf481946964db"
+    },
+    "src/game/terraformer.ts": {
+      "mode": "100644",
+      "sha256": "cb474160fdac3e8156392c63f2e6fe7f360aa1ad6af5dbd54140e5efb9053207"
+    },
+    "src/game/types.ts": {
+      "mode": "100644",
+      "sha256": "f5ac2b92625eeee0a0a26356674d5467455727918b7cdca73ae100f1a1ce4b3a"
+    },
+    "src/game/unit-cost.ts": {
+      "mode": "100644",
+      "sha256": "8f3baa813c0f420c7847592fae3b9b3985ab505d1be2b982ab77c63d9caee202"
+    },
+    "src/main.ts": {
+      "mode": "100644",
+      "sha256": "871f447bd30fee652d00978caafe0772bf0eba20d11bb62ffdd01db1f203075a"
+    },
+    "src/prestige/tree.ts": {
+      "mode": "100644",
+      "sha256": "92dadb4b1192f64131054920c83b5fb9755edab0a9648e4b103552b38ad75a3e"
+    },
+    "src/space.css": {
+      "mode": "100644",
+      "sha256": "10bdef2cf43a38590a80732906647b9fb7e6a5ef9a2c64a0a48a135e589de0af"
+    },
+    "src/style.css": {
+      "mode": "100644",
+      "sha256": "251d2d11215acdbfcc49767cd35b8f9378b8aa08c0192aca7a058d40fcf9853a"
+    },
+    "src/ui/arcade-panel.ts": {
+      "mode": "100644",
+      "sha256": "9c8dd77980a4266d033467e86462dbc825e94029caa2df38d430a4760ba9ebf0"
+    },
+    "src/ui/arcade-present.ts": {
+      "mode": "100644",
+      "sha256": "a556feb9a53cf207c7edcaa4cb02126bf2cbb858451ef5422efc2fa30549fb1d"
+    },
+    "src/ui/building-templates-panel.ts": {
+      "mode": "100644",
+      "sha256": "fcfd024a0b8315a5118d87f55d71b53cf50c73638c40d90eac15422bb2b98cbf"
+    },
+    "src/ui/building-templates-present.ts": {
+      "mode": "100644",
+      "sha256": "b8d47d6a9c612241a9160e57080c6f9c6241e0cd3a1376596eac503dc377648e"
+    },
+    "src/ui/building-templates.css": {
+      "mode": "100644",
+      "sha256": "d17a764e6adff3ca8b1264a473719c5f08df7e75b80dfdd3667e6706519a0b9d"
+    },
+    "src/ui/deep-dashboard-model.ts": {
+      "mode": "100644",
+      "sha256": "45a07ac27d19986d422b7c3dd977625110dbfe6d466d9335152d5089ba7f28e0"
+    },
+    "src/ui/deep-dashboard.css": {
+      "mode": "100644",
+      "sha256": "2a3fdb06817d786fc335f682ba2128c6f6d6b132f552af871d6b4aff46293544"
+    },
+    "src/ui/deep-dashboard.ts": {
+      "mode": "100644",
+      "sha256": "f74062e03ae4957fa3e434f1387f0d48b76667c3551c8f57458915eab46cfdfb"
+    },
+    "src/ui/deep-panel.ts": {
+      "mode": "100644",
+      "sha256": "dd69e92c14ed8d3804b4cfcbac99caa61455b384a83ba7ccdf69ee38c910c04d"
+    },
+    "src/ui/deep-present.ts": {
+      "mode": "100644",
+      "sha256": "92133c42753b3cd7f711eaaaedbcd02dcf4cfe88be05171cad57250e9465ceb4"
+    },
+    "src/ui/demolition-panel.ts": {
+      "mode": "100644",
+      "sha256": "ff5f6894fe2bf3a13b647a81245755f3bc2d3a5ed9e11f8e56d2c74bcb1bc72c"
+    },
+    "src/ui/demolition-present.ts": {
+      "mode": "100644",
+      "sha256": "3040f374ef838106d48e32267343ee21eacadb0ed91c214cc83daa68f8b60769"
+    },
+    "src/ui/demolition-review-model.ts": {
+      "mode": "100644",
+      "sha256": "9591f97ec399aa8483515fea500806c81dcf2e2aaadcdc91025ec73d64e14f83"
+    },
+    "src/ui/demolition.css": {
+      "mode": "100644",
+      "sha256": "9adb817734b1112221ac5bc86950c9a7022a881fedbe88062fe28d6661f49708"
+    },
+    "src/ui/expansion-navigation-model.ts": {
+      "mode": "100644",
+      "sha256": "820ff8d2e70470806da8797c117fd188f06426b4a6dc162785a3d5512061e32b"
+    },
+    "src/ui/expansion-navigation.css": {
+      "mode": "100644",
+      "sha256": "68d14da9acb7b33edc600e402f93f5ef22958668cd06f5c55f744a078fd47f99"
+    },
+    "src/ui/expansion-navigation.ts": {
+      "mode": "100644",
+      "sha256": "494ea89a98b97e31f90dc2e2f18b756dfa0e0a52afffb57b79fd8d62a540e355"
+    },
+    "src/ui/formations-panel.ts": {
+      "mode": "100644",
+      "sha256": "364fd1a2e6719c18de798060d99f7df5e397940eab5b94122d50cb33db71b1c3"
+    },
+    "src/ui/formations-present.ts": {
+      "mode": "100644",
+      "sha256": "a90c0a291e66262186fd250eccb9b4294cb8bc0db77ce683d9ea458e622a507c"
+    },
+    "src/ui/formations.css": {
+      "mode": "100644",
+      "sha256": "b934352731b0328e9f61394128a1027c85dc95f20c6cea0c25adf7d8bec178a7"
+    },
+    "src/ui/lab-blockers-model.ts": {
+      "mode": "100644",
+      "sha256": "97da30e319afe4ea1b4673561c5dcd8c54513e1b9d35bbd03b8d2faa58d3c206"
+    },
+    "src/ui/lab-blockers-panel.ts": {
+      "mode": "100644",
+      "sha256": "3e8428ea9330c5230fee36ac0395407d672525bc203075c02d946b28ed3b908e"
+    },
+    "src/ui/manual-unit-controls.ts": {
+      "mode": "100644",
+      "sha256": "5a1454f4c3da88034cec20bf55d1308284d538191743149483eb123f8cd8d183"
+    },
+    "src/ui/manual-unit-quote.ts": {
+      "mode": "100644",
+      "sha256": "3c4b1922e350f731431f2a47141e283ca6637d6409447f35caaf450d9cadc394"
+    },
+    "src/ui/npc-attack-controls.ts": {
+      "mode": "100644",
+      "sha256": "210394e47b7311939d94c94ae0451b38150959d25a4cf75891f408decdc722ea"
+    },
+    "src/ui/npc-battle-panel.ts": {
+      "mode": "100644",
+      "sha256": "41f47a5e1486318f1bd9ff0ced61c6c200ff97b2436217fb7123fb508529591d"
+    },
+    "src/ui/npc-battle-present.ts": {
+      "mode": "100644",
+      "sha256": "70581be076a5aaa960c56025b458cfbd09a475ed5e1ac9543696516257241eda"
+    },
+    "src/ui/npc-rehearsal-formation-model.ts": {
+      "mode": "100644",
+      "sha256": "38d6370d5ead387e3e4466e150d7d8b95585bfef0a5bb5b171489cb07036e436"
+    },
+    "src/ui/npc-rehearsal-panel.ts": {
+      "mode": "100644",
+      "sha256": "10a0a59aa8340aed34b2db3f73dd863f2e2f74016dd4de79375f50c789a4efc9"
+    },
+    "src/ui/npc-scout-comparison-model.ts": {
+      "mode": "100644",
+      "sha256": "cc4f73eb142348d1aebb87381115481c232535295f403c3a3d63e6bad2e9e7c2"
+    },
+    "src/ui/npc-scout-comparison-panel.ts": {
+      "mode": "100644",
+      "sha256": "f8db8f5981300d266ad81dd917f6b47f2e330b24e81817788ad8e68863ece4eb"
+    },
+    "src/ui/npc-scout-comparison.css": {
+      "mode": "100644",
+      "sha256": "b458da3434416bced7adad7c0d15eea1d26a46496fce0316d542177d0e4a0830"
+    },
+    "src/ui/order-quote-model.ts": {
+      "mode": "100644",
+      "sha256": "600f3bc5d3177e295fb3649067cc1315bc6e0143e047878a78f7bf095a0ca231"
+    },
+    "src/ui/orders-panel.ts": {
+      "mode": "100644",
+      "sha256": "875be6697dc29b04d5d327c1e0a2b37020078c24b400b3ac43c227f3bf436e5d"
+    },
+    "src/ui/orders-present.ts": {
+      "mode": "100644",
+      "sha256": "8a0ed1ffde6c55d48e022072ab64b6d66eae12e0a299ee93c1a939d82442d400"
+    },
+    "src/ui/orders.css": {
+      "mode": "100644",
+      "sha256": "f89f2b58ea54ea2578774d2074b8b806f3d88438c18fd7b63f904f507c63b7be"
+    },
+    "src/ui/planet-selector.ts": {
+      "mode": "100644",
+      "sha256": "5dee55a1d53c02660f15507aa7688df8f7c8db4b65305c37b6e8c03afdb922c9"
+    },
+    "src/ui/present.ts": {
+      "mode": "100644",
+      "sha256": "86979014aff31ab9ea9c4c653e43940199151664ee2074f1f8a7e4368786cbfd"
+    },
+    "src/ui/prestige-preview-model.ts": {
+      "mode": "100644",
+      "sha256": "d1adbecb990bf1f9caefeecccfc292e646f1a51c90ecafc34a0e9087f9d999bf"
+    },
+    "src/ui/prestige-preview.css": {
+      "mode": "100644",
+      "sha256": "1f596da39bff47c9899a2dd4ef1757684f5733d36d70948b8b06c44d1d42fe62"
+    },
+    "src/ui/prestige-preview.ts": {
+      "mode": "100644",
+      "sha256": "acbf2050209de8403bcce8341e95fb7ce353bd87c42f83464071163bd5b04b86"
+    },
+    "src/ui/protocol-safety.ts": {
+      "mode": "100644",
+      "sha256": "5a93bf048e22e476fbe479628799d92e21914826411c464a4f9798c67d51cfd1"
+    },
+    "src/ui/queue-head-authority.ts": {
+      "mode": "100644",
+      "sha256": "ec28b35d840b1326112fd6f844310ddaa8e9f213f885c8267d74dcf869fe44f2"
+    },
+    "src/ui/recycle-preview-model.ts": {
+      "mode": "100644",
+      "sha256": "86198a600cffee298c8ae6eeb2d366dddadc438560a862a99fa84714cd594060"
+    },
+    "src/ui/recycle-preview-panel.ts": {
+      "mode": "100644",
+      "sha256": "661358de16d28a3fdbda66dfc7052151dee3c1d5d64e0daa0110bca2e73a28e0"
+    },
+    "src/ui/render-scheduler.ts": {
+      "mode": "100644",
+      "sha256": "b40262da63974a47c28877817513d9e5c3fcfe17ecc6eb9d6a40e3e8852e8d69"
+    },
+    "src/ui/research-templates-panel.ts": {
+      "mode": "100644",
+      "sha256": "a665617626c0e52da2357b8869190290dab6c7635d80d984a19e005c888cc109"
+    },
+    "src/ui/research-templates-present.ts": {
+      "mode": "100644",
+      "sha256": "2727b4fbeb995cb5f452cf5472f564701e5a5b8d30c6a2a762c0bdd685fbe705"
+    },
+    "src/ui/research-templates.css": {
+      "mode": "100644",
+      "sha256": "4d11c3b4aa854d053a8cdb5bca2658ceb5ad4e457a8fc3835cde736fd221c536"
+    },
+    "src/ui/ring-auto-model.ts": {
+      "mode": "100644",
+      "sha256": "0f5a4249347ab9eb4cf7f749b074b93d791ef2e3d6dda2571d0495e3e8c2268b"
+    },
+    "src/ui/ring-controls-model.ts": {
+      "mode": "100644",
+      "sha256": "756d960e1d7121aab667097a9d9dee7418ad46b3bcfc8cd3171ec5a7ec2a8d7a"
+    },
+    "src/ui/ring-model.ts": {
+      "mode": "100644",
+      "sha256": "d8d310e413e4038348d99fbe3ae909655642ac09df0f3c79aeefa01b32c29022"
+    },
+    "src/ui/ring-visual.css": {
+      "mode": "100644",
+      "sha256": "f5364fe42615aea2e58e76196633b1b9c7a0592ef438009d75cbc8de76ca3f5c"
+    },
+    "src/ui/ring-visual.ts": {
+      "mode": "100644",
+      "sha256": "6dde38030169d71284084b68d0700256fecad9984ac7e8a2ec4063a7b3dc2566"
+    },
+    "src/ui/shipyard-panel.ts": {
+      "mode": "100644",
+      "sha256": "1cd86892e7d66231b62fb35b5be9df8445f0ab0c775513713bc607b07cde9b36"
+    },
+    "src/ui/shipyard-present.ts": {
+      "mode": "100644",
+      "sha256": "9c77bbf58fb0faf70332c11e80ba38651231df616f4e936599d8af9ee7c243b5"
+    },
+    "src/ui/space-panel.ts": {
+      "mode": "100644",
+      "sha256": "970c1f8a9102ef14f9680b3e34d22354abb4bb71353e4778c1a5fce6c777f65e"
+    },
+    "src/ui/space-present.ts": {
+      "mode": "100644",
+      "sha256": "7c15f3b18fc9f02b2b09354fa40f6a0cf95efbe200208ac3bad8710e4e7c5af0"
+    },
+    "src/ui/transport-load-model.ts": {
+      "mode": "100644",
+      "sha256": "7eec5152dc2f4ad229cb6a89df36f41f27712f64c569b4c8b2359b2458df29a2"
+    },
+    "src/ui/view.ts": {
+      "mode": "100644",
+      "sha256": "23c4ca1ec796cafa6dba3a910261b302b4cd215138c298d3b02c43348ce534ee"
+    },
+    "src/vite-env.d.ts": {
+      "mode": "100644",
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+    }
+  },
+  "originalUiBaseline": {
+    "baseline": "69eca71",
+    "expected": {
+      "src/style.css": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad",
+      "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+    },
+    "exactDeltaPaths": [
+      "src/style.css",
+      "src/ui/view.ts"
+    ],
+    "changedPaths": [
+      {
+        "path": "src/style.css",
+        "before": {
+          "mode": "100644",
+          "sha256": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "251d2d11215acdbfcc49767cd35b8f9378b8aa08c0192aca7a058d40fcf9853a"
+        },
+        "patchSha256": "67349b41ea8b14a34c911efdd29ea1e0d24fb6000d6ccde0d2235717c0369d51",
+        "hunks": [
+          {
+            "header": "@@ -647,6 +647,14 @@ textarea {",
+            "sha256": "813c5680415acd26e0c5b0c783d6524905a9a31f4bf5329894aed05c5641ccad"
+          },
+          {
+            "header": "@@ -812,6 +820,13 @@ textarea {",
+            "sha256": "07db6d03cbc39ac483d2bccd57c4f92b24378779a84447d38df8ff2bcd117d52"
+          },
+          {
+            "header": "@@ -821,4 +836,6 @@ textarea {",
+            "sha256": "f485e54d66b94a399a49f221ed2c54239e62691bbb2b698a85745460de04f836"
+          }
+        ]
+      },
+      {
+        "path": "src/ui/view.ts",
+        "before": {
+          "mode": "100644",
+          "sha256": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "23c4ca1ec796cafa6dba3a910261b302b4cd215138c298d3b02c43348ce534ee"
+        },
+        "patchSha256": "3c7b747006d9a0c5bc90b176f3e561c499990423a7bbc6ce306acf30b1f60401",
+        "hunks": [
+          {
+            "header": "@@ -23,8 +23,8 @@ import type { ResourceId } from \"../game/types\";",
+            "sha256": "f02691a7b0d2d848bf156ba301364cc4464acc96c21e84372d89f86f9abcc75a"
+          },
+          {
+            "header": "@@ -32,7 +32,6 @@ export type UiAction =",
+            "sha256": "33da7b9ca2bad1975a924d282e5fb73a68b4899e2f652e0bc7b2e28f83ae39c8"
+          },
+          {
+            "header": "@@ -145,11 +144,6 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi",
+            "sha256": "70a121ae3575b953e2bae039197614048fc7d35c29028a7e076014a98bf97200"
+          },
+          {
+            "header": "@@ -478,6 +472,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {",
+            "sha256": "81d9fccdd32bee1ef4de481036af6617ba2da7670ee52b2c3f496f03ebfc7ba2"
+          },
+          {
+            "header": "@@ -977,6 +972,7 @@ function shellMarkup(): string {",
+            "sha256": "332c17a028d3efbcba18280d0ca021632764c76b06de5ef4847609d9a47fc5d8"
+          }
+        ]
+      }
+    ]
+  },
+  "changedPaths": [
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "9e3b813bd7c8b0742482f40cb64e7ad2c2fc23aaee3f1170f8783067593f670b"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "970c1f8a9102ef14f9680b3e34d22354abb4bb71353e4778c1a5fce6c777f65e"
+      },
+      "patchSha256": "a488d9df9f99bba7ad408936bbbf963c9a5400a1e3eae19daebb0a8fca02e176",
+      "hunks": [
+        {
+          "header": "@@ -38,6 +38,20 @@ function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.",
+          "sha256": "83ce3690bb89714751f7a16f4e719ac661a662ba14f721d7ceb9ce5984e0e7f5"
+        },
+        {
+          "header": "@@ -413,7 +427,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "172608e2a8d614199808f976d0ef10331cb0b5b3601a5d2ef7053d540ee1fd96"
+        }
+      ]
+    }
+  ]
+}

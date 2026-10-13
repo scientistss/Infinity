@@ -220,21 +220,33 @@ def formation_transition(before):
 def previous_formation_bytes():
     read_manifest(ROOT)
     before = historical_bytes('scripts/test_rehearsal_formation_copy_provenance.py')
-    assert (ROOT/'scripts/test_rehearsal_formation_copy_provenance.py').read_bytes() == formation_transition(before), 'Unapproved formation-copy contract drift'
+    current = (ROOT/'scripts/test_rehearsal_formation_copy_provenance.py').read_bytes()
+    if current != formation_transition(before):
+        from test_fleet_row_provenance import previous_formation_bytes as fleet_previous_bytes
+        current = fleet_previous_bytes(ROOT)
+    assert current == formation_transition(before), 'Unapproved formation-copy contract drift'
     return before
 
 
 def previous_ring_bytes():
     read_manifest(ROOT)
     before = historical_bytes('scripts/browser-ring-protection.py')
-    assert (ROOT/'scripts/browser-ring-protection.py').read_bytes() == ring_transition(before), 'Unapproved ring source drift beyond exact recycle dispatch'
+    current = (ROOT/'scripts/browser-ring-protection.py').read_bytes()
+    if current != ring_transition(before):
+        from test_fleet_row_provenance import previous_ring_bytes as fleet_previous_bytes
+        current = fleet_previous_bytes(ROOT)
+    assert current == ring_transition(before), 'Unapproved ring source drift beyond exact recycle dispatch'
     return before
 
 
 def previous_ui_baseline_bytes():
     read_manifest(ROOT)
     before = historical_bytes('scripts/check-ui-baseline.mjs')
-    assert (ROOT/'scripts/check-ui-baseline.mjs').read_bytes() == ui_transition(before, MANIFEST_SHA256), 'Unapproved recycle UI checker drift'
+    current = (ROOT/'scripts/check-ui-baseline.mjs').read_bytes()
+    if current != ui_transition(before, MANIFEST_SHA256):
+        from test_fleet_row_provenance import previous_ui_baseline_bytes as fleet_previous_bytes
+        current = fleet_previous_bytes(ROOT)
+    assert current == ui_transition(before, MANIFEST_SHA256), 'Unapproved recycle UI checker drift'
     return before
 
 
@@ -299,6 +311,11 @@ def verify_candidate(candidate):
     def git(*args):
         return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE)
     candidate = git('rev-parse', candidate + '^{commit}').decode().strip()
+    if git('ls-tree', candidate, '--', 'tests/fixtures/fleet-row-provenance.json'):
+        from test_fleet_row_provenance import verify_candidate as verify_fleet_candidate
+        result = verify_fleet_candidate(candidate)
+        assert result['contract'] == 'exact-declared-fleet-row-source-delta'
+        return result['previousProvenance']
     assert candidate != REFERENCE, 'Recycle candidate must be committed separately from its public baseline'
     for path in ('scripts/test_recycle_preview_provenance.py', 'scripts/test_manual_unit_provenance.py',
                  'scripts/browser-ring-protection.py', 'scripts/check-ui-baseline.mjs',
@@ -464,9 +481,11 @@ class RecyclePreviewSyntheticTests(unittest.TestCase):
         self.assertEqual(self.ring.synchronized_domain_provenance(self.view, REFERENCE, self.git, check)['contract'], 'exact-declared-manual-unit-ui-delta')
 
     def test_only_exact_dispatch_and_three_narrow_compatibility_adapters_are_added(self):
-        self.assertEqual((ROOT/'scripts/browser-ring-protection.py').read_bytes(), ring_transition(historical_bytes('scripts/browser-ring-protection.py')))
+        from test_fleet_row_provenance import previous_ring_bytes as fleet_previous_ring_bytes
+        self.assertEqual(fleet_previous_ring_bytes(ROOT), ring_transition(historical_bytes('scripts/browser-ring-protection.py')))
         self.assertEqual((ROOT/'scripts/test_manual_unit_provenance.py').read_bytes(), manual_transition(historical_bytes('scripts/test_manual_unit_provenance.py')))
-        self.assertEqual((ROOT/'scripts/test_rehearsal_formation_copy_provenance.py').read_bytes(), formation_transition(historical_bytes('scripts/test_rehearsal_formation_copy_provenance.py')))
+        from test_fleet_row_provenance import previous_formation_bytes as fleet_previous_formation_bytes
+        self.assertEqual(fleet_previous_formation_bytes(ROOT), formation_transition(historical_bytes('scripts/test_rehearsal_formation_copy_provenance.py')))
 
     def test_old_checker_projection_requires_exact_manifest_schema_hash_and_transition(self):
         with patch(__name__ + '.ROOT', self.view):
