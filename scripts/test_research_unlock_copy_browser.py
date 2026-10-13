@@ -1,6 +1,7 @@
 """Python-only adversarial contracts; these never claim native/browser success."""
 import ast
 import copy
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -12,12 +13,33 @@ import contextlib
 import io
 import itertools
 import tempfile
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / 'scripts/browser-research-unlock-copy.py'
 SPEC = importlib.util.spec_from_file_location('research_unlock_copy_browser', PATH)
 BROWSER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BROWSER)
+
+
+DISPLAY_CONTRACT_PATH = 'scripts/test_recycle_preview_display_contract.py'
+DISPLAY_CONTRACT_BASE = '49303d3740cf223955386ff984b335ca9b110087'
+DISPLAY_CONTRACT_BEFORE_SHA = 'bd19bd4e8116033ec004bf717347dad2ad643ef621ec61461caa3a991c8f97cd'
+DISPLAY_CONTRACT_AFTER_SHA = '9d6483ee8524d10a8288ba96f796a25a367da21cfa49fb93c31ae8fbd488a57f'
+DISPLAY_CONTRACT_PATCH_SHA = '3fe0000c2a36ae2bbf79d32bf69c799dd0e55bf0a1e7088ad02e7a23aa12bf81'
+
+
+def assert_display_contract_source_transition(current):
+    # Only the approved offline benchmark source-proof adapter and its six
+    # negative tests changed. No UI projection or old assertion is discarded.
+    assert hashlib.sha256(current).hexdigest() == DISPLAY_CONTRACT_AFTER_SHA, 'Complete approved display test required'
+    before = subprocess.check_output(['git', '--no-replace-objects', '-C', str(ROOT),
+                                      'show', DISPLAY_CONTRACT_BASE+':'+DISPLAY_CONTRACT_PATH])
+    assert hashlib.sha256(before).hexdigest() == DISPLAY_CONTRACT_BEFORE_SHA, 'Complete immutable 493 display test required'
+    delta = ''.join(difflib.unified_diff(before.decode('utf-8').splitlines(keepends=True),
+                                       current.decode('utf-8').splitlines(keepends=True),
+                                       fromfile='a/'+DISPLAY_CONTRACT_PATH, tofile='b/'+DISPLAY_CONTRACT_PATH, n=3))
+    assert hashlib.sha256(delta.encode('utf-8')).hexdigest() == DISPLAY_CONTRACT_PATCH_SHA, 'Exact complete benchmark-source-only test transition required'
 
 
 def specimen(side):
@@ -151,9 +173,30 @@ class BrowserContracts(unittest.TestCase):
         source = (ROOT / 'scripts/browser-render-scheduling.py').read_bytes()
         self.assertEqual(hashlib.sha256(source).hexdigest(), '6e7e4e40acc8ac6ba8edc2bb450919612d8b19e287aa97057305ee6ee65af044')
         self.assertNotIn(b'normalize_astrophysics', source)
-        # The existing historical test still freezes every prior comparator byte.
-        original_test = (ROOT / 'scripts/test_recycle_preview_display_contract.py').read_bytes()
-        self.assertEqual(hashlib.sha256(original_test).hexdigest(), 'bd19bd4e8116033ec004bf717347dad2ad643ef621ec61461caa3a991c8f97cd')
+        # The renderer remains byte-exact. Its offline test only adopted the
+        # separately approved benchmark source-proof transition and six negatives.
+        assert_display_contract_source_transition((ROOT / DISPLAY_CONTRACT_PATH).read_bytes())
+
+    def test_display_contract_source_transition_rejects_complete_current_or_old_byte_drift(self):
+        current = (ROOT / DISPLAY_CONTRACT_PATH).read_bytes()
+        for changed in (current+b'\n', current.replace(b'\n', b'\r\n'), current[:-1], current.replace(b'assert restored == baseline(RUNNER)', b'assert True', 1)):
+            with self.subTest(kind='current-byte-drift'), self.assertRaises(AssertionError):
+                assert_display_contract_source_transition(changed)
+        for changed in (b'', current, b'changed historical source\n'):
+            with patch.object(subprocess, 'check_output', return_value=changed):
+                with self.subTest(kind='historical-byte-drift'), self.assertRaises(AssertionError):
+                    assert_display_contract_source_transition(current)
+
+    def test_display_contract_source_transition_requires_actual_full_diff_and_historical_read(self):
+        current = (ROOT / DISPLAY_CONTRACT_PATH).read_bytes()
+        for delta in ([], ['unapproved complete patch\n']):
+            with patch.object(difflib, 'unified_diff', return_value=iter(delta)):
+                with self.assertRaisesRegex(AssertionError, 'Exact complete benchmark-source-only test transition required'):
+                    assert_display_contract_source_transition(current)
+        for error in (subprocess.CalledProcessError(128, ['git', 'show']), PermissionError('Historical read denied')):
+            with patch.object(subprocess, 'check_output', side_effect=error):
+                with self.assertRaises(type(error)):
+                    assert_display_contract_source_transition(current)
 
     def test_receipt_validates_complete_synthetic_contract_without_mutating_it(self):
         args = synthetic_receipt(); prior = copy.deepcopy(args)
