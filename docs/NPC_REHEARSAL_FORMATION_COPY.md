@@ -1,5 +1,7 @@
 # 命名编成一次复制到历史演练
 
+**后续交付补记（2026-10-13）：** [241a51d](https://github.com/scientistss/Infinity/commit/241a51de31364e9086abcc304884bf9df7cd6912) / 0.6.23-alpha.1 已通过自己的 [完整候选 CI](https://github.com/scientistss/Infinity/actions/runs/38299142438) 并交付。最终范围和证据见 [本批交付记录](BATCH_DELIVERY_20261013.md)。下文的候选或待验措辞保留实现时语境，不是当前发布状态。
+
 候选版本 0.6.23-alpha.1 / v9 r14。完整云端和原生验收尚未完成，当前不是发布说明。
 
 这是纯 UI 数量入口，不增加存档字段、世界状态或新的执行授权。

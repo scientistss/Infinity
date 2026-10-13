@@ -1,4 +1,6 @@
-# 同目标历史侦察观察差（candidate，未验收）
+# 同目标历史侦察观察差（保留实现时合同）
+
+**后续交付补记（2026-10-13）：** [be0e112](https://github.com/scientistss/Infinity/commit/be0e112b964179fc15b89daa4ae6f6a722b78a92) / 0.6.22-alpha.2 已通过自己的 [完整候选 CI](https://github.com/scientistss/Infinity/actions/runs/38291221143) 并交付。最终范围和证据见 [本批交付记录](BATCH_DELIVERY_20261013.md)。下文的候选或待验措辞保留实现时语境，不是当前发布状态。
 
 本页说明新增的纯展示模型及其候选 UI 合同。此实现目前是未验收 candidate；单元测试、完整构建、天然付费侦察来源及原生浏览器验收必须分别记录，不能互相替代。本模型测试使用明确标注的合成边界 fixture，不声称由游戏实际付费抵达生成。
 

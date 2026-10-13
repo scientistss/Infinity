@@ -1,5 +1,7 @@
 # Manual ship and defense confirmation acceptance
 
+**后续交付补记（2026-10-13）：** [6b985b8](https://github.com/scientistss/Infinity/commit/6b985b88ec6b263a3eeb8f34252525383a9f110f) / 0.6.26-alpha.1 已通过自己的 [完整候选 CI](https://github.com/scientistss/Infinity/actions/runs/38322340471) 并交付。最终范围和证据见 [本批交付记录](BATCH_DELIVERY_20261013.md)。下文的候选或待验措辞保留实现时语境，不是当前发布状态。
+
 Candidate: `0.6.26-alpha.1`, save version 9 / revision 14 unchanged.
 
 ## Evidence classification

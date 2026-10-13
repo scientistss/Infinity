@@ -1,5 +1,7 @@
 # 跨星实验室占用定位
 
+**后续交付补记（2026-10-13）：** [9a27ed8](https://github.com/scientistss/Infinity/commit/9a27ed8c198a19f6bab9578e3d8d26ee22cdfc13) / 0.6.24-alpha.1 已通过自己的 [完整候选 CI](https://github.com/scientistss/Infinity/actions/runs/38304895277) 并交付。最终范围和证据见 [本批交付记录](BATCH_DELIVERY_20261013.md)。下文的候选或待验措辞保留实现时语境，不是当前发布状态。
+
 本页记录一个**尚未发布、等待完整验收**的只读界面增量。生产差分以命名编成演练候选 `c80a6728fe9e1769ca4e67fe794b8f0eedfb8627` 为固定来源，实际父提交为包含原生验收修复的 `241a51de31364e9086abcc304884bf9df7cd6912`；预定版本为 `0.6.24-alpha.1`，存档仍为 v9/r14。候选实现、单项测试及本地构建均不单独代表发布。
 
 ## 玩家能看到什么

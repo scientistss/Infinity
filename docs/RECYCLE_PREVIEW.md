@@ -1,4 +1,6 @@
-# Recycling estimate: read-only candidate
+# Recycling estimate: read-only estimate
+
+**后续交付补记（2026-10-13）：** [7ab5690](https://github.com/scientistss/Infinity/commit/7ab569045996a1a6ad8ce1aee477092144dfad74) / 0.6.27-alpha.1 已通过自己的 [完整候选 CI](https://github.com/scientistss/Infinity/actions/runs/38327276107) 并交付。最终范围和证据见 [本批交付记录](BATCH_DELIVERY_20261013.md)。下文的候选或待验措辞保留实现时语境，不是当前发布状态。
 
 The arithmetic preparation checkpoint is `cafcdfdd140f4bcbf17e589e99f83f2d761f9e49`. This follow-on candidate adds a short, read-only current-condition estimate to the recycling mission, with details closed by default. Version `0.6.27-alpha.1` keeps save version 9 / revision 14. Full same-commit cloud acceptance is required before publication.
 
