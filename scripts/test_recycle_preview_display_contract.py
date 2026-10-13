@@ -6,17 +6,25 @@ byte; they do not execute JavaScript or claim native/browser/benchmark success.
 """
 import ast
 import copy
+import difflib
 import hashlib
 from html.parser import HTMLParser
 import json
 from pathlib import Path
 import subprocess
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = '6b985b88ec6b263a3eeb8f34252525383a9f110f'
 RUNNER = 'scripts/browser-render-scheduling.py'
 BENCHMARK = 'scripts/benchmark-presentation.mjs'
+# The research source-proof adoption is one exact offline-script transition.
+# Neither old recycle assertions nor any benchmark/model/timing byte is waived.
+RESEARCH_BENCHMARK_BASE = '49303d3740cf223955386ff984b335ca9b110087'
+RESEARCH_BENCHMARK_BEFORE_SHA = '3b1ec0f010b1ba062a220cec052556a186b9784e2ccd414656fb9a09a41c66a1'
+RESEARCH_BENCHMARK_AFTER_SHA = '227d038cf7f4611a464ab2e0a03f60af1a0210a3c34bed285c804e5ddce71cd3'
+RESEARCH_BENCHMARK_PATCH_SHA = '80430502b663f156aba6e4e7e4034664d895522b049c8cc30a064d3915311d12'
 BASE_HASHES = {RUNNER: 'f644a21d8f19dd3ba84c4a1db80bedeafd844a5da43722cad84f707d82b83770',
               BENCHMARK: 'bf5ac59cfac570ec8d79d72aafeb3ed43876efbc900898011a0a9f1e86a93194'}
 # Independently transcribed approved static HTML, never a production constructor.
@@ -82,7 +90,21 @@ def assert_exact_runner_transition(current):
     assert restored == baseline(RUNNER), 'Every previous render assertion must remain byte-exact'
 
 
+def research_unlock_benchmark_before(current):
+    assert digest(current) == RESEARCH_BENCHMARK_AFTER_SHA, 'Exact complete reviewed research benchmark required'
+    before = subprocess.check_output(['git', '--no-replace-objects', '-C', str(ROOT),
+                                      'show', RESEARCH_BENCHMARK_BASE+':'+BENCHMARK]).decode('utf-8')
+    assert digest(before) == RESEARCH_BENCHMARK_BEFORE_SHA, 'Complete immutable public 493 benchmark changed'
+    # Pin the complete contextual diff, not a section filter or an assertion
+    # removal. Both whole files are independently pinned before projection.
+    delta = ''.join(difflib.unified_diff(before.splitlines(keepends=True), current.splitlines(keepends=True),
+                                       fromfile='a/'+BENCHMARK, tofile='b/'+BENCHMARK, n=3))
+    assert digest(delta) == RESEARCH_BENCHMARK_PATCH_SHA, 'Exact full research source-proof patch required'
+    return before
+
+
 def assert_exact_benchmark_transition(current):
+    current = research_unlock_benchmark_before(current)
     assert current.count(BENCHMARK_HELPER) == 1, 'Exact reviewed null-only assertion sequence required'
     assert current.count(BENCHMARK_NEW) == 1 and current.count(BENCHMARK_NOTE) == 1
     restored = current.replace(BENCHMARK_HELPER, '', 1).replace(BENCHMARK_NEW, BENCHMARK_OLD, 1).replace(BENCHMARK_NOTE, '', 1)
@@ -228,7 +250,7 @@ class RecycleDisplayContractTests(unittest.TestCase):
         self.assertIn('==original_panel_html)', source)
 
     def test_benchmark_fixed_null_model_assertions_and_all_prior_comparisons_are_retained(self):
-        source = (ROOT/BENCHMARK).read_text()
+        source = (ROOT/BENCHMARK).read_bytes().decode('utf-8')
         assert_exact_benchmark_transition(source)
         # These are exact source mutations, not claims of JavaScript execution.
         for old, new in [('assert.equal(draft.mission, "transport"', 'assert.notEqual(draft.mission, "recycle"'),
@@ -241,6 +263,77 @@ class RecycleDisplayContractTests(unittest.TestCase):
         self.assertIn('const request = deepFreeze({ mission: "transport"', source)
         self.assertIn('assert.deepEqual({ ...historicalSpace(currentFullSpace,"full")', source)
         self.assertIn('normalizedOriginalSpace[key], `space split ${key}`)', source)
+
+
+class ResearchBenchmarkSourceTransitionTests(unittest.TestCase):
+    def source(self):
+        return (ROOT/BENCHMARK).read_bytes().decode('utf-8')
+
+    def test_exact_new_script_reads_complete_493_then_continues_original_recycle_and_baseline_checks(self):
+        source = self.source()
+        with patch.object(subprocess, 'check_output', wraps=subprocess.check_output) as read:
+            before = research_unlock_benchmark_before(source)
+            self.assertEqual(digest(before), RESEARCH_BENCHMARK_BEFORE_SHA)
+            read.assert_called_once_with(['git', '--no-replace-objects', '-C', str(ROOT),
+                                          'show', RESEARCH_BENCHMARK_BASE+':'+BENCHMARK])
+        with patch.object(subprocess, 'check_output', wraps=subprocess.check_output) as read:
+            assert_exact_benchmark_transition(source)
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(read.call_args_list[-1].args[0][-1], BASE+':'+BENCHMARK)
+
+    def test_changed_research_proof_old_reader_or_any_other_model_timing_byte_is_refused(self):
+        source = self.source()
+        changes = [('assert.ok(sourceAudit.checks > 145', 'assert.ok(true'),
+                   ('copyManifest.previousManifests.length, 13', 'copyManifest.previousManifests.length, 0'),
+                   ('Object.keys(copyManifest.productionInventory).length, 210', 'Object.keys(copyManifest.productionInventory).length, 0'),
+                   ('assert.equal(sha256(current), copyRow.after.sha256', 'assert.notEqual(sha256(current), undefined'),
+                   ('"--verify-ui-baseline"', '"--skip-source-checks"'),
+                   ('"--no-replace-objects"', '"--replace-objects"'),
+                   ('load(beforeRoot, "src/ui/present.ts")', 'load(afterRoot, "src/ui/present.ts")'),
+                   ('() => beforePresent.present(state, input)', '() => afterPresent.present(state, input)'),
+                   ('const warmup = boundedInteger("--warmup", 5, 1, 100);', 'const warmup = 0;'),
+                   ('assert.equal(view.recyclePreview, null', 'assert.notEqual(view.recyclePreview, undefined')]
+        for old, new in changes:
+            self.assertIn(old, source)
+            with self.subTest(old=old), self.assertRaises(AssertionError):
+                assert_exact_benchmark_transition(source.replace(old, new, 1))
+        for changed in (source+'\n', source.replace('\n', '\r\n'), source[:-1]):
+            with self.subTest(kind='whole-byte-drift'), self.assertRaises(AssertionError):
+                assert_exact_benchmark_transition(changed)
+
+    def test_old_or_changed_historical_source_is_never_a_fallback(self):
+        source = self.source()
+        before = research_unlock_benchmark_before(source)
+        with self.assertRaises(AssertionError): assert_exact_benchmark_transition(before)
+        for changed in ('', before+'\n', before.replace('\n', '\r\n'), source):
+            with patch.object(subprocess, 'check_output', return_value=changed.encode('utf-8')):
+                with self.subTest(kind='historical-byte-drift'), self.assertRaises(AssertionError):
+                    assert_exact_benchmark_transition(source)
+
+    def test_unavailable_or_refused_historical_read_remains_a_failure(self):
+        source = self.source()
+        for failure in (subprocess.CalledProcessError(128, ['git', 'show']), PermissionError('Historical read refused')):
+            with patch.object(subprocess, 'check_output', side_effect=failure):
+                with self.subTest(failure=type(failure).__name__), self.assertRaises(type(failure)):
+                    assert_exact_benchmark_transition(source)
+
+    def test_repinned_new_or_old_whole_file_still_fails_the_independent_exact_patch(self):
+        source = self.source()
+        altered = source+'\n'
+        with patch.dict(globals(), {'RESEARCH_BENCHMARK_AFTER_SHA': digest(altered)}):
+            with self.assertRaisesRegex(AssertionError, 'Exact full research source-proof patch required'):
+                assert_exact_benchmark_transition(altered)
+        before = research_unlock_benchmark_before(source)+'\n'
+        with patch.dict(globals(), {'RESEARCH_BENCHMARK_BEFORE_SHA': digest(before)}):
+            with patch.object(subprocess, 'check_output', return_value=before.encode('utf-8')):
+                with self.assertRaisesRegex(AssertionError, 'Exact full research source-proof patch required'):
+                    assert_exact_benchmark_transition(source)
+
+    def test_missing_or_unapproved_full_diff_cannot_project_even_exact_whole_files(self):
+        for altered in ([], ['unapproved complete patch\n']):
+            with patch.object(difflib, 'unified_diff', return_value=iter(altered)):
+                with self.assertRaisesRegex(AssertionError, 'Exact full research source-proof patch required'):
+                    assert_exact_benchmark_transition(self.source())
 
 
 if __name__ == '__main__':
