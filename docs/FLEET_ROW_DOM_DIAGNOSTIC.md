@@ -111,3 +111,17 @@ No original native timing context, measurement window, result or comparison is
 changed or rerun by this diagnostic. Passing these finite cases is not a proof
 for arbitrary reentrant custom-element DOM mutation. Local Python contract tests
 are not a native-browser pass; the new CI artifact is the browser evidence.
+
+## Fixture-loader correction after the first CI attempt
+
+Run 38338811456 at diagnostic driver
+`845cfba6ffc02a6ef477388cc760ba3793c3b3c7` passed both builds and all 4,616 target
+unit tests, then failed before browser execution. The old fixture factory used
+bare `--import tsx` from the diagnostic checkout, which intentionally has no
+installed node_modules. Node resolves that loader from its current directory.
+The corrected command starts in the installed baseline worktree while still
+executing the exact old factory path and writing the same original fixture.
+The adapter already starts there; the later strict-reader process already uses
+the installed target worktree as its cwd. A static regression test checks all
+three loader calls. The original failed run remains failed evidence; no browser
+assertion, timeout, source boundary or original performance result is changed.

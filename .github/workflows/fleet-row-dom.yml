@@ -63,7 +63,8 @@ jobs:
           tar -cf "$EVIDENCE/baseline-dist.tar" -C "$RUNNER_TEMP/fleet-dom-baseline/dist" .
           echo 'c9411d7c952c217feb5c796d8c0653877ae650caa67fdc17941cfa2ce6c92e6f  '"$RUNNER_TEMP/fleet-dom-baseline/dist/release.json" | sha256sum -c -
           ln -s "$RUNNER_TEMP/fleet-dom-baseline/node_modules" "$RUNNER_TEMP/fleet-dom-fixture/node_modules"
-          node --import tsx "$RUNNER_TEMP/fleet-dom-fixture/scripts/performance-fixture.ts" > "$EVIDENCE/r8-combined.json"
+          # Bare --import tsx resolves from cwd, which must own installed deps.
+          (cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx "$RUNNER_TEMP/fleet-dom-fixture/scripts/performance-fixture.ts") > "$EVIDENCE/r8-combined.json"
           (cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx scripts/prepare-r9-performance.mjs --r8-source "$RUNNER_TEMP/fleet-dom-fixture" --fixture "$GITHUB_WORKSPACE/$EVIDENCE/r8-combined.json") > "$EVIDENCE/combined-fixture.json"
           echo '51175269239ac45ac76b1ea8fc1f1bb3d6e9f42da58709b9ecdf6a171e680a98  '"$EVIDENCE/combined-fixture.json" | sha256sum -c -
           (node --version; npm --version; python --version; git --version; uname -a) > "$EVIDENCE/build-environment.txt"

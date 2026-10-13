@@ -1,4 +1,5 @@
 """Stdlib-only diagnostic contracts; never claims actual native browser coverage."""
+import ast
 import copy
 import importlib.util
 import json
@@ -186,6 +187,23 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertIn("all(after[p]==entry for p,entry in before.items())",source)
         self.assertIn('C.verify_sources(args.baseline,args.target,TARGET)',source)
         self.assertIn('C.STRICT_READERS',source)
+
+    def test_every_tsx_loader_starts_in_an_installed_worktree(self):
+        workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()
+        commands=[line.strip() for line in workflow.splitlines() if 'node --import tsx' in line]
+        self.assertEqual(len(commands),2)
+        for command in commands:
+            self.assertTrue(command.startswith('(cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx '),command)
+        self.assertIn('(cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx "$RUNNER_TEMP/fleet-dom-fixture/scripts/performance-fixture.ts") > "$EVIDENCE/r8-combined.json"',commands)
+        self.assertIn('ln -s "$RUNNER_TEMP/fleet-dom-baseline/node_modules" "$RUNNER_TEMP/fleet-dom-fixture/node_modules"',workflow)
+        tree=ast.parse(Path(D.__file__).read_text())
+        saves=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='saves')
+        calls=[node for node in ast.walk(saves) if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
+               and isinstance(node.func.value,ast.Name) and node.func.value.id=='subprocess' and node.func.attr=='run']
+        self.assertEqual(len(calls),1)
+        self.assertEqual([ast.literal_eval(arg) for arg in calls[0].args[0].elts[:3]],['node','--import','tsx'])
+        cwd=next(keyword.value for keyword in calls[0].keywords if keyword.arg=='cwd')
+        self.assertEqual(ast.unparse(cwd),'args.target')
 
     def test_branch_only_workflow_and_separate_exact_worktrees(self):
         workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()
