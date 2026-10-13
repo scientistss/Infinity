@@ -1,0 +1,121 @@
+name: Fleet row real DOM independent diagnostic
+on:
+  push:
+    branches: ['codex/infinity-fleet-row-dom-20261013']
+permissions:
+  contents: read
+jobs:
+  real-dom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 5359676473c3b55e09acce33487ffd5f3ce8925a
+      BASELINE_SHA: 7ab569045996a1a6ad8ce1aee477092144dfad74
+      FIXTURE_SOURCE_SHA: 4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_NO_REPLACE_OBJECTS: '1'
+      EVIDENCE: fleet-row-dom-evidence
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Frozen target source proof and independent builds
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          git worktree add --detach "$RUNNER_TEMP/fleet-dom-target" "$TARGET_SHA"
+          git worktree add --detach "$RUNNER_TEMP/fleet-dom-baseline" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/fleet-dom-fixture" "$FIXTURE_SOURCE_SHA"
+          git archive "$GITHUB_SHA" > "$EVIDENCE/diagnostic-driver-source.tar"
+          git archive "$TARGET_SHA" > "$EVIDENCE/target-source.tar"
+          git archive "$BASELINE_SHA" > "$EVIDENCE/baseline-source.tar"
+          git archive "$FIXTURE_SOURCE_SHA" > "$EVIDENCE/fixture-source.tar"
+          git diff --exit-code "$TARGET_SHA" HEAD -- src public package.json package-lock.json index.html tsconfig.json vite.config.ts
+          python scripts/browser-fleet-row-dom.py source --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --target "$RUNNER_TEMP/fleet-dom-target" --output "$EVIDENCE"
+          # The original checker inspects the original 535 checkout, including its
+          # frozen 612-file inventory. No diagnostic additions are admitted there.
+          python "$RUNNER_TEMP/fleet-dom-target/scripts/check-fleet-row-experiment.py" source --baseline "$RUNNER_TEMP/fleet-dom-baseline" --candidate "$RUNNER_TEMP/fleet-dom-target" --candidate-sha "$TARGET_SHA" --output "$EVIDENCE"
+          python scripts/test_fleet_row_dom.py 2>&1 | tee "$EVIDENCE/dom-contract-tests.log"
+          (
+            cd "$RUNNER_TEMP/fleet-dom-target"
+            npm ci
+            npm test -- --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/$EVIDENCE/target-unit-results.json"
+            # Exact source adoption above authorizes this prototype-only build.
+            # The unchanged cumulative release seal is not weakened or bypassed
+            # in an ordinary build, and this is not a formal release gate.
+            node scripts/check-ring-art.mjs
+            node node_modules/typescript/bin/tsc --noEmit
+            node node_modules/vite/bin/vite.js build
+            GITHUB_SHA="$TARGET_SHA" node scripts/write-release.mjs
+          ) 2>&1 | tee "$EVIDENCE/target-prototype-build.log"
+          (
+            cd "$RUNNER_TEMP/fleet-dom-baseline"
+            npm ci
+            GITHUB_SHA="$BASELINE_SHA" npm run build
+          ) 2>&1 | tee "$EVIDENCE/baseline-build.log"
+          tar -cf "$EVIDENCE/target-dist.tar" -C "$RUNNER_TEMP/fleet-dom-target/dist" .
+          tar -cf "$EVIDENCE/baseline-dist.tar" -C "$RUNNER_TEMP/fleet-dom-baseline/dist" .
+          echo 'c9411d7c952c217feb5c796d8c0653877ae650caa67fdc17941cfa2ce6c92e6f  '"$RUNNER_TEMP/fleet-dom-baseline/dist/release.json" | sha256sum -c -
+          ln -s "$RUNNER_TEMP/fleet-dom-baseline/node_modules" "$RUNNER_TEMP/fleet-dom-fixture/node_modules"
+          node --import tsx "$RUNNER_TEMP/fleet-dom-fixture/scripts/performance-fixture.ts" > "$EVIDENCE/r8-combined.json"
+          (cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx scripts/prepare-r9-performance.mjs --r8-source "$RUNNER_TEMP/fleet-dom-fixture" --fixture "$GITHUB_WORKSPACE/$EVIDENCE/r8-combined.json") > "$EVIDENCE/combined-fixture.json"
+          echo '51175269239ac45ac76b1ea8fc1f1bb3d6e9f42da58709b9ecdf6a171e680a98  '"$EVIDENCE/combined-fixture.json" | sha256sum -c -
+          (node --version; npm --version; python --version; git --version; uname -a) > "$EVIDENCE/build-environment.txt"
+      - name: Official Chrome and pinned Playwright prerequisites
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          bash scripts/browser-prerequisites.sh 2>&1 | tee "$EVIDENCE/browser-prerequisites.log"
+      - name: Eight bounded real DOM scenario pairs
+        id: browser
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fleet-dom-http-baseline" "$RUNNER_TEMP/fleet-dom-http-target"
+          ln -s "$RUNNER_TEMP/fleet-dom-baseline/dist" "$RUNNER_TEMP/fleet-dom-http-baseline/Infinity"
+          ln -s "$RUNNER_TEMP/fleet-dom-target/dist" "$RUNNER_TEMP/fleet-dom-http-target/Infinity"
+          pids=()
+          cleanup() {
+            for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+            for attempt in $(seq 1 10); do
+              alive=0
+              for pid in "${pids[@]}"; do if kill -0 "$pid" 2>/dev/null; then alive=1; fi; done
+              if [ "$alive" = 0 ]; then break; fi
+              sleep 0.1
+            done
+            for pid in "${pids[@]}"; do kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
+          }
+          trap cleanup EXIT
+          python -m http.server 4176 --bind 127.0.0.1 --directory "$RUNNER_TEMP/fleet-dom-http-baseline" > "$EVIDENCE/baseline-http.log" 2>&1 & pids+=("$!")
+          python -m http.server 4173 --bind 127.0.0.1 --directory "$RUNNER_TEMP/fleet-dom-http-target" > "$EVIDENCE/target-http.log" 2>&1 & pids+=("$!")
+          for port in 4176 4173; do
+            for attempt in $(seq 1 10); do
+              if curl -fsS "http://127.0.0.1:$port/Infinity/release.json" > /dev/null; then break; fi
+              sleep 1
+            done
+            curl -fsS "http://127.0.0.1:$port/Infinity/release.json" > "$EVIDENCE/http-release-$port.json"
+          done
+          timeout --signal=TERM --kill-after=5s 160s python scripts/browser-fleet-row-dom.py browser \
+            --driver-sha "$GITHUB_SHA" --baseline-dist "$RUNNER_TEMP/fleet-dom-baseline/dist" --candidate-dist "$RUNNER_TEMP/fleet-dom-target/dist" \
+            --combined-fixture "$EVIDENCE/combined-fixture.json" --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
+            --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/browser.log"
+      - name: Both original strict readers and full exports after owned cleanup
+        if: always() && steps.browser.outcome != 'skipped'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python scripts/browser-fleet-row-dom.py saves --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
+            --combined-fixture "$EVIDENCE/combined-fixture.json" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/strict-saves.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-row-real-dom-${{ github.sha }}
+          path: fleet-row-dom-evidence
+          retention-days: 7
+          if-no-files-found: error
