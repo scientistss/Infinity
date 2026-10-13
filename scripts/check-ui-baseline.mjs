@@ -52,7 +52,7 @@ const expected = {
 // The original baseline map above is immutable. The two changed UI files are
 // explicitly adopted through the complete original-to-building-batch cumulative source seal; no asset or
 // directory is exempted and neither changed file is called original-byte-identical.
-const BUILDING_BATCH_MANIFEST_SHA256 = "d05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1";
+const BUILDING_BATCH_MANIFEST_SHA256 = "218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece";
 const manifestPath = "tests/fixtures/building-batch-provenance.json";
 const deltaPaths = ["src/style.css", "src/ui/view.ts"];
 const hash = value => createHash("sha256").update(value).digest("hex");

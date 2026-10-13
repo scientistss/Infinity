@@ -175,7 +175,7 @@ const buildingBatchSourceProof = (() => {
   const manifestPath = "tests/fixtures/building-batch-provenance.json";
   const raw = readFileSync(resolve(afterRoot, manifestPath));
   const manifestSha256 = sha256(raw);
-  assert.equal(manifestSha256, "d05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1", "exact independently frozen building-batch source seal");
+  assert.equal(manifestSha256, "218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece", "exact independently frozen building-batch source seal");
   const manifest = JSON.parse(raw);
   const sourceAudit = JSON.parse(execFileSync("python3",
     ["-B", "scripts/test_building_batch_provenance.py", "--verify-ui-baseline"], { cwd: afterRoot, encoding: "utf8" }));

@@ -48,3 +48,23 @@ all eight jobs at the same source/build/runtime identity.
 
 See [the bounded contract and evidence design](BUILDING_BATCH_SPEC.md). No
 native browser or full CI success is claimed by this source checkpoint.
+
+## First native run and activation repair
+
+Exact candidate `56c16a1c73e24347919141c2b789655ae59e82cb`, run
+`38478207514`, failed its new batch browser job `115574074659` after 141
+successful identity/initial-state checks. The first real checkbox activation
+was cleared by an over-eager delegated click authorization before the browser's
+input/change events. No batch registration or payment had been verified yet.
+The immutable failed artifact is `11856226056`, ZIP SHA-256
+`36a0a86437f24f0fafb9c4bb9c8ef7fb6ac7ffae425cf04dcb032c8765a809fd`.
+
+Three new event-order regressions fail on that original implementation. The
+minimal non-action-button early return passes all 15 panel tests; actual action
+buttons retain complete authorization and silent-draft checks. Failure capture
+now runs before Playwright teardown, with independent diagnostic attempts;
+11 focused Python contracts preserve all 25 scenario bodies and budgets.
+The resealed production inventory retains all 215 entries and fourteen prior
+seals; 193 source checks and 15 synthetic provenance tests passed locally.
+This repair still requires a new exact-SHA full native CI run. The original
+failed run is not reclassified as successful.

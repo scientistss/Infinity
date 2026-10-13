@@ -15,7 +15,7 @@ const prove = new Function("assert", "readFileSync", "resolve", "sha256", "execF
 const manifestPath = "tests/fixtures/building-batch-provenance.json";
 const manifestRaw = readFileSync(resolve(root, manifestPath), "utf8") as string;
 const hash = (raw: string) => createHash("sha256").update(raw).digest("hex");
-const manifestSha256 = "d05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1";
+const manifestSha256 = "218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece";
 const paths = ["src/game/building-template-batch-state.ts", "src/game/building-template-batch.ts", "src/main.ts",
   "src/ui/building-template-batch-panel.ts", "src/ui/building-template-batch-present.ts", "src/ui/building-template-batch.css", "src/ui/space-panel.ts"];
 const baseline = "6f73735534ffc1b0e47a01935d8c6e3ff786c989";

@@ -309,8 +309,11 @@ export function installBuildingTemplateBatchPanel(root: HTMLElement, onAction: (
     refreshAuthority(); syncDisabled();
   }
   function authorized(node: HTMLButtonElement | null): ActionName | null {
+    // Checkbox pre-activation toggles checked before its input/change events.
+    // Ignore non-action clicks until those events update the explicit selection.
+    if (!node) return null;
     refreshAuthority();
-    if (!node || !ready || !mountedNow() || !visible(true) || node.disabled || !node.isConnected || !panel.contains(node)) return null;
+    if (!ready || !mountedNow() || !visible(true) || node.disabled || !node.isConnected || !panel.contains(node)) return null;
     const registration = registrations.get(node);
     return registration && registration.generation === generation && controls.get(registration.action) === node && node.dataset.buildingTemplateBatchAction === registration.action ? registration.action : null;
   }

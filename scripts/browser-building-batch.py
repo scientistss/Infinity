@@ -6,6 +6,7 @@ inputs. Logical Date/performance/RAF time is controlled; no real-time claim.
 Explicit DOM/storage attacks and 3/4-planet synthetic boundaries stay labeled.
 """
 import argparse
+from contextlib import contextmanager
 import copy
 import hashlib
 import importlib.util
@@ -330,8 +331,38 @@ def worker(args):
     def finish(context, page):
         seal_event_scope(page)
         current['completed'] = True; flush(); context.close()
+    def capture_failure(error, capture_page=True):
+        # The outer fallback may see the same exception after Playwright stops.
+        if 'failure' in report:
+            return
+        report['completed'] = False; report['result'] = 'failed'
+        failure = report['failure'] = {'error': repr(error), 'traceback': traceback.format_exc(), 'scenario': current['id'] if current else 'binding'}
+        def attempt(step, capture):
+            try:
+                capture()
+            except BaseException as capture_error:
+                failure.setdefault('captureErrors', []).append({'step': step, 'error': repr(capture_error)})
+        attempt('original failure report', flush)
+        if capture_page and active_page is not None:
+            # Keep independent evidence available even when one capture fails.
+            attempt('DOM', lambda: dump('failure-dom.html', active_page.content()))
+            attempt('storage', lambda: dump('failure-storage.json', raw(active_page) or 'null'))
+            attempt('events', lambda: dump('failure-events.json', json.dumps(active_page.evaluate('window.__batchWitness'), ensure_ascii=False, indent=2)))
+            attempt('screenshot', lambda: active_page.screenshot(path=str(out / 'failure.png'), full_page=True, caret='initial'))
+        attempt('final failure report', flush)
+    @contextmanager
+    def retain_before_teardown():
+        try:
+            yield
+        except BaseException as error:
+            try:
+                capture_failure(error)
+            except BaseException:
+                # Even an unexpected diagnostic failure must not mask the test.
+                pass
+            raise
     try:
-        with sync_playwright() as playwright:
+        with sync_playwright() as playwright, retain_before_teardown():
             browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True,
                                                   args=['--no-sandbox', args.owner_marker])
             report['browserVersion'] = browser.version
@@ -537,15 +568,14 @@ def worker(args):
             check('no application exceptions', not report['errors'], report['errors'])
             report['completed'] = True; report['result'] = 'passed'; flush(); browser.close()
     except BaseException as error:
-        report['failure'] = {'error': repr(error), 'traceback': traceback.format_exc(), 'scenario': current['id'] if current else 'binding'}
-        if active_page:
+        if 'failure' not in report:
             try:
-                dump('failure-dom.html', active_page.content())
-                dump('failure-storage.json', raw(active_page) or 'null')
-                active_page.screenshot(path=str(out / 'failure.png'), full_page=True, caret='initial')
-            except BaseException as capture_error:
-                report['failure']['captureError'] = repr(capture_error)
-        flush(); raise
+                # Startup/teardown errors can be recorded, but no page API is
+                # usable here. Live failures must never be captured again.
+                capture_failure(error, capture_page=False)
+            except BaseException:
+                pass
+        raise
     return 0
 
 

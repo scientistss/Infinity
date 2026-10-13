@@ -24,7 +24,7 @@ from test_lab_blockers_provenance import ObjectDatabase
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = '6f73735534ffc1b0e47a01935d8c6e3ff786c989'
 MANIFEST = 'tests/fixtures/building-batch-provenance.json'
-MANIFEST_SHA256 = 'd05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1'
+MANIFEST_SHA256 = '218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece'
 RESEARCH_MANIFEST_SHA256 = 'ee3d929da35f41aef0aad587a11ab6acba0726abde44f0de5f753a74c4cb6999'
 SCHEMA = 'infinity-ring-protection-building-batch-provenance-v1'
 CONTRACT = 'exact-declared-building-batch-source-delta'
@@ -83,10 +83,10 @@ APPROVED_ROWS = [{'path': 'src/game/building-template-batch-state.ts',
              'sha256': '8f4063772bf75e8d582690d3efdbc52b3ac80e443d3beaabdcf704a63f4fccbc'}]},
  {'path': 'src/ui/building-template-batch-panel.ts',
   'before': None,
-  'after': {'mode': '100644', 'sha256': '49bfac6b21dfb7c82f576d3d694d036c5f3ea520771395c029c64aac9300abdf'},
-  'patchSha256': '9f997d7e87845768fd857c8d8a7932f9462ca55ed311b7e5ac5a123f4b3e32fb',
-  'hunks': [{'header': '@@ -0,0 +1,386 @@',
-             'sha256': '66bcf70c0a350f3a7e36dd282f26977717a8934af8a2241a59b048189baf7885'}]},
+  'after': {'mode': '100644', 'sha256': 'c84a8929d18771023e70da7629565d422ae6e9ed94b0373efb9e5231c3b420f6'},
+  'patchSha256': 'a8ca262438ab8145b80205fdb9505bbfea7308857bba0f7b7f61ea8bc87e241b',
+  'hunks': [{'header': '@@ -0,0 +1,389 @@',
+             'sha256': 'f840c8532168bb2f9a1dd034efcc2eb662af4cc3378e419e4ee5d6454e344d4d'}]},
  {'path': 'src/ui/building-template-batch-present.ts',
   'before': None,
   'after': {'mode': '100644', 'sha256': '144258b64e9116ea6cd33053f6d7fe6ff28c235b4eef02984a97491d5e86d942'},
