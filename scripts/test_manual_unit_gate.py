@@ -225,7 +225,9 @@ def assert_split_gate(workflow,baseline):
 
 def previous_six_workflow(workflow=None):
     """Audit every actual seven-job byte before exposing the frozen six-job contract."""
-    if workflow is None: workflow=(ROOT/WORKFLOW_PATH).read_bytes().decode()
+    if workflow is None:
+        from test_recycle_preview_gate import previous_workflow as successor_workflow
+        workflow = successor_workflow()
     baseline=six_workflow()
     assert_split_gate(workflow,baseline)
     assert_release_transitions()
@@ -281,7 +283,8 @@ def assert_release_transitions():
     for path, count in RELEASE_FILES.items():
         before = baseline_bytes(path)
         assert before.count(OLD_VERSION.encode()) == count, path
-        assert (ROOT / path).read_bytes() == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('exact release transition', path)
+        from test_recycle_preview_gate import previous_release_bytes as successor_release_bytes
+        assert successor_release_bytes(path) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('exact release transition', path)
     for path in DIAGNOSTIC_FILES:
         expected = subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{DIAGNOSTIC_SHA}:{path}'])
         assert (ROOT / path).read_bytes() == expected, ('immutable diagnostic ancestor', path)
@@ -445,7 +448,8 @@ class ManualUnitGateTests(unittest.TestCase):
 class SplitManualGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow=(ROOT/WORKFLOW_PATH).read_text()
+        from test_recycle_preview_gate import previous_workflow as successor_workflow
+        cls.workflow=successor_workflow()
         cls.baseline=six_workflow()
         cls.current,cls.original=jobs(cls.workflow),jobs(cls.baseline)
     def reject(self,before,after,job):

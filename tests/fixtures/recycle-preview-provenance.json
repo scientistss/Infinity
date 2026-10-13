@@ -1,0 +1,325 @@
+{
+  "schema": "infinity-ring-protection-recycle-preview-provenance-v1",
+  "historicalBaselineSha": "7f17a121ff35822a85d6889a9823f76bccbff227",
+  "previousAdoptionSourceSha": "6b985b88ec6b263a3eeb8f34252525383a9f110f",
+  "previousManifests": [
+    {
+      "path": "tests/fixtures/ring-protection-domain-provenance.json",
+      "sha256": "f819e5ffa0cca5769b471e4dd2f500f6ba6db0421e349cc9221e1207fd63601c"
+    },
+    {
+      "path": "tests/fixtures/research-network-domain-provenance.json",
+      "sha256": "2fc844f498d43d9f72155943f6f9204f1a26452d4df86da4859320e4df882cb1"
+    },
+    {
+      "path": "tests/fixtures/demolition-domain-provenance.json",
+      "sha256": "cd90198c4466c1f04e603aad4cb4654b06c98945b9a95b74e0eb7bb26963e529"
+    },
+    {
+      "path": "tests/fixtures/npc-domain-provenance.json",
+      "sha256": "f611b33ea5cc9e1bbb102e998bbe6515e3821224fd377aac790903328f744c26"
+    },
+    {
+      "path": "tests/fixtures/npc-attack-domain-provenance.json",
+      "sha256": "66ad64744a04d756f3d3c97812b1d800de18421b1af76dea6fabf63841b14918"
+    },
+    {
+      "path": "tests/fixtures/npc-report-ui-provenance.json",
+      "sha256": "6a995501e1136fbf6d1205fa3021851e5c0668c4a55dd5612fc5a7fd08e96fd7"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-rehearsal-provenance.json",
+      "sha256": "5f96bf28b60872cee956b05f893bbfbd2972ae866717281b31f8f7ca84c7e05a"
+    },
+    {
+      "path": "tests/fixtures/npc-scout-comparison-provenance.json",
+      "sha256": "0c83edfe531e27d08936a89fbb7477f41c3e4985bfc33854424b118711699f00"
+    },
+    {
+      "path": "tests/fixtures/npc-rehearsal-formation-copy-provenance.json",
+      "sha256": "2143af16367f93160ef9250c18de2e87bb2791f4665159bd3d8f43d8ab9fdb39"
+    },
+    {
+      "path": "tests/fixtures/lab-blockers-provenance.json",
+      "sha256": "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8"
+    },
+    {
+      "path": "tests/fixtures/manual-unit-provenance.json",
+      "sha256": "0b48b25de339ee749b43d881e41c4da85df64798a978989000efde831ed3650b"
+    }
+  ],
+  "referenceStatus": "Exact recycle-preview source adoption atop recursively verified public 6b manual-unit source. Source provenance is not native, CI, functional-equivalence or release acceptance.",
+  "scope": "Every src/public path and mode, full before/after byte hashes, complete deterministic patches and every hunk are bound. All eleven earlier seals, original art and previously sealed view.ts remain unchanged.",
+  "approvedDelta": "Read-only recycle preview and exact two-file extraction of existing settlement arithmetic. No other game, core, data, automation, save schema, combat, economy, dispatch, public asset or manual-unit behavior change is authorized.",
+  "productionPaths": [
+    "src",
+    "public"
+  ],
+  "domainPaths": [
+    "src/game",
+    "src/core",
+    "src/data",
+    "src/automation"
+  ],
+  "originalRingCriticalPaths": [
+    "src/core",
+    "src/automation",
+    "src/game/arcade.ts",
+    "src/data/arcade.ts",
+    "src/data/protocol-cards.ts",
+    "src/data/ring-art.json",
+    "src/ui/arcade-panel.ts",
+    "src/ui/arcade-present.ts",
+    "src/ui/ring-auto-model.ts",
+    "src/ui/ring-model.ts"
+  ],
+  "exactDomainDeltaPaths": [
+    "src/game/deep-space.ts",
+    "src/game/recycle-amounts.ts"
+  ],
+  "exactRingCriticalDeltaPaths": [],
+  "unchangedPresentationPaths": [
+    "src/core",
+    "src/data",
+    "src/automation",
+    "public",
+    "src/main.ts",
+    "src/space.css",
+    "src/ui/view.ts",
+    "src/ui/manual-unit-controls.ts",
+    "src/ui/manual-unit-quote.ts",
+    "src/ui/shipyard-panel.ts"
+  ],
+  "arithmeticExtraction": {
+    "sourceSha": "cafcdfdd140f4bcbf17e589e99f83f2d761f9e49",
+    "exactPaths": [
+      "src/game/deep-space.ts",
+      "src/game/recycle-amounts.ts"
+    ],
+    "verificationScope": "Exact source identity only. Independent full-state old-oracle equivalence tests and every required functional/native gate remain mandatory."
+  },
+  "originalUiBaseline": {
+    "baseline": "69eca71",
+    "expected": {
+      "src/style.css": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad",
+      "src/ui/view.ts": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+    },
+    "exactDeltaPaths": [
+      "src/style.css",
+      "src/ui/view.ts"
+    ],
+    "changedPaths": [
+      {
+        "path": "src/style.css",
+        "before": {
+          "mode": "100644",
+          "sha256": "2dd00ffca8073312192902e411fec5458b1fce8f8b22e57cde960ff07ca624ad"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "251d2d11215acdbfcc49767cd35b8f9378b8aa08c0192aca7a058d40fcf9853a"
+        },
+        "patchSha256": "67349b41ea8b14a34c911efdd29ea1e0d24fb6000d6ccde0d2235717c0369d51",
+        "hunks": [
+          {
+            "header": "@@ -647,6 +647,14 @@ textarea {",
+            "sha256": "813c5680415acd26e0c5b0c783d6524905a9a31f4bf5329894aed05c5641ccad"
+          },
+          {
+            "header": "@@ -812,6 +820,13 @@ textarea {",
+            "sha256": "07db6d03cbc39ac483d2bccd57c4f92b24378779a84447d38df8ff2bcd117d52"
+          },
+          {
+            "header": "@@ -821,4 +836,6 @@ textarea {",
+            "sha256": "f485e54d66b94a399a49f221ed2c54239e62691bbb2b698a85745460de04f836"
+          }
+        ]
+      },
+      {
+        "path": "src/ui/view.ts",
+        "before": {
+          "mode": "100644",
+          "sha256": "4203f3389eada4439e90ee44f852f9b34e09fb95a3c4ba708cfc8388d7a81264"
+        },
+        "after": {
+          "mode": "100644",
+          "sha256": "23c4ca1ec796cafa6dba3a910261b302b4cd215138c298d3b02c43348ce534ee"
+        },
+        "patchSha256": "3c7b747006d9a0c5bc90b176f3e561c499990423a7bbc6ce306acf30b1f60401",
+        "hunks": [
+          {
+            "header": "@@ -23,8 +23,8 @@ import type { ResourceId } from \"../game/types\";",
+            "sha256": "f02691a7b0d2d848bf156ba301364cc4464acc96c21e84372d89f86f9abcc75a"
+          },
+          {
+            "header": "@@ -32,7 +32,6 @@ export type UiAction =",
+            "sha256": "33da7b9ca2bad1975a924d282e5fb73a68b4899e2f652e0bc7b2e28f83ae39c8"
+          },
+          {
+            "header": "@@ -145,11 +144,6 @@ export function mountView(root: HTMLElement, onAction: (action: UiAction) => voi",
+            "sha256": "70a121ae3575b953e2bae039197614048fc7d35c29028a7e076014a98bf97200"
+          },
+          {
+            "header": "@@ -478,6 +472,7 @@ function updateResearch(root: HTMLElement, model: ViewModel): void {",
+            "sha256": "81d9fccdd32bee1ef4de481036af6617ba2da7670ee52b2c3f496f03ebfc7ba2"
+          },
+          {
+            "header": "@@ -977,6 +972,7 @@ function shellMarkup(): string {",
+            "sha256": "332c17a028d3efbcba18280d0ca021632764c76b06de5ef4847609d9a47fc5d8"
+          }
+        ]
+      }
+    ]
+  },
+  "changedPaths": [
+    {
+      "path": "src/game/deep-space.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "8e95434ec4d4b7b41a26a15d00a4bc30b04cfc64795c0cdfbffea94438605243"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "666f44b86f495411286e92fb650997a1f747d2cf2d1e99350777ca96da966689"
+      },
+      "patchSha256": "0a35f138c17a09cae9395d27aede638097885780c6ed3c4a2af95fe6011e89d7",
+      "hunks": [
+        {
+          "header": "@@ -13,6 +13,7 @@ import { RESOURCE_IDS, type GameState, type ResourceAmounts } from \"./types\";",
+          "sha256": "92c83867acfadecd1e41b524b66681151f800474c775bd92f1988160a442f6d9"
+        },
+        {
+          "header": "@@ -64,12 +65,7 @@ export function addDebris(state:GameState,target:Coordinates,metal:BigNumber,cry",
+          "sha256": "0e922c73e964bad35f0c0a3bf00ed0efee0175b489c8bddbe1b9fc227772afd0"
+        }
+      ]
+    },
+    {
+      "path": "src/game/recycle-amounts.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "d82ca844dc40b27e08c7d47a6f12620524aac6d4cee94e1a92f33f8aec3db823"
+      },
+      "patchSha256": "a41d6bb28ed96abb6ffb3afd74b961214d4bd7b731e83692d94e733e84fa49dd",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,35 @@",
+          "sha256": "4ee619570462a4c7d91d8b370f47a9eb4fff0b2e618ca2bd234e46760ff17c19"
+        }
+      ]
+    },
+    {
+      "path": "src/style.css",
+      "before": {
+        "mode": "100644",
+        "sha256": "09d3861314d9d10e062361afacefebb57cc6331c04663b0b3014f94c6dda2a13"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "251d2d11215acdbfcc49767cd35b8f9378b8aa08c0192aca7a058d40fcf9853a"
+      },
+      "patchSha256": "385365098fb3bb5cb02a8dc490c5bef05e35c9f853d0b3c5ad08fb7c67ed787b",
+      "hunks": [
+        {
+          "header": "@@ -652,6 +652,9 @@ textarea {",
+          "sha256": "9ccbb4065aef6d2322c05fd53c02997fec7dbe690eca09af8904fef389a95ac6"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/recycle-preview-model.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "86198a600cffee298c8ae6eeb2d366dddadc438560a862a99fa84714cd594060"
+      },
+      "patchSha256": "36ae4356d4e49dd2d0d6df27bc4deb9c8748579656192b931423ff20d6bec6c5",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,88 @@",
+          "sha256": "858b2194bd53262b39d0a55432c2b152748e6a1b843af2e5992b0d062932afb8"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/recycle-preview-panel.ts",
+      "before": null,
+      "after": {
+        "mode": "100644",
+        "sha256": "661358de16d28a3fdbda66dfc7052151dee3c1d5d64e0daa0110bca2e73a28e0"
+      },
+      "patchSha256": "bc156ab6f8b60f12764d5be8975e2e6e1d39205c832da0fde074ef4f72602d29",
+      "hunks": [
+        {
+          "header": "@@ -0,0 +1,95 @@",
+          "sha256": "00b62d981467e7c62d039bb3c6d75531edb407827c45139805db07f094d79528"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-panel.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "e4bf779ff98a4e84348626b8a66e85c4931828e6d37728439135fe8cbb1a4b1c"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "9e3b813bd7c8b0742482f40cb64e7ad2c2fc23aaee3f1170f8783067593f670b"
+      },
+      "patchSha256": "d1ea18dfc1c2feec5f494fc544f54ef06b391a45441c5844bfa638af33742503",
+      "hunks": [
+        {
+          "header": "@@ -27,6 +27,7 @@ import { activePlanet } from \"../game/empire\";",
+          "sha256": "657a1af4b778faa50cc91e0f947b3cd232114692b9f8b8f8458dc6db29fd6e46"
+        },
+        {
+          "header": "@@ -307,7 +308,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "6d6ab0a597df83d9a11170d9b651da6d271b9af798af49ce244bb2d92b608137"
+        },
+        {
+          "header": "@@ -337,6 +338,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "0013d4e4df931efb35430cb180708f8943ac4b5b6e3a73eca43b16550b96cf94"
+        },
+        {
+          "header": "@@ -345,18 +347,19 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "aac2ae66a2ff855777cabb9930d52d2b4031bd09105f0d8e04098f442d4e3779"
+        },
+        {
+          "header": "@@ -390,6 +393,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "be62ce2b981b5b8ee29f0f467e5d56c116f3a4877c8b7153e714bd8af151a8e9"
+        },
+        {
+          "header": "@@ -433,9 +437,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {",
+          "sha256": "140e42422384cf3714fd25188a3e61869d06cfa5c194e337285360f2d3112a04"
+        }
+      ]
+    },
+    {
+      "path": "src/ui/space-present.ts",
+      "before": {
+        "mode": "100644",
+        "sha256": "972fe84cf3951bfb36c6fa2b8401280060878debbb91d56492c779df9240a5cf"
+      },
+      "after": {
+        "mode": "100644",
+        "sha256": "7c15f3b18fc9f02b2b09354fa40f6a0cf95efbe200208ac3bad8710e4e7c5af0"
+      },
+      "patchSha256": "6bbfc4279d4d229324d7b6d973361d591f627ef9e20c8ef94933dbbeb18e0947",
+      "hunks": [
+        {
+          "header": "@@ -12,6 +12,7 @@ import { big } from \"../game/decimal\";",
+          "sha256": "b28ecee3baed89ca84ea9d53545a0b01c088311ed5b9e1182fe0f698786d15c1"
+        },
+        {
+          "header": "@@ -76,6 +77,7 @@ export function spaceFleetView(state:GameState,request:FleetRequest) {",
+          "sha256": "3d9b3cb66e34d4aeecb313598a5a4da7f14f812482a1539aee56db89fdcfc5a2"
+        },
+        {
+          "header": "@@ -109,6 +111,7 @@ export function spaceView(state:GameState,cursor:Coordinates,request:FleetReques",
+          "sha256": "1f9b13169caf0ac351ea0e5540673b604e3479762d7ee115a43ee776cfd88989"
+        }
+      ]
+    }
+  ]
+}

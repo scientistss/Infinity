@@ -27,6 +27,7 @@ import { activePlanet } from "../game/empire";
 import { formatDuration } from "../game/format";
 import { npcRemainderView, transportLoadView } from "./space-present";
 import { fillTransportCargo } from "./transport-load-model";
+import { installRecyclePreviewPanel, recyclePreviewHtml } from "./recycle-preview-panel";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
 import { RESOURCE_IDS, type GameState } from "../game/types";
 export type UiAction = OriginalAction | ManualUnitUiAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | FormationUiAction | DemolitionUiAction | {type:"send-fleet";request:FleetRequest;npcAuthority?:NpcActionAuthority} | {type:"recall-fleet";id:number;npcAuthority?:NpcActionAuthority} | {type:"npc-retry-dock";id:number;npcAuthority:NpcActionAuthority} | {type:"abandon-colony";id:string};
@@ -307,7 +308,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     <h3>3 · 装载货物</h3><div class="space-cargo">${[["metal","金属"],["crystal","晶体"],["deuterium","重氢"]].map(([id,label])=>`<label>${label}<input type="text" inputmode="decimal" id="cargo-${id}" value="0" aria-label="装载${label}" /></label>`).join("")}</div>
     <button type="button" data-space="attack-clear-cargo" hidden>清空货物草稿</button>
     <div id="transport-load-helper" hidden><div class="space-cargo">${[["metal","金属"],["crystal","晶体"],["deuterium","重氢"]].map(([id,label])=>`<button type="button" id="transport-fill-${id}" aria-label="${label}装至上限" disabled>装至上限</button>`).join("")}</div><p id="transport-load-summary" class="muted"></p><p id="transport-load-reason" class="muted" role="status"></p></div>
-    <p id="charge-risk-preview" class="muted"></p><p id="charge-capacity-preview" class="muted"></p><p id="space-quote" class="space-quote" aria-live="polite"></p><button type="button" id="space-send" data-space="send">派遣舰队</button><p class="space-status" role="status"></p>
+    ${recyclePreviewHtml()}<p id="charge-risk-preview" class="muted"></p><p id="charge-capacity-preview" class="muted"></p><p id="space-quote" class="space-quote" aria-live="polite"></p><button type="button" id="space-send" data-space="send">派遣舰队</button><p class="space-status" role="status"></p>
     <details><summary>燃料与殖民规则</summary><p class="muted">出发一次扣除舰船、货物和预付往返燃料；部署也预付往返，召回不退燃料。燃料占货舱。运输和部署仅限自己的星球。殖民成功消耗 1 艘殖民船，其余舰船返航；名额和坐标在出发时预留。充能结果在驻留结束时确定；货物和奖励返航后进入出发星球。</p></details></div></div>
     <h3 class="group-title">在途舰队</h3><div id="space-fleets" class="space-fleets"></div>
     <h3 class="group-title">帝国星球</h3><div id="space-planets"></div>
@@ -337,6 +338,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     if(id!=="messages")npcRehearsal.close();
     selected=id;for(const b of root.querySelectorAll<HTMLElement>("[data-tab]")){const active=b.dataset.tab===id;b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));}
     for(const p of root.querySelectorAll<HTMLElement>("[data-tab-panel]"))p.hidden=p.dataset.tabPanel!==id;
+    recyclePanel.syncVisibility();
   }
   function number(id:string):number{return Number(el<HTMLInputElement>(root,`#${id}`).value);}
   function request():FleetRequest {
@@ -345,18 +347,19 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     return {mission:el<HTMLSelectElement>(root,"#flight-mission").value as Mission,target:{galaxy:number("flight-galaxy"),system:number("flight-system"),position:number("flight-position")},ships,cargo,speedPercent:number("flight-speed"),holdSlots:number("charge-slots"),chargeWithBets:el<HTMLInputElement>(root,"#charge-bets").checked};
   }
   const transportLoad=installTransportLoadControls(root,request);
+  const recyclePanel=installRecyclePreviewPanel(root);
   const npcAttack=installNpcAttackControls(root,request,onAction);
   const npcBattle=installNpcBattlePanel(root);
   const npcRehearsal=installSpaceNpcRehearsal(root,current=>{
     filledFormation=null;put(root,"#formation-dispatch-source","");el(root,"#formation-dispatch-source").hidden=true;
     transportLoad.invalidate("已替换为空载攻击草稿。");transportLoad.observe(current,true,"");
-    choose("fleet");transportLoad.edited();npcAttack.edited(true);
+    choose("fleet");transportLoad.edited();recyclePanel.edited();npcAttack.edited(true);
   });
-  function target(key:string,mission:string){npcRehearsal.clearNotice();const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");transportLoad.edited();npcAttack.edited();}
+  function target(key:string,mission:string){npcRehearsal.clearNotice();const [g,s,p]=key.split(":");for(const [id,v]of [["galaxy",g],["system",s],["position",p]])el<HTMLInputElement>(root,`#flight-${id}`).value=v!;el<HTMLSelectElement>(root,"#flight-mission").value=mission;choose("fleet");transportLoad.edited();recyclePanel.edited();npcAttack.edited();}
   root.addEventListener("click",event=>{
     const b=event.target instanceof Element?event.target.closest<HTMLButtonElement>("button"):null;if(!b||b.disabled)return;
     if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}
-    if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();selected=null;return;}
+    if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}
     if(b.dataset.space){event.stopImmediatePropagation();const a=b.dataset.space;
       if(a==="prev"||a==="next"||a==="browse"||a==="home"){
         const g=number("browse-galaxy"),s=number("browse-system");
@@ -390,6 +393,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   }
   function updateSpaceFleet(model:SpaceFleetView){
     transportLoad.update();
+    recyclePanel.update(model.recyclePreview);
     el(root,"#charge-options").hidden=!model.isCharge;
     put(root,"#charge-risk-preview",model.chargePreview.risk);
     put(root,"#charge-capacity-preview",model.chargePreview.capacity);
@@ -433,9 +437,9 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
     }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean,protectionMessage:string){manualUnits.observe(state,writable,protectionMessage);updateLabBlockersProtection(root,writable,protectionMessage);demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);npcRehearsal.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
-    fillFormationShips(formation:FleetFormation){npcRehearsal.clearNotice();for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();npcAttack.edited();},
-    invalidateOrderAuthority(){manualUnits.invalidate();npcRehearsal.retire();demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    observeContexts(state:GameState,writable:boolean,protectionMessage:string){manualUnits.observe(state,writable,protectionMessage);updateLabBlockersProtection(root,writable,protectionMessage);demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);recyclePanel.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);npcRehearsal.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
+    fillFormationShips(formation:FleetFormation){npcRehearsal.clearNotice();for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();recyclePanel.edited();npcAttack.edited();},
+    invalidateOrderAuthority(){manualUnits.invalidate();npcRehearsal.retire();demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();recyclePanel.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     retireNpcRehearsal:npcRehearsal.retire,adoptNpcRehearsalWorld:npcRehearsal.adoptWorld,
     retireManualUnits:manualUnits.invalidate,
     consumeManualUnitAction(action:ManualUnitUiAction,state:GameState){return manualUnits.consume(action,state);},

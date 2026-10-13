@@ -784,7 +784,7 @@ class NpcDisplayTests(unittest.TestCase):
         tab=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='tab')
         self.assertIn("click(page,f'[data-tab=\"{name}\"]')",ast.get_source_segment(source,tab))
         adapter=(root/'src/ui/space-panel.ts').read_text();controller=(root/'src/ui/npc-scout-comparison-panel.ts').read_text()
-        self.assertIn('if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();selected=null;return;}',adapter)
+        self.assertIn('if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}',adapter)
         self.assertIn('close() { controller?.close(); comparison?.close(); }',adapter)
         self.assertIn('close() { abandon(RETIRED, true); }',controller)
         self.assertIn('const RETIRED = "对照已关闭；请从当前保留的侦察消息重新打开。";',controller)

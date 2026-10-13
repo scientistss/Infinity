@@ -164,7 +164,11 @@ def previous_ring_bytes():
     for old, new in RING_OBSERVER_TRANSITIONS:
         assert expected.count(old.encode()) == 1, 'Exact ring observer transition cardinality'
         expected = expected.replace(old.encode(), new.encode(), 1)
-    assert (ROOT/'scripts/browser-ring-protection.py').read_bytes()==expected, 'Only exact manual-unit provenance dispatch and observed retirement grammar may extend ring source'
+    current = (ROOT/'scripts/browser-ring-protection.py').read_bytes()
+    if current != expected:
+        from test_recycle_preview_provenance import previous_ring_bytes as recycle_previous_ring_bytes
+        current = recycle_previous_ring_bytes()
+    assert current==expected, 'Only exact manual-unit provenance dispatch and observed retirement grammar may extend ring source'
     return before
 
 
@@ -186,7 +190,11 @@ def previous_ui_baseline_bytes(manifest_sha256=MANIFEST_SHA256):
     ):
         assert expected.count(old) == count, ('Exact UI baseline transition cardinality', old)
         expected = expected.replace(old, new)
-    assert (ROOT / 'scripts/check-ui-baseline.mjs').read_bytes() == expected.encode(), 'Unapproved UI baseline checker drift'
+    current = (ROOT / 'scripts/check-ui-baseline.mjs').read_bytes()
+    if current != expected.encode():
+        from test_recycle_preview_provenance import previous_ui_baseline_bytes as recycle_previous_ui_baseline_bytes
+        current = recycle_previous_ui_baseline_bytes()
+    assert current == expected.encode(), 'Unapproved UI baseline checker drift'
     return before
 
 
@@ -240,6 +248,11 @@ def verify_ui_baseline():
 def verify_candidate(candidate):
     def git(*args): return subprocess.check_output(['git','-C',str(ROOT),*args],stderr=subprocess.PIPE)
     candidate=git('rev-parse',candidate+'^{commit}').decode().strip()
+    if git('ls-tree', candidate, '--', 'tests/fixtures/recycle-preview-provenance.json'):
+        from test_recycle_preview_provenance import verify_candidate as verify_recycle_candidate
+        result = verify_recycle_candidate(candidate)
+        assert result['contract'] == 'exact-declared-recycle-preview-source-delta'
+        return result['previousProvenance']
     assert candidate != REFERENCE
     diagnostic = '1f66672f40556c61c4acfaeec23f1cb18c64636a'
     assert git('merge-base', diagnostic, candidate).decode().strip() == diagnostic, 'Exact diagnostic source ancestry is required independently of acceptance'

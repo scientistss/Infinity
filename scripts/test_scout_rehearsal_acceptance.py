@@ -796,7 +796,7 @@ class StorageDiagnosticsTests(unittest.TestCase):
         self.assertIn('if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}',space)
         handler=space[space.index('  root.addEventListener("click",event=>{'):space.index('  const updateSpaceChrome=')]
         self.assertTrue(handler.rstrip().endswith('},true);'))
-        self.assertIn('choose("fleet");transportLoad.edited();npcAttack.edited(true);',space)
+        self.assertIn('choose("fleet");transportLoad.edited();recyclePanel.edited();npcAttack.edited(true);',space)
         original=view[view.index('function selectTab('):view.index('/** Research art')]
         self.assertIn('localStorage.setItem(TAB_KEY, tab)',original)
         self.assertIn('TABS.some((entry) => entry.id === id) ? id : DEFAULT_TAB',original)

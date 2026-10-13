@@ -1,6 +1,6 @@
-# Recycling estimate: preparation checkpoint
+# Recycling estimate: read-only candidate
 
-This checkpoint extracts the existing recycling arithmetic into a shared pure calculation. It does not add a player-facing preview, change the save schema, or constitute a release. The complete current release gates still apply before any later playable candidate is published.
+The arithmetic preparation checkpoint is `cafcdfdd140f4bcbf17e589e99f83f2d761f9e49`. This follow-on candidate adds a short, read-only current-condition estimate to the recycling mission, with details closed by default. Version `0.6.27-alpha.1` keeps save version 9 / revision 14. Full same-commit cloud acceptance is required before publication.
 
 ## Preserved settlement contract
 
@@ -19,8 +19,21 @@ Independent literal examples establish the intended amounts: a 40,000 metal / 20
 
 A separately retained historical function proves extraction equivalence, not correctness of the original economics. Its complete results and JSON order are compared with frozen input state/fleet, including unrelated resources, fleets, offers, messages, RNG and field order. The matrix has 560 deterministic combinations plus 70 per-ship cases and explicit boundary examples. The real dispatch-to-pickup-to-return API route separately verifies that fuel is charged once.
 
-Local checks for this checkpoint: all 4,490 unit tests in 116 files, the separate 28-test extraction suite, 140 existing deep-space/dashboard/transport tests, and TypeScript passed. These ran locally on Node 24.19.0; they are not native-browser or full release acceptance.
+Historical local checks for the arithmetic-only checkpoint: all 4,490 unit tests in 116 files, the separate 28-test extraction suite, 140 existing deep-space/dashboard/transport tests, and TypeScript passed. These ran locally on Node 24.19.0; they are not native-browser or full release acceptance.
 
-## Intended later read-only presentation
+## Player-facing contract
 
-A subsequent candidate may show a short current-condition estimate and default-collapsed details using the same function. It must only use already visible debris, remain advisory because fields and technology can change before arrival, preserve current dispatch controls, and introduce no payment or dispatch authority. That presentation is not implemented in this checkpoint.
+Choose the existing recycling mission and target, then select ships and cargo normally. The short estimate shows the current expected metal and crystal pickup. The optional details show known debris, total cargo and recycling capacity, existing cargo use, available pickup room, and the remainder. Only already visible debris is read. Missing fields and invalid drafts are clearly unavailable rather than invented zero-value results.
+
+The estimate uses the same current technology and cargo calculation as settlement. It is advisory: debris, fleets and technology may change before arrival. Dispatch remains a separate existing action and keeps its original validation and payment. Preview rendering creates no fleet, payment, queue entry, RNG change or new authority. Changing mission, world, source planet, protection state or leaving the panel retires stale displayed values. The original layout and art remain in place.
+
+## Acceptance and limits
+
+- Seven exact production paths are sealed against the accepted manual-payment source. All older source and art seals remain required.
+- Unit tests cover literal amounts, full historical settlement equivalence, invalid and unknown fields, lifecycle retirement, frozen input ownership and repeated-render idempotence. The full local suite passed 4,592 tests in 118 files before final source/fixture acceptance; this is Node 24 evidence, not a cloud-browser result.
+- The fixture starts from the existing explicitly funded, prerequisite-enabled, seed-selected pirate setup. Actual paid engine dispatch, outbound arrival, battle-created debris and survivor return generate the preview state. It is not a natural-new-game route, and those producer transitions are not browser payment evidence. The existing native deep-space payment and recycle suite remains mandatory.
+- The new native suite checks current estimates with an independent old-formula oracle, cargo and speed changes, missing debris, invalid drafts, closed details, and 320/390/768/1440 widths using real input and scrolling. Normal read-only scenarios save and compare the complete state, RNG, queues, wallets, draft and browser storage. Genuine competing-tab protection checks retained storage, visible frozen UI and draft state; it does not claim to read private protected in-memory state through an unavailable export.
+- The new suite is bounded to 240 seconds inside the unchanged 45-minute verify job. All seven existing jobs, old commands, performance windows and required aggregate remain mandatory. No eighth runner is added.
+- Render regression keeps the original complete capture, validates the exact unique inactive preview subtree, and removes only that approved subtree from a copy. The benchmark validates the fixed non-recycle request and the uniquely positioned null preview field before comparing every other historical field.
+
+Native and complete cloud outcomes must be reported with their actual final commit and run. A local build or a prepared script is not a publication result.

@@ -253,7 +253,7 @@ describe("main host adoption and pre-confirmation wiring", () => {
     expect(mainSource).toContain('view.retireNpcRehearsal();\n    view.retireManualUnits();\n    if (!prepared.ok)');
     expect(mainSource).toContain("state = result.state;\n  view.adoptNpcRehearsalWorld();");
     expect(mainSource).toContain("if (state.universe === adoptedUniverse) return;"); expect(mainSource).not.toContain("let adoptedLaunches");
-    expect(panelSource).toContain('choose("fleet");transportLoad.edited();npcAttack.edited(true);');
+    expect(panelSource).toContain('choose("fleet");transportLoad.edited();recyclePanel.edited();npcAttack.edited(true);');
     expect(panelSource).not.toContain('html(root,"#space-message-list"');
   });
   it("ordinary ticks preserve exact universe identity, while a same-seed saturated-count curvature replaces it", () => {

@@ -49,8 +49,9 @@ describe("visible extension projections", () => {
     const beforeDraft = JSON.stringify(draft);
     const full = spaceView(state, cursor, draft);
     expect(spaceGalaxyView(state, cursor)).toEqual({rows:full.rows, seed:full.seed, phase:full.phase});
-    expect(spaceFleetView(state, draft)).toEqual({isAttack:full.isAttack, attackQuota:full.attackQuota, isCharge:full.isCharge, chargePreview:full.chargePreview, slots:full.slots,
+    expect(spaceFleetView(state, draft)).toEqual({isAttack:full.isAttack, attackQuota:full.attackQuota, isCharge:full.isCharge, chargePreview:full.chargePreview, recyclePreview:full.recyclePreview, slots:full.slots,
       quote:full.quote, ships:full.ships, fleets:full.fleets, planets:full.planets});
+    expect(full.recyclePreview).toBeNull();
     expect(spaceMessagesView(state)).toEqual({messages:full.messages, npcReports:full.npcReports});
     expect(spaceOrigin(state)).toBe(full.origin);
     expect(full.rows).toHaveLength(16);

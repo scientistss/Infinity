@@ -243,6 +243,111 @@ def boot(which='base',url=None,initial_tab='overview',corrupt=False):
     return context,page
 
 
+# This is an independently reviewed DOM literal, not the production constructor.
+# Only never-recycled first-visit/folded/reopened historical fleet captures qualify.
+EMPTY_RECYCLE_PREVIEW_HTML = '''<div id="recycle-preview" class="recycle-preview muted" hidden="">
+    <p data-recycle="summary"></p>
+    <details data-recycle="details"><summary>回收估算详情</summary>
+      <p data-recycle="target"></p><p data-recycle="field"></p>
+      <p data-recycle="capacity"></p><p data-recycle="room"></p>
+      <p data-recycle="leftovers"></p><p data-recycle="notice"></p>
+    </details>
+    <p data-recycle="protection" hidden=""></p>
+  </div>'''
+
+RECYCLE_DISPLAY_SAMPLE_JS = r'''() => {
+ const panel=document.querySelector('#space-fleet'),preview=document.querySelector('#recycle-preview');
+ const mission=document.querySelector('#flight-mission'),left=document.querySelector('#transport-load-helper'),right=document.querySelector('#charge-risk-preview');
+ const fields=['summary','target','field','capacity','room','leftovers','notice','protection'];
+ const details=preview?.querySelector('[data-recycle="details"]'),summary=details?.firstElementChild;
+ const visible=e=>{for(let a=e;a;a=a.parentElement){if(a.hidden||getComputedStyle(a).display==='none')return false;}
+   return e.getClientRects().length>0&&getComputedStyle(e).visibility==='visible';};
+ return {panelHTML:panel.outerHTML,
+   counts:{panels:document.querySelectorAll('#space-fleet').length,ids:document.querySelectorAll('#recycle-preview').length,
+     classes:document.querySelectorAll('.recycle-preview').length,prefix:document.querySelectorAll('[id^="recycle-"]').length,
+     bindings:document.querySelectorAll('[data-recycle]').length},
+   mission:{count:document.querySelectorAll('#flight-mission').length,native:mission instanceof HTMLSelectElement,
+     connected:mission.isConnected,owned:panel.contains(mission)&&document.getElementById(mission.id)===mission,value:mission.value},
+   addition:preview?{html:preview.outerHTML,native:preview instanceof HTMLDivElement,connected:preview.isConnected,
+     identity:document.getElementById('recycle-preview')===preview,hidden:preview.hidden,visible:visible(preview),children:preview.children.length,
+     controls:preview.querySelectorAll('button,input,select,textarea,a,[data-action],[data-space],[onclick],[contenteditable]').length,
+     exactPlacement:panel.matches('section#space-fleet.tab-panel.space-panel[data-tab-panel="fleet"]')&&
+       preview.parentElement?.matches('div.ov-card')&&preview.parentElement.parentElement?.matches('div.space-columns')&&
+       preview.parentElement.parentElement.parentElement===panel&&preview.parentElement.parentElement.children[1]===preview.parentElement&&
+       preview.previousElementSibling===left&&preview.nextElementSibling===right&&
+       document.querySelectorAll('#transport-load-helper').length===1&&document.querySelectorAll('#charge-risk-preview').length===1,
+     details:{native:details instanceof HTMLDetailsElement,hidden:details.hidden,open:details.open,visible:visible(details),
+       count:document.querySelectorAll('[data-recycle="details"]').length,children:details.children.length,
+       direct:preview.children[1]===details,summaryHTML:summary.outerHTML,summaryChildren:summary.children.length},
+     fields:fields.map(key=>{const field=preview.querySelector('[data-recycle="'+key+'"]');return {key,
+       count:document.querySelectorAll('[data-recycle="'+key+'"]').length,native:field instanceof HTMLParagraphElement,
+       connected:field.isConnected,children:field.children.length,text:field.textContent,hidden:field.hidden,visible:visible(field),
+       direct:key==='summary'?preview.firstElementChild===field:key==='protection'?preview.lastElementChild===field:field.parentElement===details};})}:null};
+}'''
+
+
+def normalize_recycle_display(snapshot, evidence, witness, side):
+    """Validate only the exact empty addition; preserve all other copied bytes."""
+    assert side in ('before', 'after') and snapshot['tab'] == evidence['tab'] == 'fleet'
+    assert witness['panelHTML'] == evidence['panelHTML']
+    mission = {'count': 1, 'native': True, 'connected': True, 'owned': True, 'value': 'colonize'}
+    assert exact_state(witness['mission'], mission), 'Only the exact historical non-recycle draft qualifies'
+    after = side == 'after'
+    counts = {'panels': 1, 'ids': int(after), 'classes': int(after), 'prefix': int(after), 'bindings': 9 if after else 0}
+    assert exact_state(witness['counts'], counts), 'Recycle identities must be globally unique or historically absent'
+    copied = copy.deepcopy(evidence)
+    if not after:
+        assert witness['addition'] is None
+        assert 'recycle-preview' not in evidence['panelHTML'] and 'data-recycle=' not in evidence['panelHTML']
+        return copy.deepcopy(snapshot), copied
+    expected = {'html': EMPTY_RECYCLE_PREVIEW_HTML, 'native': True, 'connected': True, 'identity': True,
+        'hidden': True, 'visible': False, 'children': 3, 'controls': 0, 'exactPlacement': True,
+        'details': {'native': True, 'hidden': False, 'open': False, 'visible': False, 'count': 1, 'children': 7,
+                    'direct': True, 'summaryHTML': '<summary>回收估算详情</summary>', 'summaryChildren': 0},
+        'fields': [{'key': key, 'count': 1, 'native': True, 'connected': True, 'children': 0, 'text': '',
+                    'hidden': key == 'protection', 'visible': False, 'direct': True}
+                   for key in ('summary', 'target', 'field', 'capacity', 'room', 'leftovers', 'notice', 'protection')]}
+    assert exact_state(witness['addition'], expected), 'Full empty hidden recycle disclosure required before projection'
+    assert evidence['panelHTML'].count(EMPTY_RECYCLE_PREVIEW_HTML) == 1
+    # Re-read only the copied tree structure; do not trust a claimed placement
+    # flag when replaying hostile offline evidence, and never touch native DOM.
+    class Structure(HTMLParser):
+        def __init__(self, html):
+            super().__init__(convert_charrefs=True)
+            self.nodes, self.stack = [], []
+            self.feed(html)
+            assert not self.stack
+        def handle_starttag(self, tag, attrs):
+            node = {'tag': tag, 'attrs': attrs, 'children': [], 'parent': self.stack[-1] if self.stack else None}
+            if self.stack: self.stack[-1]['children'].append(node)
+            self.nodes.append(node)
+            if tag not in ('area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'):
+                self.stack.append(node)
+        def handle_endtag(self, tag):
+            assert self.stack and self.stack[-1]['tag'] == tag
+            self.stack.pop()
+        def one(self, ident):
+            matches = [node for node in self.nodes if ('id', ident) in node['attrs']]
+            assert len(matches) == 1
+            return matches[0]
+    tree = Structure(evidence['panelHTML'])
+    panel, preview, left, right = [tree.one(ident) for ident in ('space-fleet', 'recycle-preview', 'transport-load-helper', 'charge-risk-preview')]
+    card = preview['parent']; columns = card['parent'] if card else None
+    assert card and card['tag'] == 'div' and card['attrs'] == [('class', 'ov-card')]
+    assert columns and columns['tag'] == 'div' and columns['attrs'] == [('class', 'space-columns')]
+    assert columns['parent'] is panel and panel['tag'] == 'section'
+    assert len(columns['children']) == 2 and columns['children'][1] is card
+    siblings = card['children']; index = next(i for i, node in enumerate(siblings) if node is preview)
+    assert index > 0 and index + 1 < len(siblings) and siblings[index-1] is left and siblings[index+1] is right
+    # The captured sibling witness binds actual native nodes. This exact textual
+    # boundary independently rejects relocation in copied/offline evidence too.
+    boundary = EMPTY_RECYCLE_PREVIEW_HTML + '<p id="charge-risk-preview" class="muted" hidden=""></p>'
+    assert evidence['panelHTML'].count(boundary) == 1, 'Exact new-block to old-charge sibling boundary'
+    copied['panelHTML'] = evidence['panelHTML'].replace(EMPTY_RECYCLE_PREVIEW_HTML, '', 1)
+    assert 'recycle-preview' not in copied['panelHTML'] and 'data-recycle=' not in copied['panelHTML']
+    return copy.deepcopy(snapshot), copied
+
+
 def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None, facility_base=None, research_base=None, npc_base=None):
     result=page.evaluate('''({omitBuilding,ringBase,orderBase,facilityBase,researchBase}) => {
       const panel=[...document.querySelectorAll('[data-tab-panel]')].find(e=>!e.hidden);
@@ -386,6 +491,14 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         (out/artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
         check('NPC exact display exception starts from the complete independent old state: '+npc_base,exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
         original_panel_html=evidence['panelHTML']
+        if result['tab']=='fleet':
+            recycle=page.evaluate(RECYCLE_DISPLAY_SAMPLE_JS)
+            recycle_artifact=f'panel-parity-recycle-{npc_base}-{len(audits)}-raw.json'
+            (out/recycle_artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'recycle':recycle,
+                'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+            result,evidence=normalize_recycle_display(result,evidence,recycle,npc_base)
+            audits.append({'kind':'exact-empty-non-recycle-display-delta','side':npc_base,'rawArtifact':recycle_artifact,
+                'constraint':'The globally unique complete hidden div, one closed details with exact summary, all eight blank paragraph fields, no action controls, exact native placement before charge-risk-preview, and original colonize draft are independently asserted. Only that literal block is removed from copied panel HTML. Existing paired visible text/controls remain exact; this does not claim archived whole-fleet DOM equality.'})
         if result['tab'] in ('shipyard','defense'):
             if npc_base=='before':
                 assert result['tab'] not in manual_unit_legacy, 'One exact historical first-visit witness per panel'
@@ -1176,6 +1289,7 @@ with sync_playwright() as playwright:
             'parityNpcDisplayException':'The copied r8 base comparison retains every original message HTML node, text, time, and order. Only independently bound keyed old scout unavailable notices and the exact initial hidden rehearsal region are removed after full node-count/order/HTML/control-value checks; typed observations cannot use this projection. The copied evidence records all hidden data. Current state receives only validated null snapshot fields, and raw bytes, DOM and clock remain unchanged.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. The exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Separately, all actual planet queues and demolitions must contain no paid lab work; only the unique complete empty, hidden, closed lab-blocker disclosure in its exact intro-to-queue position is removed. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',
             'parityShipyardDefenseException':'Alongside the separately verified manual-unit delta, each complete literal old/new NPC explanation in the unique p.blurb introductory node is compared through a copied-text adapter. Its exact class, native heading/queue/grid/status sibling identities, order and counts are asserted; the complete remaining panel DOM, all visible controls, queue/card content, costs, timers, status, stored state and controlled time remain exact. Every raw panel is saved before adapters and all paired snapshots/mismatches before the first parity assertion.',
+            'parityRecyclePreviewException':'Only the exact independently asserted globally unique empty hidden recycle disclosure in the original colonize draft is removed from copied fleet evidence. Its entire HTML, closed details, eight empty fields, no actions and transport-to-charge native placement are checked for initial, opened and reopened library captures. Raw full panels, state and clock remain unchanged. Existing fleet visible-text/control parity is retained; this does not claim whole-fleet DOM parity.',
             'parityManualUnitException':'Exact first-visit count-one manual quote UI only. All 24 ordered unique identities and global bindings/actions are checked, followed by native quantities, three fixed-label mode-only buttons, canonical full integer catalog prices, payer/count/reason, and one eligibility-bound payment per card. Historical native eligibility, maximum labels, and disabled state are restored only after those assertions. All remaining whole-card DOM and text are required to match; queue controls, status, resources, and complete stored state remain unchanged. Raw old/current evidence precedes all projections. This is a prepared native check, not an offline/native-pass claim.',
             'parityTerraformerException':'Only the uniquely identified final terraformer card is excluded after complete old-state, unmet prerequisite, zero-supply, ordered old-card, exact full added DOM/text/cost/time and disabled-button identity checks. Raw panel/state evidence and complete remaining facilities DOM are retained and compared; no other facility text or controls are removed.',
             'parityRingException':'Only the exact base manual-first UI difference is excluded: before complete default-unauthorized section.ring-auto and after exact visible #ring-manual-progress 0/10. Complete state, all five old controls (including data-ring button identities), hidden/disabled new region, exact node structure/text and unique adjacent sibling boundaries are checked first. Raw snapshots, complete panel DOM and stored bytes are retained in panel-parity-arcade-before-raw.json and panel-parity-arcade-after-raw.json. All remaining text/controls plus board, manual controls, stakes, queue, odds, history and status DOM remain exact; no DOM, state, storage or clock mutation is used to obtain parity.',

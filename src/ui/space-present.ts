@@ -12,6 +12,7 @@ import { big } from "../game/decimal";
 import { SHIP_IDS, unitById } from "../data/units";
 import { RESOURCE_IDS, type GameState, type ResourceId } from "../game/types";
 import { transportLoadPreview } from "./transport-load-model";
+import { recyclePreview } from "./recycle-preview-model";
 
 /** Exact pending rights are text, never a Decimal sum or ordinary spendable stock. */
 export function npcRemainderView(amounts: Readonly<Record<ResourceId, string>>) {
@@ -76,6 +77,7 @@ export function spaceFleetView(state:GameState,request:FleetRequest) {
     attackQuota:isAttack?`攻击 ${liveUsed}/${NPC_UNFINISHED_ATTACK_LIMIT} · 目标账 ${targetsUsed}/${NPC_SITE_LIMIT}${liveUsed>=NPC_UNFINISHED_ATTACK_LIMIT?" · 攻击名额已满，返航及入港受阻仍占用":""}${targetsUsed>=NPC_SITE_LIMIT&&!targetRecorded?" · 目标记录已满；已有目标仍可攻击":""}`:"",
     isCharge:request.mission==="charge",
     chargePreview:chargePreview(state,request),
+    recyclePreview:recyclePreview(state,request,quote),
     slots:`舰队 ${state.fleets.length}/${fleetSlots(state)} · 殖民地 ${colonyCount(state)}/${colonyLimit(state)} · 在途预留 ${reservedColonies(state)} · 远征 ${state.fleets.filter(f=>f.mission==="charge").length}/${expeditionSlots(state)}`,
     quote:{ok:quote.ok,text:quote.ok?`单程 ${formatDuration(Math.ceil(quote.duration))} · 往返燃料 ${isAttack?quote.fuel.toString():formatAmount(quote.fuel)} 重氢 · 总货舱 ${formatAmount(quote.capacity)}${request.mission==="charge"?` · 驻留 ${quote.holdSeconds} 秒 · 押注 ${formatAmount(big(quote.stake??0))} 重氢`:""}`:quote.reason},
     ships:SHIP_IDS.filter(id=>id!=="solar_satellite").map(id=>({id,name:unitById(id).nameZh,count:home.units[id]})),
@@ -109,6 +111,7 @@ export function spaceView(state:GameState,cursor:Coordinates,request:FleetReques
     attackQuota:fleet.attackQuota,
     isCharge:fleet.isCharge,
     chargePreview:fleet.chargePreview,
+    recyclePreview:fleet.recyclePreview,
     origin:spaceOrigin(state),
     slots:fleet.slots,
     quote:fleet.quote,

@@ -256,9 +256,23 @@ assert.deepEqual({ ...fullCurrent, buildings: historicalBuildingCards(fullCurren
   fullOriginal, "retained full presenter equals archived original after fully asserted terraformer, research-copy and empty lab-blocker differences");
 const fullSpace = beforeSpace.spaceView(state, cursor, request);
 const currentFullSpace = afterSpace.spaceView(state, cursor, request);
+// Only this frozen transport workload may adapt the new empty read-only field.
+function historicalRecyclePreview(view, kind, draft) {
+  assert.ok(kind === "full" || kind === "fleet", "recycle adapter is fleet-only");
+  assert.equal(draft.mission, "transport", "recycle adapter requires the fixed non-recycle workload");
+  const keys = Object.keys(view), index = keys.indexOf("recyclePreview");
+  assert.equal(keys.filter(key => key === "recyclePreview").length, 1, "one own recycle preview field");
+  assert.equal(index, 4, "recycle preview retains the exact declared model position");
+  assert.deepEqual(keys.slice(2, 6), ["isCharge", "chargePreview", "recyclePreview", kind === "full" ? "origin" : "slots"],
+    "recycle preview retains both original adjacent keys");
+  assert.equal(view.recyclePreview, null, "the fixed transport workload has no active recycle preview");
+  const result = structuredClone(view);
+  delete result.recyclePreview;
+  return result;
+}
 function historicalSpace(view, kind) {
   assertZeroNpcResourceRemainders(state, `${kind}: independent zero-rights historical presentation scope`);
-  const result=structuredClone(view);
+  const result=kind==='full'||kind==='fleet' ? historicalRecyclePreview(view,kind,request) : structuredClone(view);
   if(kind==='full'||kind==='fleet') {
     assert.equal(view.planets.length,fullSpace.planets.length,`${kind}: all historical planet cards retained`);
     result.planets=view.planets.map((row,index)=>{
@@ -410,7 +424,7 @@ for (const delta of [0, 1 / 60, 0.125]) {
 assert.ok(sink, "measurement results were consumed");
 const sourceHashes = root => Object.fromEntries(["package.json", "src/ui/present.ts", "src/ui/shipyard-present.ts", "src/ui/space-present.ts", "src/game/logic.ts", "src/game/save.ts", "src/game/research.ts", "src/data/research.ts"].map(path => [path, sha256(readFileSync(resolve(root, path)))]));
 process.stdout.write(JSON.stringify({
-  scope: "Native Node performance.now wall-time model measurements on the identical frozen current state from the real r8 strict-reader fixture after observed r14 migration; native serialization uses the separately frozen actual archived/current schemas, proven complete old-field equal, so the archived serializer cannot retain new message slots; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, the exact waiting-research quote wording, and the fully asserted empty lab-blocker field (explicit null when hidden). Every original paid construction row/order and null demolition slot is proven before adapting that one field. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
+  scope: "Native Node performance.now wall-time model measurements on the identical frozen current state from the real r8 strict-reader fixture after observed r14 migration; native serialization uses the separately frozen actual archived/current schemas, proven complete old-field equal, so the archived serializer cannot retain new message slots; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, the exact waiting-research quote wording, and the fully asserted empty lab-blocker field (explicit null when hidden). Every original paid construction row/order and null demolition slot is proven before adapting that one field. The fixed transport draft independently requires exactly one null recyclePreview at its declared full/fleet model key position before removing only that field; active previews and every other field remain outside that exception. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
   sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot) },

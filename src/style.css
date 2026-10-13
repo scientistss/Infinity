@@ -652,6 +652,9 @@ textarea {
 .research-lab-blockers p { margin-top: 0.5rem; color: var(--muted); }
 .research-lab-blockers ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
 .research-lab-blockers li + li { margin-top: 0.4rem; }
+.space-panel .recycle-preview { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.space-panel .recycle-preview p { margin: 0.4rem 0; }
+.space-panel .recycle-preview summary:focus-visible { outline: 2px solid var(--good); outline-offset: 3px; }
 .req-chain {
   display: flex;
   flex-wrap: wrap;
