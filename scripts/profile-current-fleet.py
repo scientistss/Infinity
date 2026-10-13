@@ -166,7 +166,7 @@ def source_snippet(source, frame):
 
 
 def attribute(profile, identities, sources):
-    """Keep original weighted samples; inclusive ancestor values overlap."""
+    """Preserve raw sample order; unavailable weights never become durations."""
     nodes = {node['id']: node for node in profile['nodes']}
     require(len(nodes) == len(profile['nodes']), 'Duplicate CPU profile node IDs')
     parents = {}
@@ -178,47 +178,93 @@ def attribute(profile, identities, sources):
     require(samples and len(samples) == len(deltas), 'Missing/mismatched CPU samples and deltas')
     require(finite_number(profile['startTime']) and finite_number(profile['endTime'])
             and profile['endTime'] > profile['startTime'], 'Invalid CPU profile interval')
-    self_us, inclusive_us, unknown = {}, {}, []
+    kinds, unknown = {}, []
+    for node_id, node in nodes.items():
+        frame = node['callFrame']; ident = identities.get(frame.get('scriptId'))
+        if frame.get('scriptId') == '0' and not frame.get('url'):
+            kinds[node_id] = 'v8-native-or-synthetic'
+        elif ident and ident['url'] == frame.get('url'):
+            kinds[node_id] = ident['kind']
+        else:
+            kinds[node_id] = 'unverified'; unknown.append(frame)
+    self_count, inclusive_count, inclusive_production_count = {}, {}, {}
     for leaf, elapsed in zip(samples, deltas):
-        require(leaf in nodes and finite_number(elapsed) and elapsed >= 0, 'Invalid CPU sample')
-        self_us[leaf] = self_us.get(leaf, 0) + elapsed
+        require(leaf in nodes and finite_number(elapsed), 'Invalid CPU sample structure or nonfinite delta')
+        self_count[leaf] = self_count.get(leaf, 0) + 1
         current, visited = leaf, set()
         while current is not None:
             require(current not in visited, 'Cycle in CPU profile')
             visited.add(current)
-            inclusive_us[current] = inclusive_us.get(current, 0) + elapsed
+            inclusive_count[current] = inclusive_count.get(current, 0) + 1
+            if kinds[leaf] == 'production':
+                inclusive_production_count[current] = inclusive_production_count.get(current, 0) + 1
             current = parents.get(current)
-    require(0 < sum(deltas) <= profile['endTime'] - profile['startTime'], 'Invalid sampled timeline coverage')
     for node_id in nodes:
         current, visited = node_id, set()
         while current is not None:
             require(current not in visited, 'Cycle in CPU profile, including unsampled nodes')
             visited.add(current); current = parents.get(current)
+    negative = [{'sampleIndex': index, 'sampleNodeId': samples[index], 'deltaUs': elapsed}
+                for index, elapsed in enumerate(deltas) if elapsed < 0]
+    reasons = []
+    if unknown: reasons.append('Unverified source frames prevent attribution qualification.')
+    if negative: reasons.append('Original signed timeDeltas contain negative values; no duration attribution is computed.')
+    if sum(deltas) <= 0: reasons.append('Original timeDeltas sum is not positive.')
+    if sum(deltas) > profile['endTime'] - profile['startTime']:
+        reasons.append('Original timeDeltas sum exceeds the recorded profile interval.')
+    weighted = not reasons
+    production_count = sum(count for node_id, count in self_count.items() if kinds[node_id] == 'production')
+    observer_count = sum(count for node_id, count in self_count.items() if kinds[node_id] == 'diagnostic-observer')
+    self_us, inclusive_us = {}, {}
+    if weighted:
+        for leaf, elapsed in zip(samples, deltas):
+            self_us[leaf] = self_us.get(leaf, 0) + elapsed
+            current = leaf
+            while current is not None:
+                inclusive_us[current] = inclusive_us.get(current, 0) + elapsed
+                current = parents.get(current)
     rows = []
     for node_id, node in nodes.items():
-        frame = node['callFrame']; ident = identities.get(frame.get('scriptId'))
-        native = frame.get('scriptId') == '0' and not frame.get('url')
-        if native:
-            kind = 'v8-native-or-synthetic'
-        elif ident and ident['url'] == frame.get('url'):
-            kind = ident['kind']
-        else:
-            kind = 'unverified'; unknown.append(frame)
-        row = {'nodeId': node_id, 'parentId': parents.get(node_id), 'callFrame': frame, 'kind': kind,
-               'sampledSelfMs': self_us.get(node_id, 0) / 1000,
-               'sampledInclusiveMs': inclusive_us.get(node_id, 0) / 1000,
-               'hitCount': node.get('hitCount', 0)}
+        frame = node['callFrame']; count = self_count.get(node_id, 0)
+        row = {'nodeId': node_id, 'parentId': parents.get(node_id), 'callFrame': frame, 'kind': kinds[node_id],
+               'selfSampleCount': count, 'inclusiveSampleCount': inclusive_count.get(node_id, 0),
+               'selfFractionOfAllRawSamples': count / len(samples),
+               'inclusiveFractionOfAllRawSamples': inclusive_count.get(node_id, 0) / len(samples),
+               'selfFractionOfVerifiedProductionJsLeaves': count / production_count if production_count and kinds[node_id] == 'production' else None,
+               'inclusiveVerifiedProductionJsLeafCount': inclusive_production_count.get(node_id, 0),
+               'inclusiveFractionOfVerifiedProductionJsLeaves': inclusive_production_count.get(node_id, 0) / production_count if production_count and kinds[node_id] == 'production' else None,
+               'hitCount': node.get('hitCount', 0),
+               'selfCountMinusReportedHitCount': count - node.get('hitCount', 0)}
+        if weighted:
+            row['sampledSelfMs'] = self_us.get(node_id, 0) / 1000
+            row['sampledInclusiveMs'] = inclusive_us.get(node_id, 0) / 1000
         if frame.get('url') in sources:
             row['sourceSnippet'] = source_snippet(sources[frame['url']], frame)
         rows.append(row)
-    rows.sort(key=lambda row: row['sampledSelfMs'], reverse=True)
-    return {'valid': not unknown, 'unverifiedFrames': unknown, 'sampleCount': len(samples),
-            'sampledMs': sum(deltas) / 1000, 'profileDurationMs': (profile['endTime'] - profile['startTime']) / 1000,
-            'timeAccounting': 'timeDeltas weight corresponding raw samples. Inclusive ancestors overlap; never sum them or call these measurements exclusive native costs.',
-            'nodesBySelfTime': rows, 'nodesByInclusiveTime': sorted(rows, key=lambda row: row['sampledInclusiveMs'], reverse=True),
-            'observerSampledSelfMs': sum(row['sampledSelfMs'] for row in rows if row['kind'] == 'diagnostic-observer'),
+    result = {'valid': not unknown, 'structureValid': True, 'sourceValid': not unknown,
+            'attributionMode': ('weighted-samples' if weighted else 'sample-frequency-only') if not unknown else 'invalid-source',
+            'unverifiedFrames': unknown, 'sampleCount': len(samples),
+            'rawProfileSpanUs': profile['endTime'] - profile['startTime'], 'rawSignedTimeDeltasSumUs': sum(deltas),
+            'weightValidity': {'valid': weighted, 'reasons': reasons, 'negativeDeltaCount': len(negative), 'negativeDeltas': negative,
+                               'preservation': 'Original deltas, sample order and samples are unchanged. No clamping, sorting, omission or hitCount substitution.'},
+            'sampleDenominators': {'allRawSamples': len(samples), 'verifiedProductionJavaScriptLeafSamples': production_count,
+                                  'diagnosticObserverLeafSamples': observer_count},
+            'frequencyMeaning': 'Fractions are observed raw sample frequencies, not CPU shares or durations. The full denominator retains native/program/idle/GC/observer samples. The production-JS subset excludes them. Inclusive counts overlap ancestors.',
+            'nodesBySelfSampleCount': sorted(rows, key=lambda row: row['selfSampleCount'], reverse=True),
+            'nodesByInclusiveSampleCount': sorted(rows, key=lambda row: row['inclusiveSampleCount'], reverse=True),
+            'hitCountComparison': {'rawSampleCount': len(samples), 'reportedHitCountSum': sum(node.get('hitCount', 0) for node in nodes.values()),
+                                  'differingNodes': [{'nodeId': row['nodeId'], 'selfSampleCount': row['selfSampleCount'], 'reportedHitCount': row['hitCount'],
+                                                     'difference': row['selfCountMinusReportedHitCount']} for row in rows if row['selfCountMinusReportedHitCount']]},
             'explicitSelectorFrames': [row for row in rows if 'queryselector' in row['callFrame'].get('functionName', '').lower()],
             'nativeAttributionLimitation': 'V8 may charge DOM/selector/formatting work to callers or omit native frames. Callsite text is not an exclusive native timing attribution. Unknown frames invalidate this profile.'}
+    if weighted:
+        result.update({'sampledMs': sum(deltas) / 1000,
+                       'profileDurationMs': (profile['endTime'] - profile['startTime']) / 1000,
+                       'timeAccounting': 'Original timeDeltas weight their corresponding samples. Inclusive ancestor values overlap.',
+                       'nodesBySelfTime': sorted(rows, key=lambda row: row['sampledSelfMs'], reverse=True),
+                       'nodesByInclusiveTime': sorted(rows, key=lambda row: row['sampledInclusiveMs'], reverse=True),
+                       'observerSampledSelfMs': sum(row['sampledSelfMs'] for row in rows if row['kind'] == 'diagnostic-observer')})
+    return result
 
 
 def relative_asset(url, base):
@@ -360,8 +406,12 @@ def finalize_profile(cdp, page, token, directory, *, started=True, primary_error
     try:
         try:
             if started:
-                profile = cdp.send('Profiler.stop')['profile']
+                stopped = cdp.send('Profiler.stop')
+                exclusive_json(directory / 'original-profiler-stop-response.json', stopped)
+                require(isinstance(stopped, dict) and 'profile' in stopped, 'Missing CPU profile field in Profiler.stop response')
+                profile = stopped['profile']
                 exclusive_json(directory / 'original.cpuprofile', profile)
+                require(isinstance(profile, dict), 'Missing CPU profile object from successful Profiler.stop response')
         except BaseException as error:
             record('profiler-stop-or-write', error)
         finally:
@@ -378,7 +428,7 @@ def finalize_profile(cdp, page, token, directory, *, started=True, primary_error
                     record('trace-finalization', error)
     finally:
         exclusive_json(directory / 'profile-finalization.json', {
-            'profileStarted': started, 'cpuProfileObtained': profile is not None,
+            'profileStarted': started, 'cpuProfileObtained': isinstance(profile, dict),
             'traceFinalized': trace is not None, 'errors': errors})
     if first_error is not None:
         raise first_error
@@ -565,12 +615,18 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         exclusive_json(directory / 'page-errors.json', errors)
         row['before'] = before; row['after'] = after; row['metrics'] = metric_delta(raw_before, raw_after)
         row['metricWindowScope'] = 'Outer diagnostic CDP window includes inspector/profile/trace retrieval overhead; not isolated handler CPU or a benchmark speedup.'
+        require(kind == 'save-unprofiled' or isinstance(profile, dict), 'Profiled case is missing its CPU capture')
         if profile is not None:
             attribution = attribute(profile, identities, sources)
             exclusive_json(directory / 'attribution.json', attribution)
-            row['attribution'] = {'sampleCount': attribution['sampleCount'], 'sampledMs': attribution['sampledMs'],
-                                  'profileDurationMs': attribution['profileDurationMs'], 'observerSampledSelfMs': attribution['observerSampledSelfMs'],
-                                  'unverifiedFrames': attribution['unverifiedFrames'], 'topSelf': attribution['nodesBySelfTime'][:20]}
+            row['attribution'] = {'valid': attribution['valid'], 'structureValid': attribution['structureValid'], 'sourceValid': attribution['sourceValid'],
+                                  'sampleCount': attribution['sampleCount'], 'attributionMode': attribution['attributionMode'],
+                                  'weightValidity': attribution['weightValidity'], 'sampleDenominators': attribution['sampleDenominators'],
+                                  'unverifiedFrames': attribution['unverifiedFrames'], 'hitCountComparison': attribution['hitCountComparison'],
+                                  'topSelfSampleCounts': attribution['nodesBySelfSampleCount'][:20]}
+            if attribution['weightValidity']['valid']:
+                row['attribution'].update({'sampledMs': attribution['sampledMs'], 'profileDurationMs': attribution['profileDurationMs'],
+                                          'observerSampledSelfMs': attribution['observerSampledSelfMs'], 'topSelf': attribution['nodesBySelfTime'][:20]})
             require(attribution['valid'], 'Profile contains unknown/inspector JavaScript; original evidence retained')
         if action_error:
             raise action_error
@@ -627,6 +683,58 @@ def verify_release(request, args):
     return manifest
 
 
+def execute_schedule(action, report, persist, *, deadline=None):
+    """Every fixed case is attempted despite earlier failures, within one budget."""
+    planned = [(kind, repetition) for repetition in range(3)
+               for kind in ('fleet-profiled', 'save-unprofiled', 'save-profiled')]
+    report['plannedCases'] = [kind + '-r' + str(repetition + 1) for kind, repetition in planned]
+    report['attemptedCases'] = []
+    for kind, repetition in planned:
+        name = kind + '-r' + str(repetition + 1)
+        if deadline is not None and time.monotonic() >= deadline:
+            report['errors'].append({'phase': name, 'type': 'TimeoutError',
+                                     'message': 'Original overall deadline exhausted; remaining fixed windows were not attempted.'})
+            break
+        report['attemptedCases'].append(name)
+        report['phase'] = name
+        try:
+            action(kind, repetition)
+        except BaseException as error:
+            report['errors'].append({'phase': name, 'type': type(error).__name__, 'message': str(error)[:2400]})
+            if not any(row.get('case') == name for row in report['runs']):
+                report['runs'].append({'case': name, 'kind': kind, 'repetition': repetition + 1,
+                                       'valid': False, 'cleanupComplete': False, 'phase': 'failed-before-context',
+                                       'error': {'type': type(error).__name__, 'message': str(error)[:2400]}})
+        finally:
+            persist()
+    report['allPlannedWindowsAttempted'] = len(report['attemptedCases']) == len(planned)
+    persist()
+
+
+def summarize_completion(report):
+    runs = report['runs']
+    all_attempted = bool(report.get('allPlannedWindowsAttempted')) and len(report.get('attemptedCases', [])) == 9
+    completed = all_attempted and len(runs) == 9 and all(row.get('valid') and row.get('cleanupComplete') for row in runs)
+    completed = bool(completed and report.get('globalCleanupComplete') and not report['errors'])
+    profiles = [row for row in runs if row.get('kind') in ('fleet-profiled', 'save-profiled')]
+    profile_captures_qualified = len(profiles) == 6 and all(
+        all(row.get('attribution', {}).get(key) is True for key in ('valid', 'structureValid', 'sourceValid')) for row in profiles)
+    completed = bool(completed and profile_captures_qualified)
+    unavailable = [{'case': row['case'], 'reasons': row.get('attribution', {}).get('weightValidity', {}).get('reasons', ['No qualified profile attribution available.'])}
+                   for row in profiles if not row.get('attribution', {}).get('weightValidity', {}).get('valid')]
+    weighted_complete = completed and len(profiles) == 6 and not unavailable
+    report['completed'] = completed
+    report['weightedAttributionComplete'] = weighted_complete
+    report['weightedUnavailableCases'] = unavailable
+    report['summary'] = {'completed': completed, 'weightedAttributionComplete': weighted_complete,
+                         'allPlannedWindowsAttempted': all_attempted, 'plannedWindowCount': 9,
+                         'attemptedWindowCount': len(report.get('attemptedCases', [])),
+                         'qualifiedWindowCount': sum(bool(row.get('valid') and row.get('cleanupComplete')) for row in runs),
+                         'weightedUnavailableCases': unavailable, 'weightedAggregationAllowed': weighted_complete,
+                         'completionMeaning': 'All nine native capture/source/structure/save/trace/cleanup contracts passed. This does not promise usable time weights.',
+                         'weightMeaning': 'If any profile has unavailable weights, no pooled duration attribution or CPU-time shares are computed. Raw sample frequencies remain separately labeled.'}
+
+
 def main():
     global BODY_DEADLINE
     parser = argparse.ArgumentParser(description=__doc__)
@@ -641,11 +749,14 @@ def main():
             and not url.username and not url.password and not url.query and not url.fragment, 'Only local real /Infinity/ HTTP is supported')
     args.output.mkdir(parents=True, exist_ok=True)
     exclusive_bytes(args.output / '.current-fleet-profile-owner', b'Exclusive evidence writer; refusing an accidental rerun.\n')
-    report = {'targetSourceSha': TARGET_SHA, 'completed': False, 'runs': [], 'errors': [], 'phase': 'setup',
+    report = {'targetSourceSha': TARGET_SHA, 'completed': False, 'weightedAttributionComplete': False,
+              'globalCleanupComplete': False, 'runs': [], 'errors': [], 'phase': 'setup',
               'settings': {'repetitions': 3, 'fleetSampleMs': 1500, 'warmupMs': 600, 'samplingIntervalUs': 1000, 'bodyDeadlineSeconds': 180},
               'scope': 'Nine fresh native contexts: three extreme-fleet profiles, three unprofiled Save event spans, three separately profiled Saves. No production changes. No numerical speedup claim.',
               'limits': ['Headless foreground Chrome; not display-hardware, mobile or background performance.',
                          'Profile time is sampling attribution with observer/inspector overhead; inclusive ancestor times overlap.',
+                         'Finite signed raw timeDeltas are preserved. If negative values or invalid coverage make weights unavailable, all weighted function durations/rankings are omitted; only explicitly labeled raw sample frequencies are retained.',
+                         'completed and weightedAttributionComplete are independent qualifications. If any profile lacks valid weights, no pooled weighted duration attribution or CPU-time shares are computed.',
                          'Save capture/bubble spans are synchronous event wall observations, not next-paint or exclusive serializer time.',
                          'Unprofiled Save has no Profiler, Tracing, Debugger or DOMStorage observation during the span; Runtime/Performance domains remain enabled. No exact native write count is claimed for these three contexts.',
                          'Native storage bytes and source identity are observed outside measured event intervals.',
@@ -673,14 +784,13 @@ def main():
         browser = playwright.chromium.launch(executable_path=chrome, headless=True, timeout=20000, args=['--no-sandbox'])
         report['environment'] = {'browser': browser.version, 'playwright': importlib.metadata.version('playwright'),
                                  'python': platform.python_version(), 'platform': platform.platform(), 'headless': True, 'executable': chrome}
-        for repetition in range(3):
-            for kind in ('fleet-profiled', 'save-unprofiled', 'save-profiled'):
-                run_case(browser, workload, kind, repetition, args, manifest, report, persist)
-        report['completed'] = len(report['runs']) == 9 and all(row['valid'] for row in report['runs'])
+        execute_schedule(lambda kind, repetition: run_case(browser, workload, kind, repetition, args, manifest, report, persist),
+                         report, persist, deadline=BODY_DEADLINE)
     except BaseException as error:
         report['errors'].append({'phase': report['phase'], 'type': type(error).__name__, 'message': str(error)[:2400]})
     finally:
         persist()
+        cleanup_ok = True
         # 180-second body + at most three 5-second cleanup operations < 200 s.
         for label, closer in (('request', request.dispose if request else None), ('browser', browser.close if browser else None),
                               ('playwright', playwright.stop if playwright else None)):
@@ -689,12 +799,15 @@ def main():
                 try:
                     closer()
                 except BaseException as error:
+                    cleanup_ok = False
                     report['errors'].append({'phase': 'cleanup-' + label, 'type': type(error).__name__, 'message': str(error)[:500]})
         signal.alarm(0)
-        report['completed'] = report['completed'] and not report['errors']
+        report['globalCleanupComplete'] = cleanup_ok
+        summarize_completion(report)
         report['phase'] = 'complete' if report['completed'] else 'invalid-or-incomplete'
         persist()
-    print(json.dumps({'completed': report['completed'], 'cases': len(report['runs']), 'errors': report['errors']}), flush=True)
+    print(json.dumps({'completed': report['completed'], 'weightedAttributionComplete': report['weightedAttributionComplete'],
+                      'cases': len(report['runs']), 'weightedUnavailableCases': report['weightedUnavailableCases'], 'errors': report['errors']}), flush=True)
     return 0 if report['completed'] else 1
 
 

@@ -60,6 +60,41 @@ can also overlap. Unrecognized JavaScript frames invalidate attribution; the
 diagnostic observer has its own exact script identity and remains separately
 accounted. A failed window retains originals and cannot be counted as success.
 
+The first diagnostic, `c2776bff182f992ece17420400053cd806cf30cb`, run
+38332131237, failed its original strict time-weight check in the first fleet
+window. Its immutable artifact 11783142126 is SHA-256
+`a33a1f4d11322e0741183475ab5636a682ae7d74be8f434487293108559ede21`.
+The native profile contains 1,526 records and 48 negative adjacent time deltas
+(minimum −1,054 microseconds). It has no missing node IDs or unbound script
+frames. This result remains failed; its remaining eight windows did not run.
+
+For subsequent fixed nine-window diagnostics, capture completeness and weighted
+attribution completeness are separate, explicit results. Original finite
+signed deltas and sample order are retained. If deltas cannot form the strict
+nonnegative weights, all weighted function-time fields/rankings are unavailable,
+not zero, and no complete weighted comparison is claimed. A separate histogram
+counts every entry in the original `samples` array, including native/program,
+idle, GC and diagnostic frames. Its percentages mean share of recorded samples,
+not CPU-time share, calls, rate, or duration. `hitCount` remains separate: in the
+first original its sum is 1,435, unlike the 1,526 raw sample records.
+
+This deliberately does not import the complete
+[DevTools CPUProfileDataModel](https://raw.githubusercontent.com/ChromeDevTools/devtools-frontend/main/front_end/models/cpu_profile/CPUProfileDataModel.ts),
+which reconstructs/sorts timestamps and can replace isolated program samples.
+The [V8 inspector serializer](https://raw.githubusercontent.com/v8/v8/main/src/inspector/v8-profiler-agent-impl.cc)
+exports adjacent timestamp differences directly. These primary sources explain
+representation and possible interpretation; they do not establish why this
+particular capture contains nonmonotonic timestamps. No raw sample is sorted,
+clamped, discarded or replaced here. The exact DevTools revision accompanying
+the recorded Chrome binary has not been established.
+
+All nine predetermined contexts are attempted within the same original total
+deadline. Unknown sources, invalid sample structure, failed native actions,
+trace capture or cleanup remain accumulated hard failures and a nonzero final
+exit, even if later windows succeed. No failed window is rerun or selected out.
+Successful capture of all windows with some unavailable weighted metrics is
+reported explicitly, rather than presented as complete time attribution.
+
 The existing complete performance run establishes an extreme fleet limitation,
 including substantial script and layout work. It does not identify individual
 hot functions. This diagnostic must finish before selecting an optimization.

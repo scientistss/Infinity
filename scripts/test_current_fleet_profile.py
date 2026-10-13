@@ -24,6 +24,34 @@ IDENTITIES = {'5': {'url': 'http://test/app.js', 'kind': 'production', 'sha256':
               '9': {'url': P.OBSERVER_URL, 'kind': 'diagnostic-observer', 'sha256': P.digest(P.OBSERVER_SOURCE)}}
 SOURCES = {'http://test/app.js': 'a🚀function wrapper(){}', P.OBSERVER_URL: P.OBSERVER_SOURCE}
 
+# The 48 signed entries and their original indices are copied verbatim from
+# CI 38332131237's first fleet profile, SHA256
+# 490b9c33f61b15f51f4b4e8995b956532dc1d31fd51d547aa03da225f3ad50fc.
+# The tiny tree, positive padding and remaining sample identities below are
+# deliberately synthetic test scaffolding, never substituted runtime evidence.
+REAL_NEGATIVE_DELTAS = [
+    (57, -329), (88, -340), (102, -481), (144, -423), (175, -418), (201, -427),
+    (243, -266), (274, -265), (300, -192), (355, -1040), (480, -61), (491, -546),
+    (505, -106), (525, -29), (593, -278), (619, -439), (635, -848), (676, -589),
+    (704, -747), (718, -170), (734, -691), (817, -638), (832, -1002), (872, -506),
+    (900, -433), (915, -500), (932, -28), (969, -1054), (971, -2), (1013, -647),
+    (1030, -50), (1069, -1044), (1097, -843), (1111, -757), (1128, -146), (1168, -889),
+    (1195, -899), (1210, -296), (1226, -766), (1243, -125), (1289, -1045), (1328, -574),
+    (1342, -428), (1358, -960), (1398, -915), (1426, -143), (1441, -695), (1458, -193),
+]
+
+
+def signed_regression_profile():
+    deltas = [1000] * 1526
+    for index, value in REAL_NEGATIVE_DELTAS:
+        deltas[index] = value
+    return {'startTime': 0, 'endTime': 2_000_000,
+            'nodes': [
+                {'id': 1, 'callFrame': {'functionName': '(root)', 'scriptId': '0', 'url': ''}, 'children': [2, 3]},
+                {'id': 2, 'callFrame': {'functionName': '(program)', 'scriptId': '0', 'url': ''}, 'hitCount': 460},
+                {'id': 3, 'callFrame': {'functionName': 'syntheticJsLeaf', 'scriptId': '5', 'url': 'http://test/app.js'}, 'hitCount': 975}],
+            'samples': [2] * 551 + [3] * 975, 'timeDeltas': deltas}
+
 
 class ProfileTests(unittest.TestCase):
     def test_original_weighting_and_separate_observer_cost(self):
@@ -62,8 +90,8 @@ class ProfileTests(unittest.TestCase):
         value = profile(); value['timeDeltas'].pop()
         with self.assertRaises(AssertionError): P.attribute(value, IDENTITIES, SOURCES)
 
-    def test_negative_nonfinite_and_boolean_deltas(self):
-        for invalid in (-1, float('nan'), float('inf'), True):
+    def test_nonfinite_and_boolean_deltas_remain_hard_failures(self):
+        for invalid in (float('nan'), float('inf'), True):
             with self.subTest(invalid=invalid):
                 value = profile(); value['timeDeltas'][0] = invalid
                 with self.assertRaises(AssertionError): P.attribute(value, IDENTITIES, SOURCES)
@@ -87,12 +115,53 @@ class ProfileTests(unittest.TestCase):
     def test_zero_and_excess_sample_coverage(self):
         for values in ([0, 0, 0], [100000, 2000, 3000]):
             value = profile(); value['timeDeltas'] = values
-            with self.assertRaises(AssertionError): P.attribute(value, IDENTITIES, SOURCES)
+            result = P.attribute(value, IDENTITIES, SOURCES)
+            self.assertTrue(result['valid'])
+            self.assertFalse(result['weightValidity']['valid'])
+            self.assertEqual(result['attributionMode'], 'sample-frequency-only')
+            self.assertNotIn('nodesBySelfTime', result)
 
     def test_invalid_profile_bounds(self):
         for value in (0, float('nan'), True):
             data = profile(); data['endTime'] = value
             with self.assertRaises(AssertionError): P.attribute(data, IDENTITIES, SOURCES)
+
+    def test_real_negative_entries_preserve_order_and_disable_all_weights(self):
+        value = signed_regression_profile(); original = json.dumps(value)
+        result = P.attribute(value, IDENTITIES, SOURCES)
+        self.assertEqual(json.dumps(value), original)
+        self.assertTrue(result['valid'])
+        self.assertFalse(result['weightValidity']['valid'])
+        self.assertEqual(result['weightValidity']['negativeDeltaCount'], 48)
+        self.assertEqual([(row['sampleIndex'], row['deltaUs']) for row in result['weightValidity']['negativeDeltas']], REAL_NEGATIVE_DELTAS)
+        self.assertEqual(result['sampleCount'], 1526)
+        for absent in ('sampledMs', 'profileDurationMs', 'nodesBySelfTime', 'nodesByInclusiveTime', 'observerSampledSelfMs'):
+            self.assertNotIn(absent, result)
+        for row in result['nodesBySelfSampleCount']:
+            self.assertNotIn('sampledSelfMs', row)
+            self.assertNotIn('sampledInclusiveMs', row)
+
+    def test_raw_frequency_does_not_substitute_reported_hit_count(self):
+        result = P.attribute(signed_regression_profile(), IDENTITIES, SOURCES)
+        rows = {row['nodeId']: row for row in result['nodesBySelfSampleCount']}
+        self.assertEqual(rows[2]['selfSampleCount'], 551)
+        self.assertEqual(rows[2]['hitCount'], 460)
+        self.assertEqual(rows[2]['selfCountMinusReportedHitCount'], 91)
+        self.assertEqual(result['hitCountComparison']['reportedHitCountSum'], 1435)
+        self.assertEqual(rows[2]['selfFractionOfAllRawSamples'], 551 / 1526)
+        self.assertIsNone(rows[2]['selfFractionOfVerifiedProductionJsLeaves'])
+        self.assertIsNone(rows[1]['inclusiveFractionOfVerifiedProductionJsLeaves'])
+        self.assertEqual(rows[3]['selfFractionOfVerifiedProductionJsLeaves'], 1)
+        self.assertEqual(result['sampleDenominators']['allRawSamples'], 1526)
+        self.assertEqual(result['sampleDenominators']['verifiedProductionJavaScriptLeafSamples'], 975)
+
+    def test_unavailable_weights_do_not_qualify_unknown_sources(self):
+        value = signed_regression_profile(); value['nodes'][2]['callFrame']['scriptId'] = 'unverified'
+        result = P.attribute(value, IDENTITIES, SOURCES)
+        self.assertFalse(result['valid'])
+        self.assertFalse(result['sourceValid'])
+        self.assertEqual(result['attributionMode'], 'invalid-source')
+        self.assertTrue(result['unverifiedFrames'])
 
 
 class FixtureAndEvidenceTests(unittest.TestCase):
@@ -272,6 +341,34 @@ class CleanupTests(unittest.TestCase):
 
 
 class ProfileFinalizationTests(unittest.TestCase):
+    def test_missing_profile_field_retains_original_stop_response(self):
+        class Fake:
+            def send(self, method):
+                return {}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(P, 'end_trace', return_value={'retained': True}) as end:
+                with self.assertRaisesRegex(AssertionError, 'Missing CPU profile field'):
+                    P.finalize_profile(Fake(), None, None, directory)
+                end.assert_called_once()
+            self.assertEqual(json.loads((directory / 'original-profiler-stop-response.json').read_bytes()), {})
+            self.assertFalse((directory / 'original.cpuprofile').exists())
+
+    def test_null_cpu_capture_is_hard_failure_and_trace_still_finalizes(self):
+        class Fake:
+            def send(self, method):
+                return {'profile': None} if method == 'Profiler.stop' else {}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(P, 'end_trace', return_value={'retained': True}) as end:
+                with self.assertRaisesRegex(AssertionError, 'Missing CPU profile object'):
+                    P.finalize_profile(Fake(), None, None, directory)
+                end.assert_called_once()
+            self.assertIsNone(json.loads((directory / 'original.cpuprofile').read_bytes()))
+            finalization = json.loads((directory / 'profile-finalization.json').read_bytes())
+            self.assertFalse(finalization['cpuProfileObtained'])
+            self.assertTrue(finalization['traceFinalized'])
+
     def test_trace_is_finalized_when_profiler_stop_fails(self):
         calls = []
         class Fake:
@@ -324,6 +421,85 @@ class ProfileFinalizationTests(unittest.TestCase):
             result = json.loads((directory / 'profile-finalization.json').read_bytes())
             self.assertEqual([row['stage'] for row in result['errors']],
                              ['capture', 'profiler-stop-or-write', 'profiler-disable', 'trace-finalization'])
+
+
+class ScheduleQualificationTests(unittest.TestCase):
+    def report(self):
+        return {'runs': [], 'errors': [], 'globalCleanupComplete': True}
+
+    def action(self, report, *, fail_first=False, unavailable=False):
+        def invoke(kind, repetition):
+            if fail_first and kind == 'fleet-profiled' and repetition == 0:
+                raise AssertionError('first source verification failure')
+            row = {'case': kind + '-r' + str(repetition + 1), 'kind': kind, 'valid': True, 'cleanupComplete': True}
+            if kind != 'save-unprofiled':
+                row['attribution'] = {'valid': True, 'structureValid': True, 'sourceValid': True,
+                                      'weightValidity': {'valid': not unavailable, 'reasons': ['Negative deltas retained.'] if unavailable else []}}
+            report['runs'].append(row)
+        return invoke
+
+    def test_first_failure_does_not_skip_remaining_fixed_windows(self):
+        report = self.report()
+        P.execute_schedule(self.action(report, fail_first=True), report, lambda: None)
+        P.summarize_completion(report)
+        self.assertEqual(len(report['attemptedCases']), 9)
+        self.assertTrue(report['allPlannedWindowsAttempted'])
+        self.assertEqual(len(report['runs']), 9)
+        self.assertEqual(sum(row['kind'] == 'save-unprofiled' and row['valid'] for row in report['runs']), 3)
+        self.assertEqual(len(report['errors']), 1)
+        self.assertEqual(report['errors'][0]['message'], 'first source verification failure')
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['weightedAttributionComplete'])
+
+    def test_completed_does_not_imply_weighted_attribution_complete(self):
+        report = self.report()
+        P.execute_schedule(self.action(report, unavailable=True), report, lambda: None)
+        P.summarize_completion(report)
+        self.assertTrue(report['completed'])
+        self.assertFalse(report['weightedAttributionComplete'])
+        self.assertEqual(len(report['weightedUnavailableCases']), 6)
+        self.assertTrue(report['summary']['completed'])
+        self.assertFalse(report['summary']['weightedAttributionComplete'])
+        self.assertFalse(report['summary']['weightedAggregationAllowed'])
+        self.assertFalse(report['errors'])
+
+    def test_all_weighted_windows_must_qualify(self):
+        report = self.report()
+        P.execute_schedule(self.action(report), report, lambda: None)
+        P.summarize_completion(report)
+        self.assertTrue(report['completed'])
+        self.assertTrue(report['weightedAttributionComplete'])
+        report['runs'][0]['cleanupComplete'] = False
+        P.summarize_completion(report)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['weightedAttributionComplete'])
+
+    def test_deadline_is_not_extended_to_force_more_windows(self):
+        report = self.report(); times = iter([1, 3, 6])
+        with patch.object(P.time, 'monotonic', side_effect=lambda: next(times)):
+            P.execute_schedule(self.action(report), report, lambda: None, deadline=5)
+        P.summarize_completion(report)
+        self.assertEqual(len(report['attemptedCases']), 2)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['allPlannedWindowsAttempted'])
+        self.assertIn('deadline exhausted', report['errors'][0]['message'])
+
+    def test_global_cleanup_error_cannot_be_overwritten_by_successful_cases(self):
+        report = self.report()
+        P.execute_schedule(self.action(report), report, lambda: None)
+        report['globalCleanupComplete'] = False
+        report['errors'].append({'phase': 'cleanup-browser', 'message': 'failure'})
+        P.summarize_completion(report)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['weightedAttributionComplete'])
+
+    def test_missing_profile_attribution_is_not_weights_only_degradation(self):
+        report = self.report()
+        P.execute_schedule(self.action(report), report, lambda: None)
+        del report['runs'][0]['attribution']
+        P.summarize_completion(report)
+        self.assertFalse(report['completed'])
+        self.assertFalse(report['weightedAttributionComplete'])
 
 
 if __name__ == '__main__':
