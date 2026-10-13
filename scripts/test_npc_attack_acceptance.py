@@ -254,7 +254,7 @@ class NativeReloadScheduleContract(unittest.TestCase):
             def read_bytes(path, changed=changed):
                 return changed.encode('utf-8') if path == workflow_path else original_read(path)
             with mock.patch.object(Path, 'read_bytes', read_bytes):
-                with self.assertRaisesRegex(AssertionError, 'unapproved seven-job workflow drift'):
+                with self.assertRaisesRegex(AssertionError, 'Unapproved recycle workflow drift'):
                     self.test_schedules_have_separate_outputs_and_both_complete_ci_gates()
 
     def test_live_reload_adoption_is_distinct_from_strict_validation(self):
