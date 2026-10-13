@@ -1,0 +1,106 @@
+name: Prove old merchant transfer precision bug
+on:
+  push:
+    branches: ['codex/infinity-merchant-transfer-proof-20261013']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: merchant-transfer-old-proof-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  BASE_SHA: 6b985b88ec6b263a3eeb8f34252525383a9f110f
+jobs:
+  proof:
+    if: github.ref == 'refs/heads/codex/infinity-merchant-transfer-proof-20261013'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Offline proof structure and fail-closed checks
+        run: python -m unittest discover -s scripts -p 'test_merchant_transfer_proof.py' -v
+      - name: Build unchanged exact released source and explicit synthetic fixtures
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p proof-evidence
+          git worktree add --detach "$RUNNER_TEMP/merchant-proof-base" "$BASE_SHA"
+          git archive --format=zip --prefix=Infinity/ "$BASE_SHA" > proof-evidence/source-6b.zip
+          git rev-parse HEAD > proof-evidence/test-source-sha.txt
+          git rev-parse "$BASE_SHA" > proof-evidence/code-source-sha.txt
+          node --version > proof-evidence/node-version.txt
+          npm --version > proof-evidence/npm-version.txt
+          (cd "$RUNNER_TEMP/merchant-proof-base" && npm ci) > proof-evidence/npm-ci.log 2>&1
+          (cd "$RUNNER_TEMP/merchant-proof-base" && GITHUB_SHA="$BASE_SHA" npm run build) > proof-evidence/old-build.log 2>&1
+          echo 'c11a121a91fc891fa196bb71b271966884e09a888b50a254820d79218a2b1da7  '"$RUNNER_TEMP/merchant-proof-base/dist/release.json" | sha256sum -c -
+          cp scripts/merchant-transfer-proof-fixture.ts "$RUNNER_TEMP/merchant-proof-base/scripts/"
+          (cd "$RUNNER_TEMP/merchant-proof-base" && node node_modules/typescript/bin/tsc --noEmit) > proof-evidence/fixture-typecheck.log 2>&1
+          (cd "$RUNNER_TEMP/merchant-proof-base" && node --import tsx scripts/merchant-transfer-proof-fixture.ts) > proof-evidence/fixture.json 2> proof-evidence/fixture.log
+          cp -a "$RUNNER_TEMP/merchant-proof-base/dist" proof-evidence/dist
+      - name: Official native browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Two isolated native cases with 150-second browser bound
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          python scripts/browser-merchant-transfer-proof.py \
+            --proof-root "$GITHUB_WORKSPACE" \
+            --baseline-root "$RUNNER_TEMP/merchant-proof-base" \
+            --source-archive proof-evidence/source-6b.zip \
+            --fixture proof-evidence/fixture.json \
+            --dist "$RUNNER_TEMP/merchant-proof-base/dist" \
+            --expected-test-sha "$GITHUB_SHA" \
+            --chromium "$CHROME" --output proof-evidence/native
+      - name: Exact released reader accepts all actual native saved bytes
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/merchant-proof-base" && node --import tsx scripts/merchant-transfer-proof-fixture.ts --verify-native "$GITHUB_WORKSPACE/proof-evidence/native") > proof-evidence/reader-acceptance.json 2> proof-evidence/reader-acceptance.log
+          python - <<'PY'
+          import json, os
+          report = json.load(open('proof-evidence/native/report.json'))
+          assert report['completed'] is True and report['knownBugConfirmed'] is True
+          assert report['nativeCompleted'] is True and report['productSafetyGate'] is False
+          assert report['codeSourceSha'] == os.environ['BASE_SHA']
+          assert report['testSourceSha'] == os.environ['GITHUB_SHA']
+          assert len(report['cases']) == 2 and all(c['completed'] for c in report['cases'])
+          assert len(report['readerAcceptance']) == 10 and all(s['readerAccepted'] for s in report['readerAcceptance'])
+          assert report['nativeBrowserElapsedSeconds'] <= 150
+          assert report['nativeLifecycleElapsedSeconds'] <= 160
+          assert report['cleanup']['completed'] is True and report['cleanup']['deadlineExceeded'] is False
+          assert report['cleanupErrors'] == [] and report['cleanup']['errors'] == []
+          assert 0 <= report['cleanup']['hostElapsedSeconds'] <= report['cleanup']['budgetSeconds'] <= 10
+          assert len(report['cleanup']['resources']) == 5 and all(r['status'] in ('closed', 'not-active') for r in report['cleanup']['resources'])
+          print('PROOF COMPLETE: known old released merchant precision bug confirmed. This is NOT a product correctness or release gate.')
+          PY
+      - name: Preserve exact evidence and test identities even on failure
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p proof-evidence
+          git rev-parse HEAD > proof-evidence/test-source-sha.txt
+          git status --porcelain > proof-evidence/worktree-status.txt
+          git diff --name-status "$BASE_SHA" HEAD > proof-evidence/proof-only-diff.txt
+          cp scripts/merchant-transfer-proof-fixture.ts scripts/browser-merchant-transfer-proof.py scripts/test_merchant_transfer_proof.py proof-evidence/
+          cp .github/workflows/merchant-transfer-proof.yml proof-evidence/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merchant-transfer-old-proof-${{ github.sha }}-${{ github.run_attempt }}
+          path: proof-evidence
+          if-no-files-found: error
+          retention-days: 7
