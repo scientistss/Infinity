@@ -135,3 +135,23 @@ The three independently qualified fleet windows in the second run recorded
 three unprofiled Save capture-to-bubble spans were 141.7, 145.7 and 152.9 ms.
 They describe this fixed extreme workload and observation method; they neither
 prove exclusive serialization time nor establish an optimization result.
+
+The successor `052f172773421f1684b2e05fe24ba85333efbb87`, run38335896275,
+also remains failed. Artifact11785301119 has SHA-256
+`0f0566b69137dfa2435ab171af9fb704573d7853c5a1d22039c2f8be2a15811c`.
+Eight later contexts supplied the complete live helper source, but the first
+fleet context received an unreadable script11 from context3 after the seed/app
+boundary. Its seed-context metadata and live contexts5/6 were retained, but
+there was no recorded lifecycle-retirement event, so no exception can be applied
+retroactively to that run.
+
+The lifecycle-qualified successor preserves ordered native context creation,
+destruction and clearing events. An unavailable source may remain unqualified
+only when those events positively prove that its previously known context was
+retired and never reused. Current live sources still require full bytes. Any
+reference to such a retired script anywhere in a captured CPU profile rejects
+the window, including an ancestor or an unsampled profile node. Unprofiled Save
+contexts explicitly have no CPU-reference observation; they never invent a
+zero-sample measurement or authorize a retired script. Original parsed metadata,
+lifecycle proof and the exact source-retrieval failure remain in the artifact.
+An empty URL or a seed-page label alone never grants this exception.

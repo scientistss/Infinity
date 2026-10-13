@@ -9,6 +9,7 @@ replacement is used. Run only in the authorized native GitHub CI environment.
 import argparse
 import ast
 import base64
+import copy
 import hashlib
 import importlib.metadata
 import json
@@ -205,6 +206,81 @@ def automation_matches(script, source, expected, contexts, frame_id):
             and context.get('id') == script.get('executionContextId') and context.get('auxData') == aux)
 
 
+class ContextLifecycle:
+    """Positive CDP retirement evidence; absence from the live map is insufficient."""
+    def __init__(self):
+        self.contexts, self.created, self.retired = {}, {}, {}
+        self.events, self.ambiguous = [], set()
+
+    def record(self, method, event):
+        event = copy.deepcopy(event)
+        sequence = len(self.events) + 1
+        row = {'sequence': sequence, 'method': method, 'event': event, 'retiredKnownContextIds': []}
+        self.events.append(row)
+        if method == 'Runtime.executionContextCreated':
+            context = event['context']; context_id = context['id']
+            require(type(context_id) is int, 'Noninteger runtime context ID')
+            if context_id in self.created:
+                self.ambiguous.add(context_id)
+                self.retired.pop(context_id, None)
+            self.created[context_id] = {'sequence': sequence, 'context': context}
+            self.contexts[context_id] = context
+            return
+        require(method in ('Runtime.executionContextDestroyed', 'Runtime.executionContextsCleared'), 'Unknown lifecycle event')
+        ids = list(self.contexts) if method == 'Runtime.executionContextsCleared' else [event['executionContextId']]
+        for context_id in ids:
+            require(type(context_id) is int, 'Noninteger retired runtime context ID')
+            context = self.contexts.get(context_id)
+            if context is None or context_id not in self.created:
+                if method == 'Runtime.executionContextDestroyed':
+                    self.ambiguous.add(context_id)
+                continue  # Unknown IDs are never retired by inference.
+            if (method == 'Runtime.executionContextDestroyed' and event.get('executionContextUniqueId') is not None
+                    and event['executionContextUniqueId'] != context.get('uniqueId')):
+                self.ambiguous.add(context_id)
+                continue
+            self.contexts.pop(context_id)
+            if context_id not in self.ambiguous:
+                self.retired[context_id] = {'contextId': context_id, 'context': context,
+                    'creationEventSequence': self.created[context_id]['sequence'],
+                    'retirementEventSequence': sequence, 'retirementMethod': method}
+                row['retiredKnownContextIds'].append(context_id)
+
+    def retirement_proof(self, script):
+        context_id = script.get('executionContextId')
+        if (type(context_id) is not int or context_id in self.contexts or context_id in self.ambiguous
+                or context_id not in self.retired):
+            return None
+        proof = self.retired[context_id]
+        if proof['context'].get('auxData') != script.get('executionContextAuxData'):
+            return None
+        return copy.deepcopy(proof)
+
+    def evidence(self):
+        return {'events': self.events, 'liveContexts': self.contexts, 'ambiguousOrReusedContextIds': sorted(self.ambiguous),
+                'scope': 'Original ordered Runtime events. Clear retires only contexts actually known live at that event; reused IDs never support an unreadable-source allowance.'}
+
+
+def qualify_retired_sources(unreadable, profile, kind, lifecycle):
+    require(kind in ('fleet-profiled', 'save-profiled', 'save-unprofiled'), 'Unknown retired-source qualification kind')
+    profiled = kind != 'save-unprofiled'
+    require((isinstance(profile, dict) and isinstance(profile.get('nodes'), list)) if profiled else profile is None,
+            'Retired-source qualification lacks the required profile mode')
+    rows = []
+    for item in unreadable:
+        script = item['parsed']
+        proof = lifecycle.retirement_proof(script)
+        references = [{'nodeId': node['id'], 'callFrame': node['callFrame']}
+                      for node in profile['nodes'] if node['callFrame'].get('scriptId') == script['scriptId']] if profiled else None
+        rows.append({'scriptId': script['scriptId'], 'parsedHash': script.get('hash'), 'authorizedForAttribution': False,
+            'retirementProofStillValid': proof is not None and proof == item['retirementProof'],
+            'profileNodeReferences': references, 'zeroProfileReferencesObserved': not references if profiled else None})
+    return {'valid': all(row['retirementProofStillValid'] and (not profiled or not row['profileNodeReferences']) for row in rows),
+        'method': 'all-profile-node-references-including-ancestors' if profiled else 'unprofiled-no-cpu-attribution',
+        'cpuProfileObserved': profiled, 'scripts': rows,
+        'scope': 'Unreadable retired scripts remain unauthorized. Profiled cases reject any profile-tree reference, even an unsampled ancestor. Unprofiled Save has no CPU profile and makes no zero-sample or attribution claim.'}
+
+
 def archive_pre_app_scripts(parsed, contexts, responses, directory):
     # Seed-document contexts are about to be destroyed. Preserve their metadata,
     # but never qualify them or demand their evictable sources for an app profile.
@@ -215,9 +291,10 @@ def archive_pre_app_scripts(parsed, contexts, responses, directory):
     responses.clear()
 
 
-def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_id, expected, directory):
+def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_id, expected, directory,
+                             lifecycle=None, source_error_type=None):
     """Read all parsed sources after prep, outside every capture/profile span."""
-    observations, seen, total, index = [], {}, 0, 0
+    observations, seen, total, index, unreadable = [], {}, 0, 0, []
     try:
         while index < len(parsed):
             require(index < MAX_SCRIPT_SOURCES, 'Parsed source count exceeds diagnostic bound')
@@ -230,7 +307,21 @@ def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_i
             seen[script_id] = dict(script)
             observation = {'parsed': dict(script), 'qualifiedKind': None}
             observations.append(observation)
-            response = cdp.send('Debugger.getScriptSource', {'scriptId': script_id})
+            try:
+                response = cdp.send('Debugger.getScriptSource', {'scriptId': script_id})
+            except Exception as error:
+                observation['sourceReadError'] = {'type': type(error).__name__, 'message': str(error)}
+                proof = lifecycle.retirement_proof(script) if lifecycle is not None else None
+                expected_error = 'CDPSession.send: Protocol error (Debugger.getScriptSource): No script for id: ' + script_id
+                # The exact public Playwright Error class is supplied by main.
+                # Its TimeoutError/TargetClosedError subclasses, Python errors
+                # and unrelated protocol failures must never become allowances.
+                if (source_error_type is None or type(error) is not source_error_type or str(error) != expected_error
+                        or proof is None or script_id in identities):
+                    raise
+                observation.update({'sourceUnavailable': True, 'retirementProof': proof, 'authorizedForAttribution': False})
+                unreadable.append(copy.deepcopy(observation))
+                continue
             source = response.get('scriptSource')
             require(isinstance(source, str), 'Missing original V8 script source')
             body = source.encode(); sha = digest(body); total += len(body)
@@ -245,7 +336,8 @@ def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_i
                 ident = identities[script_id]
                 require(ident['sha256'] == sha and ident['url'] == script.get('url') and sources.get(key) == source,
                         'Previously verified source identity changed')
-            elif automation_matches(script, source, expected, contexts, frame_id):
+            elif ((lifecycle is None or script.get('executionContextId') not in lifecycle.ambiguous)
+                  and automation_matches(script, source, expected, contexts, frame_id)):
                 identities[script_id] = {'url': '', 'kind': 'automation-helper', 'sha256': sha,
                     'executionContextId': script['executionContextId'], 'executionContextAuxData': script['executionContextAuxData'],
                     'liveExecutionContextAtQualification': dict(contexts[script['executionContextId']])}
@@ -254,9 +346,10 @@ def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_i
                 identities[script_id].update({'sourceKey': key, 'sourcePath': filename})
                 observation['qualifiedKind'] = identities[script_id]['kind']
         require(all(script_id in seen for script_id in identities), 'Qualified identity missing from prepared script inventory')
-        return {'capturedScriptCount': len(observations), 'capturedSourceBytes': total,
+        return {'observedScriptCount': len(observations), 'capturedScriptCount': len(observations) - len(unreadable), 'capturedSourceBytes': total,
+                'retiredUnreadableSources': unreadable,
                 'automationHelperScriptIds': [key for key, value in identities.items() if value['kind'] == 'automation-helper'],
-                'scope': 'Full original V8 sources read after all locator/preparation work and before measurement. Unqualified blank sources are retained, never whitelisted.'}
+                'scope': 'All sources are requested after preparation and before measurement. Only positively retired, never-reused contexts may retain unreadable sources as permanently unqualified; every profiled case must additionally exclude their IDs from its entire CPU tree.'}
     finally:
         exclusive_json(directory / 'prepared-script-sources.json', observations)
 
@@ -660,14 +753,15 @@ def finalize_case(row, context, directory, persist):
             signal.setitimer(signal.ITIMER_REAL, max(.001, BODY_DEADLINE - time.monotonic()))
 
 
-def run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source):
+def run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source, source_error_type):
     name = kind + '-r' + str(repetition + 1)
     directory = args.output / name; directory.mkdir(exist_ok=False)
     row = {'case': name, 'kind': kind, 'repetition': repetition + 1, 'valid': False,
            'instrumented': kind != 'save-unprofiled', 'phase': 'setup'}
     report['runs'].append(row); report['phase'] = name; persist()
     context = None; cdp = None
-    errors, parsed, responses, mutations, contexts = [], [], [], [], {}
+    errors, parsed, responses, mutations = [], [], [], []
+    lifecycle = ContextLifecycle(); contexts = lifecycle.contexts
     try:
         context = browser.new_context(viewport={'width': 1440, 'height': 1100}, reduced_motion='reduce', service_workers='block')
         page = context.new_page(); page.set_default_timeout(15000); page.set_default_navigation_timeout(20000)
@@ -676,9 +770,8 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         page.on('response', lambda response: responses.append(response) if response.request.resource_type == 'script' else None)
         cdp = context.new_cdp_session(page)
         cdp.send('Performance.enable', {'timeDomain': 'timeTicks'})
-        cdp.on('Runtime.executionContextCreated', lambda event: contexts.__setitem__(event['context']['id'], event['context']))
-        cdp.on('Runtime.executionContextDestroyed', lambda event: contexts.pop(event['executionContextId'], None))
-        cdp.on('Runtime.executionContextsCleared', lambda event: contexts.clear())
+        for method in ('Runtime.executionContextCreated', 'Runtime.executionContextDestroyed', 'Runtime.executionContextsCleared'):
+            cdp.on(method, lambda event, method=method: lifecycle.record(method, event))
         cdp.send('Runtime.enable'); cdp.on('Debugger.scriptParsed', lambda event: parsed.append(event)); cdp.send('Debugger.enable')
         response = page.goto(urljoin(args.url, 'release.json'), wait_until='load')
         require(response and response.status == 200 and digest(response.body()) == RELEASE_SHA256, 'Native release navigation mismatch')
@@ -719,7 +812,8 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         # Last JavaScript evaluation/locator preparation has finished. Read-only
         # inspector source retrieval cannot be charged to the following span.
         row['preparedSources'] = capture_prepared_sources(cdp, parsed, identities, sources, contexts,
-                                                          current_frame['id'], automation_source, directory)
+                                                          current_frame['id'], automation_source, directory, lifecycle, source_error_type)
+        exclusive_json(directory / 'prepared-runtime-lifecycle.json', lifecycle.evidence())
         row['scriptIdentities'] = identities
         exclusive_json(directory / 'script-identities.json', identities)
         origin = urlparse(args.url); origin = origin.scheme + '://' + origin.netloc
@@ -773,6 +867,8 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         row['before'] = before; row['after'] = after; row['metrics'] = metric_delta(raw_before, raw_after)
         row['metricWindowScope'] = 'Outer diagnostic CDP window includes inspector/profile/trace retrieval overhead; not isolated handler CPU or a benchmark speedup.'
         require(kind == 'save-unprofiled' or isinstance(profile, dict), 'Profiled case is missing its CPU capture')
+        row['retiredSourceQualification'] = qualify_retired_sources(row['preparedSources']['retiredUnreadableSources'], profile, kind, lifecycle)
+        exclusive_json(directory / 'retired-source-qualification.json', row['retiredSourceQualification'])
         if profile is not None:
             attribution = attribute(profile, identities, sources)
             exclusive_json(directory / 'attribution.json', attribution)
@@ -787,6 +883,7 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
                                           'automationHelperSampledSelfMs': attribution['automationHelperSampledSelfMs'],
                                           'topSelf': attribution['nodesBySelfTime'][:20]})
             require(attribution['valid'], 'Profile contains unknown/inspector JavaScript; original evidence retained')
+        require(row['retiredSourceQualification']['valid'], 'Unreadable retired source has ambiguous lifecycle or CPU profile references')
         if action_error:
             raise action_error
         qualified_snapshot(after, panel)
@@ -813,7 +910,10 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
                                 ('native-current-events.json', mutations)):
             if not (directory / filename).exists():
                 exclusive_json(directory / filename, value)
-        finalize_case(row, context, directory, persist)
+        try:
+            finalize_case(row, context, directory, persist)
+        finally:
+            exclusive_json(directory / 'runtime-lifecycle.json', lifecycle.evidence())
 
 
 def verify_release(request, args):
@@ -920,6 +1020,7 @@ def main():
                          'Unprofiled Save has no Profiler, Tracing, Debugger or DOMStorage observation during the span; Runtime/Performance domains remain enabled. No exact native write count is claimed for these three contexts.',
                          'Native storage bytes and source identity are observed outside measured event intervals.',
                          'Only the complete exact Playwright 1.57 isolated-world helper is separately qualified as automation-helper after full source/hash/live-context verification. Its samples and usable weights are tooling costs, excluded from production-JS denominators. Other blank sources remain unqualified.',
+                         'Unreadable sources require positive created-to-destroyed/cleared lifecycle evidence, no context-ID reuse, and no references anywhere in a profiled CPU tree. Unprofiled Save makes no CPU-reference absence claim. Retired sources never become authorized JavaScript.',
                          'Source maps are optional external evidence and are not required or assumed by this script.']}
     def persist():
         temporary = args.output / 'report.json.tmp'
@@ -936,7 +1037,7 @@ def main():
         chrome = args.chromium or shutil.which('google-chrome') or shutil.which('google-chrome-stable')
         require(chrome and Path(chrome).is_file(), 'Official CI Chrome executable unavailable')
         automation_source, report['automationReconstruction'] = load_automation(args.output)
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import Error as PlaywrightError, sync_playwright
         playwright = sync_playwright().start()
         request = playwright.request.new_context()
         manifest = verify_release(request, args)
@@ -944,7 +1045,7 @@ def main():
         browser = playwright.chromium.launch(executable_path=chrome, headless=True, timeout=20000, args=['--no-sandbox'])
         report['environment'] = {'browser': browser.version, 'playwright': importlib.metadata.version('playwright'),
                                  'python': platform.python_version(), 'platform': platform.platform(), 'headless': True, 'executable': chrome}
-        execute_schedule(lambda kind, repetition: run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source),
+        execute_schedule(lambda kind, repetition: run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source, PlaywrightError),
                          report, persist, deadline=BODY_DEADLINE)
     except BaseException as error:
         report['errors'].append({'phase': report['phase'], 'type': type(error).__name__, 'message': str(error)[:2400]})

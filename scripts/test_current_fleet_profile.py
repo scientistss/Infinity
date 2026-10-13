@@ -404,6 +404,191 @@ class AutomationSourceTests(unittest.TestCase):
         self.assertLess(capture, source.index("cdp.send('Debugger.disable')"))
 
 
+class FakePlaywrightError(Exception):
+    """Synthetic exact-class stand-in; runtime uses the imported official Error."""
+
+
+class RetiredSourceTests(unittest.TestCase):
+    def setup_retirement(self, *, cleared=False):
+        script = parsed_source('11', 'old seed expression', context_id=3, isolated=False)
+        context = live_contexts(script)[3]; context['uniqueId'] = 'original-context-3'
+        lifecycle = P.ContextLifecycle()
+        lifecycle.record('Runtime.executionContextCreated', {'context': context})
+        if cleared:
+            lifecycle.record('Runtime.executionContextsCleared', {})
+        else:
+            lifecycle.record('Runtime.executionContextDestroyed', {'executionContextId': 3, 'executionContextUniqueId': context['uniqueId']})
+        return script, lifecycle
+
+    def capture_unreadable(self, root, script, lifecycle, error=None):
+        class Fake:
+            def send(self, method, params):
+                raise error or FakePlaywrightError('CDPSession.send: Protocol error (Debugger.getScriptSource): No script for id: ' + params['scriptId'])
+        identities, sources = {}, {}
+        result = P.capture_prepared_sources(Fake(), [script], identities, sources, lifecycle.contexts,
+                                            'current', 'not an automation source', root, lifecycle, FakePlaywrightError)
+        self.assertFalse(identities)
+        self.assertFalse(sources)
+        return result
+
+    def test_actual_destroyed_event_supports_unreadable_but_never_authorizes_it(self):
+        script, lifecycle = self.setup_retirement()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); result = self.capture_unreadable(root, script, lifecycle)
+            self.assertEqual(result['capturedScriptCount'], 0)
+            self.assertEqual(result['observedScriptCount'], 1)
+            row = result['retiredUnreadableSources'][0]
+            self.assertIsNone(row['qualifiedKind'])
+            self.assertFalse(row['authorizedForAttribution'])
+            self.assertEqual(row['sourceReadError']['message'], 'CDPSession.send: Protocol error (Debugger.getScriptSource): No script for id: 11')
+            self.assertEqual(row['retirementProof']['creationEventSequence'], 1)
+            self.assertEqual(row['retirementProof']['retirementEventSequence'], 2)
+            self.assertEqual(json.loads((root / 'prepared-script-sources.json').read_bytes()), [row])
+
+    def test_clear_proves_only_contexts_known_live_at_that_exact_event(self):
+        script, lifecycle = self.setup_retirement(cleared=True)
+        self.assertIsNotNone(lifecycle.retirement_proof(script))
+        self.assertEqual(lifecycle.events[1]['retiredKnownContextIds'], [3])
+        unknown = parsed_source('12', 'unknown', context_id=99)
+        self.assertIsNone(lifecycle.retirement_proof(unknown))
+        context = live_contexts(unknown)[99]
+        lifecycle.record('Runtime.executionContextCreated', {'context': context})
+        self.assertIsNone(lifecycle.retirement_proof(unknown))
+
+    def test_absence_or_unknown_destroyed_event_is_not_retirement_proof(self):
+        script = parsed_source('11', 'old', context_id=3)
+        for method, event in [('Runtime.executionContextsCleared', {}),
+                              ('Runtime.executionContextDestroyed', {'executionContextId': 3})]:
+            lifecycle = P.ContextLifecycle(); lifecycle.record(method, event)
+            self.assertIsNone(lifecycle.retirement_proof(script))
+            with tempfile.TemporaryDirectory() as temporary:
+                with self.assertRaisesRegex(FakePlaywrightError, 'No script for id'):
+                    self.capture_unreadable(Path(temporary), script, lifecycle)
+
+    def test_live_context_source_failure_remains_hard_failure(self):
+        script = parsed_source('11', 'live', context_id=3)
+        lifecycle = P.ContextLifecycle(); lifecycle.record('Runtime.executionContextCreated', {'context': live_contexts(script)[3]})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(FakePlaywrightError, 'No script for id'): self.capture_unreadable(root, script, lifecycle)
+            row = json.loads((root / 'prepared-script-sources.json').read_bytes())[0]
+            self.assertIn('sourceReadError', row)
+            self.assertNotIn('retirementProof', row)
+
+    def test_context_aux_data_mismatch_cannot_use_retirement_proof(self):
+        script, lifecycle = self.setup_retirement()
+        script['executionContextAuxData']['frameId'] = 'different-frame'
+        self.assertIsNone(lifecycle.retirement_proof(script))
+
+    def test_context_id_reuse_is_permanently_ineligible(self):
+        script, lifecycle = self.setup_retirement()
+        lifecycle.record('Runtime.executionContextCreated', {'context': live_contexts(script)[3]})
+        lifecycle.record('Runtime.executionContextDestroyed', {'executionContextId': 3})
+        self.assertIn(3, lifecycle.ambiguous)
+        self.assertIsNone(lifecycle.retirement_proof(script))
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(FakePlaywrightError, 'No script for id'):
+                self.capture_unreadable(Path(temporary), script, lifecycle)
+
+    def test_unobserved_old_generation_and_boolean_ids_cannot_supply_proof(self):
+        script = parsed_source('11', 'old', context_id=3)
+        lifecycle = P.ContextLifecycle()
+        lifecycle.record('Runtime.executionContextDestroyed', {'executionContextId': 3})
+        lifecycle.record('Runtime.executionContextCreated', {'context': live_contexts(script)[3]})
+        lifecycle.record('Runtime.executionContextsCleared', {})
+        self.assertIsNone(lifecycle.retirement_proof(script))
+        with self.assertRaisesRegex(AssertionError, 'Noninteger'):
+            lifecycle.record('Runtime.executionContextDestroyed', {'executionContextId': True})
+
+    def test_destroyed_unique_id_mismatch_is_ambiguous_not_positive_proof(self):
+        script = parsed_source('11', 'old', context_id=3)
+        context = live_contexts(script)[3]; context['uniqueId'] = 'first'
+        lifecycle = P.ContextLifecycle(); lifecycle.record('Runtime.executionContextCreated', {'context': context})
+        lifecycle.record('Runtime.executionContextDestroyed', {'executionContextId': 3, 'executionContextUniqueId': 'different'})
+        self.assertIsNone(lifecycle.retirement_proof(script))
+        self.assertIn(3, lifecycle.ambiguous)
+
+    def test_lifecycle_original_events_are_ordered_and_not_mutable_aliases(self):
+        script, lifecycle = self.setup_retirement()
+        evidence = lifecycle.evidence()
+        self.assertEqual([event['sequence'] for event in evidence['events']], [1, 2])
+        self.assertEqual(evidence['events'][1]['event']['executionContextId'], 3)
+        script['executionContextAuxData']['frameId'] = 'later-mutation'
+        self.assertEqual(evidence['events'][0]['event']['context']['auxData']['frameId'], 'current')
+
+    def test_retired_profile_references_reject_leaf_ancestor_and_unsampled_nodes(self):
+        script, lifecycle = self.setup_retirement()
+        unreadable = [{'parsed': script, 'retirementProof': lifecycle.retirement_proof(script)}]
+        for node_index in (0, 1, 2):
+            value = profile(); value['nodes'][node_index]['callFrame']['scriptId'] = '11'
+            if node_index == 1: value['samples'] = [3, 3, 4]  # Wrapper is an ancestor, never a leaf.
+            result = P.qualify_retired_sources(unreadable, value, 'fleet-profiled', lifecycle)
+            self.assertFalse(result['valid'])
+            self.assertTrue(result['scripts'][0]['profileNodeReferences'])
+            self.assertFalse(result['scripts'][0]['zeroProfileReferencesObserved'])
+
+    def test_profile_zero_references_can_pass_but_stays_unqualified(self):
+        script, lifecycle = self.setup_retirement()
+        unreadable = [{'parsed': script, 'retirementProof': lifecycle.retirement_proof(script)}]
+        result = P.qualify_retired_sources(unreadable, profile(), 'save-profiled', lifecycle)
+        self.assertTrue(result['valid'])
+        self.assertTrue(result['cpuProfileObserved'])
+        self.assertTrue(result['scripts'][0]['zeroProfileReferencesObserved'])
+        self.assertFalse(result['scripts'][0]['authorizedForAttribution'])
+
+    def test_unprofiled_save_never_claims_observed_zero_cpu_references(self):
+        script, lifecycle = self.setup_retirement()
+        unreadable = [{'parsed': script, 'retirementProof': lifecycle.retirement_proof(script)}]
+        result = P.qualify_retired_sources(unreadable, None, 'save-unprofiled', lifecycle)
+        self.assertTrue(result['valid'])
+        self.assertFalse(result['cpuProfileObserved'])
+        self.assertIsNone(result['scripts'][0]['profileNodeReferences'])
+        self.assertIsNone(result['scripts'][0]['zeroProfileReferencesObserved'])
+        self.assertEqual(result['method'], 'unprofiled-no-cpu-attribution')
+        for value, kind in [(None, 'save-profiled'), (profile(), 'save-unprofiled')]:
+            with self.assertRaises(AssertionError): P.qualify_retired_sources(unreadable, value, kind, lifecycle)
+
+    def test_later_context_reuse_invalidates_an_earlier_unreadable_allowance(self):
+        script, lifecycle = self.setup_retirement()
+        unreadable = [{'parsed': script, 'retirementProof': lifecycle.retirement_proof(script)}]
+        lifecycle.record('Runtime.executionContextCreated', {'context': live_contexts(script)[3]})
+        lifecycle.record('Runtime.executionContextsCleared', {})
+        result = P.qualify_retired_sources(unreadable, profile(), 'fleet-profiled', lifecycle)
+        self.assertFalse(result['valid'])
+        self.assertFalse(result['scripts'][0]['retirementProofStillValid'])
+
+    def test_retirement_does_not_swallow_deadline_or_verified_identity_errors(self):
+        script, lifecycle = self.setup_retirement()
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(TimeoutError, 'deadline'):
+                self.capture_unreadable(Path(temporary), script, lifecycle, TimeoutError('deadline'))
+        class Fake:
+            def send(self, method, params):
+                raise FakePlaywrightError('CDPSession.send: Protocol error (Debugger.getScriptSource): No script for id: 11')
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(FakePlaywrightError):
+                P.capture_prepared_sources(Fake(), [script], {'11': {}}, {}, lifecycle.contexts, 'current', '', Path(temporary), lifecycle, FakePlaywrightError)
+
+    def test_only_exact_playwright_error_and_exact_script_not_found_message_can_pass(self):
+        class SeparateTimeoutError(FakePlaywrightError): pass
+        class TargetClosedError(FakePlaywrightError): pass
+        class OtherError(Exception): pass
+        script, lifecycle = self.setup_retirement()
+        exact = 'CDPSession.send: Protocol error (Debugger.getScriptSource): No script for id: 11'
+        for error in (SeparateTimeoutError(exact), TargetClosedError(exact), OtherError(exact),
+                      MemoryError(exact), ValueError(exact), AssertionError(exact), TimeoutError(exact),
+                      FakePlaywrightError(exact + ' extra'), FakePlaywrightError(exact.replace(': 11', ': 12')),
+                      FakePlaywrightError('No script for id: 11')):
+            with self.subTest(error_type=type(error).__name__, message=str(error)), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with self.assertRaises(type(error)) as caught:
+                    self.capture_unreadable(root, script, lifecycle, error)
+                self.assertIs(caught.exception, error)
+                observed = json.loads((root / 'prepared-script-sources.json').read_bytes())[0]
+                self.assertEqual(observed['sourceReadError']['message'], str(error))
+                self.assertNotIn('retirementProof', observed)
+
+
 class FixtureAndEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
