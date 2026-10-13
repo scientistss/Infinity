@@ -68,3 +68,22 @@ The resealed production inventory retains all 215 entries and fourteen prior
 seals; 193 source checks and 15 synthetic provenance tests passed locally.
 This repair still requires a new exact-SHA full native CI run. The original
 failed run is not reclassified as successful.
+
+
+## Cold-reload source-identity follow-up
+
+At `c7b24dac00d43550a6803376e966e1d7945acf54`, the repaired native
+selection flow passed both planets' four actual paid jobs, fixed task/payer
+identities, and full completed economic state. The first reload then failed
+the strict unique HTTP 200 source-response gate (181 checks recorded). That
+run did not record the failing HTTP status, so its cause is not labeled a
+304, cache hit, or production defect. Its original artifact is preserved in
+run 38482665623, artifact 11858131739.
+
+This test-only follow-up explicitly disables HTTP cache through the existing
+CDP connection before navigation, as the other correctness suites already
+do. It records full response status, redirect/request metadata and CDP cache
+flags before asserting the unchanged unique-200 and full HTTP/V8/release
+byte checks. It makes no claim about normal cache behavior or performance.
+All 25 scenarios and existing time budgets remain mandatory; final exact-SHA
+CI is still required.

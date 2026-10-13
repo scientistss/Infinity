@@ -4,6 +4,8 @@
 Real HTTP/V8 production, native file import/confirmation/Storage, trusted normal
 inputs. Logical Date/performance/RAF time is controlled; no real-time claim.
 Explicit DOM/storage attacks and 3/4-planet synthetic boundaries stay labeled.
+HTTP caching is explicitly disabled for exact cold-reload source identity;
+this suite does not measure browser cache or rendering performance.
 """
 import argparse
 from contextlib import contextmanager
@@ -36,6 +38,20 @@ SCENARIOS = ('natural-payments-reload-no-replay', 'natural-unobserved-control', 
 
 def sha(raw):
     return hashlib.sha256(raw.encode() if isinstance(raw, str) else raw).hexdigest()
+
+
+def http_response_evidence(response):
+    request, chain, seen = response.request, [], set()
+    while request is not None:
+        if id(request) in seen or len(chain) >= 16:
+            raise ValueError('Nonfinite HTTP redirect chain')
+        seen.add(id(request))
+        chain.append({'url': request.url, 'resourceType': request.resource_type})
+        request = request.redirected_from
+    return {'url': response.url, 'status': response.status,
+            'requestChainFinalFirst': chain,
+            'cacheHeaders': {key: value for key, value in response.headers.items()
+                             if key.lower() in ('cache-control', 'etag', 'last-modified', 'age')}}
 
 
 def atomic_json(path, value):
@@ -257,7 +273,14 @@ def worker(args):
             relative = unquote(urlparse(url).path).removeprefix(unquote(parsed.path))
             if not relative.endswith('.js'): continue
             responses = [response for response in capture['responses'] if response.url == url]
-            check('executed production asset has one real HTTP response', len(responses) == 1 and responses[0].status == 200 and relative in release['files'])
+            identity_evidence = {'executed': event, 'relative': relative,
+                                 'matchingResponseCount': len(responses),
+                                 'responses': [http_response_evidence(response) for response in capture['responses']],
+                                 'protocolResponses': capture['responseEvents'],
+                                 'cachePolicy': 'Network.setCacheDisabled(true) before every initial navigation; inherited by reload'}
+            identity_ref = dump(current['id'] + '-http-response-identity.json', json.dumps(identity_evidence, ensure_ascii=False, indent=2))
+            current.setdefault('httpIdentityObservations', []).append(identity_ref)
+            check('executed production asset has one real HTTP response', len(responses) == 1 and responses[0].status == 200 and relative in release['files'], identity_ref)
             code = capture['cdp'].send('Debugger.getScriptSource', {'scriptId': event['scriptId']})['scriptSource']
             row = {'file': relative, 'url': url, 'httpSha256': sha(responses[0].body()), 'v8Sha256': sha(code), 'releaseSha256': release['files'][relative],
                    'httpOriginal': dump(current['id'] + '-http-executed.js', responses[0].body()), 'v8Original': dump(current['id'] + '-v8-executed.js', code)}
@@ -287,7 +310,11 @@ def worker(args):
         context.add_init_script(CLOCK.replace('__ORIGIN__', json.dumps(origin)).replace('__EPOCH__', str(fixture['ready']['savedAt'])))
         page = context.new_page(); active_page = page
         page.set_default_timeout(8000); page.set_default_navigation_timeout(12000)
-        capture = {'cdp': context.new_cdp_session(page), 'responses': [], 'executed': [], 'enableObserver': enable_observer}
+        capture = {'cdp': context.new_cdp_session(page), 'responses': [], 'executed': [], 'responseEvents': [], 'enableObserver': enable_observer}
+        capture['cdp'].send('Network.enable')
+        capture['cdp'].send('Network.setCacheDisabled', {'cacheDisabled': True})
+        capture['cdp'].on('Network.responseReceived', lambda event: capture['responseEvents'].append(event)
+                          if event.get('type') == 'Script' else None)
         capture['cdp'].send('Debugger.enable')
         capture['cdp'].on('Debugger.scriptParsed', lambda event: capture['executed'].append(event) if event.get('url', '').startswith(args.url) else None)
         page.on('response', lambda response: capture['responses'].append(response) if urlparse(response.url).path.endswith('.js') else None)
@@ -435,7 +462,8 @@ def worker(args):
                     actual, ref = preserve(page, 'completed'); whole('all four exact local payments and completed jobs match complete API oracle', actual, fixture['completed']['state']); current['completedRaw'] = ref
                     seal_event_scope(page)
                     retire_observer(page, capture)
-                    capture['responses'].clear(); capture['executed'].clear(); page.reload(wait_until='networkidle'); seal_scripts(page, capture)
+                    capture['responses'].clear(); capture['executed'].clear(); capture['responseEvents'].clear()
+                    page.reload(wait_until='networkidle'); seal_scripts(page, capture)
                     advance(page, 30); tab(page, 'save'); page.locator('[data-action="save"]').click(); advance(page)
                     actual, ref = preserve(page, 'no-replay'); whole('reload and three more passes do not renew finite orders', actual, fixture['noReplay']['state']); current['afterRaw'] = ref
                     live, ref = export_live(page); whole('complete live no-replay result matches independent API oracle', live, fixture['noReplay']['state']); current['afterLiveExport'] = ref

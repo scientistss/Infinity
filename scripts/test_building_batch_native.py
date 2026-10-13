@@ -257,5 +257,39 @@ class FailureCaptureContract(unittest.TestCase):
         self.assertFalse(self.namespace['report']['completed'])
 
 
+
+class ColdReloadSourceContract(unittest.TestCase):
+    def test_response_metadata_preserves_status_and_redirect_chain(self):
+        from types import SimpleNamespace
+        module = load('batch_http_contract', 'scripts/browser-building-batch.py')
+        first = SimpleNamespace(url='http://localhost/start.js', resource_type='script', redirected_from=None)
+        final = SimpleNamespace(url='http://localhost/final.js', resource_type='script', redirected_from=first)
+        response = SimpleNamespace(url=final.url, status=304, request=final,
+                                   headers={'etag': 'literal-tag', 'cache-control': 'max-age=0', 'unrelated': 'not selected'})
+        result = module.http_response_evidence(response)
+        self.assertEqual(result, {'url': final.url, 'status': 304,
+            'requestChainFinalFirst': [{'url': final.url, 'resourceType': 'script'}, {'url': first.url, 'resourceType': 'script'}],
+            'cacheHeaders': {'etag': 'literal-tag', 'cache-control': 'max-age=0'}})
+        first.redirected_from = final
+        with self.assertRaisesRegex(ValueError, 'Nonfinite HTTP redirect chain'):
+            module.http_response_evidence(response)
+
+    def test_cold_navigation_keeps_strict_full_byte_gate_and_records_before_assertion(self):
+        source = (ROOT / 'scripts/browser-building-batch.py').read_text()
+        tree = ast.parse(source)
+        worker = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'worker')
+        boot = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'boot')
+        boot_text = ast.get_source_segment(source, boot)
+        self.assertLess(boot_text.index("send('Network.enable')"), boot_text.index("send('Network.setCacheDisabled', {'cacheDisabled': True})"))
+        self.assertLess(boot_text.index("send('Network.setCacheDisabled', {'cacheDisabled': True})"), boot_text.index('page.goto('))
+        seal = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'seal_scripts')
+        seal_text = ast.get_source_segment(source, seal)
+        self.assertLess(seal_text.index('identity_ref = dump('), seal_text.index("check('executed production asset has one real HTTP response'"))
+        self.assertIn("len(responses) == 1 and responses[0].status == 200 and relative in release['files']", seal_text)
+        self.assertIn("row['httpSha256'] == row['v8Sha256'] == row['releaseSha256']", seal_text)
+        self.assertEqual(source.count("page.reload(wait_until='networkidle')"), 1)
+        self.assertIn("capture['responseEvents'].clear()", source)
+
+
 if __name__ == '__main__':
     unittest.main()
