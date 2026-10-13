@@ -46,3 +46,20 @@ The natural two-curvature route, inactive-world differential, native controls,
 four widths, complete legacy gates and final source identities remain pending.
 No release, development-branch promotion or Site update is authorized by this
 checkpoint alone. Historical r15 recovery remains outside this implementation.
+
+
+## Bounded history consistency follow-up
+
+Independent review found two impossible histories accepted by the unpublished
+reader: attempt 2 completed after only two total curvatures, and an entry job
+floor with fewer than four IDs available. Three focused counterexamples first
+failed while the 55 existing reader tests passed. The reader now requires each
+issued attempt's entry curvature (retained after abandonment), one additional
+finish curvature for a completion, and the original four-ID entry capacity.
+The completed follow-up run passed 171 domain/save/migration tests. A coherent
+synthetic curvature fixture explicitly includes the pre-existing first-launch
+card; its original normalization mismatch is retained in local test evidence.
+
+The save-screen text explicitly lists supported r2–r14 sources and rejects the
+unpublished r15, matching the actual reader. This does not establish full native
+or final CI acceptance.

@@ -168,3 +168,47 @@ describe("r16 strict bounded challenge persistence", () => {
     expect(() => readEnergyChallengeState({ ...createEnergyChallengeState(), active: undefined })).toThrow();
   });
 });
+
+describe("r16 immutable attempt history feasibility", () => {
+  it.each([false, true])("binds attempt number to real curvature count (completed=%s)", finished => {
+    const state = finished ? completed() : active();
+    const original = JSON.stringify(serializeState(state));
+    const raw = JSON.parse(original);
+    const receipt = raw.energyChallenge.active ?? raw.energyChallenge.completion.attempt;
+    receipt.attemptId = 2; raw.energyChallenge.nextAttemptId = 3;
+    const malformed = JSON.stringify(raw);
+    expect(() => deserializeState(raw)).toThrow();
+    expect(JSON.stringify(raw)).toBe(malformed);
+    attemptOf(state).attemptId = 2; state.energyChallenge.nextAttemptId = 3;
+    expect(() => serializeState(state)).toThrow();
+    state.stats.launches = finished ? 3 : 2;
+    // Coherent synthetic curvature input includes the existing first-launch card.
+    state.unlockedCards = ["energy_eff_gate"];
+    const saved = exportSave(state, 1000);
+    expect(exportSave(importSave(saved).state, 1000)).toBe(saved);
+    expect(attemptOf(importSave(saved).state).attemptId).toBe(2);
+  });
+  it("retains abandoned attempt history without accepting entries before their curvatures", () => {
+    const state = active(); state.energyChallenge.active = null;
+    expect(() => validateEnergyChallengeReferences(state)).not.toThrow();
+    state.energyChallenge.nextAttemptId = 3;
+    expect(() => validateEnergyChallengeReferences(state)).toThrow();
+    state.stats.launches = 2;
+    expect(() => validateEnergyChallengeReferences(state)).not.toThrow();
+    state.hasPrestiged = false;
+    expect(() => validateEnergyChallengeReferences(state)).toThrow();
+  });
+  it("rejects immutable entry floors without four issuable IDs, preserving the boundary", () => {
+    const state = active();
+    const floor = Number.MAX_SAFE_INTEGER - 4;
+    state.orders.nextJobId = floor; state.terraformerGrantJobFloor = floor;
+    attemptOf(state).entryJobFloor = floor;
+    expect(() => serializeState(state)).not.toThrow();
+    for (const impossible of [floor + 1, Number.MAX_SAFE_INTEGER]) {
+      state.orders.nextJobId = impossible; state.terraformerGrantJobFloor = impossible;
+      attemptOf(state).entryJobFloor = impossible;
+      expect(() => readEnergyChallengeState(state.energyChallenge)).toThrow();
+      expect(() => serializeState(state)).toThrow();
+    }
+  });
+});

@@ -47,7 +47,7 @@ function readProof(value: unknown): EnergyChallengePaidProof | null {
 function readAttempt(value: unknown): EnergyChallengeAttempt {
   if (!fields(value, ["attemptId", "universeSeed", "homeworldId", "entryJobFloor", "enteredAt", "scoreUnits", "proofs"])
     || !integer(value.attemptId, 1, Number.MAX_SAFE_INTEGER - 1) || !integer(value.universeSeed, 0, 0xffffffff)
-    || value.homeworldId !== HOMEWORLD_ID || !integer(value.entryJobFloor)
+    || value.homeworldId !== HOMEWORLD_ID || !integer(value.entryJobFloor, 1, Number.MAX_SAFE_INTEGER - 4)
     || !amount(value.enteredAt) || !isCanonicalScoreUnits(value.scoreUnits) || !fields(value.proofs, ENERGY_CHALLENGE_BUILDINGS)) return fail();
   const proofs = {} as EnergyChallengeAttempt["proofs"];
   const ids = new Set<number>();
@@ -91,6 +91,11 @@ export function readEnergyChallengeState(value: unknown): EnergyChallengeState {
 /** Receipt consistency, not a cryptographic defense against rewriting the entire save. */
 export function validateEnergyChallengeReferences(state: GameState, challenge = readEnergyChallengeState(state.energyChallenge)): void {
   const attempt = challenge.active ?? challenge.completion?.attempt;
+  // Each issued attempt consumed one ordinary entry curvature, even if abandoned.
+  // A completed receipt additionally consumed its finishing curvature.
+  const entries = challenge.nextAttemptId - 1;
+  if (entries > 0 && (state.hasPrestiged !== true
+    || !integer(state.stats.launches, entries + (challenge.completion ? 1 : 0)))) return fail();
   if (!attempt) return;
   if (state.hasPrestiged !== true || !integer(state.stats.launches, challenge.completion ? 2 : 1)
     || !integer(state.orders.nextJobId) || !integer(state.orders.nextTaskId) || attempt.entryJobFloor > state.orders.nextJobId
