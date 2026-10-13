@@ -38,6 +38,20 @@ function put(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.
 function html(root:ParentNode,sel:string,value:string){const n=el(root,sel);if(n.dataset.signature!==value){n.innerHTML=value;n.dataset.signature=value;}}
 const entry=(label:string,id:string,min:number,max:number,value:number)=>`<label>${label}<input id="${id}" type="number" min="${min}" max="${max}" value="${value}" step="1" /></label>`;
 
+/** A fresh snapshot for one fleet paint, never a control-authority cache.
+ * The paint only changes text/style; text may remove a later matching descendant. */
+export function createFleetRowLookup(list: HTMLElement) {
+  const rows = new Map<string, HTMLElement>();
+  for (const row of list.querySelectorAll<HTMLElement>("[data-flight]")) {
+    const id = row.getAttribute("data-flight")!;
+    if (!rows.has(id)) rows.set(id, row);
+  }
+  return (id: number): HTMLElement => {
+    const row = rows.get(String(id));
+    return row && list.contains(row) ? row : el(list, `[data-flight="${id}"]`);
+  };
+}
+
 /** The mounted view and the focused DOM test use this same narrow renderer. */
 export function installSpaceChrome(root: HTMLElement, syncTabs: () => void) {
   return function updateSpaceChrome(origin: string, status: string) {
@@ -413,7 +427,8 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
       }
       for(const button of list.querySelectorAll<HTMLButtonElement>('[data-space="npc-retry-dock"]'))npcAttack.register(button,"retry",button.dataset.fleet!);
     }
-    for(const f of model.fleets){const row=el(list,`[data-flight="${f.id}"]`);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
+    const fleetRow=createFleetRowLookup(list);
+    for(const f of model.fleets){const row=fleetRow(f.id);put(row,".flight-title",f.title);put(row,".flight-route",f.route);put(row,".flight-time",f.remaining);put(row,".flight-detail",f.detail);el(row,".flight-progress").style.width=`${f.progress}%`;}
 
     const planets=el(root,"#space-planets");
     const planetSignature=JSON.stringify(model.planets.map(p=>[p.id,p.name,p.coordinate,p.selected]));

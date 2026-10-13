@@ -1,0 +1,133 @@
+name: Fleet row lookup independent experiment
+on:
+  push:
+    branches: ['codex/infinity-fleet-row-index-20261013']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  experiment:
+    name: Fleet row ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: equivalence
+            minutes: 8
+            browser-minutes: 2
+            outer-seconds: 115
+            report-mode: controlled-equivalence
+          - mode: performance
+            minutes: 15
+            browser-minutes: 11
+            outer-seconds: 610
+            report-mode: native-timing
+    env:
+      BASELINE_SHA: 7ab569045996a1a6ad8ce1aee477092144dfad74
+      FIXTURE_SOURCE_SHA: 4bceefee9bb70cae3a86f6c3c31a6d0b540dac2b
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_NO_REPLACE_OBJECTS: '1'
+      EVIDENCE: fleet-row-lookup-evidence
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Exact source adoption, full candidate units and independent builds
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          git worktree add --detach "$RUNNER_TEMP/fleet-row-baseline" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/fleet-row-fixture-source" "$FIXTURE_SOURCE_SHA"
+          git archive "$BASELINE_SHA" > "$EVIDENCE/baseline-source.tar"
+          git archive "$GITHUB_SHA" > "$EVIDENCE/candidate-source.tar"
+          git archive "$FIXTURE_SOURCE_SHA" > "$EVIDENCE/fixture-source.tar"
+          python scripts/check-fleet-row-experiment.py source --baseline "$RUNNER_TEMP/fleet-row-baseline" --candidate "$GITHUB_WORKSPACE" --candidate-sha "$GITHUB_SHA" --output "$EVIDENCE"
+          python scripts/test_fleet_row_experiment.py 2>&1 | tee "$EVIDENCE/source-contract-tests.log"
+          python scripts/test_fleet_row_performance.py 2>&1 | tee "$EVIDENCE/browser-contract-tests.log"
+          npm ci 2>&1 | tee "$EVIDENCE/npm-ci.log"
+          npm test -- --reporter=default --reporter=json --outputFile="$EVIDENCE/unit-results.json" 2>&1 | tee "$EVIDENCE/unit.log"
+          # The original cumulative recycle source seal intentionally rejects
+          # this new UI delta. Never alter it or claim ordinary npm build passed.
+          # The exact source adoption above is experiment-only authorization.
+          (node scripts/check-ring-art.mjs && node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build && node scripts/write-release.mjs) 2>&1 | tee "$EVIDENCE/candidate-prototype-build.log"
+          tar -cf "$EVIDENCE/candidate-dist.tar" -C dist .
+          (
+            cd "$RUNNER_TEMP/fleet-row-baseline"
+            npm ci
+            GITHUB_SHA="$BASELINE_SHA" npm run build
+          ) 2>&1 | tee "$EVIDENCE/baseline-build.log"
+          tar -cf "$EVIDENCE/baseline-dist.tar" -C "$RUNNER_TEMP/fleet-row-baseline/dist" .
+          echo 'c9411d7c952c217feb5c796d8c0653877ae650caa67fdc17941cfa2ce6c92e6f  '"$RUNNER_TEMP/fleet-row-baseline/dist/release.json" | sha256sum -c -
+          ln -s "$RUNNER_TEMP/fleet-row-baseline/node_modules" "$RUNNER_TEMP/fleet-row-fixture-source/node_modules"
+          for profile in moderate combined; do
+            factory=render-scheduling-fixture.ts
+            if [ "$profile" = combined ]; then factory=performance-fixture.ts; fi
+            node --import tsx "$RUNNER_TEMP/fleet-row-fixture-source/scripts/$factory" > "$EVIDENCE/r8-$profile.json"
+            (cd "$RUNNER_TEMP/fleet-row-baseline" && node --import tsx scripts/prepare-r9-performance.mjs --r8-source "$RUNNER_TEMP/fleet-row-fixture-source" --fixture "$GITHUB_WORKSPACE/$EVIDENCE/r8-$profile.json") > "$EVIDENCE/$profile-fixture.json"
+          done
+          echo '4947a1e9fcbb007edc52a2f2ebf0bddc4f4842eeefffd248a4af0c641cb38096  '"$EVIDENCE/moderate-fixture.json" | sha256sum -c -
+          echo '51175269239ac45ac76b1ea8fc1f1bb3d6e9f42da58709b9ecdf6a171e680a98  '"$EVIDENCE/combined-fixture.json" | sha256sum -c -
+          (node --version; npm --version; python --version; git --version; uname -a) > "$EVIDENCE/build-environment.txt"
+      - name: Official Chrome and pinned Playwright prerequisites
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          bash scripts/browser-prerequisites.sh 2>&1 | tee "$EVIDENCE/browser-prerequisites.log"
+      - name: Independent bounded ${{ matrix.mode }} browser contexts
+        id: browser
+        timeout-minutes: ${{ matrix.browser-minutes }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fleet-row-http-baseline" "$RUNNER_TEMP/fleet-row-http-candidate"
+          ln -s "$RUNNER_TEMP/fleet-row-baseline/dist" "$RUNNER_TEMP/fleet-row-http-baseline/Infinity"
+          ln -s "$GITHUB_WORKSPACE/dist" "$RUNNER_TEMP/fleet-row-http-candidate/Infinity"
+          pids=()
+          cleanup() {
+            for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+            for attempt in $(seq 1 10); do
+              alive=0
+              for pid in "${pids[@]}"; do if kill -0 "$pid" 2>/dev/null; then alive=1; fi; done
+              if [ "$alive" = 0 ]; then break; fi
+              sleep 0.1
+            done
+            for pid in "${pids[@]}"; do kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
+          }
+          trap cleanup EXIT
+          python -m http.server 4176 --bind 127.0.0.1 --directory "$RUNNER_TEMP/fleet-row-http-baseline" > "$EVIDENCE/baseline-http.log" 2>&1 & pids+=("$!")
+          python -m http.server 4173 --bind 127.0.0.1 --directory "$RUNNER_TEMP/fleet-row-http-candidate" > "$EVIDENCE/candidate-http.log" 2>&1 & pids+=("$!")
+          for port in 4176 4173; do
+            for attempt in $(seq 1 15); do
+              if curl -fsS "http://127.0.0.1:$port/Infinity/release.json" > /dev/null; then break; fi
+              sleep 1
+            done
+            curl -fsS "http://127.0.0.1:$port/Infinity/release.json" > "$EVIDENCE/http-release-$port.json"
+          done
+          extra=()
+          if [ '${{ matrix.mode }}' = equivalence ]; then extra+=(--equivalence-only); fi
+          timeout --signal=TERM --kill-after=5s '${{ matrix.outer-seconds }}s' python scripts/browser-fleet-row-performance.py \
+            --baseline-dist "$RUNNER_TEMP/fleet-row-baseline/dist" --candidate-dist "$GITHUB_WORKSPACE/dist" \
+            --candidate-sha "$GITHUB_SHA" --moderate-fixture "$EVIDENCE/moderate-fixture.json" --combined-fixture "$EVIDENCE/combined-fixture.json" \
+            --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
+            --output "$EVIDENCE/browser" "${extra[@]}" 2>&1 | tee "$EVIDENCE/browser.log"
+      - name: Both actual strict readers and whole-save exports after browser cleanup
+        if: always() && steps.browser.outcome != 'skipped'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python scripts/check-fleet-row-experiment.py saves --baseline "$RUNNER_TEMP/fleet-row-baseline" --candidate "$GITHUB_WORKSPACE" --candidate-sha "$GITHUB_SHA" \
+            --evidence "$EVIDENCE/browser" --mode '${{ matrix.report-mode }}' --output "$EVIDENCE" 2>&1 | tee "$EVIDENCE/strict-saves.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-row-${{ matrix.mode }}-${{ github.sha }}
+          path: fleet-row-lookup-evidence
+          retention-days: 7
+          if-no-files-found: error
