@@ -1,6 +1,6 @@
 # Infinity 路线图与验收清单
 
-核对日期：2026-10-13，当前交付截点为 49303d3 / 0.6.29-alpha.1 / v9/r14，详见 [本批六阶段交付记录](BATCH_DELIVERY_20261013.md)。以下早期证据保留原记录时间；新增只读辅助、手动付款确认与舰队渲染优化不代表 NPC 自主成长或完整战争完成。后继推广失败另行保留，r15 不计为已发布。
+核对日期：2026-10-13 07:28 UTC，当前交付截点为 6f73735 / 0.6.30-alpha.1 / v9/r14，详见 [本批七阶段交付记录](BATCH_DELIVERY_20261013.md)。以下早期证据保留原记录时间；只读辅助、手动付款确认、舰队渲染优化与本次天体物理学说明的小幅显示修正不代表 NPC 自主成长或完整战争完成。本次没有新增机制或改变下列完成分类；不用阶段数和测试数计算路线图完成度。后继推广失败另行保留，6f 推广在该截点仍运行，r15 不计为已发布。
 
 本清单把现存设计中的玩法、已发布能力和待补机制分开记录，供分阶段开发与验收使用。**地形改造器、星际研究网络、普通拆除 A、NPC 固定生产、有界轨道战斗及历史侦察演练已发布。** 拆除仅限普通单星单级；NPC 已有可变库存、永久驻军战损、整数战利品和一次返港结算，但没有自主消费、建筑经营、动态成长、排名奖励、反击或完整行星战争。r14 的演练仅使用真实侦察抵达时的历史快照运行三个公开种子示例，不代表统计胜率，填入草稿后仍须独立付费派遣。
 
@@ -14,7 +14,8 @@
 - 前代已发布基线为 [eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81](https://github.com/scientistss/Infinity/commit/eefc0706e8bc2ce39fbfd732ab9d3b67ac190d81)，版本 **0.6.19-alpha.1 / v9/r12**。[完整 CI 38156777491](https://github.com/scientistss/Infinity/actions/runs/38156777491)通过 2546 项单元、构建与全部原生门禁。产物 11708833407 的 439 个源码文件、62 个应用资源和 release 摘要另行全核后完成隔离试玩发布，原生发布终态 succeeded。开发分支已核对为同一 SHA；重复的[推广 CI 38159570077](https://github.com/scientistss/Infinity/actions/runs/38159570077)在本次核验截点仍运行，不借用前一运行的绿色。详见 [NPC 精确发布验收](NPC_ECONOMY_ACCEPTANCE.md)。本次文档后续提交同样需要自己的 CI，文档更新不改变已发布应用来源。
 - 前代已发布游戏为 [576e92910a07456a9b237b809e7c77d95203bbe5](https://github.com/scientistss/Infinity/commit/576e92910a07456a9b237b809e7c77d95203bbe5)，版本 **0.6.21-alpha.1 / v9/r13**。[完整 CI 38179829606](https://github.com/scientistss/Infinity/actions/runs/38179829606)／[准确任务 114589839938](https://github.com/scientistss/Infinity/actions/runs/38179829606/job/114589839938)于 2026-10-11 22:58:21 UTC 成功：3465 项单元、两种各 948 项自然领域验收、6590 项轨道／战报原生、5721 项 SaveSession、1944 项渲染及全部必需旧门禁。两个可选旧归档重放准备测试明确跳过。产物 11718137190 的 501 个源码文件与 62 个资源全部核对后，发布负责人于 23:11 UTC 确认实际发布。完整 SHA、哈希、旧失败及性能限制见 [轨道验收](NPC_ORBITAL_ACCEPTANCE.md)。本文不把游戏 SHA 的 CI 成功转用于后续文档提交，也不据此宣称所有站点同版。
 - 历史 r14 起点为 [e729c7ff3c4ef519bfd14da9dc132ba7d971de48](https://github.com/scientistss/Infinity/commit/e729c7ff3c4ef519bfd14da9dc132ba7d971de48)，版本 **0.6.22-alpha.1 / v9/r14**。[完整 CI 38205500857](https://github.com/scientistss/Infinity/actions/runs/38205500857)于 05:20:29 UTC 完成四个必需任务与汇总门禁：3934 项单元、4806 项侦察演练原生、6593 项轨道原生、6408 项 SaveSession、1944 项渲染，接续 23 套报告／7816 项检查及完整性能 12 样本／6 对配对。536 个源文件、62 个应用资源和 release 元数据同源核验后，05:23 UTC 发布回执 succeeded；dev 正常比较更新至同一 SHA，旧站与玩家存档未操作。后继[推广 CI 38207609186](https://github.com/scientistss/Infinity/actions/runs/38207609186)的 continuation／aggregate 在 `globalFull` 处失败，原因未知，不能借用原绿。其后未运行的门禁与性能不算通过；详见 [r14 精确验收与失败记录](NPC_SCOUT_REHEARSAL_ACCEPTANCE.md)。文档提交不改变已发布应用来源，需保留自己的检查结果。
-- 当前交付 [49303d3](https://github.com/scientistss/Infinity/commit/49303d3740cf223955386ff984b335ca9b110087) 为 **0.6.29-alpha.1 / v9/r14**；其 [完整 CI 38341533349](https://github.com/scientistss/Infinity/actions/runs/38341533349) 七个必需游戏作业与汇总均成功。精确 62 资源和源码核验后已交付隔离私人试玩。六个增量、推广状态、原失败和性能限制集中在 [本批交付记录](BATCH_DELIVERY_20261013.md)，不改变下列未完成项的分类。
+- 前次交付 [49303d3](https://github.com/scientistss/Infinity/commit/49303d3740cf223955386ff984b335ca9b110087) 为 **0.6.29-alpha.1 / v9/r14**；其 [完整 CI 38341533349](https://github.com/scientistss/Infinity/actions/runs/38341533349) 七个必需游戏作业与汇总均成功，精确 62 资源和源码核验后交付隔离私人试玩。[推广 CI 38345113448](https://github.com/scientistss/Infinity/actions/runs/38345113448)后来已成功，保留为该 SHA 自己的历史证据。
+- 当前交付 [6f73735](https://github.com/scientistss/Infinity/commit/6f73735534ffc1b0e47a01935d8c6e3ff786c989) 为 **0.6.30-alpha.1 / v9/r14**；其 [完整候选 CI 38358775560](https://github.com/scientistss/Infinity/actions/runs/38358775560) 七个必需游戏作业及汇总全部成功，包含 4632 项单元、37 份既有原生报告的 50,820 项检查和本次 439 项显示对照。626 个跟踪源码文件与 62 个生产资源核验后，07:28 UTC 已交付隔离私人试玩，原生发布终态 succeeded。只删除天体物理学 0 级效果中的过期后缀和未使用变量；实际 1 级解锁、价格、前置、经济及 v9/r14 存档不变。dev 已正常前进至精确 6f，但[推广 CI 38362680488](https://github.com/scientistss/Infinity/actions/runs/38362680488)在截点仍运行，不借用候选绿色。七个增量、原失败、自然来源与性能边界见[本批交付](BATCH_DELIVERY_20261013.md)及[显示修正验收](RESEARCH_UNLOCK_COPY.md)，不扩大下列已发布范围或改变未完成项分类。
 - 依据为仓库中的 [DESIGN.md](DESIGN.md)、[AUTOMATION.md](AUTOMATION.md)、[P4_ORIGINAL_01.md](P4_ORIGINAL_01.md)、[P4_SPACE.md](P4_SPACE.md)、[DEEP_SPACE.md](DEEP_SPACE.md)、当前源码及各增量文档。原始交接全文不在仓库，`Infinity-ogame-port.md` 只有引用；本清单不能声称已逐条覆盖未取得的原文。
 - 早期文档保留历史阶段说明。判断当前能力时，应以精确版本源码、后续增量合同及该提交的验收结果为准，不能把历史的“尚未开放”直接当作当前结论。
 - 状态分别为：**已发布**（本条明确范围已进入发布基线）、**部分**（已有子能力，仍缺闭环或范围）、**候选实现**（已有生产接线，但完整验收或发布尚未完成）、**独立准备候选**（规格、试验或纯函数尚未接入应用）、**未实现**（基线没有该能力，目标可继续细化交付）、**机制未定义**（缺少足以编写行为断言的规则）。这些条目的大小不同，不用条目数或测试数计算完成百分比。
@@ -37,7 +38,7 @@
 ### 2 基础研究 暗物质与单位生产
 
 - **状态：已发布。** 基础研究队列、暗物质道具与资源包、14 类舰船和 10 类防御的生产。研究网络的跨星加速效果另见第 7 项；能制造导弹不等于已能发射攻击。
-- **依据：** [DESIGN.md](DESIGN.md)；`src/data/research.ts`、`dark-matter.ts`、`units.ts` 与对应领域模块。
+- **依据：** [DESIGN.md](DESIGN.md)；`src/data/research.ts`、`dark-matter.ts`、`units.ts` 与对应领域模块。0.6.30 的[天体物理学说明修正](RESEARCH_UNLOCK_COPY.md)仅让 0 级卡片准确显示已存在的 1 级解锁规则，没有新增研究机制。
 - **最小循环：** 满足前置 → 实际付款 → 排队完成 → 获得研究效果、道具效果或实际单位库存。
 - **依赖：** 第 1 项、共享研究与本地造船队列、稳定付款身份。
 - **存档影响：** 保留付款星球、研究进度、已付批次、单位与道具库存；新效果不能追改历史账单。
