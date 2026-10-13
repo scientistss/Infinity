@@ -7,12 +7,14 @@ Profiler, Tracing and Debugger disabled. No engine, clock, storage or DOM-method
 replacement is used. Run only in the authorized native GitHub CI environment.
 """
 import argparse
+import ast
 import base64
 import hashlib
 import importlib.metadata
 import json
 import math
 import platform
+import re
 import shutil
 import signal
 import sys
@@ -30,6 +32,17 @@ DURATION_METRICS = ('ScriptDuration', 'TaskDuration', 'LayoutDuration', 'RecalcS
 COUNT_METRICS = ('LayoutCount', 'RecalcStyleCount')
 MAX_TRACE_BYTES = 64 * 1024 * 1024
 OBSERVER_URL = 'infinity-diagnostic://current-fleet/observer-v1.js'
+PLAYWRIGHT_VERSION = '1.57.0'
+AUTOMATION_FILES = {
+    'generated/injectedScriptSource.js': '17f415019175f56bcf5e8e62155eaafbf580d89e48647ee40be405da1bba0732',
+    'server/dom.js': '995837465d10603c5d394965cdf7e9e249ca3f1905b2f20cd1e5a7fe85ec1edf'}
+AUTOMATION_DECODED_SHA256 = '360a8419bd1b64c290bda021f557f9295aa0a8bd66e3a084e8de0a870d475265'
+AUTOMATION_SHA256 = 'da5bdf40a12539d0aa73e8db00b6dc8d3f5b00e7b808f1c679a8be72b75e4e14'
+AUTOMATION_SHAPE = {'length': 302153, 'startLine': 0, 'startColumn': 0, 'endLine': 8028, 'endColumn': 6}
+AUTOMATION_OPTIONS = {'isUnderTest': False, 'sdkLanguage': 'python', 'testIdAttributeName': 'data-testid',
+                      'stableRafCount': 1, 'browserName': 'chromium', 'isUtilityWorld': True, 'customEngines': []}
+MAX_SCRIPT_SOURCES = 1024
+MAX_SCRIPT_SOURCE_BYTES = 16 * 1024 * 1024
 BODY_DEADLINE = None
 
 # The Save interval contains timestamp reads and diagnostic assignments only.
@@ -127,6 +140,127 @@ def exclusive_json(path, value):
     exclusive_bytes(path, (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode())
 
 
+def source_key(script_id, sha256):
+    return script_id + '@' + sha256
+
+
+def reconstruct_automation(generated, dom, version):
+    """Decode verified official data; never execute the JS module or normalize it."""
+    require(version == PLAYWRIGHT_VERSION, 'Expected pinned Playwright 1.57.0')
+    for relative, body in (('generated/injectedScriptSource.js', generated), ('server/dom.js', dom)):
+        require(digest(body) == AUTOMATION_FILES[relative], 'Official Playwright source hash mismatch: ' + relative)
+    literals = re.findall(r"^const source = ('(?:[^'\\]|\\.)*');$", generated.decode('ascii'), re.MULTILINE)
+    require(len(literals) == 1, 'Expected exactly one official generated source literal')
+    require(set(re.findall(r'\\(.)', literals[0])) <= {'n', "'", '\\'}, 'Unsupported generated source escape')
+    decoded = ast.literal_eval(literals[0])
+    require(isinstance(decoded, str) and digest(decoded) == AUTOMATION_DECODED_SHA256, 'Decoded official source differs')
+    wrappers = re.findall(r'      const source = `([\s\S]*?)`;\n      this\._injectedScriptPromise', dom.decode('utf-8'))
+    require(len(wrappers) == 1, 'Expected exactly one official injected-source wrapper')
+    wrapper = wrappers[0]
+    require(wrapper.count('${rawInjectedScriptSource.source}') == 1 and wrapper.count('${JSON.stringify(options)}') == 1,
+            'Unexpected official wrapper substitutions')
+    payload = wrapper.replace('${rawInjectedScriptSource.source}', decoded).replace(
+        '${JSON.stringify(options)}', json.dumps(AUTOMATION_OPTIONS, separators=(',', ':')))
+    require(digest(payload) == AUTOMATION_SHA256 and len(payload.encode('utf-16-le')) // 2 == AUTOMATION_SHAPE['length']
+            and payload.count('\n') == AUTOMATION_SHAPE['endLine']
+            and len(payload.rsplit('\n', 1)[-1]) == AUTOMATION_SHAPE['endColumn'], 'Reconstructed full automation payload differs')
+    return payload, {'version': version, 'officialSourceFiles': dict(AUTOMATION_FILES),
+        'decodedSourceSha256': digest(decoded), 'payloadSha256': digest(payload), 'payloadShape': dict(AUTOMATION_SHAPE),
+        'optionsInOfficialOrder': AUTOMATION_OPTIONS,
+        'provenance': {'pypiMetadata': 'https://pypi.org/pypi/playwright/1.57.0/json',
+            'verifiedManylinuxWheelSha256': '284ed5a706b7c389a06caa431b2f0ba9ac4130113c3a779767dda758c2497bb1',
+            'officialWrapper': 'https://github.com/microsoft/playwright/blob/v1.57.0/packages/playwright-core/src/server/dom.ts'},
+        'scope': 'Expected source reconstructed from exact installed official files. Each new runtime script still requires full getScriptSource equality and live isolated current-frame identity. No earlier run is requalified.'}
+
+
+def load_automation(directory):
+    distribution = importlib.metadata.distribution('playwright')
+    bodies = {}
+    observations = {'version': distribution.version, 'files': {}}
+    try:
+        for relative in AUTOMATION_FILES:
+            body = Path(distribution.locate_file('playwright/driver/package/lib/' + relative)).read_bytes()
+            filename = 'official-' + relative.replace('/', '-')
+            exclusive_bytes(directory / filename, body)
+            bodies[relative] = body
+            observations['files'][relative] = {'path': filename, 'sha256': digest(body), 'bytes': len(body)}
+    finally:
+        exclusive_json(directory / 'automation-installed-source-observations.json', observations)
+    payload, provenance = reconstruct_automation(bodies['generated/injectedScriptSource.js'], bodies['server/dom.js'], distribution.version)
+    exclusive_bytes(directory / 'expected-automation-helper.js', payload.encode())
+    exclusive_json(directory / 'automation-reconstruction.json', provenance)
+    return payload, provenance
+
+
+def automation_matches(script, source, expected, contexts, frame_id):
+    context = contexts.get(script.get('executionContextId'), {})
+    aux = script.get('executionContextAuxData', {})
+    return (isinstance(frame_id, str) and bool(frame_id) and type(script.get('executionContextId')) is int
+            and type(context.get('id')) is int
+            and source == expected and digest(source) == AUTOMATION_SHA256 and script.get('hash') == AUTOMATION_SHA256
+            and all(type(script.get(key)) is int and script[key] == value for key, value in AUTOMATION_SHAPE.items())
+            and script.get('url') == '' and script.get('hasSourceURL') is False
+            and script.get('isModule') is False and script.get('isLiveEdit') is False
+            and aux.get('isDefault') is False and aux.get('type') == 'isolated' and aux.get('frameId') == frame_id
+            and context.get('id') == script.get('executionContextId') and context.get('auxData') == aux)
+
+
+def archive_pre_app_scripts(parsed, contexts, responses, directory):
+    # Seed-document contexts are about to be destroyed. Preserve their metadata,
+    # but never qualify them or demand their evictable sources for an app profile.
+    exclusive_json(directory / 'pre-app-script-inventory.json', parsed)
+    exclusive_json(directory / 'pre-app-execution-contexts.json', contexts)
+    exclusive_json(directory / 'pre-app-script-http-responses.json', [{'url': response.url, 'status': response.status} for response in responses])
+    parsed.clear()
+    responses.clear()
+
+
+def capture_prepared_sources(cdp, parsed, identities, sources, contexts, frame_id, expected, directory):
+    """Read all parsed sources after prep, outside every capture/profile span."""
+    observations, seen, total, index = [], {}, 0, 0
+    try:
+        while index < len(parsed):
+            require(index < MAX_SCRIPT_SOURCES, 'Parsed source count exceeds diagnostic bound')
+            script = parsed[index]; index += 1
+            script_id = script.get('scriptId')
+            require(isinstance(script_id, str) and re.fullmatch(r'[0-9]+', script_id), 'Unsafe V8 script identity')
+            if script_id in seen:
+                require(seen[script_id] == script, 'V8 scriptId metadata changed before measurement')
+                continue
+            seen[script_id] = dict(script)
+            observation = {'parsed': dict(script), 'qualifiedKind': None}
+            observations.append(observation)
+            response = cdp.send('Debugger.getScriptSource', {'scriptId': script_id})
+            source = response.get('scriptSource')
+            require(isinstance(source, str), 'Missing original V8 script source')
+            body = source.encode(); sha = digest(body); total += len(body)
+            require(total <= MAX_SCRIPT_SOURCE_BYTES, 'V8 source bytes exceed diagnostic bound')
+            filename = 'script-' + script_id + '-' + sha + '.js'
+            exclusive_bytes(directory / filename, body)
+            observation.update({'sourceKey': source_key(script_id, sha), 'path': filename, 'sha256': sha, 'bytes': len(body)})
+            require(script.get('hash') == sha and script.get('length') == len(source.encode('utf-16-le')) // 2,
+                    'Original V8 source hash/length differs from parsed identity')
+            key = source_key(script_id, sha)
+            if script_id in identities:
+                ident = identities[script_id]
+                require(ident['sha256'] == sha and ident['url'] == script.get('url') and sources.get(key) == source,
+                        'Previously verified source identity changed')
+            elif automation_matches(script, source, expected, contexts, frame_id):
+                identities[script_id] = {'url': '', 'kind': 'automation-helper', 'sha256': sha,
+                    'executionContextId': script['executionContextId'], 'executionContextAuxData': script['executionContextAuxData'],
+                    'liveExecutionContextAtQualification': dict(contexts[script['executionContextId']])}
+            sources[key] = source
+            if script_id in identities:
+                identities[script_id].update({'sourceKey': key, 'sourcePath': filename})
+                observation['qualifiedKind'] = identities[script_id]['kind']
+        require(all(script_id in seen for script_id in identities), 'Qualified identity missing from prepared script inventory')
+        return {'capturedScriptCount': len(observations), 'capturedSourceBytes': total,
+                'automationHelperScriptIds': [key for key, value in identities.items() if value['kind'] == 'automation-helper'],
+                'scope': 'Full original V8 sources read after all locator/preparation work and before measurement. Unqualified blank sources are retained, never whitelisted.'}
+    finally:
+        exclusive_json(directory / 'prepared-script-sources.json', observations)
+
+
 def asset_path(dist, relative):
     path = Path(relative)
     require(not path.is_absolute() and '..' not in path.parts and '\\' not in relative, 'Unsafe release asset path')
@@ -179,11 +313,15 @@ def attribute(profile, identities, sources):
     require(finite_number(profile['startTime']) and finite_number(profile['endTime'])
             and profile['endTime'] > profile['startTime'], 'Invalid CPU profile interval')
     kinds, unknown = {}, []
+    qualified_ids = {script_id for script_id, ident in identities.items()
+                     if ident['kind'] in ('production', 'diagnostic-observer', 'automation-helper')
+                     and isinstance(sources.get(source_key(script_id, ident['sha256'])), str)
+                     and digest(sources[source_key(script_id, ident['sha256'])]) == ident['sha256']}
     for node_id, node in nodes.items():
         frame = node['callFrame']; ident = identities.get(frame.get('scriptId'))
         if frame.get('scriptId') == '0' and not frame.get('url'):
             kinds[node_id] = 'v8-native-or-synthetic'
-        elif ident and ident['url'] == frame.get('url'):
+        elif ident and frame['scriptId'] in qualified_ids and ident['url'] == frame.get('url'):
             kinds[node_id] = ident['kind']
         else:
             kinds[node_id] = 'unverified'; unknown.append(frame)
@@ -215,6 +353,7 @@ def attribute(profile, identities, sources):
     weighted = not reasons
     production_count = sum(count for node_id, count in self_count.items() if kinds[node_id] == 'production')
     observer_count = sum(count for node_id, count in self_count.items() if kinds[node_id] == 'diagnostic-observer')
+    automation_count = sum(count for node_id, count in self_count.items() if kinds[node_id] == 'automation-helper')
     self_us, inclusive_us = {}, {}
     if weighted:
         for leaf, elapsed in zip(samples, deltas):
@@ -238,8 +377,12 @@ def attribute(profile, identities, sources):
         if weighted:
             row['sampledSelfMs'] = self_us.get(node_id, 0) / 1000
             row['sampledInclusiveMs'] = inclusive_us.get(node_id, 0) / 1000
-        if frame.get('url') in sources:
-            row['sourceSnippet'] = source_snippet(sources[frame['url']], frame)
+        ident = identities.get(frame.get('scriptId'))
+        if ident:
+            key = source_key(frame['scriptId'], ident['sha256'])
+            row['sourceKey'] = key
+            if key in sources:
+                row['sourceSnippet'] = source_snippet(sources[key], frame)
         rows.append(row)
     result = {'valid': not unknown, 'structureValid': True, 'sourceValid': not unknown,
             'attributionMode': ('weighted-samples' if weighted else 'sample-frequency-only') if not unknown else 'invalid-source',
@@ -248,8 +391,8 @@ def attribute(profile, identities, sources):
             'weightValidity': {'valid': weighted, 'reasons': reasons, 'negativeDeltaCount': len(negative), 'negativeDeltas': negative,
                                'preservation': 'Original deltas, sample order and samples are unchanged. No clamping, sorting, omission or hitCount substitution.'},
             'sampleDenominators': {'allRawSamples': len(samples), 'verifiedProductionJavaScriptLeafSamples': production_count,
-                                  'diagnosticObserverLeafSamples': observer_count},
-            'frequencyMeaning': 'Fractions are observed raw sample frequencies, not CPU shares or durations. The full denominator retains native/program/idle/GC/observer samples. The production-JS subset excludes them. Inclusive counts overlap ancestors.',
+                                  'diagnosticObserverLeafSamples': observer_count, 'automationHelperLeafSamples': automation_count},
+            'frequencyMeaning': 'Fractions are observed raw sample frequencies, not CPU shares or durations. The full denominator retains native/program/idle/GC/observer/automation-helper samples. The production-JS subset excludes them. Inclusive counts overlap ancestors.',
             'nodesBySelfSampleCount': sorted(rows, key=lambda row: row['selfSampleCount'], reverse=True),
             'nodesByInclusiveSampleCount': sorted(rows, key=lambda row: row['inclusiveSampleCount'], reverse=True),
             'hitCountComparison': {'rawSampleCount': len(samples), 'reportedHitCountSum': sum(node.get('hitCount', 0) for node in nodes.values()),
@@ -263,7 +406,8 @@ def attribute(profile, identities, sources):
                        'timeAccounting': 'Original timeDeltas weight their corresponding samples. Inclusive ancestor values overlap.',
                        'nodesBySelfTime': sorted(rows, key=lambda row: row['sampledSelfMs'], reverse=True),
                        'nodesByInclusiveTime': sorted(rows, key=lambda row: row['sampledInclusiveMs'], reverse=True),
-                       'observerSampledSelfMs': sum(row['sampledSelfMs'] for row in rows if row['kind'] == 'diagnostic-observer')})
+                       'observerSampledSelfMs': sum(row['sampledSelfMs'] for row in rows if row['kind'] == 'diagnostic-observer'),
+                       'automationHelperSampledSelfMs': sum(row['sampledSelfMs'] for row in rows if row['kind'] == 'automation-helper')})
     return result
 
 
@@ -335,8 +479,8 @@ def verify_scripts(cdp, parsed, responses, dist, base, directory):
         exclusive_bytes(directory / ('v8-script-' + script['scriptId'] + '.js'), source.encode())
         require(digest(source) == TARGET_JS[relative], 'Executed V8 source differs from exact published JS')
         identities[script['scriptId']] = {'url': url, 'kind': 'production', 'sha256': digest(source)}
-        sources[url] = source
-    require(identities and {relative_asset(url, base) for url in sources} == set(TARGET_JS), 'Incomplete executed production script identity')
+        sources[source_key(script['scriptId'], digest(source))] = source
+    require(identities and {relative_asset(ident['url'], base) for ident in identities.values()} == set(TARGET_JS), 'Incomplete executed production script identity')
     return identities, sources
 
 
@@ -350,7 +494,7 @@ def register_observer(cdp, identities, sources, directory):
     result = cdp.send('Runtime.runScript', {'scriptId': script_id, 'returnByValue': True})
     require('exceptionDetails' not in result, 'Observer execution failed')
     identities[script_id] = {'url': OBSERVER_URL, 'kind': 'diagnostic-observer', 'sha256': digest(actual)}
-    sources[OBSERVER_URL] = actual
+    sources[source_key(script_id, digest(actual))] = actual
 
 
 def begin_trace(cdp):
@@ -516,14 +660,14 @@ def finalize_case(row, context, directory, persist):
             signal.setitimer(signal.ITIMER_REAL, max(.001, BODY_DEADLINE - time.monotonic()))
 
 
-def run_case(browser, workload, kind, repetition, args, manifest, report, persist):
+def run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source):
     name = kind + '-r' + str(repetition + 1)
     directory = args.output / name; directory.mkdir(exist_ok=False)
     row = {'case': name, 'kind': kind, 'repetition': repetition + 1, 'valid': False,
            'instrumented': kind != 'save-unprofiled', 'phase': 'setup'}
     report['runs'].append(row); report['phase'] = name; persist()
     context = None; cdp = None
-    errors, parsed, responses, mutations = [], [], [], []
+    errors, parsed, responses, mutations, contexts = [], [], [], [], {}
     try:
         context = browser.new_context(viewport={'width': 1440, 'height': 1100}, reduced_motion='reduce', service_workers='block')
         page = context.new_page(); page.set_default_timeout(15000); page.set_default_navigation_timeout(20000)
@@ -532,6 +676,9 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         page.on('response', lambda response: responses.append(response) if response.request.resource_type == 'script' else None)
         cdp = context.new_cdp_session(page)
         cdp.send('Performance.enable', {'timeDomain': 'timeTicks'})
+        cdp.on('Runtime.executionContextCreated', lambda event: contexts.__setitem__(event['context']['id'], event['context']))
+        cdp.on('Runtime.executionContextDestroyed', lambda event: contexts.pop(event['executionContextId'], None))
+        cdp.on('Runtime.executionContextsCleared', lambda event: contexts.clear())
         cdp.send('Runtime.enable'); cdp.on('Debugger.scriptParsed', lambda event: parsed.append(event)); cdp.send('Debugger.enable')
         response = page.goto(urljoin(args.url, 'release.json'), wait_until='load')
         require(response and response.status == 200 and digest(response.body()) == RELEASE_SHA256, 'Native release navigation mismatch')
@@ -540,14 +687,13 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         expected = dict(workload['ready']); expected['savedAt'] = expected['lastTickAt'] = seeded['now']
         require(strict_equal(json.loads(seeded['raw']), expected), 'Seed changed outside envelope timestamps')
         row['seed'] = {'sha256': digest(seeded['raw']), 'savedAt': seeded['now'], 'stateExact': True}
+        archive_pre_app_scripts(parsed, contexts, responses, directory)
         response = page.goto(args.url, wait_until='domcontentloaded')
         require(response and response.status == 200 and digest(response.body()) == manifest['files']['index.html'], 'Native app HTML mismatch')
         page.locator('[data-bind="energy-chip"]').wait_for(); page.wait_for_load_state('networkidle'); page.bring_to_front()
         require(not page.locator('[data-bind="offline-modal"]').is_visible(), 'Unexpected initial offline modal')
         identities, sources = verify_scripts(cdp, parsed, responses, args.dist, args.url, directory)
         register_observer(cdp, identities, sources, directory)
-        row['scriptIdentities'] = identities
-        exclusive_json(directory / 'script-identities.json', identities)
         for tab in ('overview', 'orders', 'fleet'):
             navigate(page, tab); page.wait_for_timeout(600)
             if tab != 'fleet' or kind != 'fleet-profiled':
@@ -565,6 +711,17 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
         qualified_snapshot(before, panel)
         require(before['fleetRows'] == 1000, 'Fleet DOM does not contain the 1000-fleet workload')
         require(before['observation']['start'] is None, 'Save occurred before measurement')
+        frame_tree = cdp.send('Page.getFrameTree')
+        exclusive_json(directory / 'prepared-frame-tree.json', frame_tree)
+        exclusive_json(directory / 'prepared-execution-contexts.json', contexts)
+        current_frame = frame_tree['frameTree']['frame']
+        require(current_frame['url'] == args.url and current_frame.get('id'), 'Unexpected prepared main frame')
+        # Last JavaScript evaluation/locator preparation has finished. Read-only
+        # inspector source retrieval cannot be charged to the following span.
+        row['preparedSources'] = capture_prepared_sources(cdp, parsed, identities, sources, contexts,
+                                                          current_frame['id'], automation_source, directory)
+        row['scriptIdentities'] = identities
+        exclusive_json(directory / 'script-identities.json', identities)
         origin = urlparse(args.url); origin = origin.scheme + '://' + origin.netloc
         def storage_event(event):
             ident = event.get('storageId', {})
@@ -626,7 +783,9 @@ def run_case(browser, workload, kind, repetition, args, manifest, report, persis
                                   'topSelfSampleCounts': attribution['nodesBySelfSampleCount'][:20]}
             if attribution['weightValidity']['valid']:
                 row['attribution'].update({'sampledMs': attribution['sampledMs'], 'profileDurationMs': attribution['profileDurationMs'],
-                                          'observerSampledSelfMs': attribution['observerSampledSelfMs'], 'topSelf': attribution['nodesBySelfTime'][:20]})
+                                          'observerSampledSelfMs': attribution['observerSampledSelfMs'],
+                                          'automationHelperSampledSelfMs': attribution['automationHelperSampledSelfMs'],
+                                          'topSelf': attribution['nodesBySelfTime'][:20]})
             require(attribution['valid'], 'Profile contains unknown/inspector JavaScript; original evidence retained')
         if action_error:
             raise action_error
@@ -760,6 +919,7 @@ def main():
                          'Save capture/bubble spans are synchronous event wall observations, not next-paint or exclusive serializer time.',
                          'Unprofiled Save has no Profiler, Tracing, Debugger or DOMStorage observation during the span; Runtime/Performance domains remain enabled. No exact native write count is claimed for these three contexts.',
                          'Native storage bytes and source identity are observed outside measured event intervals.',
+                         'Only the complete exact Playwright 1.57 isolated-world helper is separately qualified as automation-helper after full source/hash/live-context verification. Its samples and usable weights are tooling costs, excluded from production-JS denominators. Other blank sources remain unqualified.',
                          'Source maps are optional external evidence and are not required or assumed by this script.']}
     def persist():
         temporary = args.output / 'report.json.tmp'
@@ -775,7 +935,7 @@ def main():
         report['fixture'] = {k: v for k, v in workload.items() if k not in ('raw', 'ready')}
         chrome = args.chromium or shutil.which('google-chrome') or shutil.which('google-chrome-stable')
         require(chrome and Path(chrome).is_file(), 'Official CI Chrome executable unavailable')
-        require(importlib.metadata.version('playwright') == '1.57.0', 'Expected pinned Playwright 1.57.0')
+        automation_source, report['automationReconstruction'] = load_automation(args.output)
         from playwright.sync_api import sync_playwright
         playwright = sync_playwright().start()
         request = playwright.request.new_context()
@@ -784,7 +944,7 @@ def main():
         browser = playwright.chromium.launch(executable_path=chrome, headless=True, timeout=20000, args=['--no-sandbox'])
         report['environment'] = {'browser': browser.version, 'playwright': importlib.metadata.version('playwright'),
                                  'python': platform.python_version(), 'platform': platform.platform(), 'headless': True, 'executable': chrome}
-        execute_schedule(lambda kind, repetition: run_case(browser, workload, kind, repetition, args, manifest, report, persist),
+        execute_schedule(lambda kind, repetition: run_case(browser, workload, kind, repetition, args, manifest, report, persist, automation_source),
                          report, persist, deadline=BODY_DEADLINE)
     except BaseException as error:
         report['errors'].append({'phase': report['phase'], 'type': type(error).__name__, 'message': str(error)[:2400]})

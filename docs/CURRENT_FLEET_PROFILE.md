@@ -97,7 +97,41 @@ reported explicitly, rather than presented as complete time attribution.
 
 The existing complete performance run establishes an extreme fleet limitation,
 including substantial script and layout work. It does not identify individual
-hot functions. This diagnostic must finish before selecting an optimization.
-Any later improvement claim requires matched unprofiled input/environment
-comparisons and unchanged economic, timing, queue, persistence and authority
+hot functions. Qualified individual windows may motivate an independent prototype, but a
+failed diagnostic remains failed. Any improvement claim requires complete
+matched unprofiled input/environment comparisons and unchanged economic, timing, queue, persistence and authority
 contracts. No optimization result is claimed by this preparation checkpoint.
+
+## Exact automation-source qualification
+
+The second diagnostic, `ec8527baff9069b44414a443ae9cbc0138b73f3b`, run
+38333296574, attempted all nine predetermined contexts. Eight qualified; the
+first sampled Save failed because one recorded listener was not source-bound.
+Its artifact 11784260925 is SHA-256
+`82a42e3f54b246c0f94a952552aeaef14e46aedc1c26eac8dc1ee6928384cdc7`.
+The failed run did not execute the final whole-save checker and remains failed.
+
+The missing listener's recorded metadata matches the official Playwright 1.57.0
+persistent hit-target interceptor: full payload SHA-256
+`da5bdf40a12539d0aa73e8db00b6dc8d3f5b00e7b808f1c679a8be72b75e4e14`,
+302,153 source units and end position 8028:6. Reconstructing the expected payload
+from the verified official wheel is explanatory evidence, not a substitute for
+the absent original runtime source.
+
+Subsequent runs retain every prepared script's complete `getScriptSource` bytes
+before profiling, keyed by script ID and content hash. The additional qualified
+helper must match the complete expected payload, the pinned installed generated
+source and wrapper, the exact dependency version, and a live non-default isolated
+context belonging to the current frame. Blank URLs alone never qualify a source.
+Other helpers, including the separately observed default-world payload, remain
+unqualified. Automation records have their own category, separate from game code
+and the diagnostic observer. Source capture and decoding occur outside every
+measured/profiled interval; JavaScript source is decoded as data, never executed
+by the reconstruction step. Unknown sampled code is still a hard failure.
+
+The three independently qualified fleet windows in the second run recorded
+341–358 querySelector entries among 1,491–1,506 original sample records
+(22.6–24.0%). These are sample frequencies, not CPU-duration percentages. The
+three unprofiled Save capture-to-bubble spans were 141.7, 145.7 and 152.9 ms.
+They describe this fixed extreme workload and observation method; they neither
+prove exclusive serialization time nor establish an optimization result.

@@ -1,5 +1,6 @@
 """Stdlib-only negative tests for the current native diagnostic; no browser."""
 import importlib.util
+from contextlib import ExitStack, contextmanager
 import json
 import tempfile
 import unittest
@@ -20,9 +21,41 @@ def profile():
         'samples': [2, 3, 4], 'timeDeltas': [1000, 2000, 3000]}
 
 
-IDENTITIES = {'5': {'url': 'http://test/app.js', 'kind': 'production', 'sha256': 'expected'},
+PRODUCTION_SOURCE = 'a🚀function wrapper(){}'
+IDENTITIES = {'5': {'url': 'http://test/app.js', 'kind': 'production', 'sha256': P.digest(PRODUCTION_SOURCE)},
               '9': {'url': P.OBSERVER_URL, 'kind': 'diagnostic-observer', 'sha256': P.digest(P.OBSERVER_SOURCE)}}
-SOURCES = {'http://test/app.js': 'a🚀function wrapper(){}', P.OBSERVER_URL: P.OBSERVER_SOURCE}
+SOURCES = {P.source_key('5', P.digest(PRODUCTION_SOURCE)): PRODUCTION_SOURCE,
+           P.source_key('9', P.digest(P.OBSERVER_SOURCE)): P.OBSERVER_SOURCE}
+
+
+@contextmanager
+def automation_fixture():
+    """Tiny synthetic official-file stand-ins; never real runtime evidence."""
+    decoded = "module.exports = {InjectedScript: () => class {}};\n"
+    generated = ("const source = '" + decoded.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n') + "';\n").encode()
+    wrapper = '\n        (() => {\n        const module = {};\n        ${rawInjectedScriptSource.source}\n        return new (module.exports.InjectedScript())(globalThis, ${JSON.stringify(options)});\n        })();\n      '
+    dom = ('      const source = `' + wrapper + '`;\n      this._injectedScriptPromise = anything;').encode()
+    payload = wrapper.replace('${rawInjectedScriptSource.source}', decoded).replace('${JSON.stringify(options)}', json.dumps(P.AUTOMATION_OPTIONS, separators=(',', ':')))
+    shape = {'length': len(payload), 'startLine': 0, 'startColumn': 0, 'endLine': payload.count('\n'), 'endColumn': 6}
+    with ExitStack() as stack:
+        for name, value in {'AUTOMATION_FILES': {'generated/injectedScriptSource.js': P.digest(generated), 'server/dom.js': P.digest(dom)},
+                            'AUTOMATION_DECODED_SHA256': P.digest(decoded), 'AUTOMATION_SHA256': P.digest(payload),
+                            'AUTOMATION_SHAPE': shape}.items():
+            stack.enter_context(patch.object(P, name, value))
+        yield generated, dom, payload
+
+
+def parsed_source(script_id, source, *, context_id=6, isolated=True):
+    return {'scriptId': script_id, 'hash': P.digest(source), 'url': '',
+            'length': len(source.encode('utf-16-le')) // 2, 'startLine': 0, 'startColumn': 0,
+            'endLine': source.count('\n'), 'endColumn': len(source.rsplit('\n', 1)[-1]),
+            'executionContextId': context_id, 'executionContextAuxData': {
+                'isDefault': not isolated, 'type': 'isolated' if isolated else 'default', 'frameId': 'current'},
+            'hasSourceURL': False, 'isModule': False, 'isLiveEdit': False}
+
+
+def live_contexts(script):
+    return {script['executionContextId']: {'id': script['executionContextId'], 'auxData': dict(script['executionContextAuxData'])}}
 
 # The 48 signed entries and their original indices are copied verbatim from
 # CI 38332131237's first fleet profile, SHA256
@@ -67,7 +100,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(len(result['explicitSelectorFrames']), 1)
 
     def test_utf16_source_positions(self):
-        result = P.source_snippet(SOURCES['http://test/app.js'], {'lineNumber': 0, 'columnNumber': 3})
+        result = P.source_snippet(PRODUCTION_SOURCE, {'lineNumber': 0, 'columnNumber': 3})
         self.assertTrue(result['atAndAfter'].startswith('function'))
 
     def test_invalid_source_positions(self):
@@ -135,7 +168,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(result['weightValidity']['negativeDeltaCount'], 48)
         self.assertEqual([(row['sampleIndex'], row['deltaUs']) for row in result['weightValidity']['negativeDeltas']], REAL_NEGATIVE_DELTAS)
         self.assertEqual(result['sampleCount'], 1526)
-        for absent in ('sampledMs', 'profileDurationMs', 'nodesBySelfTime', 'nodesByInclusiveTime', 'observerSampledSelfMs'):
+        for absent in ('sampledMs', 'profileDurationMs', 'nodesBySelfTime', 'nodesByInclusiveTime', 'observerSampledSelfMs', 'automationHelperSampledSelfMs'):
             self.assertNotIn(absent, result)
         for row in result['nodesBySelfSampleCount']:
             self.assertNotIn('sampledSelfMs', row)
@@ -162,6 +195,213 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(result['sourceValid'])
         self.assertEqual(result['attributionMode'], 'invalid-source')
         self.assertTrue(result['unverifiedFrames'])
+
+    def test_source_content_must_match_script_id_and_hash(self):
+        missing = dict(SOURCES); del missing[P.source_key('5', P.digest(PRODUCTION_SOURCE))]
+        wrong = dict(SOURCES); wrong[P.source_key('5', P.digest(PRODUCTION_SOURCE))] = 'changed'
+        for sources in (missing, wrong, {'http://test/app.js': PRODUCTION_SOURCE}):
+            self.assertFalse(P.attribute(profile(), IDENTITIES, sources)['sourceValid'])
+
+    def test_automation_costs_stay_separate_and_negative_deltas_disable_them(self):
+        identities = dict(IDENTITIES)
+        identities['16'] = {'url': '', 'kind': 'automation-helper', 'sha256': P.digest('helper')}
+        sources = dict(SOURCES); sources[P.source_key('16', P.digest('helper'))] = 'helper'
+        value = profile(); value['nodes'][2]['callFrame'] = {'functionName': 'listener', 'scriptId': '16', 'url': '', 'lineNumber': 0, 'columnNumber': 0}
+        result = P.attribute(value, identities, sources)
+        helper = next(row for row in result['nodesBySelfSampleCount'] if row['kind'] == 'automation-helper')
+        self.assertEqual(result['sampleDenominators']['automationHelperLeafSamples'], 1)
+        self.assertEqual(result['sampleDenominators']['allRawSamples'], 3)
+        self.assertEqual(result['sampleDenominators']['verifiedProductionJavaScriptLeafSamples'], 1)
+        self.assertIsNone(helper['selfFractionOfVerifiedProductionJsLeaves'])
+        self.assertIsNone(helper['inclusiveFractionOfVerifiedProductionJsLeaves'])
+        self.assertEqual(helper['sourceSnippet']['atAndAfter'], 'helper')
+        self.assertEqual(result['automationHelperSampledSelfMs'], 2)
+        value['timeDeltas'][1] = -1
+        result = P.attribute(value, identities, sources)
+        self.assertTrue(result['valid'])
+        self.assertEqual(result['sampleDenominators']['automationHelperLeafSamples'], 1)
+        self.assertNotIn('automationHelperSampledSelfMs', result)
+        self.assertTrue(all('sampledSelfMs' not in row for row in result['nodesBySelfSampleCount']))
+
+
+class AutomationSourceTests(unittest.TestCase):
+    def test_exact_official_file_reconstruction_and_fixed_seven_options(self):
+        with automation_fixture() as (generated, dom, expected):
+            payload, provenance = P.reconstruct_automation(generated, dom, '1.57.0')
+            self.assertEqual(payload, expected)
+            self.assertEqual(provenance['payloadSha256'], P.digest(expected))
+            self.assertEqual(list(provenance['optionsInOfficialOrder']), [
+                'isUnderTest', 'sdkLanguage', 'testIdAttributeName', 'stableRafCount', 'browserName', 'isUtilityWorld', 'customEngines'])
+            self.assertTrue(provenance['optionsInOfficialOrder']['isUtilityWorld'])
+
+    def test_wrong_version_and_single_byte_official_file_changes_fail(self):
+        with automation_fixture() as (generated, dom, _):
+            for version, gen, wrapper in [('1.62.0', generated, dom), ('1.57.0', generated + b' ', dom), ('1.57.0', generated, dom + b' ')]:
+                with self.assertRaises(AssertionError): P.reconstruct_automation(gen, wrapper, version)
+
+    def test_complete_expected_payload_digest_is_mandatory(self):
+        with automation_fixture() as (generated, dom, _), patch.object(P, 'AUTOMATION_SHA256', '0' * 64):
+            with self.assertRaisesRegex(AssertionError, 'full automation payload differs'):
+                P.reconstruct_automation(generated, dom, '1.57.0')
+
+    def test_installed_originals_survive_hash_failure(self):
+        class Distribution:
+            version = '1.57.0'
+            def locate_file(self, relative): return root / Path(relative).name
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); output = root / 'output'; output.mkdir()
+            (root / 'injectedScriptSource.js').write_bytes(b'wrong generated')
+            (root / 'dom.js').write_bytes(b'wrong wrapper')
+            with patch.object(P.importlib.metadata, 'distribution', return_value=Distribution()):
+                with self.assertRaisesRegex(AssertionError, 'source hash mismatch'): P.load_automation(output)
+            self.assertEqual((output / 'official-generated-injectedScriptSource.js').read_bytes(), b'wrong generated')
+            self.assertEqual((output / 'official-server-dom.js').read_bytes(), b'wrong wrapper')
+            self.assertEqual(len(json.loads((output / 'automation-installed-source-observations.json').read_bytes())['files']), 2)
+
+    def test_exact_payload_requires_isolated_live_current_frame_context(self):
+        with automation_fixture() as (_, _, expected):
+            script = parsed_source('16', expected); contexts = live_contexts(script)
+            self.assertTrue(P.automation_matches(script, expected, expected, contexts, 'current'))
+            self.assertFalse(P.automation_matches(script, expected, expected, {}, 'current'))
+            self.assertFalse(P.automation_matches(script, expected, expected, contexts, 'other-frame'))
+            self.assertFalse(P.automation_matches(script, expected + ' ', expected, contexts, 'current'))
+            self.assertFalse(P.automation_matches(script, expected, expected + ' ', contexts, 'current'))
+            changed_contexts = live_contexts(script); changed_contexts[6]['auxData']['frameId'] = 'another'
+            self.assertFalse(P.automation_matches(script, expected, expected, changed_contexts, 'current'))
+            default = parsed_source('16', expected, isolated=False)
+            self.assertFalse(P.automation_matches(default, expected, expected, live_contexts(default), 'current'))
+
+    def test_matching_hash_never_excuses_changed_metadata(self):
+        with automation_fixture() as (_, _, expected):
+            original = parsed_source('16', expected); contexts = live_contexts(original)
+            for key, changed in [('url', 'fake.js'), ('hash', '0' * 64), ('length', len(expected) + 1),
+                                 ('startLine', 1), ('startColumn', 1), ('endLine', 99), ('endColumn', 5),
+                                 ('isLiveEdit', True), ('hasSourceURL', True), ('isModule', True), ('executionContextId', 7)]:
+                script = dict(original); script[key] = changed
+                with self.subTest(key=key): self.assertFalse(P.automation_matches(script, expected, expected, contexts, 'current'))
+
+    def test_capture_retains_every_blank_source_without_url_aliasing(self):
+        with automation_fixture() as (_, _, expected), tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); bodies = {'16': expected, '17': 'unqualified blank JavaScript'}
+            scripts = [parsed_source(key, body) for key, body in bodies.items()]
+            class Fake:
+                def send(self, method, params):
+                    self.assert_method = method
+                    if method != 'Debugger.getScriptSource': raise AssertionError('Only source reads permitted')
+                    return {'scriptSource': bodies[params['scriptId']]}
+            identities, sources = {}, {}
+            result = P.capture_prepared_sources(Fake(), scripts, identities, sources, live_contexts(scripts[0]), 'current', expected, root)
+            self.assertEqual(result['capturedScriptCount'], 2)
+            self.assertEqual(result['automationHelperScriptIds'], ['16'])
+            self.assertEqual(set(identities), {'16'})
+            self.assertEqual(len(sources), 2)
+            self.assertEqual(sources[P.source_key('16', P.digest(expected))], expected)
+            self.assertEqual(sources[P.source_key('17', P.digest(bodies['17']))], bodies['17'])
+            manifest = json.loads((root / 'prepared-script-sources.json').read_bytes())
+            self.assertEqual([row['qualifiedKind'] for row in manifest], ['automation-helper', None])
+            for row in manifest:
+                self.assertEqual(P.digest((root / row['path']).read_bytes()), row['sha256'])
+            value = profile(); value['nodes'][1]['callFrame'].update({'scriptId': '17', 'url': ''})
+            self.assertFalse(P.attribute(value, identities, sources)['valid'])
+
+    def test_archived_seed_contexts_are_not_retrieved_or_qualified(self):
+        with automation_fixture() as (_, _, expected), tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); old = parsed_source('3', 'destroyed seed source', context_id=3, isolated=False)
+            parsed = [old]
+            class Response:
+                url = 'http://test/setup.js'
+                status = 200
+            responses = [Response()]; contexts = live_contexts(old)
+            P.archive_pre_app_scripts(parsed, contexts, responses, root)
+            self.assertEqual(json.loads((root / 'pre-app-script-inventory.json').read_bytes()), [old])
+            self.assertEqual(json.loads((root / 'pre-app-execution-contexts.json').read_bytes())['3']['id'], 3)
+            self.assertEqual(json.loads((root / 'pre-app-script-http-responses.json').read_bytes()), [{'url': Response.url, 'status': 200}])
+            self.assertEqual(parsed, [])
+            self.assertEqual(responses, [])
+            self.assertEqual(contexts, live_contexts(old))  # Runtime events, not this boundary, track live contexts.
+            app = parsed_source('16', expected); parsed.append(app)
+            class Fake:
+                def send(self, method, params):
+                    if params['scriptId'] == '3': raise AssertionError('Destroyed pre-app source must not be requested')
+                    return {'scriptSource': expected}
+            identities, sources = {}, {}
+            result = P.capture_prepared_sources(Fake(), parsed, identities, sources, live_contexts(app), 'current', expected, root)
+            self.assertEqual(result['capturedScriptCount'], 1)
+            self.assertNotIn('3', identities)
+            self.assertNotIn(P.source_key('3', P.digest('destroyed seed source')), sources)
+            value = profile(); value['nodes'][1]['callFrame'].update({'scriptId': '3', 'url': ''})
+            self.assertFalse(P.attribute(value, identities, sources)['valid'])
+
+    def test_archival_must_succeed_before_inventory_reset(self):
+        parsed = [{'scriptId': '3'}]
+        with patch.object(P, 'exclusive_json', side_effect=OSError('original archive failure')):
+            with self.assertRaisesRegex(OSError, 'original archive failure'): P.archive_pre_app_scripts(parsed, {}, [], Path('/unused'))
+        self.assertEqual(parsed, [{'scriptId': '3'}])
+
+    def test_hash_mismatch_retains_actual_source_before_failure(self):
+        with automation_fixture() as (_, _, expected), tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); script = parsed_source('16', expected)
+            class Fake:
+                def send(self, method, params): return {'scriptSource': expected + 'changed'}
+            with self.assertRaisesRegex(AssertionError, 'hash/length differs'):
+                P.capture_prepared_sources(Fake(), [script], {}, {}, live_contexts(script), 'current', expected, root)
+            rows = json.loads((root / 'prepared-script-sources.json').read_bytes())
+            self.assertEqual((root / rows[0]['path']).read_text(), expected + 'changed')
+            self.assertIsNone(rows[0]['qualifiedKind'])
+
+    def test_reused_script_id_with_changed_hash_is_rejected(self):
+        with automation_fixture() as (_, _, expected), tempfile.TemporaryDirectory() as temporary:
+            first = parsed_source('16', expected); second = parsed_source('16', 'other')
+            class Fake:
+                def send(self, method, params): return {'scriptSource': expected}
+            with self.assertRaisesRegex(AssertionError, 'scriptId metadata changed'):
+                P.capture_prepared_sources(Fake(), [first, second], {}, {}, live_contexts(first), 'current', expected, Path(temporary))
+
+    def test_missing_source_and_unsafe_ids_fail_closed(self):
+        with automation_fixture() as (_, _, expected):
+            class Fake:
+                def send(self, method, params): return {}
+            for script_id in ('16', '../escape', '-1'):
+                with tempfile.TemporaryDirectory() as temporary:
+                    script = parsed_source(script_id, expected)
+                    with self.assertRaises(AssertionError):
+                        P.capture_prepared_sources(Fake(), [script], {}, {}, live_contexts(script), 'current', expected, Path(temporary))
+
+    def test_source_capture_bounds_fail_closed_with_partial_inventory(self):
+        with automation_fixture() as (_, _, expected):
+            script = parsed_source('16', expected)
+            class Fake:
+                def send(self, method, params): return {'scriptSource': expected}
+            for bound, value in [('MAX_SCRIPT_SOURCES', 0), ('MAX_SCRIPT_SOURCE_BYTES', len(expected) - 1)]:
+                with tempfile.TemporaryDirectory() as temporary, patch.object(P, bound, value):
+                    directory = Path(temporary)
+                    with self.assertRaisesRegex(AssertionError, 'bound'):
+                        P.capture_prepared_sources(Fake(), [script], {}, {}, live_contexts(script), 'current', expected, directory)
+                    self.assertTrue((directory / 'prepared-script-sources.json').exists())
+
+    def test_previously_verified_source_cannot_change_its_prepared_identity(self):
+        with automation_fixture() as (_, _, expected), tempfile.TemporaryDirectory() as temporary:
+            script = parsed_source('16', expected)
+            class Fake:
+                def send(self, method, params): return {'scriptSource': expected}
+            identities = {'16': {'url': 'different', 'kind': 'diagnostic-observer', 'sha256': P.digest(expected)}}
+            sources = {P.source_key('16', P.digest(expected)): expected}
+            with self.assertRaisesRegex(AssertionError, 'verified source identity changed'):
+                P.capture_prepared_sources(Fake(), [script], identities, sources, live_contexts(script), 'current', expected, Path(temporary))
+
+    def test_capture_is_after_prep_and_before_any_profiler_start(self):
+        # Static scheduling guard complements fake-CDP source tests without
+        # launching a local browser or executing any JavaScript.
+        import inspect
+        source = inspect.getsource(P.run_case)
+        archival = source.index('archive_pre_app_scripts(parsed, contexts, responses, directory)')
+        self.assertGreater(archival, source.index("strict_equal(json.loads(seeded['raw']), expected)"))
+        self.assertLess(archival, source.index("response = page.goto(args.url, wait_until='domcontentloaded')"))
+        capture = source.index('capture_prepared_sources(')
+        self.assertGreater(capture, source.index("snapshot(page, workload['key'], directory, 'before')"))
+        self.assertGreater(capture, source.index("page.mouse.move(hit['x'], hit['y'])"))
+        self.assertLess(capture, source.index("cdp.send('Profiler.start')"))
+        self.assertLess(capture, source.index("cdp.send('Debugger.disable')"))
 
 
 class FixtureAndEvidenceTests(unittest.TestCase):
