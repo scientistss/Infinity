@@ -144,6 +144,8 @@ page_sources, release_metadata = {}, None
 completed, active_page, source_sha, failure = False, None, None, None
 case = 'setup'
 branch_metrics = {}
+host_stage_sequence = 0
+responsive_diagnostic_scope = None
 CARD = '[data-bind="bld-metal_storage"]'
 QUEUE = '#demolition-job'
 OPEN = '[data-demolish="metal_storage"]'
@@ -161,6 +163,19 @@ GROSS = {'metal': 578.1007209732234, 'crystal': 384.44214731548226, 'deuterium':
 CLOCK = r'''(() => {
  if(location.origin!==__ORIGIN__)return;
  const raf=window.requestAnimationFrame.bind(window),caf=window.cancelAnimationFrame.bind(window);
+ // Capture the real monotonic clock BEFORE overriding performance.now below.
+ const nativeNow=performance.now.bind(performance),nativeDateNow=Date.now.bind(Date);
+ const nativeSetTimeout=window.setTimeout.bind(window),nativeClearTimeout=window.clearTimeout.bind(window);
+ const nativeSetInterval=window.setInterval.bind(window),nativeClearInterval=window.clearInterval.bind(window);
+ const liveness={events:[],lastAdvance:null};
+ const observation=()=>({nativeMonotonicMs:nativeNow(),nativeEpochMs:nativeDateNow(),
+   visibility:document.visibilityState,hidden:document.hidden,focused:document.hasFocus(),
+   viewport:{width:innerWidth,height:innerHeight},appFrameCount:window.__demoFrameCount||0});
+ const mark=(stage,detail={})=>{const event={stage,...observation(),...detail};liveness.events.push(event);if(liveness.events.length>128)liveness.events.shift();return event;};
+ window.__demoReadLiveness=()=>({...observation(),events:liveness.events.slice(),lastAdvance:liveness.lastAdvance});
+ for(const name of ['visibilitychange','focus','blur','resize'])
+   (name==='visibilitychange'?document:window).addEventListener(name,()=>mark(name));
+ mark('init');
  const saved=sessionStorage.getItem('demolition-clock');
  const epoch=saved?Number(saved):__EPOCH__;let elapsed=0;
  Date.now=()=>epoch+elapsed;Object.defineProperty(performance,'now',{value:()=>elapsed});
@@ -180,7 +195,57 @@ CLOCK = r'''(() => {
  });
  window.__demoFrameCount=0;
  window.requestAnimationFrame=callback=>raf(()=>{window.__demoFrameCount++;callback(elapsed);});
- window.__demoAdvance=async ms=>{const beforeAt=epoch+elapsed;elapsed+=ms;sessionStorage.setItem('demolition-clock',String(epoch+elapsed));await new Promise(raf);await new Promise(raf);return{beforeAt,afterAt:epoch+elapsed};};
+ window.__demoAdvance=async ms=>{
+   const beforeAt=epoch+elapsed;
+   const state={requestedMilliseconds:ms,deadlineMs:5000,started:observation(),phase:'starting',frames:[],heartbeatCount:0,lastHeartbeat:null};
+   liveness.lastAdvance=state;
+   elapsed+=ms;sessionStorage.setItem('demolition-clock',String(epoch+elapsed));
+   await new Promise((resolve,reject)=>{
+     let settled=false,pendingFrame=null,guard=null,heartbeat=null;
+     const finish=error=>{
+       if(settled)return;settled=true;
+       // Cancel ONLY this diagnostic wait's native RAF and native timers.
+       // Already queued callbacks also check settled before doing any work.
+       if(pendingFrame!==null){caf(pendingFrame);pendingFrame=null;}
+       if(guard!==null){nativeClearTimeout(guard);guard=null;}
+       if(heartbeat!==null){nativeClearInterval(heartbeat);heartbeat=null;}
+       state.phase=error?'rejected':'complete';state.ended=observation();
+       state.error=error?{name:error.name,message:error.message}:null;
+       mark('two-raf-'+state.phase,{advance:state});
+       if(error)reject(error);else resolve();
+     };
+     const rejectTimeout=origin=>{
+       state.timeoutOrigin=origin;
+       const error=new Error('Two actual native RAF callbacks did not complete within 5000 ms');
+       error.name='NativeTwoRafTimeout';finish(error);
+     };
+     const overdue=origin=>{
+       if(nativeNow()-state.started.nativeMonotonicMs<state.deadlineMs)return false;
+       rejectTimeout(origin);return true;
+     };
+     try{
+       guard=nativeSetTimeout(()=>{if(!settled)rejectTimeout('native-timer');},state.deadlineMs);
+       heartbeat=nativeSetInterval(()=>{
+         if(settled)return;
+         state.heartbeatCount++;state.lastHeartbeat=mark('two-raf-heartbeat',{phase:state.phase});
+       },250);
+       state.phase='waiting-first-frame';mark(state.phase);
+       pendingFrame=raf(firstTimestamp=>{
+         if(settled)return;pendingFrame=null;
+         state.frames.push({phase:'first',nativeFrameTimestamp:firstTimestamp,...observation()});
+         if(overdue('first-frame'))return;
+         state.phase='waiting-second-frame';mark(state.phase);
+         pendingFrame=raf(secondTimestamp=>{
+           if(settled)return;pendingFrame=null;
+           state.frames.push({phase:'second',nativeFrameTimestamp:secondTimestamp,...observation()});
+           if(overdue('second-frame'))return;
+           finish(null);
+         });
+       });
+     }catch(error){finish(error);}
+   });
+   return{beforeAt,afterAt:epoch+elapsed,nativeTwoRaf:state};
+ };
  window.__demoNative=[Storage.prototype.getItem,Storage.prototype.setItem,File.prototype.text,window.confirm,window.setTimeout,window.setInterval].every(fn=>/\[native code\]/.test(Function.prototype.toString.call(fn)));
  window.__demoDrags=[];for(const type of ["dragstart","drop","dragend"])document.addEventListener(type,event=>window.__demoDrags.push({type,trusted:event.isTrusted,slot:event.target.closest?.("[data-slot]")?.dataset.slot||null}),true);
  window.__demoClicks=[];window.__demoEdits=[];window.__demoFiles=[];window.__demoWheels=[];window.__demoStorage=[];
@@ -216,6 +281,64 @@ def timing_report():
         'simulatedSeconds': sum(row['simulatedSeconds'] for row in branches), 'branches': branches,
         'uncertainty': 'An unfinished advance remains advanceInFlight and is not counted as observed simulated time.'}
 
+def host_stage(stage, **detail):
+    """Small immutable host events survive a renderer stall without report polling."""
+    global host_stage_sequence
+    host_stage_sequence += 1
+    directory = out / 'liveness-stages'; directory.mkdir(exist_ok=True)
+    path = directory / f'{host_stage_sequence:06d}.json'
+    temporary = path.with_name(path.name + f'.{os.getpid()}.tmp')
+    event = {'sequence': host_stage_sequence, 'case': case, 'stage': stage,
+             'hostMonotonicSeconds': time.monotonic(),
+             'hostOffsetSeconds': time.monotonic() - HOST_STARTED_MONOTONIC,
+             'responsiveScope': responsive_diagnostic_scope, **detail}
+    try:
+        with temporary.open('x', encoding='utf-8') as stream:
+            json.dump(event, stream, ensure_ascii=False); stream.write('\n')
+            stream.flush(); os.fsync(stream.fileno())
+        os.link(temporary, path)  # Atomic publication, exclusive: never overwrite evidence.
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def diagnostic_bound(seconds=.25):
+    """Bound one failure observation; preserve the earlier suite alarm deadline."""
+    started = time.monotonic()
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_delay, previous_interval = signal.getitimer(signal.ITIMER_REAL)
+    def expired(_signal, _frame):
+        raise TimeoutError('Diagnostic host deadline; renderer state remains unknown')
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, previous_delay) if previous_delay else seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_delay:
+            signal.setitimer(signal.ITIMER_REAL, max(.000001, previous_delay - (time.monotonic() - started)), previous_interval)
+
+
+def responsive_checkpoint(page, label, width):
+    """One pre-resize raw/DOM snapshot covers the upcoming resize, tab and advance."""
+    stem = f'{label}-{width}-before-resize'
+    host_stage('responsive-checkpoint-start', snapshot=stem)
+    for suffix, observe in (('raw-save.json', lambda: raw(page)), ('dom.html', page.content),
+                            ('liveness.json', lambda: json.dumps(page.evaluate('window.__demoReadLiveness()'), ensure_ascii=False))):
+        host_stage('responsive-checkpoint-observation-start', observation=suffix)
+        # These are pre-action evidence, so an unavailable observation fails the
+        # run rather than silently allowing the risky sequence without evidence.
+        with diagnostic_bound(1):
+            value = observe()
+        path = out / f'{stem}-{suffix}'
+        with path.open('x', encoding='utf-8') as stream:
+            stream.write(value if value is not None else 'null')
+        evidence.append({'case': case, 'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+        host_stage('responsive-checkpoint-observation-complete', observation=suffix, file=path.name)
+    host_stage('responsive-checkpoint-complete', snapshot=stem)
+
+
 def advance(page, milliseconds=0):
     if milliseconds not in (0, 1000):
         raise ValueError('Acceptance only permits zero-time UI frames or exact one-second live advances')
@@ -223,7 +346,16 @@ def advance(page, milliseconds=0):
     metrics['attemptedAdvanceCalls'] += 1
     metrics['advanceInFlight'] = {'requestedMilliseconds': milliseconds,
         'hostStartOffsetSeconds': time.monotonic() - HOST_STARTED_MONOTONIC}
-    observed = page.evaluate('(ms)=>window.__demoAdvance(ms)', milliseconds)
+    host_stage('advance-start', **metrics['advanceInFlight'])
+    try:
+        observed = page.evaluate('(ms)=>window.__demoAdvance(ms)', milliseconds)
+    except BaseException as error:
+        try:
+            host_stage('advance-error', error=repr(error), rendererObservation='unknown until independently captured')
+        except BaseException as diagnostic_error:
+            metrics['advanceInFlight']['hostEventError'] = repr(diagnostic_error)
+        raise
+    host_stage('advance-return', observed=observed)
     if observed['afterAt'] - observed['beforeAt'] != milliseconds:
         raise AssertionError('Actual controlled clock delta differs from requested advance')
     metrics['successfulAdvanceCalls'] += 1
@@ -232,9 +364,13 @@ def advance(page, milliseconds=0):
     metrics['advanceInFlight'] = None
 
 def tab(page, name):
+    host_stage('tab-start', tab=name)
     if page.locator('[data-bind="offline-modal"]').is_visible():
         page.locator('[data-action="dismiss-offline"]').click()
-    page.locator(f'[data-tab="{name}"]').click(); advance(page)
+    host_stage('tab-click-start', tab=name)
+    page.locator(f'[data-tab="{name}"]').click()
+    host_stage('tab-click-return', tab=name)
+    advance(page)
 
 def raw(page):
     return page.evaluate('(key)=>localStorage.getItem(key)', KEY)
@@ -508,11 +644,28 @@ def capture_failure(error, page=None):
     completed = False
     failure = {'case': case, 'error': repr(error), 'traceback': traceback.format_exc()}
 
-    def attempt(label, action):
+    failure['observationBoundary'] = ('Missing observations, including SIGALRM-interrupted Playwright re-entry, '
+        'do not prove renderer death, an application exception, or missing browser callbacks.')
+
+    def attempt(label, action, browser=False, seconds=.25):
+        if browser:
+            attempt(label + ' start marker', lambda: host_stage('failure-observation-start', observation=label))
         try:
-            action()
+            if browser:
+                with diagnostic_bound(seconds):
+                    action()
+                attempt(label + ' complete marker', lambda: host_stage('failure-observation-complete', observation=label))
+            else:
+                action()
         except BaseException as capture_error:
-            failure.setdefault('captureErrors', []).append({'step': label, 'error': repr(capture_error)})
+            failure.setdefault('captureErrors', []).append({'step': label, 'error': repr(capture_error),
+                'observationStatus': 'unavailable; renderer state unknown' if browser else 'artifact unavailable'})
+        # Persist each result before trying the next potentially blocked call.
+        if browser:
+            try:
+                flush()
+            except BaseException as report_error:
+                failure.setdefault('captureErrors', []).append({'step': label + ' report', 'error': repr(report_error)})
 
     def artifact(name, data):
         path = out / name; path.write_bytes(data)
@@ -527,10 +680,11 @@ def capture_failure(error, page=None):
     # capture must neither hide that error nor prevent the other evidence.
     attempt('original failure report', flush)
     if page is not None:
-        attempt('raw save', capture_raw)
+        attempt('raw save', capture_raw, browser=True)
+        attempt('native frame liveness', lambda: failure.__setitem__('nativeFrameLiveness', page.evaluate('window.__demoReadLiveness()')), browser=True)
         for name, selector in [('card', CARD), ('queue', QUEUE), ('status', '[data-bind="status"]')]:
-            attempt(name, lambda name=name, selector=selector: failure.__setitem__(name, page.locator(selector).all_text_contents()))
-        attempt('scroll and wheel diagnostics', lambda: failure.__setitem__('scrollAndWheels', page.evaluate('({width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.scrollingElement?.scrollHeight,wheelCount:window.__demoWheels?.length||0,wheels:window.__demoWheels?.slice(-200)||[]})')))
+            attempt(name, lambda name=name, selector=selector: failure.__setitem__(name, page.locator(selector).all_text_contents()), browser=True)
+        attempt('scroll and wheel diagnostics', lambda: failure.__setitem__('scrollAndWheels', page.evaluate('({width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.scrollingElement?.scrollHeight,wheelCount:window.__demoWheels?.length||0,wheels:window.__demoWheels?.slice(-200)||[]})')), browser=True)
         # all_text_contents above intentionally retains hidden historical text.
         # Report visibility separately so it cannot be mistaken for shown work.
         attempt('diagnostic target visibility', lambda: failure.__setitem__('targetVisibility', page.evaluate("""selectors=>selectors.map(selector=>{
@@ -539,10 +693,10 @@ def capture_failure(error, page=None):
           return {selector,hidden:element.hidden,hiddenAncestor:!!element.closest('[hidden]'),
             display:s.display,visibility:s.visibility,rect:{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom},
             controls:[...element.querySelectorAll('button,input,select')].map(e=>({tag:e.tagName,id:e.id,disabled:e.disabled}))};
-        })""", [CARD, QUEUE, '[data-bind="res-metal"]'])))
-        attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')))
+        })""", [CARD, QUEUE, '[data-bind="res-metal"]'])), browser=True)
+        attempt('DOM', lambda: artifact('failure-dom.html', page.content().encode('utf-8')), browser=True)
         attempt('report before screenshot', flush)
-        attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)))
+        attempt('screenshot', lambda: artifact('failure.png', page.screenshot(full_page=False, timeout=2000)), browser=True, seconds=.75)
     attempt('final failure report', flush)
 
 @contextmanager
@@ -562,7 +716,10 @@ def flush():
         'responsiveScope': '320/390/768/1440: complete actual quote/loss text and active-job cancellation controls, glyph clipping, five-point hit-tests, native wheel motion and action-labeled screenshots. One economic execution at1440.',
         'timing': timing_report(), 'oracle': 'Every serialized state field compared exactly. Separately fixed integer fees/IDs, exact saved Number timers and independently integrated wallet/lifetime predictions.',
         'decimalTolerance': {'absolute': WALLET_TOLERANCE, 'scope': 'Only independent integration predictions for decimal wallets/lifetime; exact full-state comparisons, paid amounts, identities, timers and migration projections never receive tolerance.'},
-        'boundsSeconds': {'worker': 300, 'supervisor': 305}, 'checks': checks,
+        'boundsSeconds': {'worker': 300, 'supervisor': 305},
+        'livenessDiagnostics': {'nativeTwoRafDeadlineMs': 5000, 'hostEventsDirectory': 'liveness-stages',
+            'eventCount': host_stage_sequence, 'scope': 'Read-only native clocks/events; two actual RAF callbacks only. Deadline rejects, never supplies a frame. One raw/DOM checkpoint per responsive width before resize/tab/advance.',
+            'boundary': 'A blocked renderer can prevent native timers and host evaluate from returning. The unchanged suite watchdog remains final protection; unavailable observations are unknown.'}, 'checks': checks,
         'passed': sum(value['passed'] for value in checks), 'errors': errors, 'failedRequests': failed_requests,
         'sourceBindings': source_bindings, 'evidence': evidence, 'failure': failure})
 
@@ -764,8 +921,14 @@ def wheel_roundtrip(page, label, width):
 
 
 def responsive(page, label, quote=False):
+    global responsive_diagnostic_scope
     for width in (320, 390, 768, 1440):
-        page.set_viewport_size({'width': width, 'height': 1100}); building_tab(page)
+        responsive_diagnostic_scope = {'label': label, 'width': width}
+        responsive_checkpoint(page, label, width)
+        host_stage('resize-start', width=width, height=1100)
+        page.set_viewport_size({'width': width, 'height': 1100})
+        host_stage('resize-return', width=width, height=1100)
+        building_tab(page)
         wheel_roundtrip(page, label + '-' + str(width), width)
         if quote:
             trusted_click(page, OPEN); quote_golden(page)
@@ -793,7 +956,10 @@ def responsive(page, label, quote=False):
         if quote:
             native_scroll_to(page, '#demolition-review'); snap(page, f'{label}-{width}-complete-quote.png')
             trusted_click(page, DISMISS); check('native preview dismissal hides review', page.locator('#demolition-review').is_hidden())
+    host_stage('responsive-restore-resize-start', width=1440, height=1100)
     page.set_viewport_size({'width': 1440, 'height': 1100})
+    host_stage('responsive-restore-resize-return', width=1440, height=1100)
+    responsive_diagnostic_scope = None
 
 
 def force_retained(page, label, indices=None):

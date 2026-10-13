@@ -34,3 +34,33 @@ Earlier local red cases were retained: one-second RAF subtraction tails, downwar
 ## Final exact-code acceptance
 
 The candidate subsequently passed its own complete CI and immutable-artifact review at ca5ef0c769856f2c4c8925e76a5c7d322822fe1b. See [the release record](DEMOLITION_RELEASE.md) for the successful run, actual native coverage, startup-oracle correction, preserved failed runs and measured performance costs. The earlier local preparation counts above remain historical rather than being relabeled as the final run.
+
+## 2026-10-13 repeat-run frame diagnostic
+
+The released 0.6.27 source `7ab569045996a1a6ad8ce1aee477092144dfad74`
+passed candidate CI 38327276107, including all 1,225 demolition checks.
+Its later development-branch run 38330161986 failed during this suite and is
+retained separately. Artifact 11783151127, SHA-256
+`2e1b49aabd54bb035e2dd57dba0cf7a42467b46f0ba60f3e7a667d2d3bfe480e`,
+contains 294 successful checks, an exact prefix of the successful run.
+
+The second paid job's complete saved state is byte-identical to the green run:
+`native-job202-paid.json`, SHA-256
+`1fe4687c9e72d231fbf7b9e7c93d0f00c134bd35809520085d549113e56e78f7`.
+The next zero-time test frame wait began at host +34.988540302 seconds after
+resizing to 320px and clicking the facilities tab. It did not return before
+the unchanged 300-second worker bound; the supervisor ended at approximately
+305 seconds. This is a single unresolved native-frame/evaluate wait, not
+evidence of an incorrect payment or cumulative suite work requiring a larger
+budget. Missing post-alarm page captures cannot distinguish renderer, native
+RAF, or driver/dispatcher failure.
+
+The test-only successor records real monotonic host/browser phase markers,
+visibility/focus and the two actual native RAF callbacks. A five-second local
+native timer may reject the wait; it never supplies or substitutes a frame,
+retries an action, or adds simulated time. Pre-resize raw save/DOM originals
+are retained, and failure observations have independent bounded attempts.
+Unavailable observations are explicitly unknown. The original 109 check-call
+and 23 advance-call ASTs, all economic inputs, four widths, and 300/305-second
+suite bounds are unchanged. This adds diagnosis; it does not establish a cause
+or retroactively pass the failed repeat run. Its own complete CI is required.

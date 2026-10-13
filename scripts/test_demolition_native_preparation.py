@@ -8,6 +8,9 @@ from contextlib import contextmanager
 import copy
 import hashlib
 import json
+import os
+import signal
+import time as real_time
 from pathlib import Path
 import tempfile
 import traceback
@@ -17,11 +20,13 @@ from test_terraformer_native_preparation import TargetPage as OriginalTargetPage
 SCRIPT = Path(__file__).with_name('browser-demolition.py')
 SOURCE = SCRIPT.read_text(encoding='utf-8')
 TREE = ast.parse(SOURCE)
-NAMES = {'exact_json', 'native_scroll_to', 'capture_failure', 'capture_live_failure', 'wallet_transfer', 'wallet_golden', 'advance', 'wait_for_scroll_settled', 'responsive', 'import_confirmation', 'verify_conflict_refusal', 'verify_recovery_storage'}
+NAMES = {'exact_json', 'native_scroll_to', 'capture_failure', 'capture_live_failure', 'wallet_transfer', 'wallet_golden', 'advance', 'wait_for_scroll_settled', 'responsive', 'import_confirmation', 'verify_conflict_refusal', 'verify_recovery_storage', 'host_stage', 'diagnostic_bound', 'responsive_checkpoint', 'tab'}
 
 
 def helpers():
-    namespace = {'contextmanager': contextmanager, 'hashlib': hashlib, 'traceback': traceback, 'time': FakeClock()}
+    namespace = {'contextmanager': contextmanager, 'hashlib': hashlib, 'traceback': traceback, 'time': FakeClock(),
+                 'json': json, 'os': os, 'signal': signal, 'HOST_STARTED_MONOTONIC': 0,
+                 'host_stage_sequence': 0, 'responsive_diagnostic_scope': None}
     nodes = [node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name in NAMES]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SCRIPT), 'exec'), namespace)
     return namespace
@@ -84,6 +89,9 @@ class TargetPage(OriginalTargetPage):
 
 class DiagnosticPage(OriginalDiagnosticPage):
     def evaluate(self, source, selectors=None):
+        if source == 'window.__demoReadLiveness()':
+            self.observe('native liveness')
+            return {'nativeMonotonicMs': 123, 'phase': 'offline double'}
         if selectors is None:
             return super().evaluate(source)
         self.observe('target visibility')
@@ -411,6 +419,236 @@ class LiveFailureContractTests(unittest.TestCase):
             self.assertEqual(queue['rect']['height'], 0)
             self.assertTrue(queue['controls'][0]['disabled'])
             self.assertNotIn('captureErrors', namespace['failure'])
+
+
+class FrameWaitDiagnosticContracts(unittest.TestCase):
+    """Static JS contracts and Python doubles, not execution/native-frame proof."""
+    def setUp(self):
+        self.namespace = helpers()
+        directory = tempfile.TemporaryDirectory(prefix='demolition-liveness-offline-')
+        self.addCleanup(directory.cleanup)
+        self.out = Path(directory.name)
+        self.namespace.update(out=self.out, case='offline liveness', evidence=[])
+        clock_assignment = next(node for node in TREE.body if isinstance(node, ast.Assign) and
+                                any(isinstance(target, ast.Name) and target.id == 'CLOCK' for target in node.targets))
+        self.clock = next(node.value for node in ast.walk(clock_assignment) if isinstance(node, ast.Constant) and
+                          isinstance(node.value, str) and node.value.startswith('(() =>'))
+        self.wait = self.clock.split('window.__demoAdvance=async ms=>{', 1)[1].split('window.__demoNative=', 1)[0]
+
+    def test_native_monotonic_capture_precedes_clock_override_and_records_environment(self):
+        self.assertLess(self.clock.index('nativeNow=performance.now.bind(performance)'), self.clock.index("Object.defineProperty(performance,'now'"))
+        for token in ('nativeEpochMs:nativeDateNow()', 'nativeMonotonicMs:nativeNow()', 'document.visibilityState',
+                      'document.hasFocus()', 'viewport:{width:innerWidth,height:innerHeight}', 'appFrameCount:',
+                      "['visibilitychange','focus','blur','resize']"):
+            self.assertIn(token, self.clock)
+        self.assertIn('if(liveness.events.length>128)liveness.events.shift()', self.clock)
+
+    def test_only_two_actual_frames_can_complete_and_native_timer_only_rejects(self):
+        self.assertEqual(self.wait.count('pendingFrame=raf('), 2)
+        self.assertEqual(self.wait.count('finish(null)'), 1)
+        first, second = self.wait.index('pendingFrame=raf(firstTimestamp=>'), self.wait.index('pendingFrame=raf(secondTimestamp=>')
+        self.assertLess(first, second)
+        self.assertLess(second, self.wait.index('finish(null)'))
+        self.assertIn("guard=nativeSetTimeout(()=>{if(!settled)rejectTimeout('native-timer');},state.deadlineMs)", self.wait)
+        self.assertIn('deadlineMs:5000', self.wait)
+        self.assertIn('nativeNow()-state.started.nativeMonotonicMs<state.deadlineMs', self.wait)
+        self.assertIn("if(overdue('first-frame'))return;", self.wait)
+        self.assertIn("if(overdue('second-frame'))return;", self.wait)
+        self.assertIn("error.name='NativeTwoRafTimeout';finish(error)", self.wait)
+        for forbidden in ('Promise.race', 'new Promise(raf)', 'requestAnimationFrame(', 'setTimeout(resolve', 'performance.now()', 'Date.now()'):
+            self.assertNotIn(forbidden, self.wait)
+        self.assertEqual(self.wait.count('elapsed+=ms'), 1)
+        self.assertEqual(self.wait.count("sessionStorage.setItem('demolition-clock',String(epoch+elapsed))"), 1)
+
+    def test_cleanup_precedes_settlement_and_late_callbacks_cannot_continue(self):
+        finish = self.wait.split('const finish=error=>{', 1)[1].split('const rejectTimeout=', 1)[0]
+        guard = finish.index('if(settled)return;settled=true')
+        settlement = finish.index('if(error)reject(error);else resolve()')
+        for cleanup in ('caf(pendingFrame)', 'nativeClearTimeout(guard)', 'nativeClearInterval(heartbeat)'):
+            self.assertLess(guard, finish.index(cleanup))
+            self.assertLess(finish.index(cleanup), settlement)
+        for callback in ('firstTimestamp', 'secondTimestamp'):
+            body = self.wait.split('pendingFrame=raf(' + callback + '=>{', 1)[1]
+            self.assertTrue(body.lstrip().startswith('if(settled)return;pendingFrame=null;'))
+            self.assertIn('nativeFrameTimestamp:' + callback, body)
+        self.assertIn("state.lastHeartbeat=mark('two-raf-heartbeat',{phase:state.phase})", self.wait)
+        self.assertIn('},250)', self.wait)
+        self.assertIn('catch(error){finish(error);}', self.wait)
+
+    def test_host_events_are_monotonic_atomic_exclusive_and_do_not_poll_report(self):
+        self.namespace['time'].now = 12
+        self.namespace['host_stage']('before-operation', requestedMilliseconds=0)
+        self.namespace['time'].now = 13
+        self.namespace['host_stage']('after-operation')
+        events = [json.loads(path.read_text()) for path in sorted((self.out / 'liveness-stages').glob('*.json'))]
+        self.assertEqual([event['stage'] for event in events], ['before-operation', 'after-operation'])
+        self.assertEqual([event['hostMonotonicSeconds'] for event in events], [12, 13])
+        first = (self.out / 'liveness-stages/000001.json').read_bytes()
+        self.namespace['host_stage_sequence'] = 0
+        with self.assertRaises(FileExistsError):
+            self.namespace['host_stage']('must-not-overwrite')
+        self.assertEqual((self.out / 'liveness-stages/000001.json').read_bytes(), first)
+        self.assertFalse(list((self.out / 'liveness-stages').glob('*.tmp')))
+        body = ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'host_stage'))
+        self.assertFalse(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'flush' for node in ast.walk(ast.parse(body))))
+        self.assertNotIn('page.', body)
+
+    def test_failed_advance_retains_inflight_never_counts_success_or_retries(self):
+        namespace, calls = self.namespace, []
+        namespace['branch_metrics'] = {'offline liveness': {'attemptedAdvanceCalls': 0, 'successfulAdvanceCalls': 0,
+            'zeroAdvanceCalls': 0, 'liveOneSecondAdvanceCalls': 0, 'simulatedSeconds': 0, 'advanceInFlight': None}}
+        class Page:
+            def evaluate(self, source, ms):
+                calls.append((source, ms))
+                raise RuntimeError('NativeTwoRafTimeout: offline double')
+        with self.assertRaisesRegex(RuntimeError, 'NativeTwoRafTimeout'):
+            namespace['advance'](Page(), 1000)
+        metrics = namespace['branch_metrics']['offline liveness']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(metrics['attemptedAdvanceCalls'], 1)
+        self.assertEqual(metrics['successfulAdvanceCalls'], 0)
+        self.assertEqual(metrics['simulatedSeconds'], 0)
+        self.assertEqual(metrics['advanceInFlight']['requestedMilliseconds'], 1000)
+        events = [json.loads(path.read_text()) for path in sorted((self.out / 'liveness-stages').glob('*.json'))]
+        self.assertEqual([event['stage'] for event in events], ['advance-start', 'advance-error'])
+        self.assertEqual(events[-1]['rendererObservation'], 'unknown until independently captured')
+
+    def test_failed_host_marker_cannot_replace_original_advance_error(self):
+        metrics = {'attemptedAdvanceCalls': 0, 'successfulAdvanceCalls': 0, 'advanceInFlight': None}
+        self.namespace['branch_metrics'] = {'offline liveness': metrics}
+        original = RuntimeError('original native timeout')
+        class Page:
+            def evaluate(self, source, ms):
+                raise original
+        def stage(label, **detail):
+            if label == 'advance-error':
+                raise OSError('offline marker storage failure')
+        self.namespace['host_stage'] = stage
+        with self.assertRaises(RuntimeError) as raised:
+            self.namespace['advance'](Page())
+        self.assertIs(raised.exception, original)
+        self.assertIn('offline marker storage failure', metrics['advanceInFlight']['hostEventError'])
+
+    def test_observed_clock_delta_still_must_match_original_request(self):
+        for requested, observed, successful in ((0, 0, True), (1000, 1000, True), (0, 1, False), (1000, 0, False)):
+            with self.subTest(requested=requested, observed=observed):
+                metrics = {'attemptedAdvanceCalls': 0, 'successfulAdvanceCalls': 0, 'zeroAdvanceCalls': 0,
+                           'liveOneSecondAdvanceCalls': 0, 'simulatedSeconds': 0, 'advanceInFlight': None}
+                self.namespace['branch_metrics'] = {'offline liveness': metrics}
+                class Page:
+                    def evaluate(self, source, ms):
+                        return {'beforeAt': 100, 'afterAt': 100 + observed, 'nativeTwoRaf': {'phase': 'offline double'}}
+                if successful:
+                    self.namespace['advance'](Page(), requested)
+                    self.assertEqual(metrics['successfulAdvanceCalls'], 1)
+                    self.assertEqual(metrics['simulatedSeconds'], requested / 1000)
+                    self.assertIsNone(metrics['advanceInFlight'])
+                else:
+                    with self.assertRaisesRegex(AssertionError, 'clock delta'):
+                        self.namespace['advance'](Page(), requested)
+                    self.assertEqual(metrics['successfulAdvanceCalls'], 0)
+                    self.assertIsNotNone(metrics['advanceInFlight'])
+
+    def test_one_raw_dom_checkpoint_precedes_each_responsive_resize_tab_advance(self):
+        namespace = self.namespace
+        namespace['raw'] = lambda page: page.RAW
+        with DiagnosticPage().live() as page:
+            namespace['responsive_checkpoint'](page, 'offline-layout', 320)
+        self.assertEqual((self.out / 'offline-layout-320-before-resize-raw-save.json').read_bytes(), DiagnosticPage.RAW.encode())
+        self.assertEqual((self.out / 'offline-layout-320-before-resize-dom.html').read_bytes(), DiagnosticPage.DOM.encode())
+        self.assertEqual(len(namespace['evidence']), 3)
+        body = ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'responsive'))
+        self.assertEqual(body.count('responsive_checkpoint('), 1)
+        self.assertLess(body.index('responsive_checkpoint('), body.index('page.set_viewport_size('))
+        self.assertLess(body.index('page.set_viewport_size('), body.index('building_tab(page)'))
+        self.assertIn('for width in (320, 390, 768, 1440)', body)
+        self.assertNotIn('check(', ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'responsive_checkpoint')))
+
+    def test_original_business_check_and_advance_call_census_is_byte_for_byte_ast_exact(self):
+        def census(names):
+            calls = [ast.dump(node, include_attributes=False) for node in sorted(ast.walk(TREE), key=lambda node: getattr(node, 'lineno', 0))
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names]
+            return len(calls), hashlib.sha256(json.dumps(calls).encode()).hexdigest()
+        # Pinned from 7ab569045996a1a6ad8ce1aee477092144dfad74, whose green artifact
+        # executed 1225 checks and 50 positive one-second advances. Static census
+        # protects every original assertion and every advance call; it is not a rerun.
+        self.assertEqual(census({'check'}), (109, 'baae104d3af444105bfbae93f5313ee27ce3c7f0cf30f4d4d8a04e2eaa437948'))
+        self.assertEqual(census({'advance', 'one_seconds'}), (23, 'f2a321de7342851c48a202daa6efe2ac6fb554e1f7ded724fb3dc535ae8e3576'))
+
+
+class DiagnosticDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.namespace = helpers()
+        self.namespace['time'] = real_time
+        self.prior_handler = signal.getsignal(signal.SIGALRM)
+        self.prior_timer = signal.getitimer(signal.ITIMER_REAL)
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        self.addCleanup(self.restore_alarm)
+
+    def restore_alarm(self):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, self.prior_handler)
+        signal.setitimer(signal.ITIMER_REAL, *self.prior_timer)
+
+    def test_stalled_observation_has_local_bound_and_no_leaked_alarm(self):
+        started = real_time.monotonic()
+        with self.assertRaisesRegex(TimeoutError, 'renderer state remains unknown'):
+            with self.namespace['diagnostic_bound'](.03):
+                real_time.sleep(2)
+        self.assertLess(real_time.monotonic() - started, .5)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
+        self.assertEqual(signal.getsignal(signal.SIGALRM), self.prior_handler)
+
+    def test_cleanup_restores_original_earlier_suite_deadline_without_extending_it(self):
+        handler = lambda *_: None
+        signal.signal(signal.SIGALRM, handler)
+        signal.setitimer(signal.ITIMER_REAL, 1)
+        before = signal.getitimer(signal.ITIMER_REAL)[0]
+        with self.namespace['diagnostic_bound'](.5):
+            real_time.sleep(.025)
+        after = signal.getitimer(signal.ITIMER_REAL)[0]
+        self.assertLess(after, before - .02)
+        self.assertGreater(after, 0)
+        self.assertIs(signal.getsignal(signal.SIGALRM), handler)
+
+    def test_failed_marker_write_does_not_prevent_available_browser_observations(self):
+        namespace = self.namespace
+        with tempfile.TemporaryDirectory(prefix='demolition-diagnostic-offline-') as directory:
+            def failed_marker(*args, **kwargs):
+                raise OSError('offline marker storage failure')
+            namespace.update(out=Path(directory), case='offline marker failure', completed=True, failure=None, evidence=[],
+                CARD='card', QUEUE='queue', flush=lambda: None, raw=lambda page: page.raw(), host_stage=failed_marker)
+            with DiagnosticPage().live() as page:
+                namespace['capture_failure'](AssertionError('original failure'), page)
+            self.assertEqual(namespace['failure']['rawSave'], page.RAW)
+            self.assertEqual(namespace['failure']['queue'], ['captured text'])
+            self.assertEqual((Path(directory) / 'failure-dom.html').read_bytes(), page.DOM.encode())
+            self.assertTrue(all(row['observationStatus'] == 'artifact unavailable' for row in namespace['failure']['captureErrors']))
+
+    def test_each_failure_observation_is_independent_and_unavailable_is_unknown(self):
+        namespace = self.namespace
+        with tempfile.TemporaryDirectory(prefix='demolition-diagnostic-offline-') as directory:
+            namespace.update(out=Path(directory), case='offline timeout', completed=True, failure=None, evidence=[],
+                CARD='card', QUEUE='queue', flush=lambda: None, raw=lambda page: page.raw())
+            class Page(DiagnosticPage):
+                def raw(self):
+                    self.observe('raw')
+                    real_time.sleep(2)
+                def evaluate(self, source, selectors=None):
+                    if source == 'window.__demoReadLiveness()':
+                        raise RuntimeError('offline double: interrupted Playwright re-entry unavailable')
+                    return super().evaluate(source, selectors)
+            with Page().live() as page:
+                namespace['capture_failure'](AssertionError('original failure'), page)
+            self.assertEqual(namespace['failure']['error'], "AssertionError('original failure')")
+            missing = namespace['failure']['captureErrors']
+            self.assertEqual([row['step'] for row in missing], ['raw save', 'native frame liveness'])
+            self.assertTrue(all(row['observationStatus'] == 'unavailable; renderer state unknown' for row in missing))
+            self.assertEqual(namespace['failure']['queue'], ['captured text'])
+            self.assertEqual((Path(directory) / 'failure-dom.html').read_bytes(), page.DOM.encode())
+            self.assertEqual((Path(directory) / 'failure.png').read_bytes(), b'offline fake screenshot bytes')
+            self.assertIn('SIGALRM-interrupted Playwright re-entry', namespace['failure']['observationBoundary'])
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
 
 
 if __name__ == '__main__':
