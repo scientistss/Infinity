@@ -13,6 +13,7 @@ import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR14, assertHis
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { cpus, platform, release } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -219,15 +220,47 @@ const labBlockersSourceProof = (() => {
   const manifestSha256 = sha256(raw);
   assert.equal(manifestSha256, "ea23cbbc562494b2e00ab37eac5f666c2fb2773904f2366d3f3f8b76d4c9afb8", "exact previously adopted read-only lab UI seal");
   const manifest = JSON.parse(raw);
+  // The later copy-only adoption leaves the lab seal untouched. Reuse its full
+  // Python/Git contract, including all 210 source entries and thirteen earlier
+  // seals, instead of accepting a second unqualified present.ts hash.
+  const copyManifestPath = "tests/fixtures/research-unlock-copy-provenance.json";
+  const copyRaw = readFileSync(resolve(afterRoot, copyManifestPath));
+  const copyManifestSha256 = sha256(copyRaw);
+  assert.equal(copyManifestSha256, "ee3d929da35f41aef0aad587a11ab6acba0726abde44f0de5f753a74c4cb6999", "exact two-line research unlock copy seal");
+  const copyManifest = JSON.parse(copyRaw);
+  const sourceAudit = JSON.parse(execFileSync("python3",
+    ["-B", "scripts/test_research_unlock_copy_provenance.py", "--verify-ui-baseline"], { cwd: afterRoot, encoding: "utf8" }));
+  assert.equal(sourceAudit.contract, "exact-declared-research-unlock-copy-source-delta", "complete research unlock source contract");
+  assert.equal(sourceAudit.sourceBaseline, "49303d3740cf223955386ff984b335ca9b110087", "immutable public source before the two-line removal");
+  assert.equal(sourceAudit.manifestSha256, copyManifestSha256, "independently verified exact copy seal");
+  assert.deepEqual(sourceAudit.approvedSourceDeltaPaths, ["src/ui/present.ts"], "no unrelated source adaptation");
+  assert.ok(sourceAudit.checks > 145, "complete recursive source checks must run");
+  assert.equal(Object.keys(copyManifest.productionInventory).length, 210, "complete approved production inventory");
+  assert.equal(copyManifest.previousManifests.length, 13, "all prior source seals retained");
+  assert.deepEqual(copyManifest.changedPaths.map(row => row.path), ["src/ui/present.ts"], "only the reviewed presentation delta");
+  const copyRow = copyManifest.changedPaths[0];
   const files = Object.fromEntries(["src/ui/present.ts", "src/ui/lab-blockers-model.ts"].map(path => {
     const rows = manifest.changedPaths.filter(row => row.path === path);
     assert.equal(rows.length, 1, `one sealed lab presentation source: ${path}`);
     assert.equal(rows[0].after.mode, "100644", `ordinary sealed lab presentation source: ${path}`);
-    const digest = sha256(readFileSync(resolve(afterRoot, path)));
+    const current = readFileSync(resolve(afterRoot, path));
+    let adopted = current;
+    if (path === "src/ui/present.ts") {
+      assert.deepEqual(copyRow.before, rows[0].after, "copy delta starts from the exact unchanged lab seal");
+      assert.equal(copyRow.after.mode, "100644", "ordinary adopted research copy source");
+      assert.equal(sha256(current), copyRow.after.sha256, "current source is exactly the independently verified two-line removal");
+      adopted = execFileSync("git", ["--no-replace-objects", "-C", afterRoot, "show", `${sourceAudit.sourceBaseline}:${path}`]);
+    }
+    const digest = sha256(adopted);
     assert.equal(digest, rows[0].after.sha256, `exact adopted lab presentation source: ${path}`);
-    return [path, digest];
+    return [path, sha256(current)];
   }));
-  return { manifestPath, manifestSha256, files };
+  return { manifestPath, manifestSha256, files, researchUnlockCopy: {
+    manifestPath: copyManifestPath, manifestSha256: copyManifestSha256,
+    sourceBaseline: sourceAudit.sourceBaseline, checks: sourceAudit.checks,
+    approvedSourceDeltaPaths: sourceAudit.approvedSourceDeltaPaths,
+    beforePresentSha256: copyRow.before.sha256, afterPresentSha256: copyRow.after.sha256,
+  } };
 })();
 const currentSerializedPlanets = afterSave.serializeState(state).planets;
 assert.deepEqual(fixture.ready.state.planets.flatMap(planet => planet.buildQueue.map(job => job.jobId)),
