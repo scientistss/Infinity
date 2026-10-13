@@ -1,0 +1,19 @@
+/* Scoped addition: preserve Infinity's original artwork, chrome and layout. */
+.energy-challenge { min-width:0; margin:16px 0; padding:14px; border:1px solid var(--line,#2b2b33); border-left:3px solid var(--accent,#879fff); border-radius:8px; background:var(--panel,#141418); overflow-wrap:anywhere; }
+.energy-challenge h3 { margin:0 0 8px; font-size:1rem; }
+.energy-challenge p, .energy-challenge li, .energy-challenge summary { font-size:.85rem; line-height:1.6; }
+.energy-challenge p { margin:8px 0; }
+.energy-challenge ul { padding-left:20px; margin:8px 0; }
+.energy-challenge li { margin:4px 0; }
+.energy-challenge .energy-challenge-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.energy-challenge button { min-height:44px; max-width:100%; padding:8px 12px; white-space:normal; font:inherit; font-size:.85rem; color:var(--text,#eeeef3); background:var(--panel,#141418); border:1px solid var(--line,#2b2b33); border-radius:6px; cursor:pointer; }
+.energy-challenge button:disabled { cursor:default; opacity:.5; }
+.energy-challenge button:focus-visible, .energy-challenge summary:focus-visible { outline:2px solid var(--good,#3be37a); outline-offset:3px; }
+.energy-challenge summary { min-height:32px; padding:4px 0; cursor:pointer; }
+.energy-challenge details { border-top:1px solid var(--line,#2b2b33); padding-top:8px; margin-top:12px; }
+.energy-challenge [hidden], .energy-challenge[hidden] { display:none !important; }
+#energy-challenge-summary { font-variant-numeric:tabular-nums; }
+#energy-challenge-status, #energy-challenge-home, #energy-challenge-load { color:var(--muted,#8b8b95); }
+#energy-challenge-review { padding-top:12px; margin-top:12px; border-top:1px solid var(--line,#2b2b33); }
+#energy-challenge-checklist [data-complete="true"] { color:var(--good,#3be37a); }
+@media(max-width:420px) { .energy-challenge { padding:10px; } .energy-challenge-actions button { flex:1 1 140px; } }

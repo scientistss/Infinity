@@ -1,4 +1,27 @@
-# Energy tightening domain checkpoint
+# Energy tightening implementation checkpoints
+
+## UI and raw-input compatibility checkpoint
+
+The follow-up source checkpoint includes the challenge panel, explicit native
+confirmation and SaveSession write/readback-before-adoption integration. It
+also restores the established raw descriptor/cycle rejection priority before
+the new challenge authority scan. All checks remain enabled.
+
+Local integration evidence on Node 24: the 152 challenge save/migration tests
+passed after the ordering repair. The earlier 22 panel/presentation/integration
+checks passed; the complete UI must still pass native browser acceptance at
+the final source SHA. In the larger uncommitted preparation workspace, 1,517
+tests in 28 legacy suites passed after precise fixture/revision adaptations;
+those preparation changes are not included in this UI checkpoint.
+
+Three fixed-seed, paid engine strategies reached the challenge finish and
+used the third ordinary queue slot after 2,269 / 2,340 / 2,785 logical seconds.
+That evidence was generated from a working-tree diagnostic and is not final
+source-bound CI or a real-time browser playthrough. The final clean-source
+routes, complete native lifecycle/migration gates and all existing gates remain
+required. This checkpoint is unreleased.
+
+## Earlier domain-only checkpoint
 
 Unreleased, unmounted domain and v9/r16 persistence checkpoint based on the
 atomic building-template source checkpoint `56c16a1c73e24347919141c2b789655ae59e82cb`.

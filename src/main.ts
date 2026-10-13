@@ -15,6 +15,9 @@ import { catchUp, type OfflineCatchup } from "./core/offline";
 import { AccountedClock, type ClockSample } from "./core/accounted-clock";
 import { unlockBanner } from "./data/achievements";
 import { evaluatePrestige, scrape, scrapeAmount, tick } from "./game/logic";
+import { quoteEnergyChallenge, enterEnergyChallenge, abandonEnergyChallenge, finishEnergyChallenge } from "./game/energy-challenge";
+import { energyChallengeConfirmation } from "./ui/energy-challenge-present";
+import { ENERGY_CHALLENGE_AUTO_REASON, energyChallengeProtocolProblem } from "./game/energy-challenge-state";
 import { curvatureById } from "./data/curvature-tech";
 import { buyCurvature } from "./prestige/tree";
 import {
@@ -93,6 +96,7 @@ window.addEventListener("storage", (event) => {
   render();
 });
 document.addEventListener("visibilitychange", () => {
+  view.retireEnergyChallenge();
   view.retireNpcPending();
   if (document.visibilityState === "hidden") persist(undefined, true);
   // Account the full resume gap in the existing frame before displaying it.
@@ -189,6 +193,7 @@ function render(urgent = true, now = performance.now()): void {
   view.updateFormations(state, ready);
   // Their hidden paths are cheap and must observe leaving their surfaces.
   view.updatePrestigePreview(state, ready);
+  view.updateEnergyChallenge(state, ready, saveSession.message);
   view.updateExpansionNavigation(state, view.cursor());
   paintedHeads = queueHeads(state);
   renderScheduler.didPaint(now, tab);
@@ -201,6 +206,7 @@ async function handleAction(action: UiAction): Promise<void> {
     view.retireNpcRehearsal();
     view.retireManualUnits();
     view.retireBuildingTemplateBatch();
+    view.retireEnergyChallenge();
   }
   saveSession.cancelPendingImport();
   const recoveryAction = ["save", "export", "export-legacy", "import-text", "import-file", "reset", "dismiss-notice", "dismiss-offline"].includes(action.type);
@@ -211,7 +217,43 @@ async function handleAction(action: UiAction): Promise<void> {
   }
   const actionSource = state;
   const before = state.unlocked;
-  if (action.type === "demolition-confirm" || action.type === "demolition-cancel") {
+  if (action.type === "energy-challenge") {
+    // Review is a one-shot UI intent, not a cached world or domain candidate.
+    // Final quote, native confirmation, domain validation and save are synchronous.
+    if (!view.checkEnergyChallengeAction(action, state)) {
+      status = "挑战核对已失效，请重新查看";
+      view.completeEnergyChallengeAction(status);
+    } else {
+      const source = state;
+      const quote = quoteEnergyChallenge(source, action.action);
+      if (!quote.ok) {
+        status = quote.reason;
+        view.completeEnergyChallengeAction(status);
+      } else {
+        const accepted = window.confirm(energyChallengeConfirmation(source, action.action, quote));
+        if (!accepted) {
+          status = "已取消挑战操作，当前进度未改变";
+          view.completeEnergyChallengeAction(status);
+        } else if (state !== source || saveSession.mode !== "ready" || !view.consumeEnergyChallengeAction(action, source)) {
+          status = "进度、存档或查看区域已改变，未采用挑战操作；请重新核对";
+          view.completeEnergyChallengeAction(status);
+        } else {
+          view.retireNpcRehearsal(); view.retireManualUnits(); view.retireBuildingTemplateBatch();
+          const result = action.action === "enter" ? enterEnergyChallenge(source, quote)
+            : action.action === "finish" ? finishEnergyChallenge(source, quote) : abandonEnergyChallenge(source, quote);
+          status = result.reason;
+          if (result.ok && result.state !== source) {
+            // Unknown writes freeze the old visible world and retain original
+            // export through SaveSession. This is not a disk rollback promise.
+            const saved = saveSession.save(result.state, Date.now(), accountedClock.lastTickAt);
+            if (saved.ok) { state = result.state; observeWorldAdoption(); }
+            else { status = `挑战操作未采用，当前可见进度保持原样：${saved.message}`; notice = saveSession.notice; }
+          }
+          view.completeEnergyChallengeAction(status);
+        }
+      }
+    }
+  } else if (action.type === "demolition-confirm" || action.type === "demolition-cancel") {
     const result = action.type === "demolition-confirm" ? commitDemolition(state, action.quote) : cancelDemolition(state, action.request);
     const changed = result.state !== state;
     state = result.state; status = result.reason;
@@ -434,7 +476,7 @@ async function handleAction(action: UiAction): Promise<void> {
     const next = toggleSlot(state, action.index, action.enabled);
     const card = state.protocols.slots[action.index]?.card;
     if (next === state) status = card && action.enabled
-      ? demolitionProtocolProblem(state, { ...card, enabled: true }) || "协议槽不可用，未启用协议卡"
+      ? energyChallengeProtocolProblem(state, { ...card, enabled: true }) || demolitionProtocolProblem(state, { ...card, enabled: true }) || "协议槽不可用，未启用协议卡"
       : "协议卡已改变，未调整启用状态";
     else { state = next; status = action.enabled ? "已启用协议卡" : "已关闭协议卡"; persist(); }
   } else if (action.type === "protocol-clear") {
@@ -447,7 +489,8 @@ async function handleAction(action: UiAction): Promise<void> {
     else { state = next; status = "已调整协议槽顺序"; persist(); }
   } else if (action.type === "protocol-param") {
     const next = patchSlot(state, action.index, action.path, action.value);
-    if (next === state) status = "协议未修改：槽位锁定、参数无效或与拆除目标冲突";
+    if (next === state) status = state.energyChallenge.active && state.protocols.slots[action.index]?.card?.enabled && action.path === "action.kind" && action.value === "prestige"
+      ? ENERGY_CHALLENGE_AUTO_REASON : "协议未修改：槽位锁定、参数无效或与拆除目标冲突";
     else { state = next; status = "已调整协议参数"; persist(); }
 
   } else if (action.type === "buy-tech") {
@@ -461,6 +504,12 @@ async function handleAction(action: UiAction): Promise<void> {
       persist();
     }
   } else if (action.type === "prestige") {
+    if (state.energyChallenge.active) {
+      status = "能源紧缩进行中：请选择完成并发射，或明确放弃本次挑战";
+      view.showEnergyChallengeChoice();
+      render();
+      return;
+    }
     const source = state;
     // A visible preview is information, never execution authority. Confirm a fresh
     // candidate from the exact same rule that manual and automated launches use.
@@ -503,6 +552,7 @@ async function handleAction(action: UiAction): Promise<void> {
     // Reading validates data only. Background saves may continue; no old
     // replacement intent survives the read or authorizes overwriting new progress.
     const prepared = await saveSession.prepareFile(action.file);
+    view.retireEnergyChallenge();
     if (!saveSession.isCurrentPreparedFile(prepared) || (!prepared.ok && prepared.code === "stale")) return;
     // The user may have opened a fresh review while the file was being read.
     // Retire that review too before presenting this still-current result/dialog.
@@ -541,7 +591,8 @@ async function handleAction(action: UiAction): Promise<void> {
     action.type === "enqueue" ||
     action.type === "enqueueResearch" ||
     action.type === "manual-unit-pay" ||
-    action.type === "prestige"
+    action.type === "prestige" ||
+    action.type === "energy-challenge"
   ) {
     const note = unlockBanner(state.unlocked.filter((id) => !before.includes(id)));
     if (note) banner = note;

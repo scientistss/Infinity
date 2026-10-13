@@ -182,10 +182,11 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   // Validate before JSON can omit undefined/extras or turn nonfinite numbers into null.
+  // Preserve the established raw descriptor/cycle rejection before the new authority scan.
+  rejectNpcScoutFields(state, false);
   rejectEnergyChallengeFields(state, false);
   const energyChallenge = readEnergyChallengeState(state.energyChallenge);
   validateEnergyChallengeReferences(state, energyChallenge);
-  rejectNpcScoutFields(state, false);
   const messages = readNpcScoutMessages(state.messages);
   rejectNpcAttackFields(state, false);
   validateNpcAttackReferences(state);
@@ -231,8 +232,8 @@ export function deserializeState(raw: unknown): GameState {
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
 function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false, legacyNpcScout = false, legacyEnergyChallenge = false): GameState {
-  rejectEnergyChallengeFields(raw, legacyEnergyChallenge);
   rejectNpcScoutFields(raw, legacyNpcScout);
+  rejectEnergyChallengeFields(raw, legacyEnergyChallenge);
   rejectNpcAttackFields(raw, legacyNpcAttack);
   rejectMisplacedNpcEconomyFields(raw);
   rejectMisplacedDemolitionFields(raw);
@@ -336,10 +337,10 @@ export function importSave(json: string): SaveFile {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
   const legacyEnergyChallenge = parsed.revision <= 14;
-  rejectEnergyChallengeFields(parsed, legacyEnergyChallenge, true);
   // The snapshot introduction is fixed at r14, regardless of any later output revision.
   const legacyNpcScout = parsed.revision <= 13;
   rejectNpcScoutFields(parsed, legacyNpcScout, true);
+  rejectEnergyChallengeFields(parsed, legacyEnergyChallenge, true);
   // Reject r13-exclusive authority in the untouched source before any normalization.
   const legacyNpcAttack = parsed.revision <= 12;
   rejectNpcAttackFields(parsed, legacyNpcAttack, true);

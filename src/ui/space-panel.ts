@@ -9,6 +9,7 @@ import { installExpansionNavigation } from "./expansion-navigation";
 import { installDemolitionPanel, type DemolitionUiAction } from "./demolition-panel";
 import { installProtocolSafety } from "./protocol-safety";
 import { installPrestigePreview } from "./prestige-preview";
+import { installEnergyChallengePanel, type EnergyChallengeUiAction } from "./energy-challenge-panel";
 import { formationsPanelHtml, installFormationsPanel, type FormationUiAction } from "./formations-panel";
 import type { FleetFormation } from "../game/formation-state";
 import { researchTemplatesPanelHtml, installResearchTemplatesPanel } from "./research-templates-panel";
@@ -32,7 +33,7 @@ import { fillTransportCargo } from "./transport-load-model";
 import { installRecyclePreviewPanel, recyclePreviewHtml } from "./recycle-preview-panel";
 import type { SpaceView, SpaceGalaxyView, SpaceFleetView, SpaceMessagesView } from "./space-present";
 import { RESOURCE_IDS, type GameState } from "../game/types";
-export type UiAction = OriginalAction | ManualUnitUiAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | BuildingTemplateBatchAction | FormationUiAction | DemolitionUiAction | {type:"send-fleet";request:FleetRequest;npcAuthority?:NpcActionAuthority} | {type:"recall-fleet";id:number;npcAuthority?:NpcActionAuthority} | {type:"npc-retry-dock";id:number;npcAuthority:NpcActionAuthority} | {type:"abandon-colony";id:string};
+export type UiAction = OriginalAction | EnergyChallengeUiAction | ManualUnitUiAction | DeepAction | OrderAction | ResearchTemplateAction | BuildingTemplateAction | BuildingTemplateBatchAction | FormationUiAction | DemolitionUiAction | {type:"send-fleet";request:FleetRequest;npcAuthority?:NpcActionAuthority} | {type:"recall-fleet";id:number;npcAuthority?:NpcActionAuthority} | {type:"npc-retry-dock";id:number;npcAuthority:NpcActionAuthority} | {type:"abandon-colony";id:string};
 const TABS=[{id:"orders",label:"计划",icon:"protocol_card.webp"},{id:"galaxy",label:"银河",icon:"tech.webp"},{id:"fleet",label:"舰队",icon:"shipyard.svg"},{id:"messages",label:"消息",icon:"save.webp"},{id:"deep",label:"深空",icon:"ring_machine.webp"}];
 const enc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 function el<T extends HTMLElement=HTMLElement>(root:ParentNode,sel:string):T {const n=root.querySelector<T>(sel);if(!n)throw Error(`缺少界面节点 ${sel}`);return n;}
@@ -335,6 +336,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   const buildingTemplateBatchPanel=installBuildingTemplateBatchPanel(root,onAction);
   const formationPanel=installFormationsPanel(root,onAction);
   const prestigePreview=installPrestigePreview(root);
+  const energyChallengePanel=installEnergyChallengePanel(root,onAction);
   const expansionNavigation=installExpansionNavigation(root);
   const demolitionPanel=installDemolitionPanel(root,onAction);
   const protocolSafety=installProtocolSafety(root);
@@ -351,6 +353,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   let cursor:Coordinates={galaxy:1,system:50,position:8},selected:string|null=null,initialized=false,origin:Coordinates=cursor;
   let fleetButtons = new WeakMap<HTMLButtonElement, number>();
   function choose(id:string){
+    energyChallengePanel.retire();
     npcAttack.retirePending();
     if(id!=="messages")npcRehearsal.close();
     selected=id;for(const b of root.querySelectorAll<HTMLElement>("[data-tab]")){const active=b.dataset.tab===id;b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));}
@@ -376,7 +379,7 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
   root.addEventListener("click",event=>{
     const b=event.target instanceof Element?event.target.closest<HTMLButtonElement>("button"):null;if(!b||b.disabled)return;
     if(b.dataset.spaceTab){event.stopImmediatePropagation();choose(b.dataset.spaceTab);return;}
-    if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}
+    if(b.dataset.tab){energyChallengePanel.retire();npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}
     if(b.dataset.space){event.stopImmediatePropagation();const a=b.dataset.space;
       if(a==="prev"||a==="next"||a==="browse"||a==="home"){
         const g=number("browse-galaxy"),s=number("browse-system");
@@ -459,10 +462,13 @@ export function mountView(root:HTMLElement,onAction:(a:UiAction)=>void) {
     retireBuildingTemplateBatch:buildingTemplateBatchPanel.retireReview, updateFormations(state:GameState,writable:boolean){
       formationPanel.observe(state,writable);
       if(!el(root,"#space-fleet").hidden&&el<HTMLDetailsElement>(root,"#fleet-formations").open)formationPanel.update(state,writable);
-    }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview:prestigePreview.update, invalidatePrestigePreview:prestigePreview.invalidate, updateExpansionNavigation:expansionNavigation.update,
-    observeContexts(state:GameState,writable:boolean,protectionMessage:string){manualUnits.observe(state,writable,protectionMessage);updateLabBlockersProtection(root,writable,protectionMessage);demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);recyclePanel.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);npcRehearsal.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);buildingTemplateBatchPanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
+    }, completeFormationAction:formationPanel.completeAction, updatePrestigePreview(state:GameState,writable:boolean){if(state.energyChallenge.active)prestigePreview.invalidate();else prestigePreview.update(state,writable);}, invalidatePrestigePreview:prestigePreview.invalidate,
+    updateEnergyChallenge:energyChallengePanel.update, retireEnergyChallenge:energyChallengePanel.retire,
+    checkEnergyChallengeAction:energyChallengePanel.check, consumeEnergyChallengeAction:energyChallengePanel.consume, completeEnergyChallengeAction:energyChallengePanel.complete,
+    showEnergyChallengeChoice(){root.querySelector<HTMLButtonElement>('[data-tab="curvature"]')?.click();energyChallengePanel.showChoice();}, updateExpansionNavigation:expansionNavigation.update,
+    observeContexts(state:GameState,writable:boolean,protectionMessage:string){energyChallengePanel.observe(state,writable,protectionMessage);manualUnits.observe(state,writable,protectionMessage);updateLabBlockersProtection(root,writable,protectionMessage);demolitionPanel.observe(state,writable);protocolSafety.observe(state,writable);transportLoad.observe(state,writable,protectionMessage);recyclePanel.observe(state,writable,protectionMessage);npcAttack.observe(state,writable,protectionMessage);npcRehearsal.observe(state,writable,protectionMessage);orderPanel.observe(state,writable);templatePanel.observe(state,writable);buildingTemplatePanel.observe(state,writable);buildingTemplateBatchPanel.observe(state,writable);formationPanel.observe(state,writable);updateDeep.observeRing(state,writable,protectionMessage);},
     fillFormationShips(formation:FleetFormation){npcRehearsal.clearNotice();for(const input of root.querySelectorAll<HTMLInputElement>("[data-ship]"))input.value=String(formation.ships[input.dataset.ship as keyof FleetFormation["ships"]]??0);filledFormation={id:formation.id,revision:formation.revision,name:formation.name};put(root,"#formation-dispatch-source",`已填入 #${formation.id} ${formation.name} · 修订 ${formation.revision} 的数量快照，可继续手动编辑。`);el(root,"#formation-dispatch-source").hidden=false;transportLoad.edited();recyclePanel.edited();npcAttack.edited();},
-    invalidateOrderAuthority(){manualUnits.invalidate();npcRehearsal.retire();demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();recyclePanel.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();buildingTemplateBatchPanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
+    invalidateOrderAuthority(){energyChallengePanel.retire();manualUnits.invalidate();npcRehearsal.retire();demolitionPanel.invalidate();expansionNavigation.invalidate();prestigePreview.invalidate();clearFormationFill();transportLoad.invalidate();recyclePanel.invalidate();npcAttack.invalidate();npcBattle.invalidate();formationPanel.invalidateAuthority();original.invalidateOrderAuthority();orderPanel.invalidateOrderAuthority();templatePanel.invalidateAuthority();buildingTemplatePanel.invalidateAuthority();buildingTemplateBatchPanel.invalidateAuthority();updateDeep.invalidateFleetAuthority();deepFleetButtons=new WeakMap<HTMLButtonElement,number>();fleetButtons=new WeakMap<HTMLButtonElement,number>();const list=el(root,"#space-fleets");list.replaceChildren();delete list.dataset.fleetSignature;},
     retireNpcRehearsal:npcRehearsal.retire,adoptNpcRehearsalWorld:npcRehearsal.adoptWorld,
     retireManualUnits:manualUnits.invalidate,
     consumeManualUnitAction(action:ManualUnitUiAction,state:GameState){return manualUnits.consume(action,state);},
