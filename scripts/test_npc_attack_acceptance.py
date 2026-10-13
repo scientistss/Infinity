@@ -243,6 +243,10 @@ class NativeReloadScheduleContract(unittest.TestCase):
         workflow_path = ROOT / '.github/workflows/p4-original-verify.yml'
         original_read = Path.read_bytes
         current = original_read(workflow_path).decode('utf-8')
+        recycle_gate = original_read(ROOT / 'scripts/test_recycle_preview_gate.py')
+        fleet_adapter = b'    from test_fleet_row_gate import previous_workflow as successor_workflow\n'
+        expected_error = ('Unapproved fleet-row workflow drift' if fleet_adapter in recycle_gate
+                          else 'Unapproved recycle workflow drift')
         start, end = current.index('  lab-blockers:\n'), current.index('  required-gates:\n')
         mutations = (
             current[:start] + current[end:],
@@ -254,7 +258,7 @@ class NativeReloadScheduleContract(unittest.TestCase):
             def read_bytes(path, changed=changed):
                 return changed.encode('utf-8') if path == workflow_path else original_read(path)
             with mock.patch.object(Path, 'read_bytes', read_bytes):
-                with self.assertRaisesRegex(AssertionError, 'Unapproved recycle workflow drift'):
+                with self.assertRaisesRegex(AssertionError, '^' + expected_error + '$'):
                     self.test_schedules_have_separate_outputs_and_both_complete_ci_gates()
 
     def test_live_reload_adoption_is_distinct_from_strict_validation(self):
