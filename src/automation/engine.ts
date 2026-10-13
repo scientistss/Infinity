@@ -1,3 +1,4 @@
+import { energyChallengeProtocolProblem } from "../game/energy-challenge-state";
 import { demolitionProtocolProblem } from "../game/demolition";
 import { activePlanet, withPlanet, selectPlanet } from "../game/empire";
 import {
@@ -250,7 +251,7 @@ export function equipCard(state: GameState, index: number, cardId: string): Prot
   if (!state.unlockedCards.includes(cardId)) return { state, status: `未解锁：${unlockHint(state, cardId)}` };
   if (!isOpenSlot(state, index)) return { state, status: slotUnlockHint(state, index) || "槽位未开启" };
   const card = instantiate(cardId);
-  const conflict = demolitionProtocolProblem(state, card);
+  const conflict = energyChallengeProtocolProblem(state, card) ?? demolitionProtocolProblem(state, card);
   if (conflict) return { state, status: conflict };
   if (state.protocols.slots[index]?.card?.action.kind === "runLights") state = stopAutoRunner(state);
   return {
@@ -274,7 +275,7 @@ export function toggleSlot(state: GameState, index: number, enabled: boolean): G
   if (!slot?.card) return state;
   if (!enabled && slot.card.action.kind === "runLights") return stopAutoRunner(state);
   const card: ProtocolCard = { ...slot.card, enabled };
-  if (demolitionProtocolProblem(state, card)) return state;
+  if (energyChallengeProtocolProblem(state, card) || demolitionProtocolProblem(state, card)) return state;
   return writeSlot(state, index, { ...slot, card, lamp: "gray", reason: enabled ? "已启用" : "已关闭" });
 }
 
@@ -322,7 +323,7 @@ export function patchSlot(state: GameState, index: number, path: string, value: 
   if (!slot?.card) return state;
   const card = structuredClone(slot.card) as ProtocolCard;
   if (!applyPatch(state, card, path, value)) return state;
-  if (demolitionProtocolProblem(state, { ...card, enabled: true })) return state;
+  if (energyChallengeProtocolProblem(state, card) || demolitionProtocolProblem(state, { ...card, enabled: true })) return state;
   if (slot.card.action.kind === "runLights" || card.action.kind === "runLights") {
     state = stopRingBatch(state, "协议参数已修改，请重新授权自动批次");
     card.enabled = false;
@@ -641,6 +642,8 @@ function runSlot(state: GameState, index: number, periodSeconds: number): GameSt
 }
 
 function applyAction(state: GameState, card: ProtocolCard): { state: GameState; ok: boolean; reason: string } {
+  const challengeProblem = energyChallengeProtocolProblem(state, card);
+  if (challengeProblem) return { state, ok: false, reason: challengeProblem };
   const action = card.action;
   if (action.kind === "collect") {
     const amount = baseCollectAmount(state);

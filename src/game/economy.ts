@@ -1,3 +1,4 @@
+import { isEnergyChallengeActive } from "./energy-challenge-state";
 import { positionBonus } from "./galaxy";
 import { HOMEWORLD_ID } from "./planet";
 import { activePlanet } from "./empire";
@@ -99,7 +100,7 @@ function flow(state: GameState, fusionFactor: number, global: number): Flow {
       fusionOutputPerHour(b.fusion_reactor, tech.energy_tech) * pctOf(planet, "fusion_reactor") * fusionFactor +
       satelliteSupply(planet)) *
     doubled;
-  const demand = energyDemand(planet);
+  const demand = energyDemand(planet) * (isEnergyChallengeActive(state) ? 2 : 1);
   const efficiency = demand > 0 ? Math.min(1, supply / demand) : 1;
   const plasma = {
     metal_mine: (1 + PLASMA_BONUS.metal * tech.plasma_tech) * boosterFactor(state, "metal") * (planet.id === HOMEWORLD_ID ? 1 : positionBonus(planet.coordinates.position,"metal")),

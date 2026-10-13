@@ -1,4 +1,5 @@
 import { createFormationState } from "./formation-state";
+import { createEnergyChallengeState } from "./energy-challenge-state";
 import { createOrderState } from "./order-state";
 import { createBuildingTemplateState } from "./building-template-state";
 import { createResearchTemplateState } from "./research-template-state";
@@ -71,6 +72,7 @@ export function createInitialState(seed?: number, arcadeSeed?: number): GameStat
   const arcade = createArcade(arcadeSeed);
   const worldSeed = seed === undefined ? arcade.seed : seed >>> 0;
   return {
+    energyChallenge: createEnergyChallengeState(),
     orders: createOrderState(),
     terraformerGrantJobFloor: 1,
     formations: createFormationState(),

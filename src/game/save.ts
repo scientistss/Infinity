@@ -1,4 +1,5 @@
 import { readNpcScoutMessages, rejectNpcScoutFields, validateNpcScoutReferences } from "./npc-scout-save";
+import { readEnergyChallengeState, rejectEnergyChallengeFields, validateEnergyChallengeReferences } from "./energy-challenge-save";
 import { npcEconomySnapshot } from "./npc-economy";
 import { createNpcWalletContext, npcWalletFromSnapshot, readNpcWalletState } from "./npc-wallet";
 import { createNpcBattleState, NPC_SITE_LIMIT, readNpcBattleState, rejectNpcAttackFields, validateNpcAttackReferences } from "./npc-attack-state";
@@ -105,6 +106,7 @@ export interface SerializedResearchOrder extends PaidJobIdentity {
 }
 
 export interface SerializedState {
+  energyChallenge: GameState["energyChallenge"];
   npcEconomy: GameState["npcEconomy"];
   npcBattles: GameState["npcBattles"];
   terraformerGrantJobFloor: number;
@@ -157,7 +159,7 @@ export interface SaveFile {
   state: SerializedState;
 }
 
-/** Unsupported versions are protected; only same-schema v9 r2–r13 → r14 are migrated. */
+/** Unsupported versions are protected; only known same-schema v9 r2–r14 → r16 are migrated. */
 export class SaveVersionError extends Error {
   constructor(readonly version: number) {
     super(
@@ -180,6 +182,9 @@ export function outdatedSaveNotice(version: number): string {
 
 export function serializeState(state: GameState): SerializedState {
   // Validate before JSON can omit undefined/extras or turn nonfinite numbers into null.
+  rejectEnergyChallengeFields(state, false);
+  const energyChallenge = readEnergyChallengeState(state.energyChallenge);
+  validateEnergyChallengeReferences(state, energyChallenge);
   rejectNpcScoutFields(state, false);
   const messages = readNpcScoutMessages(state.messages);
   rejectNpcAttackFields(state, false);
@@ -187,6 +192,7 @@ export function serializeState(state: GameState): SerializedState {
   validateNpcScoutReferences(state, messages);
   const npcContext = createNpcWalletContext(state.universe.seed, NPC_SITE_LIMIT, state.planets.map(planet => planet.coordinates));
   return {
+    energyChallenge,
     npcEconomy: readNpcWalletState(state.npcEconomy, npcContext),
     npcBattles: readNpcBattleState(state.npcBattles, npcContext),
     terraformerGrantJobFloor: readTerraformerGrantJobFloor(state.terraformerGrantJobFloor, state.orders.nextJobId),
@@ -224,7 +230,8 @@ export function deserializeState(raw: unknown): GameState {
 }
 
 /** Legacy mode is reachable only after importSave validates an older envelope. */
-function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false, legacyNpcScout = false): GameState {
+function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = false, legacyNpcScout = false, legacyEnergyChallenge = false): GameState {
+  rejectEnergyChallengeFields(raw, legacyEnergyChallenge);
   rejectNpcScoutFields(raw, legacyNpcScout);
   rejectNpcAttackFields(raw, legacyNpcAttack);
   rejectMisplacedNpcEconomyFields(raw);
@@ -292,6 +299,10 @@ function readState(raw: unknown, legacyTerraformer: boolean, legacyNpcAttack = f
   if (legacyNpcScout) state.messages = state.messages.map(message => ({ ...message, npcScoutSnapshot: null }));
   else validateNpcScoutReferences(state);
   if (state.stats.seenEnergyShort) state.seenEnergyShortage = true;
+  // Every historical source domain has now passed its original reader. The fresh
+  // inactive challenge from createInitialState is the only additive legacy lift.
+  if (!legacyEnergyChallenge) state.energyChallenge = readEnergyChallengeState(raw.energyChallenge);
+  validateEnergyChallengeReferences(state);
   return refreshUnlocks(markEnergyShortage(state));
 }
 
@@ -307,7 +318,7 @@ export function exportSave(state: GameState, savedAt = Date.now(), lastTickAt = 
   return JSON.stringify(file, null, 2);
 }
 
-/** Validate current v9/r14 or explicitly migrate same-schema r2–r13; never touch the current game. */
+/** Validate current v9/r16 or fully migrate known r2–r14; r15 remains protected. */
 export function importSave(json: string): SaveFile {
   let parsed: unknown;
   try {
@@ -324,6 +335,8 @@ export function importSave(json: string): SaveFile {
   if (typeof parsed.revision !== "number" || !supportedRevisions.includes(parsed.revision)) {
     throw Error(`原版 P4 存档修订不兼容（需要 ${supportedRevisions.map(revision => `r${revision}`).join("/")}）；原件保留，未导入`);
   }
+  const legacyEnergyChallenge = parsed.revision <= 14;
+  rejectEnergyChallengeFields(parsed, legacyEnergyChallenge, true);
   // The snapshot introduction is fixed at r14, regardless of any later output revision.
   const legacyNpcScout = parsed.revision <= 13;
   rejectNpcScoutFields(parsed, legacyNpcScout, true);
@@ -377,7 +390,7 @@ export function importSave(json: string): SaveFile {
     version: SAVE_VERSION,
     savedAt: parsed.savedAt,
     lastTickAt,
-    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack, legacyNpcScout)),
+    state: serializeState(readState(parsed.state, legacyTerraformer, legacyNpcAttack, legacyNpcScout, legacyEnergyChallenge)),
   };
 }
 

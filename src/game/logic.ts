@@ -1,3 +1,5 @@
+import { isEnergyChallengeActive } from "./energy-challenge-state";
+import { recordEnergyChallengeProduction } from "./energy-challenge-progress";
 import { completeDemolition, withDemolitionRemaining, type CompletedDemolition } from "./demolition";
 import { validDemolitionSeconds } from "./demolition-state";
 import { cloneFormation } from "./formation-state";
@@ -121,9 +123,9 @@ export function tick(state: GameState, dtSeconds: number, mode: TickMode = "live
         if (head && head.totalSeconds > 0 && !blockedBuilds.has(head.jobId)) {
           const remaining = head.remainingSeconds - step;
           if (remaining <= EPS) {
-            // Only terraformer completion needs the explicit consumed timer boundary.
-            // Other buildings retain their historical completion path and timing behavior.
-            const done = completeActive(head.building === "terraformer" ? withHeadRemaining(result, 0) : result);
+            // New challenge proofs and terraformer grants require an explicit consumed timer.
+            // Outside these cases, retain the historical completion path unchanged.
+            const done = completeActive(head.building === "terraformer" || isEnergyChallengeActive(result) ? withHeadRemaining(result, 0) : result);
             result = done.state;
             if (!done.completed && head.building === "terraformer") blockedBuilds.add(head.jobId);
             if (done.completed) log?.completedBuilds.push(current.planets.length > 1 ? { ...done.completed, planetId: snapshot.id } : done.completed);
@@ -246,7 +248,7 @@ function integrate(state: GameState, dt: number, eco: EconomySnapshot): { state:
     if (produced.gt(0)) lifetime[id] = lifetime[id].add(produced);
   }
   return {
-    state: { ...withPlanet(state, { resources }), lifetime },
+    state: recordEnergyChallengeProduction(state, { ...withPlanet(state, { resources }), lifetime }),
     filled,
   };
 }
@@ -343,7 +345,7 @@ export interface PrestigeEvaluation {
  */
 export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   const gain = warpGain(state);
-  if (gain.lt(1)) return { gain, next: state };
+  if (gain.lt(1) || isEnergyChallengeActive(state)) return { gain, next: state };
   const next = createInitialState(state.universe.seed, state.arcade.seed);
   // Curvature starts a new player run inside the same universe, not a new NPC age.
   next.npcEconomy = state.npcEconomy;
@@ -353,6 +355,7 @@ export function evaluatePrestige(state: GameState): PrestigeEvaluation {
   next.nextFleetId = state.nextFleetId;
   next.orders = terminateOrdersForPrestige(state);
   next.terraformerGrantJobFloor = next.orders.nextJobId;
+  next.energyChallenge = state.energyChallenge;
   next.formations = { nextFormationId: state.formations.nextFormationId, entries: state.formations.entries.map(cloneFormation) };
   next.buildingTemplates = { nextTemplateId: state.buildingTemplates.nextTemplateId, templates: state.buildingTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };
   next.researchTemplates = { nextTemplateId: state.researchTemplates.nextTemplateId, templates: state.researchTemplates.templates.map(template => ({ ...template, goals: template.goals.map(goal => ({ ...goal })) })) };

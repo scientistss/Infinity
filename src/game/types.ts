@@ -1,4 +1,5 @@
 export type { DemolitionJob, DemolitionJobRef, DemolishableBuildingId } from "./demolition-state";
+import type { EnergyChallengeState } from "./energy-challenge-state";
 import type { FleetFormationState } from "./formation-state";
 import type { OrderState } from "./order-state";
 import type { BuildingTemplateState } from "./building-template-state";
@@ -91,6 +92,8 @@ export interface PlayerStats {
 }
 
 export interface GameState {
+  /** One bounded energy-tightening attempt or verified completion receipt. */
+  energyChallenge: EnergyChallengeState;
   /** Finite local plans and globally stable paid queue identities. */
   orders: OrderState;
   /** Jobs below this payment boundary keep historical completion without field grants. */

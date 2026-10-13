@@ -1,3 +1,5 @@
+import { validateEnergyChallengeReferences } from "./energy-challenge-save";
+import { recordEnergyChallengeBuildCompletion } from "./energy-challenge-progress";
 import { activePlanet, withPlanet } from "./empire";
 /**
  * Build queue (design doc §5.5). One order under construction per planet, the rest wait.
@@ -48,8 +50,12 @@ export interface CompletedBuild {
   level: number;
 }
 
-export function queueCapacity(_state: GameState): number {
-  return QUEUE_BASE_CAPACITY;
+export function queueCapacity(state: GameState): number {
+  if (!state.energyChallenge?.completion || state.energyChallenge.active) return QUEUE_BASE_CAPACITY;
+  // A bare flag or malformed receipt never grants a paid admission.
+  try { validateEnergyChallengeReferences(state); }
+  catch { return QUEUE_BASE_CAPACITY; }
+  return QUEUE_BASE_CAPACITY + 1;
 }
 
 export function queuedCount(planet: PlanetState, id: BuildingId): number {
@@ -193,7 +199,7 @@ export function completeActive(state: GameState): { state: GameState; completed:
     seenQueueIdle: state.stats.seenQueueIdle || planet.buildQueue.length === 0,
   };
   const next = startNext({ ...withPlanet(credited, { planet }), stats });
-  return { state: next, completed: { building: head.building, level: head.targetLevel } };
+  return { state: recordEnergyChallengeBuildCompletion(state, next, head), completed: { building: head.building, level: head.targetLevel } };
 }
 
 /**

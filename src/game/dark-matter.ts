@@ -1,3 +1,4 @@
+import { isEnergyChallengeActive } from "./energy-challenge-state";
 import { activePlanet, withPlanet } from "./empire";
 /**
  * Dark matter (design doc §8.8). P2–P3 uses: halve / finish the running build, research or shipyard batch, the
@@ -167,6 +168,10 @@ function advanceBuildChecked(state: GameState, seconds: number, carry: boolean):
       break;
     }
     left -= head.remainingSeconds;
+    if (isEnergyChallengeActive(current) && head.building !== "terraformer") {
+      const planet = activePlanet(current);
+      boundary = withPlanet(current, { planet: { ...planet, buildQueue: [{ ...head, remainingSeconds: 0 }, ...planet.buildQueue.slice(1)] } });
+    }
     const completed = completeActive(boundary);
     if (head.building === "terraformer" && !completed.completed) return fail(state, completed.reason ?? "地形改造器完成失败，未使用加速");
     current = completed.state;
