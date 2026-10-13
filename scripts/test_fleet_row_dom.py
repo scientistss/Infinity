@@ -207,7 +207,9 @@ class DiagnosticContracts(unittest.TestCase):
         workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()
         self.assertIn('for group in A B; do',workflow);self.assertIn('--group "$group"',workflow)
         self.assertIn('--output "$EVIDENCE/browser/group-$group"',workflow)
-        self.assertIn('exit "$status"',workflow);self.assertIn('Required full aggregate',workflow)
+        self.assertIn('exit "$status"',workflow);self.assertIn('Required full browser aggregate',workflow)
+        for group in ('A','B'):self.assertIn('saves --group '+group,workflow)
+        self.assertIn('Required full 196-receipt aggregate',workflow)
 
     def test_group_headers_reject_missing_duplicate_false_completed_and_identity_changes(self):
         report,watch=self.group_report('A',self.root)
@@ -305,22 +307,109 @@ class DiagnosticContracts(unittest.TestCase):
         report=json.loads(path.read_bytes());report['environment']['browser']='different browser';path.write_text(json.dumps(report))
         with self.assertRaisesRegex(AssertionError,'runtime environments differ'):self.run_aggregate_fixture(args,source,work)
 
+    def fake_journal(self,items):
+        rows=[]
+        def add(event,**kwargs):rows.append({'event':event,'atMs':len(rows),**kwargs})
+        add('startup',nodeVersion='v24.15.0',sourceCount=2,saveCount=49)
+        for source in ('baseline','candidate'):
+            add('reader-start',source=source);add('reader-ready',source=source,durationMs=1)
+            for item in items:
+                add('item-start',source=source,path=item['relative'])
+                add('item-complete',durationMs=1,receipt={'source':source,'path':item['relative'],'strictReaderAccepted':True,'fullEnvelopeEqual':True,'canonicalFixedPoint':True})
+        add('complete',checkCount=98)
+        return ''.join(json.dumps(row)+'\n' for row in rows)
+
     def test_both_physical_origins_receive_all_196_reader_receipts(self):
         args,source,work=self.aggregate_fixture();report=self.run_aggregate_fixture(args,source,work)
         for row in report['runs']:(args.output/row['case']/'seeded-current.json').write_text(work['raw'])
         def readers(command,**kwargs):
             self.assertEqual(command[:3],['node','--import','tsx']);self.assertEqual(kwargs['cwd'],args.target)
-            inputs=json.loads(kwargs['input']);self.assertEqual(len(inputs['saves']),98)
-            self.assertEqual([item['relative'] for item in inputs['saves'][:2]],['group-A/combined-original-afterSave.json','group-B/combined-original-afterSave.json'])
-            receipts=[{'source':source['side'],'path':item['relative'],'strictReaderAccepted':True,'fullEnvelopeEqual':True,'canonicalFixedPoint':True}
-                      for source in inputs['sources'] for item in inputs['saves']]
-            return SimpleNamespace(returncode=0,stdout=json.dumps(receipts),stderr='')
-        with patch.object(D,'aggregate_groups',return_value=report),patch.object(D.P,'workload',return_value={**work,'key':'synthetic'}), \
-             patch.object(D,'qualify_snapshot'),patch.object(D.subprocess,'run',side_effect=readers):D.saves(args)
+            self.assertEqual(kwargs['timeout'],75);self.assertNotIn('capture_output',kwargs)
+            inputs=json.loads(kwargs['input']);self.assertEqual(len(inputs['saves']),49)
+            self.assertEqual(inputs['saves'][0]['relative'],f'group-{args.group}/combined-original-afterSave.json')
+            kwargs['stdout'].write(json.dumps(D.expected_receipts(inputs['saves'])).encode())
+            kwargs['stderr'].write(self.fake_journal(inputs['saves']).encode())
+            return SimpleNamespace(returncode=0)
+        with patch.object(D,'verified_aggregate',return_value=report),patch.object(D.C,'verify_sources'), \
+             patch.object(D.P,'workload',return_value={**work,'key':'synthetic'}),patch.object(D,'qualify_snapshot'), \
+             patch.object(D.subprocess,'run',side_effect=readers):
+            for group in D.GROUPS:args.group=group;D.saves(args)
+            D.aggregate_readers(args)
         value=json.loads((args.output/'strict-saves-check.json').read_bytes())
         self.assertTrue(value['completed']);self.assertEqual(value['physicalEnvelopeOccurrences'],98)
         self.assertEqual(value['actualReaderExportChecks'],196);self.assertEqual(len(value['checks']),196)
         self.assertEqual(value['logicalEnvelopeOccurrences'],97);self.assertEqual(value['logicalReaderExportChecks'],194)
+        self.assertEqual([value['groups'][g]['actualChecks'] for g in D.GROUPS],[98,98])
+
+    def test_reader_instrumentation_is_exactly_reversible_without_assertion_changes(self):
+        changed=D.instrumented_readers();original=changed
+        for index,(anchor,addition) in reversed(list(enumerate(D.READER_INSERTIONS))):
+            altered=(addition+anchor) if index==0 else (anchor+addition)
+            self.assertEqual(original.count(altered),1);original=original.replace(altered,anchor,1)
+            self.assertNotIn('assert.',addition);self.assertNotIn('save.import',addition);self.assertNotIn('save.export',addition)
+        self.assertEqual(original,D.C.STRICT_READERS)
+        self.assertEqual(changed.count('await import(pathToFileURL(source.module).href)'),1)
+        self.assertIn('writeSync(2,',changed);self.assertIn("event:'item-complete',receipt:checks[checks.length-1]",changed)
+        with patch.object(D.C,'STRICT_READERS',D.C.STRICT_READERS.replace('checks=[]','checks = []')):
+            with self.assertRaisesRegex(AssertionError,'anchor changed'):D.instrumented_readers()
+
+    def test_timed_out_reader_preserves_flushed_original_prefix_and_result(self):
+        args=SimpleNamespace(group='A',output=self.root,driver_sha='f'*40,baseline=self.root,target=self.root)
+        items=[{'relative':str(n),'path':str(self.root/str(n))} for n in range(49)]
+        prefix=''.join(self.fake_journal(items).splitlines(keepends=True)[:5])
+        def timeout(command,**kwargs):
+            kwargs['stderr'].write(prefix.encode());kwargs['stderr'].flush()
+            raise D.subprocess.TimeoutExpired(command,75)
+        with patch.object(D.subprocess,'run',side_effect=timeout):
+            with self.assertRaises(D.subprocess.TimeoutExpired):D.run_reader_batch(args,items)
+        self.assertEqual((self.root/'reader-A-journal.jsonl').read_text(),prefix)
+        result=json.loads((self.root/'reader-A-result.json').read_bytes())
+        self.assertFalse(result['completed']);self.assertTrue(result['timedOut']);self.assertEqual(result['timeoutSeconds'],75)
+        self.assertEqual(result['journalSha256'],D.digest(prefix));self.assertEqual(result['error']['type'],'TimeoutExpired')
+
+    def test_reader_journal_rejects_missing_duplicate_reordered_or_changed_receipts(self):
+        items=[{'relative':str(n)} for n in range(49)];raw=self.fake_journal(items)
+        self.assertEqual(D.validate_journal(raw,items)['checkCount'],98)
+        for kind in ('missing','duplicate','reorder','receipt','timing'):
+            rows=[json.loads(line) for line in raw.splitlines()]
+            if kind=='missing':rows.pop()
+            if kind=='duplicate':rows[6]=copy.deepcopy(rows[4])
+            if kind=='reorder':rows[3],rows[4]=rows[4],rows[3]
+            if kind=='receipt':rows[4]['receipt']['fullEnvelopeEqual']=False
+            if kind=='timing':rows[4]['durationMs']=-1
+            with self.subTest(kind=kind),self.assertRaises(AssertionError):D.validate_journal('\n'.join(json.dumps(row) for row in rows),items)
+
+    def test_final_reader_aggregate_rejects_failed_missing_and_changed_raw_receipts(self):
+        args=SimpleNamespace(output=self.root,driver_sha='f'*40,baseline=self.root,target=self.root)
+        plans={group:[{'relative':f'group-{group}/{n}','path':str(self.root/f'group-{group}/{n}'),'sha256':str(n),'planets':100,'fleets':1000} for n in range(49)] for group in D.GROUPS}
+        def readers(command,**kwargs):
+            items=json.loads(kwargs['input'])['saves'];kwargs['stdout'].write(json.dumps(D.expected_receipts(items)).encode())
+            kwargs['stderr'].write(self.fake_journal(items).encode());return SimpleNamespace(returncode=0)
+        with patch.object(D.subprocess,'run',side_effect=readers):
+            for group in D.GROUPS:args.group=group;D.run_reader_batch(args,plans[group])
+        originals={p.name:p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        for change in ('incomplete','missing-group','source','stdout','journal','receipt','duplicate','input'):
+            for name,raw in originals.items():(self.root/name).write_bytes(raw)
+            final=self.root/'strict-saves-check.json'
+            if final.exists():final.unlink()
+            path=self.root/'reader-A-result.json';record=json.loads(path.read_bytes())
+            if change=='incomplete':record['completed']=False
+            if change=='missing-group':(self.root/'reader-B-result.json').unlink()
+            if change=='source':record['originalReaderSha256']='forged'
+            if change=='stdout':(self.root/'reader-A-stdout.json').write_text('changed raw output')
+            if change=='journal':(self.root/'reader-A-journal.jsonl').write_text('')
+            if change in ('receipt','duplicate'):
+                stdout=self.root/'reader-A-stdout.json';values=json.loads(stdout.read_bytes())
+                if change=='receipt':values[0]['canonicalFixedPoint']=False
+                else:values[1]=copy.deepcopy(values[0])
+                stdout.write_text(json.dumps(values));record['stdoutSha256']=D.digest(stdout.read_bytes())
+            if change=='input':
+                inp=self.root/'reader-A-input.json';value=json.loads(inp.read_bytes());value['saves'][0]['sha256']='forged';inp.write_text(json.dumps(value));record['inputSha256']=D.digest(inp.read_bytes())
+            path.write_text(json.dumps(record))
+            with patch.object(D,'verified_aggregate',return_value={'fixtureOrigins':[]}), \
+                 patch.object(D,'collect_group_saves',side_effect=lambda args,report,group,export:plans[group]):
+                with self.subTest(change=change),self.assertRaises((AssertionError,FileNotFoundError)):D.aggregate_readers(args)
+            self.assertFalse(json.loads(final.read_bytes())['completed'])
 
     def test_every_tsx_loader_starts_in_an_installed_worktree(self):
         workflow=(ROOT/'.github/workflows/fleet-row-dom.yml').read_text()
@@ -331,7 +420,7 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertIn('(cd "$RUNNER_TEMP/fleet-dom-baseline" && node --import tsx "$RUNNER_TEMP/fleet-dom-fixture/scripts/performance-fixture.ts") > "$EVIDENCE/r8-combined.json"',commands)
         self.assertIn('ln -s "$RUNNER_TEMP/fleet-dom-baseline/node_modules" "$RUNNER_TEMP/fleet-dom-fixture/node_modules"',workflow)
         tree=ast.parse(Path(D.__file__).read_text())
-        saves=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='saves')
+        saves=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='run_reader_batch')
         calls=[node for node in ast.walk(saves) if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute)
                and isinstance(node.func.value,ast.Name) and node.func.value.id=='subprocess' and node.func.attr=='run']
         self.assertEqual(len(calls),1)

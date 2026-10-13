@@ -171,3 +171,46 @@ and all eighty checkpoint saves are checked by both actual original readers:
 origin maps to 97 logical occurrences / 194 logical checks, without deleting
 either receipt. These are occurrence counts, not claims of distinct byte values.
 No successful subset is a full pass.
+
+## Separately bounded, instrumented strict-reader groups
+
+Run 38341415886 at `49c6834132943339bc608439a143bbe1a680e38d` completed both
+browser groups with clean teardown (71.23 and 66.44 seconds) and its mandatory
+aggregate recomputed all sixteen contexts and forty exact checkpoint pairs.
+The subsequent single reader process over all 98 physical envelopes exceeded
+its 75-second bound. It produced no completed reader receipt array, so that
+whole job remains failed even though its browser comparison is complete.
+
+The successor retains the completed browser protocol and splits only the
+post-browser work into two fixed mandatory reader batches. A and B each contain
+49 whole envelope occurrences: that group's original afterSave, eight seeds,
+and forty complete checkpoint saves. Each batch loads each original source
+reader once and performs 98 reader/export checks with the same 75-second limit.
+The workflow has separate required A and B steps; B still runs after an A
+failure. The overall ten-minute job limit remains unchanged.
+
+Instrumentation is a literal-anchored addition to the frozen original reader
+payload. Removing only those additions recovers its exact bytes. No assertion,
+JSON parse, importSave, deserializeState, exportSave, fixed-point check or input
+field is changed. The added code measures startup/import/per-envelope time and
+uses synchronous writeSync to flush each started item and completed original
+receipt to stderr. Stdout and stderr are written directly to exclusive files.
+A timeout records its actual exception and preserves the original partial
+journal and stdout; it cannot erase the progress prefix or count as completion.
+The executing Node version is retained in the startup record. A local Node 24
+preflight is separate from native CI's Node 22 evidence.
+
+A final required aggregate recomputes the browser evidence, reconstructs the
+whole input inventories, and checks both reader payloads, input and output
+hashes, original stdout arrays and complete per-item journals. It requires
+exact source/path order, every original acceptance/export/fixed-point flag,
+both successful process identities, matching Node versions and all 196 actual
+receipts. Missing, reordered, duplicated, changed or partial receipts fail.
+Both physical origins remain: 98/196 actual occurrences/checks and the separately
+identified 97/194 logical mapping. No shorter prefix or successful subset passes.
+
+The one authorized local A-batch preflight of the actual ci-49 archived inputs
+completed all 98 original-reader checks in 48.69 seconds on Node v24.19.0,
+retaining 202 flushed startup/import/item/completion events. This was one
+bounded, non-browser execution with no retry; it is useful preparation evidence,
+not a native Node 22 CI pass or a substitute for required reader group B.

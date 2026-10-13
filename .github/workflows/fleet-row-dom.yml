@@ -114,12 +114,43 @@ jobs:
             fi
           done
           exit "$status"
-      - name: Required full aggregate and both original strict readers after cleanup
+      - name: Required full browser aggregate after cleanup
+        id: aggregate
         if: always() && steps.browser.outcome != 'skipped'
         timeout-minutes: 2
         run: |
           set -euo pipefail
-          python scripts/browser-fleet-row-dom.py saves --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
+          python scripts/browser-fleet-row-dom.py aggregate --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
+            --baseline-dist "$RUNNER_TEMP/fleet-dom-baseline/dist" --candidate-dist "$RUNNER_TEMP/fleet-dom-target/dist" \
+            --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
+            --combined-fixture "$EVIDENCE/combined-fixture.json" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/browser-aggregate.log"
+      - name: Required original-reader group A
+        id: reader-a
+        if: always() && steps.aggregate.outcome == 'success'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python scripts/browser-fleet-row-dom.py saves --group A --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
+            --baseline-dist "$RUNNER_TEMP/fleet-dom-baseline/dist" --candidate-dist "$RUNNER_TEMP/fleet-dom-target/dist" \
+            --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
+            --combined-fixture "$EVIDENCE/combined-fixture.json" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/strict-reader-A.log"
+      - name: Required original-reader group B
+        id: reader-b
+        if: always() && steps.aggregate.outcome == 'success'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python scripts/browser-fleet-row-dom.py saves --group B --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
+            --baseline-dist "$RUNNER_TEMP/fleet-dom-baseline/dist" --candidate-dist "$RUNNER_TEMP/fleet-dom-target/dist" \
+            --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
+            --combined-fixture "$EVIDENCE/combined-fixture.json" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/strict-reader-B.log"
+      - name: Required full 196-receipt aggregate
+        id: reader-aggregate
+        if: always() && steps.aggregate.outcome == 'success'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python scripts/browser-fleet-row-dom.py reader-aggregate --driver "$GITHUB_WORKSPACE" --driver-sha "$GITHUB_SHA" --baseline "$RUNNER_TEMP/fleet-dom-baseline" --target "$RUNNER_TEMP/fleet-dom-target" \
             --baseline-dist "$RUNNER_TEMP/fleet-dom-baseline/dist" --candidate-dist "$RUNNER_TEMP/fleet-dom-target/dist" \
             --baseline-url http://127.0.0.1:4176/Infinity/ --candidate-url http://127.0.0.1:4173/Infinity/ \
             --combined-fixture "$EVIDENCE/combined-fixture.json" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/strict-saves.log"

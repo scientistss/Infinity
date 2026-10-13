@@ -406,11 +406,12 @@ def validate_case_evidence(root,row,work,variant):
     require(any(e['type']=='click' and e['target']=='save' for e in value['events']),'Native Save click missing')
 
 
-def aggregate_groups(args):
+def aggregate_groups(args,archive=True):
     output=args.output;report={'completed':False,'observationsComplete':False,'globalCleanupComplete':False,'mode':'real-dom-boundaries-aggregate',
         'baselineSourceSha':P.BASELINE_SHA,'candidateSourceSha':TARGET,'driverSourceSha':args.driver_sha,'groups':{},'runs':[],'errors':[]}
     try:
-        require({p.name for p in output.iterdir() if p.is_dir()}=={'group-A','group-B'},'Require exactly both fixed groups')
+        directories={p.name for p in output.iterdir() if p.is_dir()}
+        require({'group-A','group-B'}<=directories<= {'group-A','group-B','strict-snapshot-saves'},'Require exactly both fixed groups and only known reader exports')
         source=source_identity(args);require(exact(source,json.loads((output.parent/'driver-source-check.json').read_bytes())),'Driver source proof changed')
         C.verify_sources(args.baseline,args.target,TARGET)
         variants={side:{'side':side,'dist':getattr(args,side+'_dist'),'url':getattr(args,side+'_url'),
@@ -446,39 +447,151 @@ def aggregate_groups(args):
         return report
     except BaseException as error:
         report['errors'].append({'type':type(error).__name__,'message':str(error)});raise
-    finally:P.exclusive_json(output/'report.json',report)
+    finally:
+        if archive:P.exclusive_json(output/'report.json',report)
+
+
+READER_SECONDS=75
+# Every replacement retains its original statement exactly. Reversing only these
+# literal additions must recover the unchanged frozen reader byte-for-byte.
+READER_INSERTIONS=(
+    ("import {readFileSync} from 'node:fs';", "import {writeSync} from 'node:fs';\n"),
+    ("const input=JSON.parse(readFileSync(0,'utf8')), checks=[];", "\nconst started=performance.now();\nconst journal=entry=>writeSync(2,JSON.stringify(entry)+'\\n');\njournal({event:'startup',nodeVersion:process.version,sourceCount:input.sources.length,saveCount:input.saves.length,atMs:0});"),
+    ("for(const source of input.sources) {", "\n const importStarted=performance.now();journal({event:'reader-start',source:source.side,atMs:importStarted-started});"),
+    (" const save=await import(pathToFileURL(source.module).href);", "\n journal({event:'reader-ready',source:source.side,atMs:performance.now()-started,durationMs:performance.now()-importStarted});"),
+    (" for(const item of input.saves) {", "\n  const itemStarted=performance.now();journal({event:'item-start',source:source.side,path:item.relative,atMs:itemStarted-started});"),
+    ("  checks.push({source:source.side,path:item.relative,strictReaderAccepted:true,fullEnvelopeEqual:true,canonicalFixedPoint:true});", "\n  journal({event:'item-complete',receipt:checks[checks.length-1],atMs:performance.now()-started,durationMs:performance.now()-itemStarted});"),
+    ("process.stdout.write(JSON.stringify(checks));", "\njournal({event:'complete',checkCount:checks.length,atMs:performance.now()-started});"),
+)
+
+
+def instrumented_readers():
+    source=C.STRICT_READERS
+    for index,(anchor,addition) in enumerate(READER_INSERTIONS):
+        require(source.count(anchor)==1,'Frozen strict-reader instrumentation anchor changed')
+        source=source.replace(anchor,(addition+anchor) if index==0 else (anchor+addition),1)
+    return source
+
+
+def verified_aggregate(args):
+    archived=json.loads((args.output/'report.json').read_bytes());actual=aggregate_groups(args,archive=False)
+    require(exact(archived,actual),'Archived browser aggregate differs from recomputed raw evidence')
+    return actual
+
+
+def collect_group_saves(args,report,group,export):
+    require(group in GROUPS,'Unknown fixed reader group');items=[];root=args.output
+    def add(path):
+        require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(root.resolve()),'Unsafe/missing whole-save occurrence')
+        items.append({'path':str(path.resolve()),'relative':str(path.relative_to(root)),'planets':100,'fleets':1000,'sha256':digest(path.read_bytes())})
+    work=P.workload(args.combined_fixture,'combined');origins=[x for x in report['fixtureOrigins'] if x['group']==group]
+    require(len(origins)==1,'Missing/duplicate group origin');original=root/origins[0]['file']
+    require(original.read_text()==work['raw'],'Original full fixture differs');add(original)
+    rows=[r for r in report['runs'] if r['scenario'] in GROUPS[group]]
+    require([(r['scenario'],r['side']) for r in rows]==[(s,side) for s in GROUPS[group] for side in ('baseline','candidate')],'Reader group case census differs')
+    for row in rows:
+        add(root/row['case']/'seeded-current.json')
+        for step,record in row['snapshots'].items():
+            raw=(root/record['file']).read_bytes();require(digest(raw)==record['sha256'],'Snapshot changed before strict reader')
+            value=json.loads(raw);qualify_snapshot(value,work['key'])
+            path=root/'strict-snapshot-saves'/row['case']/(step+'.json')
+            require(path.resolve().is_relative_to(root.resolve()),'Escaping reader export path')
+            if export:path.parent.mkdir(parents=True,exist_ok=True);P.exclusive_bytes(path,value['raw'].encode())
+            require(path.read_bytes()==value['raw'].encode(),'Reader input differs from full original native snapshot');add(path)
+    require(len(items)==49 and len({x['relative'] for x in items})==49,'Incomplete/duplicate fixed reader batch')
+    return items
+
+
+def expected_receipts(items):
+    return [{'source':source,'path':item['relative'],'strictReaderAccepted':True,'fullEnvelopeEqual':True,'canonicalFixedPoint':True}
+            for source in ('baseline','candidate') for item in items]
+
+
+def validate_journal(raw,items):
+    rows=[json.loads(line) for line in raw.splitlines()];require(rows,'Missing startup/per-item journal')
+    first=rows[0];require(first['event']=='startup' and first['sourceCount']==2 and first['saveCount']==49
+                         and isinstance(first['nodeVersion'],str) and re.fullmatch(r'v\d+\.\d+\.\d+',first['nodeVersion']),'Wrong reader startup identity')
+    expected=[('startup',None,None)]
+    for source in ('baseline','candidate'):
+        expected.extend([('reader-start',source,None),('reader-ready',source,None)])
+        for item in items:expected.extend([('item-start',source,item['relative']),('item-complete',source,item['relative'])])
+    expected.append(('complete',None,None));actual=[];receipts=[];previous=-1
+    for row in rows:
+        event=row['event'];receipt=row.get('receipt',{})
+        actual.append((event,receipt.get('source') if event=='item-complete' else row.get('source'),receipt.get('path') if event=='item-complete' else row.get('path')))
+        require(P.finite(row['atMs']) and row['atMs']>=previous,'Invalid/nonmonotonic reader timing');previous=row['atMs']
+        if event in ('reader-ready','item-complete'):require(P.finite(row['durationMs']) and row['durationMs']>=0,'Invalid reader duration')
+        if event=='item-complete':receipts.append(receipt)
+    require(exact(actual,expected) and exact(receipts,expected_receipts(items)) and rows[-1]['checkCount']==98,'Missing/duplicate/reordered flushed receipt or startup/import event')
+    return {'nodeVersion':first['nodeVersion'],'eventCount':len(rows),'checkCount':len(receipts),'elapsedMs':rows[-1]['atMs']}
+
+
+def run_reader_batch(args,items):
+    prefix='reader-'+args.group;source=instrumented_readers();result={'completed':False,'group':args.group,'timeoutSeconds':READER_SECONDS,
+        'driverSourceSha':args.driver_sha,'baselineSourceSha':P.BASELINE_SHA,'candidateSourceSha':TARGET,
+        'originalReaderSha256':digest(C.STRICT_READERS),'instrumentedReaderSha256':digest(source),'rawSaves':items,'timedOut':False,'returnCode':None}
+    inputs={'sources':[{'side':side,'module':str(root.resolve()/'src/game/save.ts')} for side,root in [('baseline',args.baseline),('candidate',args.target)]],'saves':items}
+    input_path=args.output/(prefix+'-input.json');stdout=args.output/(prefix+'-stdout.json');stderr=args.output/(prefix+'-journal.jsonl')
+    P.exclusive_json(input_path,inputs);P.exclusive_bytes(args.output/(prefix+'-source.mjs'),source.encode())
+    result['inputSha256']=digest(input_path.read_bytes());started=time.monotonic()
+    try:
+        # Direct exclusive files plus writeSync per item preserve the original
+        # partial output even if subprocess.run kills this batch at 75 seconds.
+        with stdout.open('xb') as out,stderr.open('xb') as err:
+            checked=subprocess.run(['node','--import','tsx','--input-type=module','-e',source],input=json.dumps(inputs),text=True,
+                                   stdout=out,stderr=err,cwd=args.target,timeout=READER_SECONDS)
+        result['returnCode']=checked.returncode;require(checked.returncode==0,'Actual dual whole-save readers/exporters failed')
+        checks=json.loads(stdout.read_bytes());require(exact(checks,expected_receipts(items)),'Incomplete/duplicate/reordered original reader receipts')
+        result['journal']=validate_journal(stderr.read_text(),items);result['completed']=True;result['actualReaderExportChecks']=len(checks)
+    except BaseException as error:
+        result['timedOut']=isinstance(error,subprocess.TimeoutExpired);result['error']={'type':type(error).__name__,'message':str(error)[:2000]};raise
+    finally:
+        result['elapsedSeconds']=time.monotonic()-started
+        for key,path in [('stdoutSha256',stdout),('journalSha256',stderr)]:
+            if path.exists():result[key]=digest(path.read_bytes())
+        P.exclusive_json(args.output/(prefix+'-result.json'),result)
+    return result
 
 
 def saves(args):
-    result={'completed':False,'checks':[]}
+    report=verified_aggregate(args);items=collect_group_saves(args,report,args.group,export=True)
+    C.verify_sources(args.baseline,args.target,TARGET)
+    return run_reader_batch(args,items)
+
+
+def aggregate_readers(args):
+    result={'completed':False,'groups':{},'checks':[]}
     try:
-        report=aggregate_groups(args)
-        items=[]
-        def add(path):
-            items.append({'path':str(path.resolve()),'relative':str(path.relative_to(args.output)),'planets':100,'fleets':1000,'sha256':digest(path.read_bytes())})
-        work=P.workload(args.combined_fixture,'combined')
-        for origin in report['fixtureOrigins']:
-            original=args.output/origin['file'];require(original.read_text()==work['raw'],'Original full fixture differs');add(original)
-        for row in report['runs']:
-            add(args.output/row['case']/'seeded-current.json')
-            for step,record in row['snapshots'].items():
-                value=json.loads((args.output/record['file']).read_bytes());qualify_snapshot(value,work['key'])
-                path=args.output/'strict-snapshot-saves'/row['case']/(step+'.json');path.parent.mkdir(parents=True,exist_ok=True)
-                P.exclusive_bytes(path,value['raw'].encode());add(path)
-        require(len(items)==len(GROUPS)+2*len(SCENARIOS)+2*sum(len(steps(s)) for s in SCENARIOS),'Incomplete physical whole-save inventory')
-        inputs={'sources':[{'side':side,'module':str(root.resolve()/'src/game/save.ts')} for side,root in [('baseline',args.baseline),('candidate',args.target)]],'saves':items}
-        checked=subprocess.run(['node','--import','tsx','--input-type=module','-e',C.STRICT_READERS],input=json.dumps(inputs),text=True,capture_output=True,cwd=args.target,timeout=75)
-        result['readerStdout']=checked.stdout;result['readerStderr']=checked.stderr
-        require(checked.returncode==0,'Actual dual whole-save readers/exporters failed')
-        result['checks']=json.loads(checked.stdout);require(len(result['checks'])==2*len(items),'Incomplete dual-reader results')
-        result.update(rawSaves=items,completed=True,physicalEnvelopeOccurrences=len(items),actualReaderExportChecks=len(result['checks']),
-                      logicalEnvelopeOccurrences=len(items)-1,logicalReaderExportChecks=len(result['checks'])-2,duplicateFixtureOrigins=report['fixtureOrigins'],
-                      scope='Both exact original readers/exporters check all 98 physical envelope occurrences (196 receipts); byte-identical origins map to 97 logical occurrences (194 logical checks), without deleting either receipt.')
+        report=verified_aggregate(args);all_items=[]
+        for group in GROUPS:
+            items=collect_group_saves(args,report,group,export=False);prefix='reader-'+group
+            record=json.loads((args.output/(prefix+'-result.json')).read_bytes());source=instrumented_readers()
+            require(record['completed'] is True and record['group']==group and record['timedOut'] is False
+                    and type(record['returnCode']) is int and record['returnCode']==0 and record['timeoutSeconds']==75,'Incomplete fixed reader group')
+            require(record['driverSourceSha']==args.driver_sha and record['baselineSourceSha']==P.BASELINE_SHA and record['candidateSourceSha']==TARGET,'Reader source identities differ')
+            require(record['originalReaderSha256']==digest(C.STRICT_READERS) and record['instrumentedReaderSha256']==digest(source)
+                    and (args.output/(prefix+'-source.mjs')).read_text()==source,'Original/instrumented reader payload differs')
+            require(exact(record['rawSaves'],items),'Reader raw whole-save identities differ')
+            inputs=(args.output/(prefix+'-input.json')).read_bytes()
+            expected={'sources':[{'side':side,'module':str(root.resolve()/'src/game/save.ts')} for side,root in [('baseline',args.baseline),('candidate',args.target)]],'saves':items}
+            require(digest(inputs)==record['inputSha256'] and exact(json.loads(inputs),expected),'Original reader input differs')
+            stdout=(args.output/(prefix+'-stdout.json')).read_bytes();journal=(args.output/(prefix+'-journal.jsonl')).read_bytes()
+            require(digest(stdout)==record['stdoutSha256'] and digest(journal)==record['journalSha256'],'Changed original reader output/journal')
+            checks=json.loads(stdout);require(exact(checks,expected_receipts(items)) and record['actualReaderExportChecks']==98,'Missing/duplicate/reordered actual reader receipts')
+            summary=validate_journal(journal.decode(),items);require(exact(summary,record['journal']),'Reader journal summary differs')
+            result['groups'][group]={'resultSha256':digest((args.output/(prefix+'-result.json')).read_bytes()),'journal':summary,'actualChecks':len(checks)}
+            result['checks'].extend(checks);all_items.extend(items)
+        require(len(all_items)==98 and len({x['relative'] for x in all_items})==98 and len(result['checks'])==196,'Incomplete physical full-reader census')
+        require(result['groups']['A']['journal']['nodeVersion']==result['groups']['B']['journal']['nodeVersion'],'Reader runtime versions differ')
+        result.update(completed=True,rawSaves=all_items,physicalEnvelopeOccurrences=98,actualReaderExportChecks=196,
+                      logicalEnvelopeOccurrences=97,logicalReaderExportChecks=194,duplicateFixtureOrigins=report['fixtureOrigins'],
+                      scope='Both separately bounded original-reader groups are mandatory: all 98 physical envelopes / 196 raw receipts. Identical origins map to 97/194 logical occurrences/checks without dropping receipts.')
+    except BaseException as error:result['error']={'type':type(error).__name__,'message':str(error)};raise
     finally:P.exclusive_json(args.output/'strict-saves-check.json',result)
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('source','browser','saves'))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('source','browser','aggregate','saves','reader-aggregate'))
     parser.add_argument('--driver-sha',required=True);parser.add_argument('--output',required=True,type=Path)
     for name in ('driver','target','baseline','candidate-dist','baseline-dist','combined-fixture'):parser.add_argument('--'+name,type=Path)
     for name in ('baseline-url','candidate-url','chromium'):parser.add_argument('--'+name)
@@ -490,8 +603,10 @@ def main():
     for url in (args.baseline_url,args.candidate_url):
         p=urlparse(url);require(p.scheme=='http' and p.hostname in ('127.0.0.1','localhost') and p.path=='/Infinity/' and not p.username and not p.password and not p.query and not p.fragment,'Use exact loopback app origins')
     require(args.baseline_url!=args.candidate_url,'Distinct origins required')
+    if args.command=='aggregate':aggregate_groups(args);return 0
+    if args.command=='reader-aggregate':aggregate_readers(args);return 0
+    require(args.group in GROUPS,'Choose the fixed group A or B')
     if args.command=='saves':saves(args);return 0
-    require(args.group in GROUPS,'Choose the fixed browser group A or B')
     return body(args) if args.worker else supervise(args)
 
 
