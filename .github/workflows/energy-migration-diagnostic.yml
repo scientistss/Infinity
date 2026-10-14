@@ -1,0 +1,116 @@
+name: Exact energy migration receipt diagnostic
+on:
+  push:
+    branches: ['codex/infinity-energy-migration-diagnostic-20261014']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  energy-migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED_SOURCE: eebebde40b2eeda506352cad0913ce44a1cdae07
+      PYTHONDONTWRITEBYTECODE: 1
+      GIT_NO_REPLACE_OBJECTS: 1
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      energy-census-sha256: ${{ steps.energy_census.outputs.energy-census-sha256 }}
+      energy-case-count: ${{ steps.energy_census.outputs.energy-case-count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: eebebde40b2eeda506352cad0913ce44a1cdae07
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: GITHUB_SHA="$EXPECTED_SOURCE" npm run build
+      - name: Exact challenge source and additive mandatory gate contracts
+        run: |
+          python scripts/test_energy_challenge_provenance.py --verify-candidate "$EXPECTED_SOURCE" EnergyChallengeCommittedCandidateTests -v
+          python -m unittest discover -s scripts -p 'test_energy_challenge_*.py' -v
+          python -m unittest discover -s scripts -p 'test_manual_unit_hidden.py' -v
+          node --import tsx --test scripts/test-r16-compatibility.mjs
+      - name: Prepare exact clean candidate and immutable public r14 sources
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/energy-current" "$EXPECTED_SOURCE"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/energy-current/node_modules"
+          git worktree add --detach "$RUNNER_TEMP/energy-public-r14" 64176f94a43564be73c64ce21968d36e2ae329a3
+          (cd "$RUNNER_TEMP/energy-public-r14" && npm ci) > energy-public-r14-install.log 2>&1
+          test -z "$(git -C "$RUNNER_TEMP/energy-current" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/energy-public-r14" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact source assets and actual Node runtime
+        id: common_identity
+        run: GITHUB_SHA="$EXPECTED_SOURCE" python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/energy-current"
+      - name: Reproduce three clean paid routes, typed boundaries and genuine historical readers
+        run: |
+          (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-natural.log 2>&1
+          python scripts/check-energy-challenge-natural.py --fixture energy-natural --require-clean
+          (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-native-branches.mjs --natural "$GITHUB_WORKSPACE/energy-natural" --out "$GITHUB_WORKSPACE/energy-supplements") > energy-supplements.log 2>&1
+          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements --require-clean
+          (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-migration-fixtures.mjs generate "$RUNNER_TEMP/energy-public-r14" "$GITHUB_WORKSPACE/energy-migrations") > energy-migrations.log 2>&1
+          ENERGY_PUBLIC_R14_SOURCE="$RUNNER_TEMP/energy-public-r14" node --import tsx --test scripts/test-energy-challenge-migration-oracle.mjs
+          python scripts/prepare-energy-challenge-native.py --natural energy-natural/report.json --supplements energy-supplements/manifest.json --migrations energy-migrations/manifest.json --expected-sha "$EXPECTED_SOURCE" --runtime-node "$(node --version)" --output energy-plan.json
+          test -z "$(git -C "$RUNNER_TEMP/energy-current" status --porcelain=v1 --untracked-files=all)"
+          test -z "$(git -C "$RUNNER_TEMP/energy-public-r14" status --porcelain=v1 --untracked-files=all)"
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory 15-case migrations native gate, 240 seconds plus 20-second cleanup
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > energy-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          timeout --signal=TERM --kill-after=20s 240s xvfb-run -a python scripts/browser-energy-challenge.py --lane migrations --url http://127.0.0.1:4173/Infinity/ --plan energy-plan.json --expected-plan-sha256 "$(sha256sum energy-plan.json | cut -d' ' -f1)" --expected-sha "$EXPECTED_SOURCE" --expected-version 0.6.32-alpha.1 --runtime-node "$(node --version)" --node "$(command -v node)" --public-r14-source "$RUNNER_TEMP/energy-public-r14" --common-identity common-identity.json --chromium "$CHROME" --output energy-evidence
+      - name: Reopen raw originals and derive exact completed lane census
+        id: energy_census
+        run: |
+          python scripts/energy_challenge_census.py --expected-sha "$EXPECTED_SOURCE" --lane migrations energy-evidence > energy-census.json
+          python -c "import sys,json;sys.path.insert(0,'scripts');from energy_challenge_census import canonical,sha;print('energy-census-sha256='+sha(canonical(json.load(open('energy-census.json')))))" >> "$GITHUB_OUTPUT"
+          echo 'energy-case-count=15' >> "$GITHUB_OUTPUT"
+      - name: Archive exact readable candidate source
+        if: always()
+        env:
+          DIAGNOSTIC_SHA: ${{ github.sha }}
+          DIAGNOSTIC_RUN: ${{ github.run_id }}
+        run: |
+          git archive --format=zip --prefix=Infinity/ HEAD > energy-source.zip
+          python - <<'PYCODE'
+          import json,os,subprocess
+          source=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert source==os.environ['EXPECTED_SOURCE']
+          json.dump({'classification':'isolated migration receipt diagnostic, not full release acceptance','executionSha':os.environ['DIAGNOSTIC_SHA'],'runId':os.environ['DIAGNOSTIC_RUN'],'job':os.environ['GITHUB_JOB'],'sourceSha':source,'cases':15,'nativeBudgetSeconds':240},open('energy-diagnostic-context.json','w'),indent=2)
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: energy-migration-diagnostic-${{ github.sha }}
+          path: |
+            dist
+            energy-source.zip
+            common-identity.json
+            energy-diagnostic-context.json
+            energy-census.json
+            energy-plan.json
+            energy-natural
+            energy-supplements
+            energy-migrations
+            energy-evidence
+            energy-*.log
+          retention-days: 7
+          if-no-files-found: error
+
