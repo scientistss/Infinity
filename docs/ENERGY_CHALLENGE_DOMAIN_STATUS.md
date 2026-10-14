@@ -1,5 +1,37 @@
 # Energy tightening implementation checkpoints
 
+## Native checkpoint evidence and continuous-route gate
+
+The source repair checkpoint
+[`bb7fc33`](https://github.com/scientistss/Infinity/commit/bb7fc33f1b51c5e27324c9df7df2a27a357802ff)
+retains the production code from the preceding candidate. The exact preceding
+[`ceda5a2` run](https://github.com/scientistss/Infinity/actions/runs/38489528477)
+is red. Its lifecycle worker completed 35 cases; controls exercised all 18
+cases but failed its final evidence census. The migration worker failed at a
+save-receipt observation boundary. Several legacy gates rejected outdated
+source or fixture contracts, and three workers were cancelled before their
+complete acceptance. Passing portions do not make this candidate releasable.
+
+The first three browser strategy checks entered normally and verified paid
+building proofs, then imported engine-earned eligibility checkpoints before
+finishing. They establish those separate transitions, not continuous browser
+earning. An additional mandatory solar-route worker therefore starts from one
+pristine fixed-seed new-game envelope and performs 4,201 original one-second
+engine frames, 149 building payments, four research payments, two challenge
+confirmations and 22 actual save/reload checkpoints. It never imports an earned
+checkpoint. The final reward and third building/research slots must be used
+through the UI. This is compressed logical time, not a wall-clock playthrough.
+
+The proposed acceptance has twelve required workers plus the aggregate gate;
+the original eleven workers and 68 challenge cases remain required. The solar
+worker has a 600-second execution budget and bounded cleanup. Its local oracle
+and runner checks are preparation evidence only until exact-source native CI
+and all existing gates succeed.
+
+The previously released atomic-building version remains the playable baseline.
+Its [promotion run](https://github.com/scientistss/Infinity/actions/runs/38488563403)
+also completed successfully. No energy-challenge candidate has been released.
+
 ## Complete source checkpoint, not yet released
 
 `f2e0549c3345aa0cb5485c27df6cf2351cb59f6a` preserves the complete domain,

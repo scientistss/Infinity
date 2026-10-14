@@ -1564,8 +1564,9 @@ jobs:
         run: |
           mkdir -p lab-blockers-source-evidence
           python - <<'PYCODE'
-          import importlib.util
+          import importlib.util, sys
           from pathlib import Path
+          sys.path.insert(0, str(Path('scripts').resolve()))
           spec = importlib.util.spec_from_file_location('lab_historical_source', 'scripts/browser-lab-blockers.py')
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
@@ -2175,22 +2176,107 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  energy-solar-route:
+    # One uninterrupted fresh-start solar attempt; no finish-ready import acceptance.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      common-identity-sha256: ${{ steps.common_identity.outputs.common-sha256 }}
+      energy-solar-census-sha256: ${{ steps.solar_census.outputs.energy-solar-census-sha256 }}
+      energy-solar-case-count: ${{ steps.solar_census.outputs.energy-solar-case-count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Exact source and independent continuous solar contracts
+        run: |
+          python scripts/test_energy_challenge_provenance.py --verify-candidate "$GITHUB_SHA" EnergyChallengeCommittedCandidateTests -v
+          python -m unittest discover -s scripts -p 'test_energy_challenge_solar*.py' -v
+      - name: Prepare exact clean continuous solar source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git worktree add --detach "$RUNNER_TEMP/energy-solar-current" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/energy-solar-current/node_modules"
+          test -z "$(git -C "$RUNNER_TEMP/energy-solar-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Bind exact source assets and actual Node runtime
+        id: common_identity
+        run: python scripts/parallel-gate-identity.py --source-root "$RUNNER_TEMP/energy-solar-current"
+      - name: Generate clean route transcript and complete independent native replay oracle
+        run: |
+          (cd "$RUNNER_TEMP/energy-solar-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-solar-natural.log 2>&1
+          (cd "$RUNNER_TEMP/energy-solar-current" && python scripts/check-energy-challenge-natural.py --fixture "$GITHUB_WORKSPACE/energy-natural" --require-clean)
+          (cd "$RUNNER_TEMP/energy-solar-current" && node --import tsx scripts/energy-challenge-solar-oracle.mjs --natural "$GITHUB_WORKSPACE/energy-natural/report.json" --out "$GITHUB_WORKSPACE/energy-solar-oracle") > energy-solar-oracle.log 2>&1
+          (cd "$RUNNER_TEMP/energy-solar-current" && python scripts/check-energy-challenge-solar-oracle.py --oracle "$GITHUB_WORKSPACE/energy-solar-oracle/manifest.json" --require-clean)
+          (cd "$RUNNER_TEMP/energy-solar-current" && ENERGY_SOLAR_NATURAL="$GITHUB_WORKSPACE/energy-natural/report.json" node --import tsx --test scripts/test-energy-challenge-solar-oracle.mjs)
+          test -z "$(git -C "$RUNNER_TEMP/energy-solar-current" status --porcelain=v1 --untracked-files=all)"
+      - name: Browser prerequisites
+        timeout-minutes: 4
+        run: bash scripts/browser-prerequisites.sh
+      - name: Mandatory continuous solar route, 600 seconds plus 20-second cleanup
+        shell: bash
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > energy-solar-preview.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then READY=1; break; fi
+            sleep 1
+          done
+          test "$READY" = 1
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          timeout --signal=TERM --kill-after=20s 600s xvfb-run -a python scripts/browser-energy-challenge-solar.py --url http://127.0.0.1:4173/Infinity/ --natural energy-natural --oracle energy-solar-oracle/manifest.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.32-alpha.1 --runtime-node "$(node --version)" --node "$(command -v node)" --common-identity common-identity.json --chromium "$CHROME" --output energy-solar-evidence
+      - name: Reopen every solar original and independently derive the completed route census
+        id: solar_census
+        run: |
+          python scripts/energy_challenge_solar_census.py --expected-sha "$GITHUB_SHA" energy-solar-evidence > energy-solar-census.json
+          python -c "import sys,json;sys.path.insert(0,'scripts');from energy_challenge_census import canonical,sha;print('energy-solar-census-sha256='+sha(canonical(json.load(open('energy-solar-census.json')))))" >> "$GITHUB_OUTPUT"
+          echo 'energy-solar-case-count=1' >> "$GITHUB_OUTPUT"
+      - name: Archive exact readable continuous solar source
+        if: always()
+        run: git archive --format=zip --prefix=Infinity/ HEAD > energy-solar-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: energy-solar-route-${{ github.sha }}
+          path: |
+            dist
+            energy-solar-source.zip
+            common-identity.json
+            energy-natural
+            energy-solar-oracle
+            energy-solar-evidence
+            energy-solar-census.json
+            energy-solar-*.log
+          retention-days: 7
+          if-no-files-found: error
+
   required-gates:
     # Always fail closed for failed, cancelled, missing, or unexpectedly skipped jobs.
     # The existing [deep-source] source-only convention never constitutes release acceptance.
     if: ${{ always() && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[deep-source]')) }}
-    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority, building-batch, energy-controls, energy-lifecycle, energy-migration]
+    needs: [verify, verify-continuation, npc-orbital, scout-rehearsal, lab-blockers, manual-unit-payments, manual-unit-authority, building-batch, energy-controls, energy-lifecycle, energy-migration, energy-solar-route]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require all eleven jobs and exact source asset runtime and fixture identities
+      - name: Require all twelve jobs and exact source asset runtime and fixture identities
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python - <<'PYCODE'
           import json, os, re
           jobs = json.loads(os.environ['JOB_RESULTS'])
-          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch', 'energy-controls', 'energy-lifecycle', 'energy-migration'}, jobs
+          assert set(jobs) == {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch', 'energy-controls', 'energy-lifecycle', 'energy-migration', 'energy-solar-route'}, jobs
           for name, job in jobs.items():
               assert job['result'] == 'success', (name, job['result'])
           def hashes_for(names, key):
@@ -2209,6 +2295,14 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Validate all twelve jobs and preserve the complete eleven-job census inputs
+        id: legacy_job_results
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          LEGACY_JOBS="$(python scripts/energy_challenge_solar_aggregate.py project-legacy-jobs)"
+          test -n "$LEGACY_JOBS"
+          printf 'jobs=%s\n' "$LEGACY_JOBS" >> "$GITHUB_OUTPUT"
       - name: Download exact same-run payments artifact
         uses: actions/download-artifact@v4
         with:
@@ -2221,7 +2315,7 @@ jobs:
           path: ${{ runner.temp }}/manual-unit-authority-artifact
       - name: Recompute source fixture and complete scenario census from both original native artifacts
         env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
+          JOB_RESULTS: ${{ steps.legacy_job_results.outputs.jobs }}
         run: python scripts/manual_unit_census.py aggregate --payments "$RUNNER_TEMP/manual-unit-payments-artifact" --authority "$RUNNER_TEMP/manual-unit-authority-artifact" --expected-sha "$GITHUB_SHA" --output manual-unit-aggregate-census.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -2237,7 +2331,7 @@ jobs:
           path: ${{ runner.temp }}/building-batch-artifact
       - name: Independently recompute complete batch scenario and raw evidence census
         env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
+          JOB_RESULTS: ${{ steps.legacy_job_results.outputs.jobs }}
         run: python scripts/building_batch_census.py aggregate --artifact "$RUNNER_TEMP/building-batch-artifact" --expected-sha "$GITHUB_SHA" --output building-batch-aggregate-census.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -2263,12 +2357,28 @@ jobs:
           path: ${{ runner.temp }}/energy-migration-artifact
       - name: Reopen all original energy evidence and rederive the disjoint 68-case census
         env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
+          JOB_RESULTS: ${{ steps.legacy_job_results.outputs.jobs }}
         run: python scripts/energy_challenge_census.py --expected-sha "$GITHUB_SHA" "$RUNNER_TEMP/energy-controls-artifact/energy-evidence" "$RUNNER_TEMP/energy-lifecycle-artifact/energy-evidence" "$RUNNER_TEMP/energy-migration-artifact/energy-evidence" > energy-aggregate-census.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: energy-aggregate-census-${{ github.sha }}
           path: energy-aggregate-census.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Download exact same-run continuous solar originals
+        uses: actions/download-artifact@v4
+        with:
+          name: energy-solar-route-${{ github.sha }}
+          path: ${{ runner.temp }}/energy-solar-route-artifact
+      - name: Independently rederive the uninterrupted solar census and retain the original 68-case proof
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/energy_challenge_solar_aggregate.py aggregate --solar-artifact "$RUNNER_TEMP/energy-solar-route-artifact" --energy-census energy-aggregate-census.json --expected-sha "$GITHUB_SHA" --output energy-solar-aggregate-census.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: energy-solar-aggregate-census-${{ github.sha }}
+          path: energy-solar-aggregate-census.json
           retention-days: 7
           if-no-files-found: error

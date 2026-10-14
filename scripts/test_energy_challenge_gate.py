@@ -29,7 +29,8 @@ def assert_gate(workflow):
 
 
 def previous_workflow(workflow=None):
-    assert_gate(ordinary(WORKFLOW_PATH).read_bytes().decode())
+    from energy_challenge_solar_workflow import previous_workflow as solar_previous_workflow
+    assert_gate(solar_previous_workflow(ordinary(WORKFLOW_PATH).read_bytes().decode()))
     if workflow is not None:assert_gate(workflow)
     from test_energy_challenge_provenance import previous_bytes, historical_bytes
     for path in RELEASE_FILES:
@@ -53,7 +54,8 @@ def previous_release_bytes(path):
 
 class EnergyChallengeGateTests(unittest.TestCase):
     def setUp(self):
-        self.workflow=ordinary(WORKFLOW_PATH).read_text();self.old=original_workflow()
+        from energy_challenge_solar_workflow import previous_workflow as solar_previous_workflow
+        self.workflow=solar_previous_workflow(ordinary(WORKFLOW_PATH).read_bytes().decode());self.old=original_workflow()
     def reject(self,before,after):
         assert self.workflow.count(before)==1,before
         with self.assertRaises(AssertionError):assert_gate(self.workflow.replace(before,after,1))
