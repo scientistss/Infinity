@@ -185,8 +185,9 @@ describe("r16 immutable attempt history feasibility", () => {
     // Coherent synthetic curvature input includes the existing first-launch card.
     state.unlockedCards = ["energy_eff_gate"];
     const saved = exportSave(state, 1000);
-    expect(exportSave(importSave(saved).state, 1000)).toBe(saved);
-    expect(attemptOf(importSave(saved).state).attemptId).toBe(2);
+    const restored = deserializeState(importSave(saved).state);
+    expect(exportSave(restored, 1000)).toBe(saved);
+    expect(attemptOf(restored).attemptId).toBe(2);
   });
   it("retains abandoned attempt history without accepting entries before their curvatures", () => {
     const state = active(); state.energyChallenge.active = null;

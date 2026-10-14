@@ -13,6 +13,24 @@ def body(name, following):
 
 
 class ManualUnitHiddenHelperTests(unittest.TestCase):
+    def test_release_identity_requires_current_r16_and_complete_parent_metadata(self):
+        source = HELPER.read_text()
+        release_check = next(line for line in source.splitlines()
+                             if "check('actual release pins exact SHA version" in line)
+        expected_revision = int(re.search(r'report\.releaseMetadata\.saveRevision === (\d+)', release_check).group(1))
+        self.assertEqual(expected_revision, 16)
+        for historical_or_unsupported in (14, 15, 999):
+            self.assertNotEqual(expected_revision, historical_or_unsupported)
+        current = (ROOT / 'src/game/content.ts').read_text()
+        self.assertEqual(expected_revision, int(re.search(r'export const SAVE_REVISION = (\d+);', current).group(1)))
+        for required in ('response.status === 200', 'requests.get(response.requestId)?.url === releaseURL',
+                         'report.releaseMetadata.sourceSha === input.expectedSha',
+                         'report.releaseMetadata.version === input.expectedVersion',
+                         'report.releaseMetadata.saveVersion === 9',
+                         'Object.keys(report.releaseMetadata.files || {}).length === 62',
+                         'isDeepStrictEqual(report.releaseMetadata, input.expectedRelease)'):
+            self.assertIn(required, release_check)
+
     def test_ci_only_guard_precedes_output_and_chrome_start(self):
         source = HELPER.read_text()
         self.assertIn("process.env.CI !== 'true' || process.env.GITHUB_ACTIONS !== 'true'", source)

@@ -61,7 +61,7 @@ class EnergyChallengeGateTests(unittest.TestCase):
         assert_gate(self.workflow)
         current,old=jobs(self.workflow),jobs(self.old)
         self.assertEqual(tuple(current),(*OLD_JOBS,*NEW_JOBS,'required-gates'))
-        for job in OLD_JOBS:self.assertEqual(current[job],old[job].replace(OLD_VERSION,VERSION).replace(RESEARCH_GENERATE,RESEARCH_GENERATE_R14),job)
+        for job in OLD_JOBS:self.assertEqual(current[job],adopted_old_job(job,old[job]),job)
         self.assertEqual(self.workflow.split('\njobs:\n')[0],self.old.split('\njobs:\n')[0])
         self.assertEqual(sum(COUNTS.values()),68)
         self.assertEqual(COUNTS,{'controls':18,'lifecycle':35,'migrations':15})
@@ -69,6 +69,46 @@ class EnergyChallengeGateTests(unittest.TestCase):
         for job,lane in JOB_LANES.items():
             self.assertIn('timeout-minutes: 15',current[job]);self.assertIn(f'--lane {lane}',current[job])
             self.assertIn(f'--kill-after=20s {BUDGETS[lane]}s',current[job])
+    def test_old_job_adaptations_are_finite_and_current_revision_is_exact(self):
+        current, old = jobs(self.workflow), jobs(self.old)
+        for job in ('verify', 'verify-continuation', 'npc-orbital'):
+            block = current[job]
+            for changed in (ORBITAL_RELEASE_R14, ORBITAL_RELEASE_R16.replace('== 16', '>= 14'), 'pass'):
+                self.reject(block, block.replace(ORBITAL_RELEASE_R16, changed, 1))
+            for revision in (14, 15, 16, 17, '16', True):
+                scope = {'expected':'a'*40, 'release':{'sourceSha':'a'*40,'saveVersion':9,'saveRevision':revision}}
+                if revision == 16 and type(revision) is int:
+                    exec(ORBITAL_RELEASE_R16, scope)
+                else:
+                    with self.assertRaises(AssertionError):exec(ORBITAL_RELEASE_R16, scope)
+        block = current['scout-rehearsal']
+        for before, after in ((SCOUT_PRODUCER_R16, SCOUT_PRODUCER_R14),
+                ('raw = project_bytes(generated[path_key], raw, repository=repo)', 'pass'),
+                ('assert hashlib.sha256(raw).hexdigest() == generated[hash_key]', 'pass')):
+            self.reject(block, block.replace(before, after, 1))
+        # Even a single unrelated old assertion or old command cannot be removed.
+        for job in OLD_JOBS:
+            block = current[job]
+            command = next(line for line in block.splitlines(True) if line.lstrip().startswith('python '))
+            self.reject(block, block.replace(command, '', 1))
+
+    def test_energy_checkers_receive_directories_but_plan_receives_original_files(self):
+        for job, lane in JOB_LANES.items():
+            block = job_block(job, lane)
+            for before, after in (
+                ('--fixture energy-natural --require-clean', '--fixture energy-natural/report.json --require-clean'),
+                ('--fixture energy-supplements --require-clean', '--fixture energy-supplements/manifest.json --require-clean'),
+                ('--natural energy-natural/report.json', '--natural energy-natural'),
+                ('--supplements energy-supplements/manifest.json', '--supplements energy-supplements')):
+                self.reject(block, block.replace(before, after, 1))
+
+    def test_current_demolition_report_records_actual_serializer_revision(self):
+        source = ordinary('scripts/demolition-natural-growth.ts').read_text()
+        self.assertIn('import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION }', source)
+        self.assertIn('m.save.revision === 10 && SAVE_REVISION === 16', source)
+        self.assertIn('sourceRevision: 10, targetRevision: SAVE_REVISION', source)
+        self.assertNotIn('sourceRevision: 10, targetRevision: 14', source)
+
     def test_all_new_job_and_aggregate_commands_are_mandatory_and_exact(self):
         for block in [*(job_block(j,l) for j,l in JOB_LANES.items()),AGGREGATE_ADDITION]:
             self.reject(block,'');self.reject(block,block*2)

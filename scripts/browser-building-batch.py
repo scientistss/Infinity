@@ -397,7 +397,7 @@ def worker(args):
             response = request_context.get(urljoin(args.url, 'release.json'), timeout=10000)
             release_raw = response.body(); release = json.loads(release_raw)
             report['release'] = dump('release.json', release_raw)
-            check('release exact SHA version and unchanged schema', response.status == 200 and release['sourceSha'] == args.expected_sha and release['version'] == args.expected_version and release['saveVersion'] == 9 and release['saveRevision'] == 14)
+            check('release exact SHA version and unchanged schema', response.status == 200 and release['sourceSha'] == args.expected_sha and release['version'] == args.expected_version == '0.6.32-alpha.1' and release['saveVersion'] == 9 and release['saveRevision'] == 16)
             check('release is the common-identity original asset', sha(release_raw) == common['identity']['releaseSha256'])
             for name, digest in release['files'].items():
                 check('safe exact asset path', '..' not in Path(name).parts and not name.startswith('/') and bool(re.fullmatch('[0-9a-f]{64}', digest)))

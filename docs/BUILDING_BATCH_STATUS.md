@@ -1,4 +1,35 @@
-# Multi-planet building template candidate
+# Multi-planet building template release
+
+## Released 2026-10-14
+
+Version **0.6.31-alpha.1**, save v9/r14, was accepted at
+`166c77fe0fc36ac40eb390804c2a96598870006e` and deployed from its exact CI
+artifact. [Run 38484078861](https://github.com/scientistss/Infinity/actions/runs/38484078861)
+passed all eight required jobs and the aggregate. All eight packages contained
+the same 651 source files, 62 production assets and Node v22.23.3 identity.
+The new native suite passed all 25 scenarios and 774 checks, including actual
+two-planet registration/payment/completion and 320/390/768/1440 layouts.
+
+Player entry: Plans → building templates → the 2–4-planet application section.
+Choose a saved template and planets, set each independent cap, review, then
+confirm once. Registration does not prepay; real construction pays locally.
+
+Performance is a limitation, not an improvement claim. The fixed comparison
+is historical 0.6.11, not the preceding release. In the moderate fixture the
+18 recorded EventTiming interactions had P95/max 56 ms and no observed steady
+long tasks. Extreme combined orders used about 639 ms of script and 669 ms of
+total task time per second; extreme input P95 was 240 ms. A previously used,
+then folded batch panel retains bounded checks of at most four selected
+planets; its independent CPU cost was not measured. Future optimization must
+preserve retirement and one-use authorization checks.
+
+Release JSON SHA-256:
+`23b2cf288d0f1a7803213ace6c3bf214f9b57d5730bb8672af58288e59304c29`.
+The development ref was advanced normally from 6f73735 to 166c77f; its separate
+promotion run 38488563403 was still running when this document was prepared.
+The historical failed runs below remain failed.
+
+## Original candidate observations
 
 This candidate integrates one explicit application of a saved building template
 to 2–4 selected owned planets. Each ordinary finite order retains its own fixed
@@ -13,10 +44,10 @@ claim to roll back browser storage. Completed or already-covered goals are an
 explicit no-op, including no save write.
 
 The earlier domain-only checkpoint is
-`a0a212cab84c5ac4419016a99912da220c31d8b1`. The published baseline remains
-`6f73735534ffc1b0e47a01935d8c6e3ff786c989`, version 0.6.30-alpha.1. This candidate
-uses 0.6.31-alpha.1 and retains save v9/r14. It is not a released version until
-all eight required CI jobs and their exact-identity aggregate succeed.
+`a0a212cab84c5ac4419016a99912da220c31d8b1`. Its published baseline was
+`6f73735534ffc1b0e47a01935d8c6e3ff786c989`, version 0.6.30-alpha.1. The release
+keeps save v9/r14. The original candidate observations below preceded the
+complete acceptance recorded above.
 
 ## Local observations on 2026-10-13
 

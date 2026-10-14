@@ -89,8 +89,8 @@ def census(report_path, fixture_path, common_path, expected):
     for reference in evidence:
         resolve_reference(report_path.parent, reference)
     release = json.loads(resolve_reference(report_path.parent, report['release']))
-    assert release['sourceSha'] == expected and release['version'] == report['version']
-    assert release['saveVersion'] == 9 and release['saveRevision'] == 14
+    assert release['sourceSha'] == expected and release['version'] == report['version'] == '0.6.32-alpha.1'
+    assert release['saveVersion'] == 9 and release['saveRevision'] == 16
     assert report['release']['sha256'] == common['identity']['releaseSha256']
     assert len(report['assets']) == len(release['files'])
     assert {row['file']: row['sha256'] for row in report['assets']} == release['files']
@@ -268,7 +268,7 @@ def census(report_path, fixture_path, common_path, expected):
 
 
 def verify_original_artifact(root, result, expected, jobs):
-    required = {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch'}
+    required = {'verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch', 'energy-controls', 'energy-lifecycle', 'energy-migration'}
     assert set(jobs) == required and all(job['result'] == 'success' for job in jobs.values())
     outputs = jobs['building-batch']['outputs']
     assert set(outputs) == {'common-identity-sha256', 'building-batch-fixture-sha256', 'building-batch-census-sha256'}
@@ -309,7 +309,7 @@ def verify_original_artifact(root, result, expected, jobs):
     assert len(actual) == 63 and len(release['files']) == 62
     assert actual == common['assets']
     assert {name: digest for name, digest in actual.items() if name != 'release.json'} == release['files']
-    assert release['sourceSha'] == expected and release['version'] == result['version'] and release['saveVersion'] == 9 and release['saveRevision'] == 14
+    assert release['sourceSha'] == expected and release['version'] == result['version'] == '0.6.32-alpha.1' and release['saveVersion'] == 9 and release['saveRevision'] == 16
     assert actual['release.json'] == result['releaseSha256']
 
 
@@ -329,7 +329,7 @@ def main():
         root = args.artifact
         result = census(root / 'building-batch-evidence/report.json', root / 'building-batch-source-evidence/fixture/fixture.json', root / 'common-identity.json', args.expected_sha)
         assert load(root / 'building-batch-census.json') == result, 'Published census does not recompute from original artifact'
-        assert os.environ.get('JOB_RESULTS'), 'Original eight-job outputs are required'
+        assert os.environ.get('JOB_RESULTS'), 'Original eleven-job outputs are required'
         verify_original_artifact(root, result, args.expected_sha, json.loads(os.environ['JOB_RESULTS']))
     args.output.write_bytes(json.dumps(result, indent=2, ensure_ascii=False).encode() + b'\n')
     if args.mode == 'report' and os.environ.get('GITHUB_OUTPUT'):

@@ -201,7 +201,7 @@ async function loadOrigin() {
   for (const r of RESOURCE_IDS) check(eco.gross[r] === GOLD.grossPerSecond[r] && eco.consumption[r] === 0, `Independent actual natural gross rate ${r}`);
   check(state.planets.length === 2 && state.planets.every(p => !p.demolition && !p.buildQueue.length && !p.shipyardQueue.length) && !state.research.queue.length && !state.fleets.length && !state.boosters.length, "Origin has unexpected competing work");
   initial = serializeState(state); control = deserializeState(initial); expectedManualActions = state.stats.manualActions; originAt = m.save.savedAt + 1000;
-  origin = { sourceSha: GOLD.sourceSha, reportSha256: hash, milestoneName: m.name, gameSeconds: m.gameSeconds, originalSave: m.save, originalSaveRaw: rawOrigin, originalSaveSha256: GOLD.originalSaveSha256, extraction: sliceMetadata, migration: { sourceRevision: 10, targetRevision: 14, addedNpcEconomy: expectedNpcEconomy(), addedPerPlanet: { demolition: null }, addedPerMessage: { npcScoutSnapshot: null }, everyOldFieldPreserved: true }, replayedLiveSeconds: 1, finalSnapshotReproducedExactly: true, originalFinalSnapshot };
+  origin = { sourceSha: GOLD.sourceSha, reportSha256: hash, milestoneName: m.name, gameSeconds: m.gameSeconds, originalSave: m.save, originalSaveRaw: rawOrigin, originalSaveSha256: GOLD.originalSaveSha256, extraction: sliceMetadata, migration: { sourceRevision: 10, targetRevision: SAVE_REVISION, addedNpcEconomy: expectedNpcEconomy(), addedPerPlanet: { demolition: null }, addedPerMessage: { npcScoutSnapshot: null }, everyOldFieldPreserved: true }, replayedLiveSeconds: 1, finalSnapshotReproducedExactly: true, originalFinalSnapshot };
   ready = true; checkpoint("origin");
 }
 let error: unknown = null;

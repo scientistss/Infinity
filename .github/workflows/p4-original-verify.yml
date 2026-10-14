@@ -297,7 +297,7 @@ jobs:
           assert git(workspace, 'diff', 'HEAD', '--') == b''
           release_raw = (workspace / 'dist/release.json').read_bytes()
           release = json.loads(release_raw)
-          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 16
           assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
                     for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
           assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
@@ -887,7 +887,7 @@ jobs:
           assert git(workspace, 'diff', 'HEAD', '--') == b''
           release_raw = (workspace / 'dist/release.json').read_bytes()
           release = json.loads(release_raw)
-          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 16
           assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
                     for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
           assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
@@ -1289,7 +1289,7 @@ jobs:
           assert git(workspace, 'diff', 'HEAD', '--') == b''
           release_raw = (workspace / 'dist/release.json').read_bytes()
           release = json.loads(release_raw)
-          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14
+          assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 16
           assets = {str(file.relative_to(workspace / 'dist')): sha(file.read_bytes())
                     for file in sorted((workspace / 'dist').rglob('*')) if file.is_file()}
           assert {name: digest for name, digest in assets.items() if name != 'release.json'} == release['files']
@@ -1427,13 +1427,20 @@ jobs:
         run: |
           mkdir -p scout-rehearsal-source-evidence
           python - <<'PYCODE'
-          import hashlib, io, json, os, subprocess, tarfile
+          import hashlib, io, json, os, subprocess, sys, tarfile
           from pathlib import Path
           repo = Path.cwd()
+          sys.path.insert(0, str(repo / 'scripts'))
+          from test_energy_challenge_provenance import project_bytes
           fixture = json.loads((repo / 'tests/fixtures/npc-scout-legacy.json').read_text())
           generated = fixture['generatedBy']
+          assert generated['path'] == 'scripts/scout-historical-fixtures.mjs'
+          assert generated['preparationPath'] == 'scripts/scout-historical-fixtures.py'
           for path_key, hash_key in (('path', 'sha256'), ('preparationPath', 'preparationSha256')):
-              assert hashlib.sha256((repo / generated[path_key]).read_bytes()).hexdigest() == generated[hash_key]
+              raw = (repo / generated[path_key]).read_bytes()
+              if path_key == 'path':
+                  raw = project_bytes(generated[path_key], raw, repository=repo)
+              assert hashlib.sha256(raw).hexdigest() == generated[hash_key]
           # Original fixture generation preceded only the package release-label bump.
           # Keep its actual historical metadata; prove dependency contents are identical.
           original_lock = subprocess.check_output(['git', 'show', 'cc19bf5e1a459cf8e667ca55f4891ca9ffd25a71:package-lock.json'])
@@ -1910,6 +1917,7 @@ jobs:
         run: |
           python scripts/test_energy_challenge_provenance.py --verify-candidate "$GITHUB_SHA" EnergyChallengeCommittedCandidateTests -v
           python -m unittest discover -s scripts -p 'test_energy_challenge_*.py' -v
+          python -m unittest discover -s scripts -p 'test_manual_unit_hidden.py' -v
           node --import tsx --test scripts/test-r16-compatibility.mjs
       - name: Prepare exact clean candidate and immutable public r14 sources
         run: |
@@ -1927,9 +1935,9 @@ jobs:
       - name: Reproduce three clean paid routes, typed boundaries and genuine historical readers
         run: |
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-natural.log 2>&1
-          python scripts/check-energy-challenge-natural.py --fixture energy-natural/report.json --require-clean
+          python scripts/check-energy-challenge-natural.py --fixture energy-natural --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-native-branches.mjs --natural "$GITHUB_WORKSPACE/energy-natural" --out "$GITHUB_WORKSPACE/energy-supplements") > energy-supplements.log 2>&1
-          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements/manifest.json --require-clean
+          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-migration-fixtures.mjs generate "$RUNNER_TEMP/energy-public-r14" "$GITHUB_WORKSPACE/energy-migrations") > energy-migrations.log 2>&1
           ENERGY_PUBLIC_R14_SOURCE="$RUNNER_TEMP/energy-public-r14" node --import tsx --test scripts/test-energy-challenge-migration-oracle.mjs
           python scripts/prepare-energy-challenge-native.py --natural energy-natural/report.json --supplements energy-supplements/manifest.json --migrations energy-migrations/manifest.json --expected-sha "$GITHUB_SHA" --runtime-node "$(node --version)" --output energy-plan.json
@@ -2003,6 +2011,7 @@ jobs:
         run: |
           python scripts/test_energy_challenge_provenance.py --verify-candidate "$GITHUB_SHA" EnergyChallengeCommittedCandidateTests -v
           python -m unittest discover -s scripts -p 'test_energy_challenge_*.py' -v
+          python -m unittest discover -s scripts -p 'test_manual_unit_hidden.py' -v
           node --import tsx --test scripts/test-r16-compatibility.mjs
       - name: Prepare exact clean candidate and immutable public r14 sources
         run: |
@@ -2020,9 +2029,9 @@ jobs:
       - name: Reproduce three clean paid routes, typed boundaries and genuine historical readers
         run: |
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-natural.log 2>&1
-          python scripts/check-energy-challenge-natural.py --fixture energy-natural/report.json --require-clean
+          python scripts/check-energy-challenge-natural.py --fixture energy-natural --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-native-branches.mjs --natural "$GITHUB_WORKSPACE/energy-natural" --out "$GITHUB_WORKSPACE/energy-supplements") > energy-supplements.log 2>&1
-          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements/manifest.json --require-clean
+          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-migration-fixtures.mjs generate "$RUNNER_TEMP/energy-public-r14" "$GITHUB_WORKSPACE/energy-migrations") > energy-migrations.log 2>&1
           ENERGY_PUBLIC_R14_SOURCE="$RUNNER_TEMP/energy-public-r14" node --import tsx --test scripts/test-energy-challenge-migration-oracle.mjs
           python scripts/prepare-energy-challenge-native.py --natural energy-natural/report.json --supplements energy-supplements/manifest.json --migrations energy-migrations/manifest.json --expected-sha "$GITHUB_SHA" --runtime-node "$(node --version)" --output energy-plan.json
@@ -2096,6 +2105,7 @@ jobs:
         run: |
           python scripts/test_energy_challenge_provenance.py --verify-candidate "$GITHUB_SHA" EnergyChallengeCommittedCandidateTests -v
           python -m unittest discover -s scripts -p 'test_energy_challenge_*.py' -v
+          python -m unittest discover -s scripts -p 'test_manual_unit_hidden.py' -v
           node --import tsx --test scripts/test-r16-compatibility.mjs
       - name: Prepare exact clean candidate and immutable public r14 sources
         run: |
@@ -2113,9 +2123,9 @@ jobs:
       - name: Reproduce three clean paid routes, typed boundaries and genuine historical readers
         run: |
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-natural.log 2>&1
-          python scripts/check-energy-challenge-natural.py --fixture energy-natural/report.json --require-clean
+          python scripts/check-energy-challenge-natural.py --fixture energy-natural --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-native-branches.mjs --natural "$GITHUB_WORKSPACE/energy-natural" --out "$GITHUB_WORKSPACE/energy-supplements") > energy-supplements.log 2>&1
-          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements/manifest.json --require-clean
+          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-migration-fixtures.mjs generate "$RUNNER_TEMP/energy-public-r14" "$GITHUB_WORKSPACE/energy-migrations") > energy-migrations.log 2>&1
           ENERGY_PUBLIC_R14_SOURCE="$RUNNER_TEMP/energy-public-r14" node --import tsx --test scripts/test-energy-challenge-migration-oracle.mjs
           python scripts/prepare-energy-challenge-native.py --natural energy-natural/report.json --supplements energy-supplements/manifest.json --migrations energy-migrations/manifest.json --expected-sha "$GITHUB_SHA" --runtime-node "$(node --version)" --output energy-plan.json

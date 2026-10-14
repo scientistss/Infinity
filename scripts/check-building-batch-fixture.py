@@ -9,6 +9,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from r16_compatibility import assert_inactive_energy_challenge
 
 ROOT = Path(__file__).resolve().parents[1]
 MONEY_ZERO = {'metal': '0', 'crystal': '0', 'deuterium': '0'}
@@ -21,6 +22,13 @@ REJECTION_CASES = {'missing-later-planet-budget', 'duplicate-payer', 'unknown-la
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+
+def assert_current_envelope(envelope):
+    assert type(envelope['version']) is int and envelope['version'] == 9
+    assert type(envelope['revision']) is int and envelope['revision'] == 16
+    assert_inactive_energy_challenge(envelope['state'])
 
 
 def validate(report, directory, require_clean=False):
@@ -91,7 +99,7 @@ def validate(report, directory, require_clean=False):
         assert sha(raw) == checkpoint['sha256']
         envelope = json.loads(raw)
         assert envelope == report[{'no-replay': 'noReplay'}.get(name, name)]
-        assert envelope['version'] == 9 and envelope['revision'] == 14
+        assert_current_envelope(envelope)
         assert len(envelope['state']['planets']) == 2
     paid_state = report['paid']['state']
     assert report['checkpoints']['paid']['logicalSeconds'] == 2487
@@ -130,11 +138,13 @@ def validate(report, directory, require_clean=False):
         for file_key, hash_key, envelope_key in [('file', 'sha256', 'ready'), ('expectedFile', 'expectedSha256', 'authorized')]:
             raw = (directory / branch[file_key]).read_bytes()
             assert sha(raw) == branch[hash_key] and json.loads(raw) == branch[envelope_key]
+            assert_current_envelope(branch[envelope_key])
     variants = report['lifecycleVariants']
     assert set(variants) == {'renamed', 'deleted', 'capacity-blocked', 'selected-colony-authorized'}
     for name, branch in variants.items():
         raw = (directory / branch['file']).read_bytes()
         assert sha(raw) == branch['sha256'] and json.loads(raw) == branch['envelope']
+        assert_current_envelope(branch['envelope'])
         assert branch['classification'] == 'public-API-branch-from-independent-natural-ready-source; not-browser-evidence'
         assert len(branch['envelope']['state']['planets']) == 2
     renamed = variants['renamed']['envelope']['state']

@@ -73,14 +73,14 @@ class OriginalEvidenceContract(unittest.TestCase):
         dist = self.root / 'dist'; dist.mkdir()
         asset_files = {'index.html': b'<html>original</html>', **{f'asset-{index}.txt': str(index).encode() for index in range(61)}}
         for name, raw in asset_files.items(): (dist / name).write_bytes(raw)
-        release = {'sourceSha': expected, 'version': '0.6.31-alpha.1', 'saveVersion': 9, 'saveRevision': 14,
+        release = {'sourceSha': expected, 'version': '0.6.32-alpha.1', 'saveVersion': 9, 'saveRevision': 16,
                    'files': {name: CENSUS.sha(raw) for name, raw in asset_files.items()}}
         release_raw = json.dumps(release).encode(); (dist / 'release.json').write_bytes(release_raw)
         common = {'sourceZipSha256': CENSUS.sha(archive_raw), 'source': {'sourceCode': {name: CENSUS.sha(raw) for name, raw in files.items()},
                   'sourceModes': {name: '100644' for name in files}}, 'assets': {**release['files'], 'release.json': CENSUS.sha(release_raw)}}
         (self.root / 'common-identity.json').write_text(json.dumps({'identity': common}))
         result = {'completeCommonIdentity': 'a' * 64, 'fixtureSha256': 'b' * 64, 'releaseSha256': CENSUS.sha(release_raw), 'version': release['version']}
-        names = ('verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch')
+        names = ('verify', 'verify-continuation', 'npc-orbital', 'scout-rehearsal', 'lab-blockers', 'manual-unit-payments', 'manual-unit-authority', 'building-batch', 'energy-controls', 'energy-lifecycle', 'energy-migration')
         jobs = {name: {'result': 'success', 'outputs': {}} for name in names}
         jobs['building-batch']['outputs'] = {'common-identity-sha256': result['completeCommonIdentity'], 'building-batch-fixture-sha256': result['fixtureSha256'], 'building-batch-census-sha256': CENSUS.sha(CENSUS.canonical(result))}
         return expected, result, jobs, common
@@ -100,6 +100,34 @@ class OriginalEvidenceContract(unittest.TestCase):
         for mutation in mutations:
             changed = copy.deepcopy(jobs); mutation(changed)
             with self.assertRaises(AssertionError): CENSUS.verify_original_artifact(self.root, result, expected, changed)
+
+    def test_every_new_job_is_required_and_must_succeed(self):
+        expected, result, jobs, _ = self.artifact()
+        self.assertEqual(len(jobs), 11)
+        for name in jobs:
+            for status in ('failure', 'cancelled', 'skipped', 'in_progress', '', None):
+                changed = copy.deepcopy(jobs); changed[name]['result'] = status
+                with self.subTest(job=name, status=status), self.assertRaises(AssertionError):
+                    CENSUS.verify_original_artifact(self.root, result, expected, changed)
+            changed = copy.deepcopy(jobs); del changed[name]
+            with self.subTest(job=name, missing=True), self.assertRaises(AssertionError):
+                CENSUS.verify_original_artifact(self.root, result, expected, changed)
+
+    def test_retagged_old_or_future_release_is_not_current(self):
+        expected, result, jobs, common = self.artifact()
+        release_path = self.root / 'dist/release.json'
+        baseline = json.loads(release_path.read_bytes())
+        for field, value in (('saveRevision', 14), ('saveRevision', 15), ('saveRevision', 17), ('version', '0.6.31-alpha.1')):
+            release = copy.deepcopy(baseline); release[field] = value
+            raw = json.dumps(release).encode(); release_path.write_bytes(raw)
+            changed_common = copy.deepcopy(common); changed_common['assets']['release.json'] = CENSUS.sha(raw)
+            (self.root / 'common-identity.json').write_text(json.dumps({'identity': changed_common}))
+            changed_result = copy.deepcopy(result); changed_result['releaseSha256'] = CENSUS.sha(raw)
+            changed_result['version'] = release['version']
+            changed_jobs = copy.deepcopy(jobs)
+            changed_jobs['building-batch']['outputs']['building-batch-census-sha256'] = CENSUS.sha(CENSUS.canonical(changed_result))
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                CENSUS.verify_original_artifact(self.root, changed_result, expected, changed_jobs)
 
     def test_source_mode_or_dist_byte_change_cannot_be_hidden(self):
         expected, result, jobs, common = self.artifact()

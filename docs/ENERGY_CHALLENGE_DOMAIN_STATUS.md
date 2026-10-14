@@ -1,5 +1,33 @@
 # Energy tightening implementation checkpoints
 
+## Complete source checkpoint, not yet released
+
+`f2e0549c3345aa0cb5485c27df6cf2351cb59f6a` preserves the complete domain,
+UI, r16 migration and eleven-job acceptance integration, including the
+released atomic-building ancestry 166c77f. It is an explicitly unreleased
+source checkpoint, not a successful CI or deployable artifact.
+
+Its exact local source tree passed 5,009 of 5,010 unit tests on Node 24.19.0;
+the existing 120-mission deep-release loop exceeded its unchanged 15-second
+limit. The isolated file subsequently passed 26 tests, including that loop
+in 12,155 ms; this does not turn the full run green. A new test's missing
+deserialize step also caused two TypeScript diagnostics in the real build.
+
+Clean, fixed-seed engine routes reached the challenge target and next legal
+curvature after 2,269 / 2,340 / 2,785 challenge logical seconds. All three
+independent route checks, eleven supplemental branches, 32 migration
+preparations, 15 migration inputs and six migration-oracle tests passed.
+These are local compressed simulations, not native browser acceptance.
+
+Actual workflow enumeration found narrow preparation errors: directory-based
+checkers were passed file paths, several current-version checks still named
+r14, and an immutable historical producer needed the strict source projection.
+The follow-up corrects these contracts, the test type conversion and exact
+eleven-job census without changing production or weakening historical checks.
+The real local Node 24 identity was correctly refused by the Node 22-only
+native-plan builder. Final exact-SHA build, native lifecycle/migration, old
+regressions and the eleven required jobs remain mandatory before release.
+
 ## UI and raw-input compatibility checkpoint
 
 The follow-up source checkpoint includes the challenge panel, explicit native

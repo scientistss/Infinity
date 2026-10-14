@@ -19,6 +19,13 @@ PUBLIC_R14 = '64176f94a43564be73c64ce21968d36e2ae329a3'
 RESEARCH_GENERATE = 'node --import tsx scripts/research-unlock-copy-fixture.mjs generate --out research-unlock-copy-fixture'
 RESEARCH_GENERATE_R14 = RESEARCH_GENERATE + ' --source-root "$RUNNER_TEMP/research-copy-before"'
 
+# Exact finite successor adaptations. Every other byte of each old job survives.
+OLD_VERSION_COUNTS = {'verify':1,'verify-continuation':0,'npc-orbital':0,'scout-rehearsal':3,'lab-blockers':1,'manual-unit-payments':1,'manual-unit-authority':1,'building-batch':1}
+ORBITAL_RELEASE_R14 = "assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 14"
+ORBITAL_RELEASE_R16 = "assert release['sourceSha'] == expected and release['saveVersion'] == 9 and release['saveRevision'] == 16"
+SCOUT_PRODUCER_R14 = "          import hashlib, io, json, os, subprocess, tarfile\n          from pathlib import Path\n          repo = Path.cwd()\n          fixture = json.loads((repo / 'tests/fixtures/npc-scout-legacy.json').read_text())\n          generated = fixture['generatedBy']\n          for path_key, hash_key in (('path', 'sha256'), ('preparationPath', 'preparationSha256')):\n              assert hashlib.sha256((repo / generated[path_key]).read_bytes()).hexdigest() == generated[hash_key]\n"
+SCOUT_PRODUCER_R16 = "          import hashlib, io, json, os, subprocess, sys, tarfile\n          from pathlib import Path\n          repo = Path.cwd()\n          sys.path.insert(0, str(repo / 'scripts'))\n          from test_energy_challenge_provenance import project_bytes\n          fixture = json.loads((repo / 'tests/fixtures/npc-scout-legacy.json').read_text())\n          generated = fixture['generatedBy']\n          assert generated['path'] == 'scripts/scout-historical-fixtures.mjs'\n          assert generated['preparationPath'] == 'scripts/scout-historical-fixtures.py'\n          for path_key, hash_key in (('path', 'sha256'), ('preparationPath', 'preparationSha256')):\n              raw = (repo / generated[path_key]).read_bytes()\n              if path_key == 'path':\n                  raw = project_bytes(generated[path_key], raw, repository=repo)\n              assert hashlib.sha256(raw).hexdigest() == generated[hash_key]\n"
+
 
 def original_workflow():
     raw = subprocess.check_output(['git','--no-replace-objects','-C',str(ROOT),'show',BASE_SHA+':'+WORKFLOW_PATH])
@@ -53,6 +60,7 @@ def job_block(job, lane):
         run: |
           python scripts/test_energy_challenge_provenance.py --verify-candidate "$GITHUB_SHA" EnergyChallengeCommittedCandidateTests -v
           python -m unittest discover -s scripts -p 'test_energy_challenge_*.py' -v
+          python -m unittest discover -s scripts -p 'test_manual_unit_hidden.py' -v
           node --import tsx --test scripts/test-r16-compatibility.mjs
       - name: Prepare exact clean candidate and immutable public r14 sources
         run: |
@@ -70,9 +78,9 @@ def job_block(job, lane):
       - name: Reproduce three clean paid routes, typed boundaries and genuine historical readers
         run: |
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-natural-fixture.mjs --out "$GITHUB_WORKSPACE/energy-natural") > energy-natural.log 2>&1
-          python scripts/check-energy-challenge-natural.py --fixture energy-natural/report.json --require-clean
+          python scripts/check-energy-challenge-natural.py --fixture energy-natural --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-native-branches.mjs --natural "$GITHUB_WORKSPACE/energy-natural" --out "$GITHUB_WORKSPACE/energy-supplements") > energy-supplements.log 2>&1
-          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements/manifest.json --require-clean
+          python scripts/check-energy-challenge-native-branches.py --fixture energy-supplements --require-clean
           (cd "$RUNNER_TEMP/energy-current" && node --import tsx scripts/energy-challenge-migration-fixtures.mjs generate "$RUNNER_TEMP/energy-public-r14" "$GITHUB_WORKSPACE/energy-migrations") > energy-migrations.log 2>&1
           ENERGY_PUBLIC_R14_SOURCE="$RUNNER_TEMP/energy-public-r14" node --import tsx --test scripts/test-energy-challenge-migration-oracle.mjs
           python scripts/prepare-energy-challenge-native.py --natural energy-natural/report.json --supplements energy-supplements/manifest.json --migrations energy-migrations/manifest.json --expected-sha "$GITHUB_SHA" --runtime-node "$(node --version)" --output energy-plan.json
@@ -148,12 +156,31 @@ def exact(text,before,after):
     return text.replace(before,after,1)
 
 
+
+def adopted_old_job(job, before):
+    """Only reviewed current-entry adaptations; no historical assertion removal."""
+    assert job in OLD_JOBS
+    assert before.count(OLD_VERSION) == OLD_VERSION_COUNTS[job]
+    current = before.replace(OLD_VERSION, VERSION)
+    if job == 'verify':
+        current = exact(current, RESEARCH_GENERATE, RESEARCH_GENERATE_R14)
+    if job in ('verify', 'verify-continuation', 'npc-orbital'):
+        current = exact(current, ORBITAL_RELEASE_R14, ORBITAL_RELEASE_R16)
+    if job == 'scout-rehearsal':
+        current = exact(current, SCOUT_PRODUCER_R14, SCOUT_PRODUCER_R16)
+    return current
+
+
 def expected_workflow(before=None):
     before = original_workflow() if before is None else before
     assert hashlib.sha256(before.encode()).hexdigest()==BASE_WORKFLOW_SHA256
     assert before.count(OLD_VERSION)==8
-    current=before.replace(OLD_VERSION,VERSION)
-    current=exact(current,RESEARCH_GENERATE,RESEARCH_GENERATE_R14)
+    current=before
+    for index, job in enumerate(OLD_JOBS):
+        next_job = OLD_JOBS[index + 1] if index + 1 < len(OLD_JOBS) else 'required-gates'
+        start, end = before.index('  '+job+':\n'), before.index('  '+next_job+':\n')
+        block = before[start:end]
+        current = exact(current, block, adopted_old_job(job, block))
     current=exact(current,'  required-gates:\n',ENERGY_JOBS+'  required-gates:\n')
     current=exact(current,'    needs: ['+', '.join(OLD_JOBS)+']\n','    needs: ['+', '.join((*OLD_JOBS,*NEW_JOBS))+']\n')
     current=exact(current,'Require all eight jobs and exact source asset runtime and fixture identities','Require all eleven jobs and exact source asset runtime and fixture identities')
