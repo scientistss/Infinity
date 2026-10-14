@@ -1,0 +1,75 @@
+name: Solar original runtime math diagnostic
+on:
+  push:
+    branches: ['codex/infinity-solar-math-diagnostic-20261014']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-runtime-operands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ORIGINAL_SHA: 309ec2037c0f4412c913d07bc7263d4f83b1f153
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_NO_REPLACE_OBJECTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: 309ec2037c0f4412c913d07bc7263d4f83b1f153
+          path: original-source
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.23.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: energy-solar-route-309ec2037c0f4412c913d07bc7263d4f83b1f153
+          path: original-artifact
+          run-id: 38496521976
+          github-token: ${{ github.token }}
+      - name: Rebuild the exact original source and verify original release bytes
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir diagnostic
+          python scripts/test_solar_math_diagnostic.py -v > diagnostic/contracts.log 2>&1
+          test "$(node --version)" = v22.23.3
+          (cd original-source && npm ci && GITHUB_SHA="$ORIGINAL_SHA" npm run build) > diagnostic/build.log 2>&1
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('original-source/dist'); old=pathlib.Path('original-artifact/energy-solar-evidence')
+          identity=json.loads((old/'000000-common-identity.json').read_text())['identity']
+          assert identity['source']['sourceSha']=='309ec2037c0f4412c913d07bc7263d4f83b1f153'
+          assert (root/'release.json').read_bytes()==(old/'000003-http-release-original.json').read_bytes()
+          for name,digest in identity['assets'].items(): assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest,name
+          PY
+          node --import ./original-source/node_modules/tsx/dist/loader.mjs scripts/diagnose-solar-node.mjs original-source original-artifact diagnostic/node.json > diagnostic/node.log 2>&1
+      - name: Verify original official Chrome prerequisite
+        timeout-minutes: 2
+        run: bash original-source/scripts/browser-prerequisites.sh > diagnostic/browser-prerequisites.log 2>&1
+      - name: Observe exact original native prefix and numerical operands
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          chrome=$(command -v google-chrome || command -v google-chrome-stable)
+          "$chrome" --version | grep -F '154.0.8037.97'
+          mkdir -p "$RUNNER_TEMP/solar-math-http"
+          ln -s "$GITHUB_WORKSPACE/original-source/dist" "$RUNNER_TEMP/solar-math-http/Infinity"
+          python -m http.server 4173 --bind 127.0.0.1 --directory "$RUNNER_TEMP/solar-math-http" > diagnostic/http.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 15); do curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null && break; sleep 1; done
+          # The original supervisor owns a 160s envelope; reserve 10s to seal its report.
+          timeout --signal=TERM --kill-after=5s 170s python scripts/diagnose-solar-browser.py --source original-source --artifact original-artifact --url http://127.0.0.1:4173/Infinity/ --chromium "$chrome" --node-report diagnostic/node.json --output diagnostic/browser > diagnostic/browser.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: solar-math-diagnostic-${{ github.sha }}
+          path: diagnostic
+          if-no-files-found: error
+          retention-days: 7
