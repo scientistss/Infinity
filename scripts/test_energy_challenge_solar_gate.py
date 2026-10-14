@@ -44,6 +44,11 @@ class SolarWorkflowTests(unittest.TestCase):
         self.assertEqual(tuple(new),(*census.REQUIRED_JOBS,'required-gates'))
         for name in census.LEGACY_JOBS:
             expected=old[name]
+            if name=='verify':
+                anchor="          python -m unittest discover -s scripts -p 'test_research_unlock_copy_browser.py' -v\n"
+                command="          python -m unittest discover -s scripts -p 'test_energy_verified_input.py' -v\n"
+                self.assertEqual(expected.count(anchor),1)
+                expected=wiring.exact(expected,anchor,anchor+command)
             if name=='lab-blockers':
                 before="          import importlib.util\n          from pathlib import Path\n"
                 after="          import importlib.util, sys\n          from pathlib import Path\n          sys.path.insert(0, str(Path('scripts').resolve()))\n"
@@ -54,6 +59,21 @@ class SolarWorkflowTests(unittest.TestCase):
         self.assertEqual(wiring.previous_workflow(),self.before)
         self.assertEqual(new['required-gates'].count('JOB_RESULTS: ${{ steps.legacy_job_results.outputs.jobs }}'),3)
         self.assertIn('timeout-minutes: 2',new['required-gates'])
+
+    def test_sealed_input_command_is_unique_mandatory_and_stays_in_verify(self):
+        command="          python -m unittest discover -s scripts -p 'test_energy_verified_input.py' -v\n"
+        self.assertEqual(self.current.count(command),1)
+        self.reject(command,'')
+        self.reject(command,command*2)
+        self.reject(command,command.rstrip()+' || true\n')
+        current=jobs(self.current)
+        self.assertEqual(current['verify'].count(command),1)
+        continuation=current['verify-continuation']
+        anchor='        run: |\n'
+        offset=continuation.index(anchor)+len(anchor)
+        altered=continuation[:offset]+command+continuation[offset:]
+        moved=self.current.replace(command,'',1).replace(continuation,altered,1)
+        with self.assertRaises(AssertionError):wiring.assert_workflow(moved,self.before)
 
     def test_exact_lab_path_fix_cannot_disappear_duplicate_or_change_source(self):
         self.reject(wiring.LAB_IMPORT_AFTER,wiring.LAB_IMPORT_BEFORE)

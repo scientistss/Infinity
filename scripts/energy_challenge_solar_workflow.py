@@ -140,10 +140,15 @@ SOLAR_AGGREGATE_ADDITION = r'''      - name: Download exact same-run continuous 
 '''
 
 
+VERIFIED_INPUT_ANCHOR = "          python -m unittest discover -s scripts -p 'test_research_unlock_copy_browser.py' -v\n"
+VERIFIED_INPUT_COMMAND = "          python -m unittest discover -s scripts -p 'test_energy_verified_input.py' -v\n"
+
+
 def expected_workflow(before=None):
     before=original_workflow() if before is None else before
     assert hashlib.sha256(before.encode()).hexdigest()==BASE_WORKFLOW_SHA256
     current=exact(before,LAB_IMPORT_BEFORE,LAB_IMPORT_AFTER)
+    current=exact(current,VERIFIED_INPUT_ANCHOR,VERIFIED_INPUT_ANCHOR+VERIFIED_INPUT_COMMAND)
     current=exact(current,'  required-gates:\n',SOLAR_JOB+'\n  required-gates:\n')
     current=exact(current,'energy-controls, energy-lifecycle, energy-migration]\n','energy-controls, energy-lifecycle, energy-migration, energy-solar-route]\n')
     current=exact(current,'Require all eleven jobs and exact source asset runtime and fixture identities','Require all twelve jobs and exact source asset runtime and fixture identities')

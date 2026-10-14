@@ -224,14 +224,8 @@ def assert_split_gate(workflow,baseline):
 
 
 def previous_six_workflow(workflow=None):
-    """Audit every actual seven-job byte before exposing the frozen six-job contract."""
-    if workflow is None:
-        from test_recycle_preview_gate import previous_workflow as successor_workflow
-        workflow = successor_workflow()
-    baseline=six_workflow()
-    assert_split_gate(workflow,baseline)
-    assert_release_transitions()
-    return baseline
+    from energy_verified_gate_projection import call
+    return call('manual_six', ROOT, workflow)
 
 
 
@@ -291,18 +285,13 @@ def assert_release_transitions():
 
 
 def previous_workflow(workflow=None):
-    if workflow is None:
-        workflow = previous_six_workflow()
-    baseline = baseline_workflow()
-    assert_manual_unit_gate(workflow, baseline)
-    assert_release_transitions()
-    return baseline
+    from energy_verified_gate_projection import call
+    return call('manual_workflow', ROOT, workflow)
 
 
 def previous_release_bytes(path):
-    assert path in RELEASE_FILES, ('unsupported exact historical release projection', path)
-    previous_workflow()
-    return baseline_bytes(path)
+    from energy_verified_gate_projection import call
+    return call('manual_release', ROOT, path)
 
 
 def aggregate_code(workflow):

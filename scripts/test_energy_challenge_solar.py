@@ -4,6 +4,7 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 import energy_challenge_solar_census as S
 from test_energy_challenge_native import SPECIMEN
@@ -186,5 +187,17 @@ class SolarContract(unittest.TestCase):
         scope=next(n for n in ast.walk(worker) if isinstance(n,ast.With) and any(isinstance(i.context_expr,ast.Call) and getattr(i.context_expr.func,'id',None)=='sync_playwright' for i in n.items))
         self.assertIsInstance(scope.body[0],ast.Try)
         self.assertTrue(scope.body[0].handlers)
+
+    def test_supervisor_reserves_termination_waits_inside_total_620_seconds(self):
+        tree=ast.parse(RUNNER);supervisor=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='supervise')
+        assignment=next(n for n in ast.walk(supervisor) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='deadline' for t in n.targets))
+        start=1000
+        deadline=eval(compile(ast.Expression(assignment.value),'<actual supervisor deadline>','eval'),
+                      {'time':SimpleNamespace(monotonic=lambda:start),'BUDGETS':{'solar':S.BUDGET},'args':SimpleNamespace(lane='solar')})
+        waits=[next(k.value.value for k in n.keywords if k.arg=='timeout') for n in ast.walk(supervisor)
+               if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='wait' and any(k.arg=='timeout' for k in n.keywords)]
+        self.assertEqual(waits,[2,2]);self.assertEqual(deadline-start,616)
+        self.assertEqual(deadline-start+sum(waits),S.BUDGET+20)
+        self.assertEqual(S.BUDGET,600)
 
 if __name__=='__main__':unittest.main()

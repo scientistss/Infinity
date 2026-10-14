@@ -75,6 +75,7 @@ jobs:
           python scripts/test_fleet_row_provenance.py --verify-candidate "$GITHUB_SHA" -v
           python -m unittest discover -s scripts -p 'test_research_unlock_copy_gate.py' -v
           python -m unittest discover -s scripts -p 'test_research_unlock_copy_browser.py' -v
+          python -m unittest discover -s scripts -p 'test_energy_verified_input.py' -v
           python scripts/test_research_unlock_copy_provenance.py --verify-candidate "$GITHUB_SHA" -v
       - name: Natural growth across curvature and role reassignment
         run: node --import tsx scripts/natural-growth-journey.ts > natural-growth-report.json 2> natural-growth-report.log

@@ -262,7 +262,8 @@ def supervise(args):
     with (out / 'worker.log').open('x') as log:
         child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:],
             '--worker', '--run-id='+run_id, '--owner-marker='+marker], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        deadline=time.monotonic()+BUDGETS[args.lane]+20
+        # The two bounded termination waits below consume the final four seconds.
+        deadline=time.monotonic()+BUDGETS[args.lane]+20-4
         try:
             while child.poll() is None:
                 collect(child.pid)

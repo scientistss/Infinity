@@ -171,36 +171,18 @@ def assert_lab_blockers_gate(workflow, baseline):
 
 
 def assert_release_transitions():
-    from test_manual_unit_gate import previous_release_bytes as successor_release_bytes
-    for relative, cardinality in RELEASE_FILES.items():
-        before = baseline_bytes(relative)
-        assert before.count(OLD_VERSION.encode()) == cardinality, ('pinned release cardinality', relative)
-        assert successor_release_bytes(relative) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('unapproved release/source drift', relative)
-    # Preserve the actual test-only successor fixes, including all 36 tests.
-    # Only its four exact current-release literals change for this release.
-    for relative, cardinality in CORRECTED_FORMATION_VERSION_FILES.items():
-        before = subprocess.check_output(['git', '-C', str(ROOT), 'show',
-            f'{CORRECTED_FORMATION_SHA}:{relative}'])
-        assert before.count(OLD_VERSION.encode()) == cardinality, ('corrected formation release cardinality', relative)
-        assert successor_release_bytes(relative) == before.replace(OLD_VERSION.encode(), VERSION.encode()), ('corrected formation source drift', relative)
+    from energy_verified_gate_projection import call
+    return call('lab_transitions', ROOT)
 
 
 def previous_workflow(workflow=None):
-    """Audit the complete successor before running unchanged historical rules."""
-    if workflow is None:
-        from test_manual_unit_gate import previous_workflow as successor_workflow
-        workflow = successor_workflow()
-    baseline = baseline_workflow()
-    assert_lab_blockers_gate(workflow, baseline)
-    assert_release_transitions()
-    return baseline
+    from energy_verified_gate_projection import call
+    return call('lab_workflow', ROOT, workflow)
 
 
 def previous_release_bytes(relative):
-    """Only these four version-only inputs have an exact historical projection."""
-    assert relative in RELEASE_FILES, ('unsupported historical source projection', relative)
-    previous_workflow()
-    return baseline_bytes(relative)
+    from energy_verified_gate_projection import call
+    return call('lab_release', ROOT, relative)
 
 
 def aggregate_code(workflow):
