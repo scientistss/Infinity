@@ -1,0 +1,115 @@
+name: Active energy challenge bounded observation
+on:
+  push:
+    branches: ['codex/energy-active-diag-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_NO_REPLACE_OBJECTS: '1'
+  GAME_SHA: 6af7a5e85a522ba89478c5e95d919a2c04fb2e55
+  GAME_TREE: 24bcfa662e8cb47a5f2d24016d34986c3ea15617
+  RELEASE_SHA256: 327ead4aa33749136c24ff966a6b4337e9ad00114dd39907f8324abf4179d030
+  EVIDENCE: energy-active-evidence
+jobs:
+  observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Bind the unchanged released game separately from the diagnostic harness
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "$GAME_SHA^{tree}")" = "$GAME_TREE"
+          git diff --exit-code "$GAME_SHA" "$GITHUB_SHA" -- src package.json package-lock.json index.html public vite.config.ts tsconfig.json .github/workflows/p4-original-verify.yml
+          git worktree add --detach "$RUNNER_TEMP/energy-active-game" "$GAME_SHA"
+          git archive "$GAME_SHA" > "$EVIDENCE/game-source.tar"
+          git archive "$GITHUB_SHA" > "$EVIDENCE/diagnostic-source.tar"
+          npm ci 2>&1 | tee "$EVIDENCE/npm-ci.log"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/energy-active-game/node_modules"
+          (cd "$RUNNER_TEMP/energy-active-game" && GITHUB_SHA="$GAME_SHA" npm run build) 2>&1 | tee "$EVIDENCE/game-build.log"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/energy-active-game/dist/release.json" | sha256sum -c -
+          test -z "$(git -C "$RUNNER_TEMP/energy-active-game" status --porcelain=v1 --untracked-files=all)"
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'energy-active-game'
+          entries=[]
+          for row in subprocess.check_output(['git','-C',str(root),'ls-tree','-rz',os.environ['GAME_SHA']]).split(b'\0'):
+              if not row: continue
+              meta,path=row.split(b'\t',1); mode,kind,oid=meta.decode().split(); path=path.decode()
+              assert kind=='blob' and mode in ('100644','100755'),(path,mode,kind)
+              disk=root/path; assert not disk.is_symlink() and disk.is_file(),path
+              raw=disk.read_bytes()
+              assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==oid,path
+              entries.append({'path':path,'mode':mode,'oid':oid,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
+          assert len(entries)==719,len(entries)
+          release=json.loads((root/'dist/release.json').read_bytes())
+          assert release['sourceSha']==os.environ['GAME_SHA'] and release['version']=='0.6.32-alpha.1' and release['saveVersion']==9 and release['saveRevision']==16
+          assert len(release['files'])==62
+          assert {p.relative_to(root/'dist').as_posix() for p in (root/'dist').rglob('*') if p.is_file()}==set(release['files'])|{'release.json'}
+          for path,expected in release['files'].items(): assert hashlib.sha256((root/'dist'/path).read_bytes()).hexdigest()==expected,path
+          out={'gameSha':os.environ['GAME_SHA'],'gameTree':os.environ['GAME_TREE'],'diagnosticSha':os.environ['GITHUB_SHA'],'releaseSha256':os.environ['RELEASE_SHA256'],'files':entries,'release':release,'node':subprocess.check_output(['node','--version'],text=True).strip()}
+          pathlib.Path(os.environ['EVIDENCE'],'source-identity.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+          tar -cf "$EVIDENCE/game-dist.tar" -C "$RUNNER_TEMP/energy-active-game/dist" .
+      - name: Generate fresh paid API fixtures and independently check the diagnostic contracts
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts -p 'test_energy_active_performance*.py' -v 2>&1 | tee "$EVIDENCE/diagnostic-tests.log"
+          python -m unittest discover -s tests/energy-active-performance -p 'test_checker.py' -v 2>&1 | tee "$EVIDENCE/checker-tests.log"
+          node --import tsx scripts/energy-active-performance-fixture.mjs --source-root "$RUNNER_TEMP/energy-active-game" --out "$EVIDENCE/fixtures" 2>&1 | tee "$EVIDENCE/fixture.log"
+          node --import tsx tests/energy-active-performance-fixture-checks.mjs "$EVIDENCE/fixtures" --source-root "$RUNNER_TEMP/energy-active-game" 2>&1 | tee "$EVIDENCE/fixture-checks.log"
+      - name: Official Chrome and pinned browser prerequisites
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          bash scripts/browser-prerequisites.sh 2>&1 | tee "$EVIDENCE/browser-prerequisites.log"
+      - name: Native unchanged clocks, twelve contexts and thirty-six fixed windows
+        id: native
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/energy-active-http"
+          ln -s "$RUNNER_TEMP/energy-active-game/dist" "$RUNNER_TEMP/energy-active-http/Infinity"
+          python -m http.server 4173 --bind 127.0.0.1 --directory "$RUNNER_TEMP/energy-active-http" > "$EVIDENCE/http.log" 2>&1 & server=$!
+          cleanup() {
+            kill "$server" 2>/dev/null || true
+            for attempt in $(seq 1 10); do if ! kill -0 "$server" 2>/dev/null; then break; fi; sleep .1; done
+            kill -KILL "$server" 2>/dev/null || true
+            wait "$server" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 15); do if curl -fsS http://127.0.0.1:4173/Infinity/release.json > /dev/null; then break; fi; sleep 1; done
+          curl -fsS http://127.0.0.1:4173/Infinity/release.json > "$EVIDENCE/http-release.json"
+          echo "$RELEASE_SHA256  $EVIDENCE/http-release.json" | sha256sum -c -
+          timeout --signal=TERM --kill-after=5s 505s python scripts/browser-energy-active-performance.py \
+            --url http://127.0.0.1:4173/Infinity/ --source-root "$RUNNER_TEMP/energy-active-game" \
+            --build-dir "$RUNNER_TEMP/energy-active-game/dist" --fixtures "$EVIDENCE/fixtures" --output "$EVIDENCE/browser" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Reopen original measurements and strict saves outside CPU windows
+        if: always() && steps.native.outcome != 'skipped'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/energy-active-performance-fixture.mjs --source-root "$RUNNER_TEMP/energy-active-game" \
+            --validate-raw-manifest "$EVIDENCE/browser/strict-reader-inputs.json" --output "$EVIDENCE/browser/strict-reader-output.json" 2>&1 | tee "$EVIDENCE/strict-reader.log"
+          python scripts/check-energy-active-performance.py --evidence "$EVIDENCE/browser" --fixtures "$EVIDENCE/fixtures" \
+            --source-root "$RUNNER_TEMP/energy-active-game" --build-dir "$RUNNER_TEMP/energy-active-game/dist" --out "$EVIDENCE/check.json" 2>&1 | tee "$EVIDENCE/check.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: energy-active-observation-${{ github.sha }}
+          path: energy-active-evidence
+          if-no-files-found: error
+          retention-days: 7
