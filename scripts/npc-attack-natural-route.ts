@@ -15,7 +15,7 @@ import { retryNpcAttackDock } from "../src/game/npc-attack";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 import { STORAGE_KEY } from "../src/game/content";
-import { liftR13StateToR16, liftR14StateToR16 } from "./r16-compatibility.mjs";
+import { assertInactiveEnergyChallenge, liftR13StateToR16, liftR14StateToR16 } from "./r16-compatibility.mjs";
 import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection";
 import type { GameState } from "../src/game/types";
 declare const process: { argv: string[]; version: string; exitCode?: number; stdout: { write(text: string): void } };
@@ -436,11 +436,14 @@ try {
   check("unaltered natural final is genuinely curvature eligible", evaluation.next !== state && evaluation.gain.gte(1));
   check("unaltered natural final owns earned nonzero rights", state.planets.some(p => RES.some(r => p.npcResourceRemainder[r] !== "0")));
   exact("curvature evaluation leaves complete natural source unchanged", serializeState(state), finalBefore);
-  const oldEvaluation = old.logic.evaluatePrestige(control), curvatureExpected = old.save.serializeState(oldEvaluation.next);
+  const curvatureActual = serializeState(evaluation.next);
+  assertInactiveEnergyChallenge(finalBefore, "Natural curvature input");
+  assertInactiveEnergyChallenge(curvatureActual, "Natural curvature result");
+  const oldEvaluation = old.logic.evaluatePrestige(control), curvatureExpected = liftR14StateToR16(old.save.serializeState(oldEvaluation.next));
   curvatureExpected.messages = independentMessages(curvatureExpected.messages);
   curvatureExpected.npcEconomy = structuredClone(npc); curvatureExpected.npcBattles = { model: "npc-battle-receipts-v1", reports: structuredClone(reports) };
   curvatureExpected.planets = curvatureExpected.planets.map((p: RecordValue) => ({ ...p, npcResourceRemainder: { metal: "0", crystal: "0", deuterium: "0" } }));
-  exact("curvature entire state equals pinned old evaluator plus independent retained NPC state and zero new rights", serializeState(evaluation.next), curvatureExpected);
+  exact("curvature entire state equals pinned old evaluator plus independent retained NPC state and zero new rights", curvatureActual, curvatureExpected);
   const confirmation = prestigeConfirmation(state, evaluation);
   check("curvature exact confirmation discloses earned right and no transfer/refund", confirmation.includes("母星 [homeworld]：金属 0 / 晶体 0.00000000006 / 重氢 0") && confirmation.includes("新母星的待结算权益归零，不转移或退款。"));
   branches.curvature = { classification: "Unedited whole-state-proven natural final31 fork with actually earned rights and naturally reached curvature eligibility. Exact economic reset is independently compared with pinned eef evaluation; confirmation string is the real UI formatter, separately checked for the literal earned right.",

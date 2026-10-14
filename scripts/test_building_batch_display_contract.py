@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 import building_batch_display_contract as batch
+from test_energy_challenge_provenance import project_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / 'scripts/browser-render-scheduling.py'
@@ -242,13 +243,26 @@ class BuildingBatchDisplayContracts(unittest.TestCase):
             self.assertEqual(ast.get_source_segment(baseline, old_node), ast.get_source_segment(source, new_node))
 
     def test_native_cpu_probe_and_inputs_are_completely_unchanged(self):
-        performance = (ROOT / 'scripts/browser-presentation-performance.py').read_bytes()
+        current = (ROOT / 'scripts/browser-presentation-performance.py').read_bytes()
+        performance = project_bytes('scripts/browser-presentation-performance.py', current, repository=ROOT)
+        self.assertNotIn(b'building_batch', current)
         self.assertEqual(hashlib.sha256(performance).hexdigest(), '3e74f638c84aabf479cd01c68d5f42c6b7f4807a4f5d44f642aaf5f0e66e709a')
         self.assertNotIn(b'building_batch', performance)
         self.assertNotIn('MutationObserver', batch.SAMPLE_JS)
         self.assertNotIn('.remove(', batch.SAMPLE_JS)
         self.assertNotIn('.replaceWith(', batch.SAMPLE_JS)
         self.assertNotIn('cloneNode', batch.SAMPLE_JS)
+
+
+    def test_complete_performance_projection_rejects_changed_or_reverted_current_bytes(self):
+        path = 'scripts/browser-presentation-performance.py'
+        current = (ROOT / path).read_bytes()
+        before = project_bytes(path, current, repository=ROOT)
+        self.assertEqual(hashlib.sha256(before).hexdigest(), '3e74f638c84aabf479cd01c68d5f42c6b7f4807a4f5d44f642aaf5f0e66e709a')
+        self.assertNotEqual(current, before)
+        for changed in (current + b'\n', current.replace(b'\n', b'\r\n'), before, b'forged performance source'):
+            with self.subTest(digest=hashlib.sha256(changed).hexdigest()), self.assertRaises(AssertionError):
+                project_bytes(path, changed, repository=ROOT)
 
 
 if __name__ == '__main__':

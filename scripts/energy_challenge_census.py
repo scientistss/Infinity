@@ -109,7 +109,12 @@ def validate_reset_oracle(case, directory):
     checker=load_boundary_checker();oracle=case['resetOracle']
     assert oracle['kind']=='pristine-template-from-observed-seed-v1'
     assert oracle['fixedTemplateSeed']==20261013 and oracle['permittedSeedPaths']==checker.SEED_PATHS
-    assert case['steps']==[{'kind':'reset','resetOracle':oracle}]
+    assert reference_identity(case['steps'])==reference_identity([{'kind':'reset','resetOracle':oracle}])
+    # Portable originals have distinct filenames even when the bytes repeat.
+    # Bind both copies by identity, then reopen both rather than trusting paths.
+    step_oracle=case['steps'][0]['resetOracle']
+    for key in ('template','pristineSource'):
+        assert resolve_reference(directory,step_oracle[key],external=True)==resolve_reference(directory,oracle[key],external=True)
     assert not case.get('finalExpected'), 'Random native reset cannot have a pregenerated final state'
     template=state_from(resolve_reference(directory,oracle['template'],external=True))
     pristine=state_from(resolve_reference(directory,oracle['pristineSource'],external=True))

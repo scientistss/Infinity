@@ -31,6 +31,22 @@ CAPTURED_CLOSED_COMPARISON_HTML = '''<section id="npc-scout-comparison-panel" cl
     <div id="npc-scout-comparison-results" hidden=""></div>
   </section>'''
 
+def energy_tab_retirement_before(current):
+    """Expose only the original tab clause after complete reviewed source binding."""
+    from test_energy_challenge_provenance import approved_rows, historical_bytes, read_manifest
+    root=Path(__file__).resolve().parents[1]
+    read_manifest(root)
+    path='src/ui/space-panel.ts'
+    row=next(item for item in approved_rows() if item['path']==path)
+    before=historical_bytes(path)
+    assert hashlib.sha256(before).hexdigest()==row['before']['sha256'], 'Exact A space controller source'
+    assert hashlib.sha256(current.encode()).hexdigest()==row['after']['sha256'], 'Exact reviewed r16 space controller source'
+    old='if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}'
+    new='if(b.dataset.tab){energyChallengePanel.retire();npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}'
+    assert before.decode().count(old)==1 and current.count(new)==1, 'Exact single tab retirement extension'
+    return current.replace(new,old,1)
+
+
 class NpcDisplayTests(unittest.TestCase):
     def state(self):return {'activePlanetId':'homeworld','planets':[{'id':'homeworld','name':'Home','npcResourceRemainder':{'metal':'0','crystal':'0','deuterium':'0'},'coordinates':{'galaxy':1,'system':50,'position':8}}],'universe':{'seed':42},'npcEconomy':{'sites':{}},'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'messages':[{'id':'send-1','at':3,'text':'原有消息。','npcScoutSnapshot':None},{'id':'scout-2','at':60,'text':'原有侦察情报。','npcScoutSnapshot':None}]}
     def unit_panel(self,tab,side):
@@ -783,7 +799,8 @@ class NpcDisplayTests(unittest.TestCase):
         self.assertLess((navigate.lineno,navigate.col_offset),(sample.lineno,sample.col_offset))
         tab=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='tab')
         self.assertIn("click(page,f'[data-tab=\"{name}\"]')",ast.get_source_segment(source,tab))
-        adapter=(root/'src/ui/space-panel.ts').read_text();controller=(root/'src/ui/npc-scout-comparison-panel.ts').read_text()
+        adapter=(root/'src/ui/space-panel.ts').read_bytes().decode();controller=(root/'src/ui/npc-scout-comparison-panel.ts').read_text()
+        adapter=energy_tab_retirement_before(adapter)
         self.assertIn('if(b.dataset.tab){npcAttack.retirePending();npcRehearsal.close();recyclePanel.invalidate();selected=null;return;}',adapter)
         self.assertIn('close() { controller?.close(); comparison?.close(); }',adapter)
         self.assertIn('close() { abandon(RETIRED, true); }',controller)
@@ -792,6 +809,18 @@ class NpcDisplayTests(unittest.TestCase):
         for statement in ('other.replaceChildren(); other.value = "";',
                           'panel.hidden = true; text(source, ""); text(status, reason); disable();'):
             self.assertIn(statement,abandon)
+
+    def test_tab_retirement_projection_rejects_any_source_drift_or_old_reversion(self):
+        from test_energy_challenge_provenance import historical_bytes
+        current=(Path(__file__).resolve().parents[1]/'src/ui/space-panel.ts').read_bytes().decode()
+        call='energyChallengePanel.retire();'
+        for changed in (current+'\n',current.replace('\n','\r\n'),historical_bytes('src/ui/space-panel.ts').decode(),
+                        current.replace('if(b.dataset.tab){'+call,'if(b.dataset.tab){',1),
+                        current.replace('if(b.dataset.tab){'+call,'if(b.dataset.tab){'+call*2,1),
+                        current.replace(call+'npcAttack.retirePending();','npcAttack.retirePending();'+call,1),
+                        current.replace('comparison?.close();','comparison?.open();',1)):
+            with self.subTest(sha256=hashlib.sha256(changed.encode()).hexdigest()),self.assertRaises(AssertionError):
+                energy_tab_retirement_before(changed)
 
 class EmptyLabBlockerParityTests(unittest.TestCase):
     """Independent copied source-layout goldens, not a native execution claim."""

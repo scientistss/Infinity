@@ -20,6 +20,8 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 READ_ONLY_GIT = m._git
 VERIFY_HISTORICAL = m._historical_source_bindings
+VERIFY_APPROVED_PREDECESSOR = m._approved_predecessor
+APPROVED_PREDECESSOR = '166c77fe0fc36ac40eb390804c2a96598870006e'
 FILES = (m.POOL_PATH, 'scripts/scout-historical-fixtures.mjs', 'scripts/scout-historical-fixtures.py',
          'scripts/scout-rehearsal-natural-route.ts', 'src/game/save.ts', 'package-lock.json')
 
@@ -97,7 +99,7 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
         patch = mock.patch.object(m, '_historical_source_bindings', return_value=self.bindings)
         patch.start(); self.addCleanup(patch.stop)
         self.approved_current = {path: (self.workspace / path).read_bytes() for path in FILES}
-        self.approved_before = {path: READ_ONLY_GIT(ROOT, 'show', 'HEAD:' + path) for path in FILES}
+        self.approved_before = {path: READ_ONLY_GIT(ROOT, 'show', APPROVED_PREDECESSOR + ':' + path) for path in FILES}
         def predecessor(workspace, path, raw):
             if raw != self.approved_current[path]: raise ValueError('Unapproved current support bytes')
             return self.approved_before[path]
@@ -249,6 +251,23 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
                 elif name == 'duplicateFile': binding['sourceFiles'].append(copy.deepcopy(binding['sourceFiles'][0]))
                 else: binding['serializerSha256'] = '0' * 64
                 with mock.patch.object(m, '_git', READ_ONLY_GIT), self.assertRaises(ValueError): VERIFY_HISTORICAL(ROOT, pool)
+
+    def test_synthetic_projection_uses_immutable_predecessor_not_candidate_head(self):
+        producer = 'scripts/scout-historical-fixtures.mjs'
+        self.assertEqual(m._sha(self.approved_before[producer]), self.pool['generatedBy']['sha256'])
+        self.assertNotEqual(self.approved_before[producer], self.approved_current[producer])
+        before_lock = json.loads(self.approved_before['package-lock.json'])
+        self.assertEqual(before_lock['version'], '0.6.31-alpha.1')
+        self.assertEqual(before_lock['packages']['']['version'], '0.6.31-alpha.1')
+        self.assertNotEqual(self.approved_before['package-lock.json'], self.approved_current['package-lock.json'])
+        # Test the real finite byte projector too; the synthetic identity mock
+        # cannot manufacture a predecessor or silently accept a source reversion.
+        for path in (producer, 'package-lock.json'):
+            current = (ROOT / path).read_bytes()
+            self.assertEqual(VERIFY_APPROVED_PREDECESSOR(ROOT, path, current), self.approved_before[path])
+            for changed in (current + b'\n', self.approved_before[path], b'forged source'):
+                with self.subTest(path=path), self.assertRaises(AssertionError):
+                    VERIFY_APPROVED_PREDECESSOR(ROOT, path, changed)
 
     def test_changed_producer_requires_exact_approved_predecessor_bytes(self):
         path = 'scripts/scout-historical-fixtures.mjs'

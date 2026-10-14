@@ -10,6 +10,7 @@ Sources use cold HTTP caching; no cache/performance claim is made. The separate
 REALCLOCK migration document keeps actual Date/performance/RAF untouched.
 """
 import argparse
+from copy import deepcopy
 from decimal import Decimal
 import importlib.util
 import io
@@ -30,7 +31,8 @@ import zipfile
 
 from energy_challenge_census import (ACTIONS, BUDGETS, CONTROLS, LANES, LIFECYCLE,
     MIGRATIONS, PLAN_SCHEMA, RETIREMENTS, SCENARIOS, SCHEMA, WIDTHS, canonical,
-    original, reference, resolve_reference, sha, state_from, validate_plan, load_boundary_checker)
+    original, reference, resolve_reference, sha, state_from, validate_plan, load_boundary_checker,
+    derive_realclock_request)
 
 from energy_challenge_trace import (prepare_plan as prepare_trace, NativeFrameTrace, location, source_offset,
     to_replay_epoch, through_manual_save, freeze_manual_boundary)
@@ -219,6 +221,30 @@ class Evidence:
         assert condition,name
         assert time.monotonic()-self.report['_started']<self.report['budgetSeconds'],'Approved purpose-bound worker budget expired'
     def imported(self,root,ref,label): return self.dump(label,resolve_reference(root,ref,external=True))
+
+
+class ManualStorageBoundary:
+    """Join independent CDP streams without altering the original save prefix.
+
+    Runtime.bindingCalled and DOMStorage notifications need not arrive in the
+    same order. Freeze the trace synchronously at save-result, then collect the
+    actual storage receipts through that same exact final write. Nothing is
+    synthesized from a successful save; the complete receipt chain must match.
+    """
+    def __init__(self,application_url):
+        self.application_url=application_url;self.events=[];self.frozen=None;self.result=None
+    def record(self,kind,row):
+        self.events.append(deepcopy({'kind':kind,**row}));self._finish()
+    def capture(self,observer,marker):
+        assert self.frozen is None, 'Only one original manual boundary'
+        self.frozen=freeze_manual_boundary(observer,self.events,marker);self._finish()
+    def _finish(self):
+        if self.frozen is None or self.result is not None:return
+        final=self.frozen['trace']['events'][-1]['primaryRaw']
+        if not any(row.get('key')==KEY and row['kind'] in ('added','updated') and row['newValue']==final for row in self.events):return
+        receipts=deepcopy(self.events)
+        request=derive_realclock_request(self.frozen['trace'],receipts,self.frozen['marker'],self.application_url)
+        self.result={**self.frozen,'storageEvents':receipts,'writes':request['nativePrimaryWrites']}
 
 
 def worker(args):
@@ -533,11 +559,10 @@ def worker(args):
         cap['cdp'].on('Debugger.scriptParsed',lambda event:cap['executed'].append(event) if event.get('url','').startswith(args.url) else None)
         page.on('response',lambda response:cap['responses'].append(response) if urlparse(response.url).path.endswith('.js') else None)
         page.on('pageerror',lambda error:report['errors'].append(str(error)))
-        writes=[];storage_events=[]
+        storage_boundary=ManualStorageBoundary(args.url)
         def storage_event(kind,row):
             if row.get('storageId',{}).get('isLocalStorage') and row['storageId'].get('securityOrigin')==origin:
-                storage_events.append({'kind':kind,**row})
-                if row.get('key')==KEY and kind in ('added','updated'):writes.append(row['newValue'])
+                storage_boundary.record(kind,row)
                 if kind in ('removed','cleared'):check('real-clock trace never deletes native storage',False,row)
         cap['cdp'].send('DOMStorage.enable')
         for method,kind in [('domStorageItemAdded','added'),('domStorageItemUpdated','updated'),('domStorageItemRemoved','removed'),('domStorageItemsCleared','cleared')]:
@@ -551,18 +576,28 @@ def worker(args):
         check('real-clock startup source and recoverable backup are byte exact',startup['sourceRaw']==startup['backupRaw']==source)
         if page.locator('[data-bind="offline-modal"]').is_visible():page.locator('[data-action="dismiss-offline"]').click()
         page.locator('[data-tab="save"]').click()
-        marker=cap['trace'].events[-1]['sequence'];boundary={}
+        marker=cap['trace'].events[-1]['sequence']
         def capture_boundary(event):
             if event['sequence']>marker and event['kind']=='save-result' and any(row['sequence']>marker and row['kind']=='action' and row.get('actionType')=='save' for row in cap['trace'].events):
                 prefix=through_manual_save(cap['trace'].events,marker)
-                boundary.update(freeze_manual_boundary(cap['trace'],storage_events,marker))
+                storage_boundary.capture(cap['trace'],marker)
                 cap['trace'].on_event=None
         cap['trace'].on_event=capture_boundary
         page.locator('[data-action="save"]').click()
         # Original trace prefix ends at this complete real manual-save result.
         # Live frames after it cannot fit, replace, or alter those captured clocks.
         page.evaluate('0')
-        check('manual result froze complete independent host evidence',bool(boundary) and not cap['trace'].failures)
+        check('manual result froze exact original trace prefix',storage_boundary.frozen is not None and not cap['trace'].failures)
+        # Pump delivery of the independent CDP storage stream only. This never
+        # retries the manual action, replays a frame or substitutes a clock.
+        receipt_deadline=min(time.monotonic()+7,report['_started']+BUDGETS[args.lane]-10)
+        while storage_boundary.result is None and time.monotonic()<receipt_deadline:
+            page.wait_for_timeout(10)
+        current['realClockCapture']={
+            'trace':dump('real-clock-boundary-trace.json',canonical(storage_boundary.frozen['trace'])),
+            'deliveredStorageEvents':dump('real-clock-delivered-storage-events.json',canonical(storage_boundary.events))}
+        check('manual result has its complete independent native storage receipt chain',storage_boundary.result is not None)
+        boundary=storage_boundary.result
         prefix=boundary['trace']['events'];epoch=to_replay_epoch(prefix)
         final=prefix[-1]['primaryRaw'];backup=prefix[-1]['backupRaw']
         check('independent native primary and backup readback matches manual boundary',

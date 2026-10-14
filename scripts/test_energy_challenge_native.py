@@ -163,6 +163,53 @@ class NativeContract(unittest.TestCase):
         self.assertNotEqual(frozen['trace']['events'],observer.events)
         with self.assertRaises(AssertionError):trace.freeze_manual_boundary(observer,storage,3)
 
+    def test_manual_storage_boundary_joins_either_delivery_order_without_replay(self):
+        for final_receipt_first in (False,True):
+            with self.subTest(final_receipt_first=final_receipt_first):
+                cdp,observer,storage=realclock_receipts()
+                boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/')
+                first=storage if final_receipt_first else storage[:-1]
+                for event in first:boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
+                self.assertIsNone(boundary.result)
+                boundary.capture(observer,3)
+                if not final_receipt_first:
+                    self.assertIsNone(boundary.result)
+                    frozen=deepcopy(boundary.frozen)
+                    cdp.record(observer,{'kind':'action','actionType':'export','mode':'ready'})
+                    event=storage[-1];boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
+                    self.assertEqual(boundary.frozen,frozen)
+                self.assertEqual(boundary.result['writes'],[storage[1]['newValue'],storage[2]['newValue']])
+                self.assertEqual(boundary.result['storageEvents'],storage)
+                self.assertEqual(boundary.result['trace']['events'][-1]['kind'],'save-result')
+                original=deepcopy(boundary.result)
+                event=deepcopy(storage[-1]);event['newValue']='subsequent event outside captured prefix'
+                boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
+                self.assertEqual(boundary.result,original)
+                with self.assertRaises(AssertionError):boundary.capture(observer,3)
+
+    def test_manual_storage_boundary_does_not_invent_missing_receipts(self):
+        _,observer,storage=realclock_receipts()
+        boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/')
+        boundary.capture(observer,3)
+        for event in storage[:-1]:boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
+        self.assertIsNone(boundary.result)
+        self.assertEqual(boundary.frozen['writes'],[])
+        self.assertEqual(len(boundary.events),2)
+
+    def test_manual_storage_boundary_rejects_altered_missing_extra_receipts(self):
+        mutations=[lambda rows:rows.pop(0),lambda rows:rows.pop(1),
+                   lambda rows:rows[2].update(oldValue='changed-primary'),
+                   lambda rows:rows.insert(2,deepcopy(rows[1])),
+                   lambda rows:rows[0].update(newValue='changed-backup'),
+                   lambda rows:rows[1]['storageId'].update(securityOrigin='https://other.invalid')]
+        for mutate in mutations:
+            _,observer,storage=realclock_receipts();mutate(storage)
+            boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/')
+            boundary.capture(observer,3)
+            with self.subTest(mutation=mutate),self.assertRaises(AssertionError):
+                for event in storage:boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
+            self.assertIsNone(boundary.result)
+
     def test_replay_success_flag_cannot_replace_source_state_and_write_bindings(self):
         _,observer,storage=realclock_receipts()
         request=census.derive_realclock_request(observer.snapshot(),storage,3,'https://example.invalid/Infinity/')
@@ -193,9 +240,18 @@ class NativeContract(unittest.TestCase):
                     'pristineSource':census.reference(root/'pristine.json',root),'fixedTemplateSeed':20261013,'permittedSeedPaths':checker.SEED_PATHS}
             case={'id':'new-game-clear','resetOracle':oracle,'steps':[{'kind':'reset','resetOracle':deepcopy(oracle)}]}
             census.validate_reset_oracle(case,root)
+            for key in ('template','pristineSource'):
+                clone=root/(key+'-portable-copy.json');clone.write_bytes((root/oracle[key]['file']).read_bytes())
+                case['steps'][0]['resetOracle'][key]=census.reference(clone,root)
+            self.assertNotEqual(case['steps'][0]['resetOracle'],oracle)
+            census.validate_reset_oracle(case,root)
             for mutate in (lambda c:c['resetOracle'].update(fixedTemplateSeed=1),
                            lambda c:c['steps'][0]['resetOracle'].update(permittedSeedPaths=['all']),
-                           lambda c:c.update(finalExpected=oracle['template'])):
+                           lambda c:c.update(finalExpected=oracle['template']),
+                           lambda c:c['steps'][0]['resetOracle']['template'].update(sha256='a'*64),
+                           lambda c:c['steps'][0]['resetOracle']['template'].update(file='missing.json'),
+                           lambda c:c['steps'][0]['resetOracle']['template'].update(file=oracle['pristineSource']['file']),
+                           lambda c:c['steps'].append(deepcopy(c['steps'][0]))):
                 bad=deepcopy(case);mutate(bad)
                 with self.assertRaises(AssertionError):census.validate_reset_oracle(bad,root)
 
