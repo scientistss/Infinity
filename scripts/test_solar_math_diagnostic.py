@@ -28,6 +28,21 @@ class SolarMathDiagnosticTests(unittest.TestCase):
         self.assertIn('3ff76cf41f212d79',helper)
         self.assertIn('3ff76cf41f212d7a',helper)
 
+    def assert_original_checkout(self,workflow):
+        checkouts=[block for block in workflow.split('\n      - ') if block.startswith('uses: actions/checkout@v7\n')]
+        original=[block for block in checkouts if '          path: original-source\n' in block]
+        self.assertEqual(len(original),1,'Exactly one pinned original-source checkout required')
+        fields=re.findall(r'^          ([a-z-]+): (.+)$',original[0],re.MULTILINE)
+        self.assertEqual(len(fields),len(dict(fields)),'Duplicate checkout setting')
+        self.assertEqual(dict(fields),{'ref':D.SHA,'path':'original-source','fetch-depth':'0','persist-credentials':'false'})
+
+    def test_original_checkout_requires_full_historical_objects(self):
+        workflow=(FILE.parents[1]/'.github/workflows/solar-math-diagnostic.yml').read_text()
+        self.assert_original_checkout(workflow)
+        for old,new in [('          fetch-depth: 0\n',''),('fetch-depth: 0','fetch-depth: 1'),('ref: '+D.SHA,'ref: HEAD'),('path: original-source','path: unpinned-source')]:
+            with self.subTest(mutation=new),self.assertRaises(AssertionError):
+                self.assert_original_checkout(workflow.replace(old,new))
+
     def test_workflow_pins_original_runtimes_and_evidence(self):
         workflow=(FILE.parents[1]/'.github/workflows/solar-math-diagnostic.yml').read_text()
         for value in ['node-version: 22.23.3','154.0.8037.97','run-id: 38496521976',D.SHA,'timeout-minutes: 10']:
