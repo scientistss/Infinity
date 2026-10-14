@@ -144,9 +144,50 @@ def navigation_schedule(plan):
         elif api=='reject':tabs.append('facilities' if request['api']=='enqueue' else 'research' if request['api']=='enqueueResearch' else 'curvature')
     return [*tabs,'save']  # Final export navigation.
 
-def validate_storage(events,receipts,initial,url,tabs=None):
+def preframe_autosave_wall(events,records,index,accounted):
+    """Prove the one fixed-clock advance before its original RAF consumes it.
+
+    __ecAdvance increments Date.now before awaiting native RAF. The unchanged
+    real setInterval may save in that interval; saving must not consume time.
+    Require the exact original background transaction and its own frozen tick
+    record, rather than accepting a numeric clock tolerance or any future frame.
+    """
+    assert records is not None and 2<=index and index+3<len(events)
+    assert [r['index'] for r in records]==list(range(1,len(records)+1))
+    before,persist,save,result,frame,end=events[index-2:index+4]
+    assert [e['kind'] for e in (before,persist,save,result,frame,end)]==[
+        'frame-end','persist-input','save-input','save-result','frame','frame-end']
+    assert [e['sequence'] for e in (before,persist,save,result,frame,end)]==list(range(index-2,index+4))
+    assert all(e['executionContextId']==save['executionContextId'] and e['documentId']==save['documentId']
+               and e['mode']=='ready' for e in (before,persist,save,result,frame,end))
+    assert persist['background'] is True and persist['nextStatus']=='已自动保存'
+    owners=[r for r in records if r['traceStart']<=index<r['traceEnd']]
+    assert len(owners)==1;record=owners[0];position=record['index']-1
+    assert record['api']=='tick' and position>0
+    previous=records[position-1]
+    scope,observed=record_scope(record,events,previous['traceEnd'],previous['observationSequence'])
+    assert record['traceStart']<=persist['sequence'] and observed['sequence']==end['sequence']
+    assert sum(e['kind']=='frame' and e['gapSeconds']>0 for e in scope)==1
+    assert [e['kind'] for e in scope if e['sequence']<=end['sequence']].count('frame')==1
+    previous_state=events[previous['observationSequence']]
+    assert previous_state['kind']=='frame-end' and previous_state['executionContextId']==save['executionContextId']
+    assert previous_state['documentId']==save['documentId'] and same_state(save['state'],previous_state['state'])
+    assert same_state(result['visibleState'],save['state'])
+    # The expected write time comes only from the immutable one-second action
+    # chronology, never from a saved envelope or observed state.
+    expected=EPOCH+1000*sum(r['api']=='tick' for r in records[:position+1])
+    assert type(save['savedAt']) is int and save['savedAt']==expected
+    assert type(save['lastTickAt']) is int and save['lastTickAt']==accounted==expected-1000
+    assert before['lastTickAt']==accounted and frame['lastTickAtBefore']==accounted
+    assert type(frame['gapSeconds']) in (int,float) and frame['gapSeconds']==1
+    assert frame['now']-before['now']==1000 and end['now']==frame['now']
+    assert end['lastTickAt']==expected and end['state'] is not None
+    return expected
+
+
+def validate_storage(events,receipts,initial,url,tabs=None,records=None):
     durable=initial;expected=[];pending=None;source_reads=0;ready_count=0;contexts=set();context=None;awaiting_ready=False;constructor_now=None;wall=None
-    for event in events:
+    for index,event in enumerate(events):
         if pending is not None:assert event['kind']=='save-result'
         if event['kind']=='source-read':
             assert pending is None and not awaiting_ready and event['executionContextId'] not in contexts
@@ -164,13 +205,16 @@ def validate_storage(events,receipts,initial,url,tabs=None):
         if event['kind']=='frame-end':wall=event['lastTickAt']
         if event['kind']=='save-input':
             assert pending is None and event['expectedRaw']==durable and event['mode']=='ready'
-            assert event['savedAt']==event['lastTickAt']==wall;pending=event
+            assert event['lastTickAt']==wall
+            saved_at=wall if event['savedAt']==wall else preframe_autosave_wall(events,records,index,wall)
+            assert event['savedAt']==saved_at;pending=event
         elif event['kind']=='save-result':
             assert pending is not None and event['ok'] is True and event['mode']=='ready'
             raw=event['candidateRaw'];assert raw==event['expectedRaw']==event['primaryRaw'] and event['backupRaw'] is None
             envelope=decode(raw)
             assert envelope['version']==9 and envelope['revision']==16
-            assert envelope['savedAt']==envelope['lastTickAt']==event['savedAt']==event['lastTickAt']==wall
+            assert envelope['savedAt']==event['savedAt']==pending['savedAt']==saved_at
+            assert envelope['lastTickAt']==event['lastTickAt']==pending['lastTickAt']==wall
             assert same_state(envelope['state'],pending['state'])
             if raw!=durable:expected.append((durable,raw))
             durable=raw;pending=None
@@ -329,7 +373,7 @@ def validate(root,expected_sha):
     assert sum(e.get('id')=='energy-challenge-confirm' for e in clicks)==2
     actions=[e['actionType'] for e in events if e['kind']=='action']
     assert Counter(actions)==Counter({'enqueue':149,'enqueueResearch':4,'energy-challenge':2,'save':22,'export':1})
-    receipts=decode(C.resolve_reference(root,report['storageEvents']));final=validate_storage(events,receipts,initial.decode(),report['applicationUrl'],tabs)
+    receipts=decode(C.resolve_reference(root,report['storageEvents']));final=validate_storage(events,receipts,initial.decode(),report['applicationUrl'],tabs,records)
     assert C.resolve_reference(root,report['finalPrimary']).decode()==final
     assert decode(C.resolve_reference(root,report['finalStorage']))=={C.KEY:final,TAB_KEY:tabs[-1]}
     assert same_state(decode(final)['state'],states[-1]['state'])

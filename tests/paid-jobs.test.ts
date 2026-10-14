@@ -5,6 +5,8 @@ import { big } from "../src/game/decimal";
 import { addInventory, buyShopItem, speedUp, useInventory } from "../src/game/dark-matter";
 import { advanceFleets, emptyCargo, recallFleet, type Fleet } from "../src/game/fleet";
 import { tick } from "../src/game/logic";
+import { coordinateKey, validCoordinates } from "../src/game/galaxy";
+import { createInitialState } from "../src/game/state";
 import { creditPaidJob } from "../src/game/order-ledger";
 import { subtractOrderAmounts } from "../src/game/order-money";
 import type { OrderMoney, OrderTarget, PaidJobRef } from "../src/game/order-state";
@@ -271,13 +273,18 @@ describe("prospective ship output limits", () => {
   it("reserves both deployment ports until arrival or recall resolves the destination", () => {
     let state = ready();
     activePlanet(state).units.light_fighter = MAX_PLANET_UNITS - 2;
-    const destination = createPlanet("deploy-target", { galaxy: 1, system: 51, position: 8 });
+    // The random home can itself be 1:51:8. Use a distinct, valid port for every seed.
+    const home = activePlanet(state).coordinates;
+    const destination = createPlanet("deploy-target", { ...home, position: home.position % 15 + 1 });
+    expect(validCoordinates(destination.coordinates)).toBe(true);
+    expect(destination.coordinates).not.toEqual(home);
     destination.units.light_fighter = MAX_PLANET_UNITS - 2;
     destination.buildings.shipyard = 2;
     destination.resources = { metal: big(1e7), crystal: big(1e7), deuterium: big(1e7) };
-    state = { ...state, planets: [...state.planets, destination], fleets: [
+    state = { ...state, planets: [...state.planets, destination], nextFleetId: 2, fleets: [
       fleet(state, { light_fighter: 2 }, { returning: false, mission: "deploy", target: destination.coordinates, elapsed: 5, remaining: 25 }),
     ] };
+    expect(() => deserializeState(serializeState(state))).not.toThrow();
     expect(shipOutputCapacity(state, "light_fighter")).toBe(0);
     expect(shipOutputCapacity(selectPlanet(state, destination.id), "light_fighter")).toBe(0);
     expect(enqueueUnits(state, "light_fighter", 1, "manual").ok).toBe(false);
@@ -293,16 +300,47 @@ describe("prospective ship output limits", () => {
     expect(shipOutputCapacity(arrived, "light_fighter")).toBe(2);
   });
 
+  it.each([1403498824, 3907892709])("rejects captured duplicate deployment ports without changing raw bytes (seed %i)", (seed) => {
+    let state = withResearch(rich(createInitialState(seed, seed), 1e7), { combustion_drive: 2 });
+    const home = activePlanet(state);
+    home.buildings.research_lab = 3;
+    home.buildings.shipyard = 2;
+    home.units.light_fighter = MAX_PLANET_UNITS - 2;
+    expect(home.coordinates).toEqual({ galaxy: 1, system: 51, position: 8 });
+    const destination = createPlanet("deploy-target", { galaxy: 1, system: 52, position: 8 });
+    destination.units.light_fighter = MAX_PLANET_UNITS - 2;
+    destination.buildings.shipyard = 2;
+    destination.resources = { metal: big(1e7), crystal: big(1e7), deuterium: big(1e7) };
+    state = { ...state, planets: [...state.planets, destination], nextFleetId: 2, fleets: [
+      fleet(state, { light_fighter: 2 }, { returning: false, mission: "deploy", target: destination.coordinates, elapsed: 5, remaining: 25 }),
+    ] };
+    // First prove the complete control is accepted, then change only destination coordinates.
+    const accepted = deserializeState(serializeState(state));
+    const raw = JSON.parse(JSON.stringify(serializeState(accepted)));
+    expect(serializeState(deserializeState(raw))).toEqual(raw);
+    raw.planets[1].coordinates = { ...home.coordinates };
+    raw.fleets[0].target = { ...home.coordinates };
+    const rejectedBytes = JSON.stringify(raw);
+    expect(() => deserializeState(raw)).toThrow("星球坐标重复");
+    expect(JSON.stringify(raw)).toBe(rejectedBytes);
+    const duplicate = { ...state, planets: [home, { ...destination, coordinates: { ...home.coordinates } }],
+      fleets: state.fleets.map(value => ({ ...value, target: { ...home.coordinates } })) };
+    expect(() => serializeState(duplicate)).toThrow("星球坐标重复");
+  });
+
   it("counts a deployment once in the empire even while reserving both local ports", () => {
     let state = ready();
     const planets = Array.from({ length: 10 }, (_, index) => {
-      const planet = createPlanet(`reserve-${index}`, { galaxy: 1, system: 60 + index, position: 8 });
+      const planet = createPlanet(`reserve-${index}`, { galaxy: 2, system: 60 + index, position: 8 });
       planet.units.light_fighter = index < 9 ? 1e15 : Number.MAX_SAFE_INTEGER - 9e15 - 3;
       return planet;
     });
-    state = { ...state, planets: [...state.planets, ...planets], fleets: [
+    state = { ...state, planets: [...state.planets, ...planets], nextFleetId: 2, fleets: [
       fleet(state, { light_fighter: 2 }, { returning: false, mission: "deploy", target: planets[9]!.coordinates }),
     ] };
+    expect(state.planets.every(planet => validCoordinates(planet.coordinates))).toBe(true);
+    expect(new Set(state.planets.map(planet => coordinateKey(planet.coordinates))).size).toBe(11);
+    expect(() => deserializeState(serializeState(state))).not.toThrow();
     expect(shipOutputCapacity(state, "light_fighter")).toBe(1);
     expect(shipOutputCapacity(selectPlanet(state, planets[9]!.id), "light_fighter")).toBe(1);
     expect(canBuildUnits(state, "light_fighter", 1).ok).toBe(true);
@@ -314,11 +352,14 @@ describe("prospective ship output limits", () => {
     activePlanet(state).units.light_fighter = 0;
     expect(canBuildUnits(state, "light_fighter", 1).ok).toBe(true);
     const extra = Array.from({ length: 10 }, (_, index) => {
-      const planet = createPlanet(`capacity-${index}`, { galaxy: 1, system: 60 + index, position: 8 });
+      const planet = createPlanet(`capacity-${index}`, { galaxy: 2, system: 60 + index, position: 8 });
       planet.units.light_fighter = index < 9 ? 1e15 : Number.MAX_SAFE_INTEGER - 9e15;
       return planet;
     });
     state = { ...state, planets: [...state.planets, ...extra] };
+    expect(state.planets.every(planet => validCoordinates(planet.coordinates))).toBe(true);
+    expect(new Set(state.planets.map(planet => coordinateKey(planet.coordinates))).size).toBe(11);
+    expect(() => deserializeState(serializeState(state))).not.toThrow();
     expect(shipOutputCapacity(state, "light_fighter")).toBe(0);
     expect(canBuildUnits(state, "light_fighter", 1).ok).toBe(false);
   });

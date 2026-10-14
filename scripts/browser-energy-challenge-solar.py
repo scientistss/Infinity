@@ -220,7 +220,9 @@ def worker(args):
                 deadline=min(time.monotonic()+7,start+S.BUDGET-5)
                 needed=sum(e['kind']=='save-result' and e['candidateRaw']!=next((p['expectedRaw'] for p in reversed(snapshot['events'][:e['sequence']]) if p['kind']=='save-input'),None) for e in snapshot['events'])
                 while sum(e.get('key')==KEY for e in storage_events)<needed and time.monotonic()<deadline:page.wait_for_timeout(10)
-                S.validate_storage(snapshot['events'],storage_events,initial.decode(),args.url,S.navigation_schedule(plan))
+                completed_records=[S.decode(line) for line in original(records_path).splitlines()]
+                S.validate_timing(snapshot['events'],completed_records)
+                S.validate_storage(snapshot['events'],storage_events,initial.decode(),args.url,S.navigation_schedule(plan),completed_records)
                 report['trace']=dump('complete-native-trace.json',canonical(snapshot));report['storageEvents']=dump('native-storage-events.json',canonical(storage_events))
                 report['finalStorage']=dump('final-complete-native-storage.json',canonical(page.evaluate('Object.fromEntries(Object.entries(localStorage))')))
                 document();check('all 23 native document lifecycles retained',len(report['documents'])==23)

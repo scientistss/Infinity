@@ -42,7 +42,7 @@ VERIFIED_INPUT_COMMAND = "          python -m unittest discover -s scripts -p 't
 SOURCE_FOLLOWUP_ROWS = {'docs/ENERGY_CHALLENGE_DOMAIN_STATUS.md': {'before': '2e6cdf526dcc62642f0d29bd489ad23d3c21ecf6e6cb61739287cdae49271a5a',
                                             'after': 'f5c8dff917dc0c6d79bd54d1d13d6e77645de479b6e8db8a256ae3a6869dcec6'},
  'scripts/browser-energy-challenge-solar.py': {'before': 'cc98de66ac040d4e13775fa1e29e9640e0a3253a053b9a0270aab679bbc9552d',
-                                               'after': '699273661b49ae5e3b4326af94332b58efa39aabc2fde0e0c85b03598abb5d3c'},
+                                               'after': 'cf1ec916141a3d592ec2900b1e206b11b453a9081dfd411223f2cdd3fc211122'},
  'scripts/browser-energy-challenge.py': {'before': 'e125a0c0e821256ef02d81223b19815a1978e3eac6a6f16685205193cbfff33b',
                                          'after': 'd7753666ce3909f7cbdb13d6810f3205f4347d4cf16e1b756f7786d9ce1b8de4'},
  'scripts/browser-lab-blockers.py': {'before': 'f8d5504136e49b2dbc0ccbef64a3aa42e398bc85c55974b64c1123852cd4349a',
@@ -50,7 +50,7 @@ SOURCE_FOLLOWUP_ROWS = {'docs/ENERGY_CHALLENGE_DOMAIN_STATUS.md': {'before': '2e
  'scripts/energy_challenge_census.py': {'before': 'cf91b2a1f5cfe0576836e16de3d913b22265416463d2d5996276799e9afdbb45',
                                         'after': '940ee72beae89b4d7a7dd1419876b04e0f671d0f278ff77ff6f2100ec31b2a9a'},
  'scripts/energy_challenge_solar_census.py': {'before': 'c3e08c3c47cac5d224411085c5482bede6b775ae8f7f1defb7e215b45b4f6951',
-                                              'after': '703e101353c2715f58a2341c22c5b98ff6bf0aea2a7c8897137b474113f157f7'},
+                                              'after': '09e0cc90e500d00eb48272046be28a0691fdf14284798d4be76afa98b86902f4'},
  'scripts/test_demolition_native_preparation.py': {'before': 'c26f7176ffe3e7b0e387fd4188fe8eab4a6a651a14f0c12f6e50475732574da1',
                                                    'after': '87cf5e4a92149e555b76e99eb32c02a9c32af687d311ea35812ecfdddc17f920'},
  'scripts/test_energy_challenge_native.py': {'before': 'd732a12db51d1f9eba6f00409fabb36f85cfe571146ca1fef8eb83243a7cbf24',
@@ -62,7 +62,9 @@ SOURCE_FOLLOWUP_ROWS = {'docs/ENERGY_CHALLENGE_DOMAIN_STATUS.md': {'before': '2e
  'scripts/test_lab_blockers_acceptance.py': {'before': '4676ffc6004806ad5394453883f969705e8366f621d4a3eee8b0bdabdff6010e',
                                              'after': '4124d797037dc05d6c27f3a67727362e87bda6579b9bab56f50b8d51f5c59904'},
  'scripts/test_npc_attack_acceptance.py': {'before': 'dc2e0aee70a0f4911fb00a8bdfd4e41f20d839516726617f7bc73fcdb2145ab7',
-                                           'after': '484ad50b958abdb465361d037a5d9fcc3904e5063ac645ed831bebd1a55ca40f'}}
+                                           'after': '484ad50b958abdb465361d037a5d9fcc3904e5063ac645ed831bebd1a55ca40f'},
+ 'tests/paid-jobs.test.ts': {'before': 'd64184041dca8cf5405d9fadfa86dc7adbbe858646c33e630dcdc27cfe71b6b4',
+                             'after': '66b91339e2460095b7b8711dc55b526afe6de742db915eeb92f19233961cde71'}}
 RELEASE_FILES = tuple(batch.RELEASE_FILES)
 NEW_PATH_MODES = {
     'scripts/energy-challenge-solar-browser-reference.mjs': '100644',
@@ -72,6 +74,7 @@ NEW_PATH_MODES = {
     'scripts/energy_verified_input.py': '100644',
     'scripts/test-energy-challenge-solar-reference.mjs': '100644',
     'scripts/test_energy_challenge_solar_reference.py': '100644',
+    'scripts/test_energy_challenge_solar_storage_clock.py': '100644',
     'scripts/test_energy_verified_input.py': '100644',
 }
 NEW_PATHS = set(NEW_PATH_MODES)
@@ -87,7 +90,8 @@ ADAPTERS = {
         'previous_release_bytes': ('relative', "'lab_release', ROOT, relative"),
     },
 }
-NEW_HISTORICAL_SUPPORT = set(ADAPTERS) | {'scripts/test_demolition_native_preparation.py'}
+NEW_HISTORICAL_SUPPORT = set(ADAPTERS) | {'scripts/test_demolition_native_preparation.py',
+                                      'tests/paid-jobs.test.ts'}
 OPERATIONS = {'manual_six', 'manual_workflow', 'manual_release',
               'lab_workflow', 'lab_release', 'lab_transitions'}
 
