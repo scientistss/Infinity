@@ -223,6 +223,15 @@ class Evidence:
     def imported(self,root,ref,label): return self.dump(label,resolve_reference(root,ref,external=True))
 
 
+def preserve_native_storage_receipt(cap,kind,row,dump):
+    """Persist the unfiltered CDP row before any receipt assertion can fail."""
+    events=cap['trace'].events
+    receipt={'deliverySequence':len(cap['rawStorageReceipts']),'kind':kind,'row':deepcopy(row),
+             'traceEventCount':len(events),'traceLastSequence':events[-1]['sequence'] if events else None}
+    cap['rawStorageReceipts'].append(receipt)
+    cap['rawStorageReceiptRefs'].append(dump('real-clock-raw-storage-receipt.json',canonical(receipt)))
+
+
 class ManualStorageBoundary:
     """Join independent CDP streams without altering the original save prefix.
 
@@ -231,8 +240,8 @@ class ManualStorageBoundary:
     actual storage receipts through that same exact final write. Nothing is
     synthesized from a successful save; the complete receipt chain must match.
     """
-    def __init__(self,application_url):
-        self.application_url=application_url;self.events=[];self.frozen=None;self.result=None
+    def __init__(self,application_url,preserve=None):
+        self.application_url=application_url;self.events=[];self.frozen=None;self.result=None;self.preserve=preserve
     def record(self,kind,row):
         self.events.append(deepcopy({'kind':kind,**row}));self._finish()
     def capture(self,observer,marker):
@@ -243,6 +252,8 @@ class ManualStorageBoundary:
         final=self.frozen['trace']['events'][-1]['primaryRaw']
         if not any(row.get('key')==KEY and row['kind'] in ('added','updated') and row['newValue']==final for row in self.events):return
         receipts=deepcopy(self.events)
+        # Save the exact candidate chain before validation, including rejects.
+        if self.preserve is not None:self.preserve(self.frozen,receipts)
         request=derive_realclock_request(self.frozen['trace'],receipts,self.frozen['marker'],self.application_url)
         self.result={**self.frozen,'storageEvents':receipts,'writes':request['nativePrimaryWrites']}
 
@@ -559,8 +570,14 @@ def worker(args):
         cap['cdp'].on('Debugger.scriptParsed',lambda event:cap['executed'].append(event) if event.get('url','').startswith(args.url) else None)
         page.on('response',lambda response:cap['responses'].append(response) if urlparse(response.url).path.endswith('.js') else None)
         page.on('pageerror',lambda error:report['errors'].append(str(error)))
-        storage_boundary=ManualStorageBoundary(args.url)
+        def preserve_boundary(frozen,receipts):
+            current['realClockCapture']={
+                'trace':dump('real-clock-boundary-trace.json',canonical(frozen['trace'])),
+                'deliveredStorageEvents':dump('real-clock-delivered-storage-events.json',canonical(receipts))}
+        storage_boundary=ManualStorageBoundary(args.url,preserve_boundary);cap['storageBoundary']=storage_boundary
+        cap['rawStorageReceipts']=[];cap['rawStorageReceiptRefs']=current['realClockRawStorageReceipts']=[]
         def storage_event(kind,row):
+            preserve_native_storage_receipt(cap,kind,row,dump)
             if row.get('storageId',{}).get('isLocalStorage') and row['storageId'].get('securityOrigin')==origin:
                 storage_boundary.record(kind,row)
                 if kind in ('removed','cleared'):check('real-clock trace never deletes native storage',False,row)
@@ -593,9 +610,7 @@ def worker(args):
         receipt_deadline=min(time.monotonic()+7,report['_started']+BUDGETS[args.lane]-10)
         while storage_boundary.result is None and time.monotonic()<receipt_deadline:
             page.wait_for_timeout(10)
-        current['realClockCapture']={
-            'trace':dump('real-clock-boundary-trace.json',canonical(storage_boundary.frozen['trace'])),
-            'deliveredStorageEvents':dump('real-clock-delivered-storage-events.json',canonical(storage_boundary.events))}
+        if 'realClockCapture' not in current:preserve_boundary(storage_boundary.frozen,storage_boundary.events)
         check('manual result has its complete independent native storage receipt chain',storage_boundary.result is not None)
         boundary=storage_boundary.result
         prefix=boundary['trace']['events'];epoch=to_replay_epoch(prefix)
@@ -623,10 +638,17 @@ def worker(args):
         failure={'error':repr(error),'traceback':traceback.format_exc(),'scenario':current['id'] if current else 'binding','captureStatus':'inside-live-playwright'}
         report['failure']=failure
         if active_page is None:return
-        tasks={'dom':lambda:active_page.content(),'primary':lambda:raw(active_page) or 'null',
+        # These host copies do not pump CDP callbacks. Preserve them first while
+        # Playwright is still live, before any fallible browser-side reads.
+        tasks={}
+        if capture is not None and 'storageBoundary' in capture:
+            tasks.update({'raw-storage-receipts':lambda:canonical(capture['rawStorageReceipts']),
+                          'storage-events':lambda:canonical(capture['storageBoundary'].events),
+                          'manual-boundary':lambda:canonical(capture['storageBoundary'].frozen)})
+        tasks.update({'dom':lambda:active_page.content(),'primary':lambda:raw(active_page) or 'null',
                'events':lambda:canonical(active_page.evaluate('window.__ecWitness')),
                'trace':lambda:canonical(capture['trace'].snapshot()),
-               'screenshot':lambda:active_page.screenshot(full_page=True,caret='initial')}
+               'screenshot':lambda:active_page.screenshot(full_page=True,caret='initial')})
         for name,operation in tasks.items():
             try:failure[name]=dump('failure-'+name+('.png' if name=='screenshot' else '.html' if name=='dom' else '.json'),operation())
             except BaseException as error:failure.setdefault('captureErrors',{})[name]=repr(error)

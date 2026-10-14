@@ -251,7 +251,18 @@ class NativeReloadScheduleContract(unittest.TestCase):
         research_gate = original_read(ROOT / 'scripts/test_research_unlock_copy_gate.py')
         energy_adapter = b'    from test_energy_challenge_gate import previous_workflow as successor_workflow\n'
         batch_gate = original_read(ROOT / 'scripts/test_building_batch_gate.py')
-        if energy_adapter in batch_gate:
+        lab_gate = original_read(ROOT / 'scripts/test_lab_blockers_gate.py').decode('utf-8')
+        lab_entries = [node for node in ast.parse(lab_gate).body
+                       if isinstance(node, ast.FunctionDef) and node.name == 'previous_workflow']
+        self.assertEqual(len(lab_entries), 1)
+        capture_adapter = (
+            "def previous_workflow(workflow=None):\n"
+            "    from energy_verified_gate_projection import call\n"
+            "    return call('lab_workflow', ROOT, workflow)")
+        if ast.get_source_segment(lab_gate, lab_entries[0]) == capture_adapter:
+            expected_error = str(('Current bytes differ from committed object',
+                                  '.github/workflows/p4-original-verify.yml'))
+        elif energy_adapter in batch_gate:
             self.assertIn(batch_adapter, research_gate)
             expected_error = 'Unapproved energy eleven-job workflow drift'
         elif batch_adapter in research_gate:
@@ -276,8 +287,9 @@ class NativeReloadScheduleContract(unittest.TestCase):
             def read_bytes(path, changed=changed):
                 return changed.encode('utf-8') if path == workflow_path else original_read(path)
             with mock.patch.object(Path, 'read_bytes', read_bytes):
-                with self.assertRaisesRegex(AssertionError, '^' + expected_error + '$'):
+                with self.assertRaises(AssertionError) as caught:
                     self.test_schedules_have_separate_outputs_and_both_complete_ci_gates()
+                self.assertEqual(str(caught.exception), expected_error)
 
     def test_live_reload_adoption_is_distinct_from_strict_validation(self):
         source = (ROOT / 'scripts/npc-attack-natural-route.ts').read_text()

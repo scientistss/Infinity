@@ -253,7 +253,8 @@ def validate(root,expected_sha):
     release_raw=C.resolve_reference(root,report['release']);release=decode(release_raw)
     assert C.sha(release_raw)==identity['releaseSha256'] and release['sourceSha']==expected_sha and release['saveVersion']==9 and release['saveRevision']==16
     assert report['version']==release['version'] and len(report['assets'])==len(release['files'])==62
-    assert {asset['file'] for asset in report['assets']}==set(release['files']) and release['files']==identity['assets']
+    assert {asset['file'] for asset in report['assets']}==set(release['files'])
+    assert identity['assets']=={**release['files'],'release.json':C.sha(release_raw)}
     for asset in report['assets']:assert C.sha(C.resolve_reference(root,asset['original']))==release['files'][asset['file']]==identity['assets'][asset['file']]
     natural,route,plan,oracle,states,initial=load_inputs(root/'natural',root/'oracle/manifest.json',expected_sha)
     assert natural['sourceTree']==identity['source']['fullTree'] and oracle['runtimeNode']==report['runtimeNode']

@@ -163,6 +163,36 @@ class SolarContract(unittest.TestCase):
             ('checkpoint',{}),('reject',{'api':'enqueue'}),('reject',{'api':'enqueueResearch'}),('reject',{'api':'finishEnergyChallenge'})]]
         self.assertEqual(S.navigation_schedule(plan),['facilities','facilities','research','curvature','save','facilities','research','curvature','save'])
 
+    def test_identity_assets_are_exactly_release_files_and_actual_release_hash(self):
+        # Execute the actual census assertions; do not duplicate the predicate in
+        # a test-only validator or need a synthetic 4,383-state native report.
+        tree=ast.parse((ROOT/'scripts/energy_challenge_solar_census.py').read_text())
+        validate=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='validate')
+        checks=[node for node in validate.body if isinstance(node,ast.Assert)
+                and ("report['assets']" in ast.unparse(node) or "identity['assets']" in ast.unparse(node))]
+        self.assertEqual(len(checks),3)
+        code=compile(ast.Module(body=checks,type_ignores=[]),'<actual solar asset assertions>','exec')
+        files={f'asset-{i}.js':S.C.sha(str(i)) for i in range(62)}
+        release={'version':'test-version','files':files};release_raw=S.C.canonical(release)
+        report={'version':release['version'],'assets':[{'file':name} for name in files]}
+        identity={'assets':{**files,'release.json':S.C.sha(release_raw)}}
+        def run(r,i,raw=release_raw):
+            exec(code,{'report':r,'identity':i,'release':release,'release_raw':raw,'C':S.C})
+        run(report,identity)
+        mutations=[lambda r,i:i['assets'].pop('release.json'),
+                   lambda r,i:i['assets'].pop('asset-0.js'),
+                   lambda r,i:i['assets'].update({'unexpected.js':S.C.sha('extra')}),
+                   lambda r,i:i['assets'].update({'release.json':S.C.sha('wrong release')}),
+                   lambda r,i:i['assets'].update({'asset-0.js':S.C.sha('wrong asset')}),
+                   lambda r,i:r['assets'].pop(),
+                   lambda r,i:r['assets'].append({'file':'extra.js'}),
+                   lambda r,i:r['assets'][0].update(file='extra.js'),
+                   lambda r,i:r['assets'][0].update(file='asset-1.js')]
+        for mutate in mutations:
+            bad_report,bad_identity=deepcopy(report),deepcopy(identity);mutate(bad_report,bad_identity)
+            with self.subTest(mutation=mutate),self.assertRaises(AssertionError):run(bad_report,bad_identity)
+        with self.assertRaises(AssertionError):run(report,identity,release_raw+b' ')
+
     def test_only_pristine_context_seed_no_midjourney_import_or_injection(self):
         tree=ast.parse(RUNNER);worker=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='worker')
         context_calls=[n for n in ast.walk(worker) if isinstance(n,ast.Call) and getattr(n.func,'attr',None)=='new_context' and any(k.arg=='storage_state' for k in n.keywords)]

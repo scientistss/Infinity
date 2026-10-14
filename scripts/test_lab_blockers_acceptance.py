@@ -97,6 +97,41 @@ class IndependentDisplayOracleTests(unittest.TestCase):
 
 
 class NativeRunnerContractTests(unittest.TestCase):
+    def test_release_schema_uses_explicit_lift_without_relabeling_historical_input(self):
+        historical = {'schema': 'infinity-original-p4', 'version': 9, 'revision': 14,
+                      'state': {'allHistoricalFields': ['retained', 123]}, 'savedAt': 500, 'lastTickAt': 500}
+        before = copy.deepcopy(historical)
+        self.assertTrue(module.lab_release_schema_matches({'saveVersion': 9, 'saveRevision': 16}, historical))
+        for release in ({'saveVersion': 9, 'saveRevision': 14}, {'saveVersion': 9, 'saveRevision': 15},
+                        {'saveVersion': 8, 'saveRevision': 16}, {'saveVersion': 9}, {}):
+            self.assertFalse(module.lab_release_schema_matches(release, historical))
+        self.assertEqual(historical, before)
+        for revision in (13, 15, 16):
+            changed = copy.deepcopy(historical); changed['revision'] = revision
+            with self.assertRaisesRegex(AssertionError, '^Only genuine r14 envelope may use this adapter$'):
+                module.lab_release_schema_matches({'saveVersion': 9, 'saveRevision': 16}, changed)
+
+    def test_shared_release_verifier_has_only_one_reviewed_predicate_change(self):
+        shared = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+        old = "release_metadata.get('saveVersion') == fixtures['base']['version'] and release_metadata.get('saveRevision') == fixtures['base']['revision']"
+        original = next(node for node in ast.parse(shared).body if isinstance(node, ast.FunctionDef) and node.name == 'verify_bundle')
+        expected = ast.parse(ast.get_source_segment(shared, original).replace(old,
+            "lab_release_schema_matches(release_metadata, fixtures['base'])"))
+        observed = []; real_compile = compile
+        def capture(source, filename, *args, **kwargs):
+            if filename == '<reviewed-lab-r14-to-r16-release-verifier>': observed.append(source)
+            return real_compile(source, filename, *args, **kwargs)
+        with patch('builtins.compile', side_effect=capture): module.load_reviewed_helpers()
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(ast.dump(observed[0]), ast.dump(expected))
+        original_read = Path.read_text
+        def changed(path, *args, **kwargs):
+            value = original_read(path, *args, **kwargs)
+            return value.replace(old, 'True') if path == ROOT / 'scripts/browser-npc-attack.py' else value
+        with patch.object(Path, 'read_text', changed):
+            with self.assertRaisesRegex(RuntimeError, '^Exact historical release-schema predicate changed$'):
+                module.load_reviewed_helpers()
+
     def test_ci_only_gate_precedes_playwright_import(self):
         source = SCRIPT.read_text()
         self.assertLess(source.index("if os.environ.get('CI') != 'true'"), source.index('from playwright.sync_api import'))

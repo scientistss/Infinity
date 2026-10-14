@@ -419,12 +419,24 @@ read = Path.read_bytes
 workflow = root/new.energy.WORKFLOW_PATH
 diagnostic = root/'.github/workflows/manual-unit-old-proof.yml'
 package, lock = root/'package.json', root/'package-lock.json'
+workflow_bytes = read(workflow)
+lab_start = workflow_bytes.index(b'  lab-blockers:\n')
+lab_end = workflow_bytes.index(b'  manual-unit-payments:\n', lab_start)
+workflow_mutations = (
+    ('missing_lab', workflow_bytes[:lab_start] + workflow_bytes[lab_end:]),
+    ('skipped_aggregate', workflow_bytes.replace(b"assert job['result'] == 'success'",
+                                               b"assert job['result'] in ('success', 'skipped')", 1)),
+    ('changed_orbital_command', workflow_bytes.replace(b'python scripts/browser-npc-attack.py ',
+                                                      b'echo skipped-orbital ', 1)),
+)
+assert all(changed != workflow_bytes for _, changed in workflow_mutations)
 rows = []
 for label, targets in (
     ('workflow_newline', {workflow: read(workflow)+b'\n'}),
     ('package_newline', {package: read(package)+b'\n'}),
     ('lock_dependency_bytes', {lock: read(lock).replace(b'break_infinity.js', b'break_infinity.xx', 1)}),
     ('workflow_and_diagnostic_priority', {workflow: read(workflow)+b'\n', diagnostic: read(diagnostic)+b'\n'}),
+    *((label, {workflow: changed}) for label, changed in workflow_mutations),
 ):
     row = {'input': label}
     def altered(path): return targets[path] if path in targets else read(path)
@@ -453,6 +465,9 @@ print(json.dumps(rows))
                 ('package_newline', "('Unapproved energy support bytes', 'package.json')", 'package.json'),
                 ('lock_dependency_bytes', "('Unapproved energy support bytes', 'package-lock.json')", 'package-lock.json'),
                 ('workflow_and_diagnostic_priority', workflow_error, '.github/workflows/manual-unit-old-proof.yml'),
+                ('missing_lab', workflow_error, '.github/workflows/p4-original-verify.yml'),
+                ('skipped_aggregate', workflow_error, '.github/workflows/p4-original-verify.yml'),
+                ('changed_orbital_command', workflow_error, '.github/workflows/p4-original-verify.yml'),
             )
             self.assertEqual(len(rows), len(expected))
             for row, (label, old_error, path) in zip(rows, expected):

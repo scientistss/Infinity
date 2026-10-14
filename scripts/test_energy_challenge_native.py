@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import energy_challenge_census as census
 import energy_challenge_trace as trace
@@ -209,6 +210,99 @@ class NativeContract(unittest.TestCase):
             with self.subTest(mutation=mutate),self.assertRaises(AssertionError):
                 for event in storage:boundary.record(event['kind'],{k:v for k,v in event.items() if k!='kind'})
             self.assertIsNone(boundary.result)
+
+    def test_raw_storage_receipts_preserve_complete_unfiltered_rows(self):
+        _,observer,storage=realclock_receipts()
+        with tempfile.TemporaryDirectory() as directory:
+            out=Path(directory);evidence=browser.Evidence(out,{'checkCount':0})
+            cap={'trace':observer,'rawStorageReceipts':[],'rawStorageReceiptRefs':[]}
+            for number,event in enumerate(storage):
+                row={k:deepcopy(v) for k,v in event.items() if k!='kind'}
+                row['unrecognizedMetadata']={'literal':['retain',number]}
+                row['storageId']['securityOrigin']='https://unrelated.invalid'
+                original=deepcopy(row)
+                browser.preserve_native_storage_receipt(cap,event['kind'],row,evidence.dump)
+                receipt=json.loads(census.resolve_reference(out,cap['rawStorageReceiptRefs'][-1]))
+                self.assertEqual(receipt,{'deliverySequence':number,'kind':event['kind'],'row':original,
+                    'traceEventCount':len(observer.events),'traceLastSequence':observer.events[-1]['sequence']})
+                row['unrecognizedMetadata']['literal'].append('later mutation')
+                self.assertEqual(cap['rawStorageReceipts'][-1],receipt)
+            self.assertEqual([row['deliverySequence'] for row in cap['rawStorageReceipts']],[0,1,2])
+            evidence.journal.close()
+        tree=ast.parse((ROOT/'scripts/browser-energy-challenge.py').read_text())
+        callback=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='storage_event')
+        self.assertEqual(ast.unparse(callback.body[0]),'preserve_native_storage_receipt(cap, kind, row, dump)')
+        self.assertIsInstance(callback.body[1],ast.If)
+
+    def test_unknown_storage_key_is_preserved_before_strict_rejection_in_either_order(self):
+        for receipts_first in (False,True):
+            with self.subTest(receipts_first=receipts_first),tempfile.TemporaryDirectory() as directory:
+                _,observer,storage=realclock_receipts()
+                unknown={'kind':'added','storageId':deepcopy(storage[0]['storageId']),
+                         'key':'unrecognized-native-key','newValue':'complete literal raw value',
+                         'extraNativeMetadata':{'keep':['all','fields']}}
+                storage.insert(2,unknown)
+                out=Path(directory);evidence=browser.Evidence(out,{'checkCount':0});saved={}
+                cap={'trace':observer,'rawStorageReceipts':[],'rawStorageReceiptRefs':[]}
+                def preserve(frozen,receipts):
+                    saved['trace']=evidence.dump('boundary.json',census.canonical(frozen['trace']))
+                    saved['storage']=evidence.dump('storage.json',census.canonical(receipts))
+                boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/',preserve)
+                def validate(snapshot,receipts,marker,url):
+                    self.assertEqual(json.loads(census.resolve_reference(out,saved['trace'])),snapshot)
+                    self.assertEqual(json.loads(census.resolve_reference(out,saved['storage'])),storage)
+                    raw=[json.loads(census.resolve_reference(out,ref)) for ref in cap['rawStorageReceiptRefs']]
+                    self.assertEqual([r['deliverySequence'] for r in raw],list(range(4)))
+                    self.assertEqual(raw[2]['row'],{k:v for k,v in unknown.items() if k!='kind'})
+                    return census.derive_realclock_request(snapshot,receipts,marker,url)
+                with patch.object(browser,'derive_realclock_request',side_effect=validate) as derive:
+                    if not receipts_first:boundary.capture(observer,3)
+                    with self.assertRaisesRegex(AssertionError,'unrecognized-native-key') as error:
+                        for event in storage:
+                            row={k:v for k,v in event.items() if k!='kind'}
+                            browser.preserve_native_storage_receipt(cap,event['kind'],row,evidence.dump)
+                            boundary.record(event['kind'],row)
+                        if receipts_first:boundary.capture(observer,3)
+                    self.assertEqual(error.exception.args[0],('Unexpected real-clock native storage receipt',2,'added','unrecognized-native-key'))
+                    self.assertEqual(derive.call_count,1)
+                self.assertIsNone(boundary.result)
+                self.assertEqual(json.loads(census.resolve_reference(out,saved['storage']))[2],unknown)
+                evidence.journal.close()
+
+    def test_storage_failure_host_snapshots_survive_all_browser_capture_errors(self):
+        _,observer,storage=realclock_receipts()
+        boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/')
+        boundary.capture(observer,3)
+        for row in storage[:-1]:boundary.record(row['kind'],{k:v for k,v in row.items() if k!='kind'})
+        tree=ast.parse((ROOT/'scripts/browser-energy-challenge.py').read_text())
+        capture=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='capture_failure')
+        module=ast.Module(body=[capture],type_ignores=[])
+        class BrokenPage:
+            def content(self):order.append('browser-read');raise RuntimeError('closed during capture')
+            def evaluate(self,*args):raise RuntimeError('closed during capture')
+            def screenshot(self,**kwargs):raise RuntimeError('closed during capture')
+        class BrokenTrace:
+            def snapshot(self):raise RuntimeError('no trace snapshot available')
+        for absent_snapshot in (False,True):
+            with self.subTest(absent_snapshot=absent_snapshot),tempfile.TemporaryDirectory() as directory:
+                if absent_snapshot:boundary.frozen=None
+                cap={'trace':BrokenTrace() if absent_snapshot else observer,'storageBoundary':boundary,
+                     'rawStorageReceipts':[{'complete':'raw receipt'}]}
+                out=Path(directory);report={'checkCount':0};evidence=browser.Evidence(out,report);order=[]
+                def dump(label,value):order.append(label);return evidence.dump(label,value)
+                env={'report':report,'current':{'id':'migrate-r14'},'active_page':BrokenPage(),'capture':cap,
+                     'dump':dump,'canonical':census.canonical,'raw':lambda page:page.evaluate('primary'),
+                     'traceback':browser.traceback}
+                exec(compile(module,'<actual capture_failure>','exec'),env)
+                env['capture_failure'](AssertionError('receipt rejected'))
+                failure=report['failure']
+                for name,expected in [('raw-storage-receipts',cap['rawStorageReceipts']),
+                                      ('storage-events',boundary.events),('manual-boundary',boundary.frozen)]:
+                    self.assertEqual(json.loads(census.resolve_reference(out,failure[name])),expected)
+                self.assertEqual(order[:4],['failure-raw-storage-receipts.json','failure-storage-events.json','failure-manual-boundary.json','browser-read'])
+                self.assertEqual(set(failure['captureErrors']),{'dom','primary','events','screenshot'}|({'trace'} if absent_snapshot else set()))
+                self.assertEqual(failure['captureStatus'],'inside-live-playwright')
+                evidence.journal.close()
 
     def test_replay_success_flag_cannot_replace_source_state_and_write_bindings(self):
         _,observer,storage=realclock_receipts()

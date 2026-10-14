@@ -187,9 +187,10 @@ def derive_realclock_request(snapshot, storage_events, marker, application_url):
     url=urlparse(application_url);origin=f'{url.scheme}://{url.netloc}'
     durable={KEY:startup['sourceRaw']};writes=[]
     assert storage_events
-    for row in storage_events:
+    for sequence,row in enumerate(storage_events):
         assert row['storageId']['isLocalStorage'] is True and row['storageId']['securityOrigin']==origin
-        assert row['kind'] in ('added','updated') and row['key'] in (KEY,KEY+'.backup')
+        assert row['kind'] in ('added','updated') and row['key'] in (KEY,KEY+'.backup'), (
+            'Unexpected real-clock native storage receipt',sequence,row.get('kind'),row.get('key'))
         key=row['key'];new=row['newValue'];assert type(new) is str
         if row['kind']=='added':assert key not in durable
         else:assert key in durable and row['oldValue']==durable[key] and new!=durable[key]

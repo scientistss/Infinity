@@ -55,6 +55,23 @@ def load_reviewed_helpers():
     if {node.name for node in nodes} != names: raise RuntimeError('Reviewed native helper contract changed')
     exec(compile(ast.Module(body=nodes, type_ignores=[]), '<reviewed-lab-native-helpers>', 'exec'), globals())
     load_shared_helpers()
+    # This runner deliberately imports an unchanged r14 historical envelope.
+    # Bind the current release to its explicit r16 lift, without relabeling it.
+    shared = (ROOT / 'scripts/browser-npc-attack.py').read_text()
+    verifier = [node for node in ast.parse(shared).body
+                if isinstance(node, ast.FunctionDef) and node.name == 'verify_bundle']
+    if len(verifier) != 1: raise RuntimeError('Unique reviewed release verifier required')
+    original = ast.get_source_segment(shared, verifier[0])
+    old = "release_metadata.get('saveVersion') == fixtures['base']['version'] and release_metadata.get('saveRevision') == fixtures['base']['revision']"
+    if original.count(old) != 1: raise RuntimeError('Exact historical release-schema predicate changed')
+    adjusted = original.replace(old, 'lab_release_schema_matches(release_metadata, fixtures[\'base\'])')
+    exec(compile(ast.parse(adjusted), '<reviewed-lab-r14-to-r16-release-verifier>', 'exec'), globals())
+
+
+def lab_release_schema_matches(release, historical):
+    lifted = lift_r14_envelope_to_r16(historical)
+    return (release.get('saveVersion') == lifted['version']
+            and release.get('saveRevision') == lifted['revision'])
 
 
 def metadata(full=False):
