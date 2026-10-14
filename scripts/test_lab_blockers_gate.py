@@ -454,7 +454,7 @@ class LabBlockersGateTests(unittest.TestCase):
         for relative in (*RELEASE_FILES, *CORRECTED_FORMATION_VERSION_FILES):
             target = ROOT / relative
             original = original_read(target)
-            for changed in (original + b'\n', original.replace(b'0.6.31-alpha.1', OLD_VERSION.encode(), 1)):
+            for changed in (original + b'\n', original.replace(b'0.6.32-alpha.1', OLD_VERSION.encode(), 1)):
                 def read_bytes(path, target=target, changed=changed):
                     return changed if path == target else original_read(path)
                 with self.subTest(relative=relative), patch.object(Path, 'read_bytes', read_bytes):

@@ -300,7 +300,8 @@ def production_action_handlers(text):
         rf'\.includes\((?P=action)\.type\)&&'
         rf'(?:{identifier}\.retireNpcRehearsal\(\)|'
         rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\)\)|'
-        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\),{identifier}\.retireBuildingTemplateBatch\(\)\)),)?'
+        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\),{identifier}\.retireBuildingTemplateBatch\(\)\)|'
+        rf'\({identifier}\.retireNpcRehearsal\(\),{identifier}\.retireManualUnits\(\),{identifier}\.retireBuildingTemplateBatch\(\),{identifier}\.retireEnergyChallenge\(\)\)),)?'
         rf'(?P<session>{identifier})\.cancelPendingImport\(\);'
         rf'const (?P<recovery>{identifier})={recovery}\.includes\((?P=action)\.type\);'
         rf'if\((?P=session)\.mode!=="ready"&&!(?P=recovery)\)\{{'
@@ -324,6 +325,11 @@ def production_action_handlers(text):
             rf'&&\(({identifier})\.retireNpcRehearsal\(\),({identifier})\.retireManualUnits\(\),({identifier})\.retireBuildingTemplateBatch\(\)\),',
             match.group(0))
         if triple is not None and len(set(triple.groups())) != 1:
+            continue
+        quartet = re.search(
+            rf'&&\(({identifier})\.retireNpcRehearsal\(\),({identifier})\.retireManualUnits\(\),({identifier})\.retireBuildingTemplateBatch\(\),({identifier})\.retireEnergyChallenge\(\)\),',
+            match.group(0))
+        if quartet is not None and len(set(quartet.groups())) != 1:
             continue
         valid.append(match)
     return valid
@@ -375,7 +381,7 @@ def production_serializers(text):
               rf'|return\{{(?:(?:npcEconomy:{identifier}\({state}\.npcEconomy\),)?'
               rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,'
               rf'{state}\.orders\.nextJobId\),)?)')
-    return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text)) + scout_production_serializers(text)
+    return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text)) + scout_production_serializers(text) + energy_production_serializers(text)
 
 
 def scout_production_serializers(text):
@@ -425,8 +431,60 @@ def scout_production_serializers(text):
     return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
 
 
+def energy_production_serializers(text):
+    """Exact r16 wrapper: scout scan, energy scan/reader/references, then old fields.
+
+    Every returned field is still mandatory. The messages local is bound at its
+    declaration, reference validation and return; no arbitrary prefix or helper
+    body is admitted. Runtime source/HTTP/V8 hashes remain the identity proof.
+    """
+    identifier = r'[A-Za-z_$][A-Za-z0-9_$]*'
+    state = r'(?P=state)'
+
+    def call(field):
+        return rf'{field}:{identifier}\({state}\.{field}\)'
+
+    def copy(field):
+        return rf'{field}:\{{\.\.\.{state}\.{field}\}}'
+
+    def direct(field):
+        return rf'{field}:{state}\.{field}'
+
+    fields = [
+        *(call(field) for field in ('buildingTemplates', 'formations', 'researchTemplates', 'orders')),
+        rf'planets:{state}\.planets\.map\({identifier}\)',
+        direct('activePlanetId'), rf'deepSpace:structuredClone\({state}\.deepSpace\)',
+        copy('universe'), call('fleets'),
+        r'messages:(?P=messages)',
+        direct('nextFleetId'), call('research'),
+        rf'darkMatter:(?P<big>{identifier})\({state}\.darkMatter\)', copy('items'),
+        rf'boosters:{state}\.boosters\.map\((?P<booster>{identifier})=>\(\{{\.\.\.(?P=booster)\}}\)\)',
+        call('arcade'), call('lifetime'), rf'warpCores:(?P=big)\({state}\.warpCores\)',
+        copy('curvature'), rf'totalTime:(?P=big)\({state}\.totalTime\)',
+        *(direct(field) for field in ('manualClicks', 'seenEnergyShortage', 'hasPrestiged')),
+        rf'unlockedCards:{state}\.unlockedCards\.slice\(\)', call('protocols'),
+        rf'unlocked:{state}\.unlocked\.slice\(\)', copy('stats'), direct('offlineBonusHours'),
+    ]
+    prefix = (rf'(?<![\w$])(?<!async )function (?P<name>{identifier})\((?P<state>{identifier})\)\{{'
+              rf'{identifier}\({state},!1\)(?:;|,){identifier}\({state},!1\);'
+              rf'const (?P<challenge>{identifier})={identifier}\({state}\.energyChallenge\);'
+              rf'{identifier}\({state},(?P=challenge)\);'
+              rf'const (?P<messages>{identifier})={identifier}\({state}\.messages\);'
+              rf'{identifier}\({state},!1\)(?:;|,){identifier}\({state}\)(?:;|,)'
+              rf'{identifier}\({state},(?P=messages)\);'
+              rf'const (?P<context>{identifier})={identifier}\({state}\.universe\.seed,(?:512|{identifier}),'
+              rf'{state}\.planets\.map\((?P<planet>{identifier})=>(?P=planet)\.coordinates\)\);'
+              rf'return\{{energyChallenge:(?P=challenge),npcEconomy:{identifier}\({state}\.npcEconomy,(?P=context)\),'
+              rf'npcBattles:{identifier}\({state}\.npcBattles,(?P=context)\),'
+              rf'terraformerGrantJobFloor:{identifier}\({state}\.terraformerGrantJobFloor,{state}\.orders\.nextJobId\),')
+    return list(re.finditer(prefix + ','.join(fields) + r'\}\}', text))
+
+
 def synchronized_domain_provenance(repository, candidate, git, check):
     """Verify exact source identity, independently of the later native assertions."""
+    if git('ls-tree', candidate, '--', 'tests/fixtures/energy-challenge-provenance.json'):
+        from test_energy_challenge_provenance import energy_challenge_provenance
+        return energy_challenge_provenance(repository, candidate, git, check)
     if candidate != '6f73735534ffc1b0e47a01935d8c6e3ff786c989' and git('ls-tree', candidate, '--', 'tests/fixtures/building-batch-provenance.json'):
         from test_building_batch_provenance import building_batch_provenance
         return building_batch_provenance(repository, candidate, git, check)

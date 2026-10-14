@@ -1838,7 +1838,7 @@ try:
           and source_report['source']['sourceScopeStatusPorcelain'] == '')
     check('native oracle declares and proves the exact four-reload schedule', native_reload_schedule_valid(source_report))
     check('original public r12 final raw remains byte-exact', hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'
-          and fixtures['originalSave']['revision'] == 12 and fixtures['base']['revision'] == 14
+          and fixtures['originalSave']['revision'] == 12 and fixtures['base']['revision'] == 16
           and fixtures['provenance']['injectedGameState'] is False)
     for row in fixtures['milestones']:
         check('milestone raw bytes and full envelope are bound: ' + row['name'],
@@ -1855,7 +1855,7 @@ try:
         begin_case('suite integrity')
         verify_compact_report_coverage()
         check('no actual app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('served release exact v9/r14', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)
+        check('served release exact v9/r16', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 16)
         completed = True; browser.close(); flush(full=True, final=True)
 except BaseException as error:
     if failure is None:

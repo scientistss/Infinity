@@ -4,8 +4,11 @@
 Real HTTP/V8 production, native file import/confirmation/Storage, trusted normal
 inputs. Logical Date/performance/RAF time is controlled; no real-time claim.
 Explicit DOM/storage attacks and 3/4-planet synthetic boundaries stay labeled.
+HTTP caching is explicitly disabled for exact cold-reload source identity;
+this suite does not measure browser cache or rendering performance.
 """
 import argparse
+from contextlib import contextmanager
 import copy
 import hashlib
 import importlib.util
@@ -35,6 +38,20 @@ SCENARIOS = ('natural-payments-reload-no-replay', 'natural-unobserved-control', 
 
 def sha(raw):
     return hashlib.sha256(raw.encode() if isinstance(raw, str) else raw).hexdigest()
+
+
+def http_response_evidence(response):
+    request, chain, seen = response.request, [], set()
+    while request is not None:
+        if id(request) in seen or len(chain) >= 16:
+            raise ValueError('Nonfinite HTTP redirect chain')
+        seen.add(id(request))
+        chain.append({'url': request.url, 'resourceType': request.resource_type})
+        request = request.redirected_from
+    return {'url': response.url, 'status': response.status,
+            'requestChainFinalFirst': chain,
+            'cacheHeaders': {key: value for key, value in response.headers.items()
+                             if key.lower() in ('cache-control', 'etag', 'last-modified', 'age')}}
 
 
 def atomic_json(path, value):
@@ -239,7 +256,7 @@ def worker(args):
     def import_file(page, path, accept=True):
         tab(page, 'save'); dialogs = []
         def answer(dialog):
-            valid = dialog.type == 'confirm' and dialog.message.startswith('已读取存档 v9/r14。') and '是否替换当前进度' in dialog.message
+            valid = dialog.type == 'confirm' and dialog.message.startswith('已读取存档 v9/r16。') and '是否替换当前进度' in dialog.message
             dialogs.append({'valid': valid, 'message': dialog.message, 'accepted': valid and accept})
             dialog.accept() if valid and accept else dialog.dismiss()
         page.once('dialog', answer)
@@ -256,7 +273,14 @@ def worker(args):
             relative = unquote(urlparse(url).path).removeprefix(unquote(parsed.path))
             if not relative.endswith('.js'): continue
             responses = [response for response in capture['responses'] if response.url == url]
-            check('executed production asset has one real HTTP response', len(responses) == 1 and responses[0].status == 200 and relative in release['files'])
+            identity_evidence = {'executed': event, 'relative': relative,
+                                 'matchingResponseCount': len(responses),
+                                 'responses': [http_response_evidence(response) for response in capture['responses']],
+                                 'protocolResponses': capture['responseEvents'],
+                                 'cachePolicy': 'Network.setCacheDisabled(true) before every initial navigation; inherited by reload'}
+            identity_ref = dump(current['id'] + '-http-response-identity.json', json.dumps(identity_evidence, ensure_ascii=False, indent=2))
+            current.setdefault('httpIdentityObservations', []).append(identity_ref)
+            check('executed production asset has one real HTTP response', len(responses) == 1 and responses[0].status == 200 and relative in release['files'], identity_ref)
             code = capture['cdp'].send('Debugger.getScriptSource', {'scriptId': event['scriptId']})['scriptSource']
             row = {'file': relative, 'url': url, 'httpSha256': sha(responses[0].body()), 'v8Sha256': sha(code), 'releaseSha256': release['files'][relative],
                    'httpOriginal': dump(current['id'] + '-http-executed.js', responses[0].body()), 'v8Original': dump(current['id'] + '-v8-executed.js', code)}
@@ -286,7 +310,11 @@ def worker(args):
         context.add_init_script(CLOCK.replace('__ORIGIN__', json.dumps(origin)).replace('__EPOCH__', str(fixture['ready']['savedAt'])))
         page = context.new_page(); active_page = page
         page.set_default_timeout(8000); page.set_default_navigation_timeout(12000)
-        capture = {'cdp': context.new_cdp_session(page), 'responses': [], 'executed': [], 'enableObserver': enable_observer}
+        capture = {'cdp': context.new_cdp_session(page), 'responses': [], 'executed': [], 'responseEvents': [], 'enableObserver': enable_observer}
+        capture['cdp'].send('Network.enable')
+        capture['cdp'].send('Network.setCacheDisabled', {'cacheDisabled': True})
+        capture['cdp'].on('Network.responseReceived', lambda event: capture['responseEvents'].append(event)
+                          if event.get('type') == 'Script' else None)
         capture['cdp'].send('Debugger.enable')
         capture['cdp'].on('Debugger.scriptParsed', lambda event: capture['executed'].append(event) if event.get('url', '').startswith(args.url) else None)
         page.on('response', lambda response: capture['responses'].append(response) if urlparse(response.url).path.endswith('.js') else None)
@@ -330,8 +358,38 @@ def worker(args):
     def finish(context, page):
         seal_event_scope(page)
         current['completed'] = True; flush(); context.close()
+    def capture_failure(error, capture_page=True):
+        # The outer fallback may see the same exception after Playwright stops.
+        if 'failure' in report:
+            return
+        report['completed'] = False; report['result'] = 'failed'
+        failure = report['failure'] = {'error': repr(error), 'traceback': traceback.format_exc(), 'scenario': current['id'] if current else 'binding'}
+        def attempt(step, capture):
+            try:
+                capture()
+            except BaseException as capture_error:
+                failure.setdefault('captureErrors', []).append({'step': step, 'error': repr(capture_error)})
+        attempt('original failure report', flush)
+        if capture_page and active_page is not None:
+            # Keep independent evidence available even when one capture fails.
+            attempt('DOM', lambda: dump('failure-dom.html', active_page.content()))
+            attempt('storage', lambda: dump('failure-storage.json', raw(active_page) or 'null'))
+            attempt('events', lambda: dump('failure-events.json', json.dumps(active_page.evaluate('window.__batchWitness'), ensure_ascii=False, indent=2)))
+            attempt('screenshot', lambda: active_page.screenshot(path=str(out / 'failure.png'), full_page=True, caret='initial'))
+        attempt('final failure report', flush)
+    @contextmanager
+    def retain_before_teardown():
+        try:
+            yield
+        except BaseException as error:
+            try:
+                capture_failure(error)
+            except BaseException:
+                # Even an unexpected diagnostic failure must not mask the test.
+                pass
+            raise
     try:
-        with sync_playwright() as playwright:
+        with sync_playwright() as playwright, retain_before_teardown():
             browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True,
                                                   args=['--no-sandbox', args.owner_marker])
             report['browserVersion'] = browser.version
@@ -404,7 +462,8 @@ def worker(args):
                     actual, ref = preserve(page, 'completed'); whole('all four exact local payments and completed jobs match complete API oracle', actual, fixture['completed']['state']); current['completedRaw'] = ref
                     seal_event_scope(page)
                     retire_observer(page, capture)
-                    capture['responses'].clear(); capture['executed'].clear(); page.reload(wait_until='networkidle'); seal_scripts(page, capture)
+                    capture['responses'].clear(); capture['executed'].clear(); capture['responseEvents'].clear()
+                    page.reload(wait_until='networkidle'); seal_scripts(page, capture)
                     advance(page, 30); tab(page, 'save'); page.locator('[data-action="save"]').click(); advance(page)
                     actual, ref = preserve(page, 'no-replay'); whole('reload and three more passes do not renew finite orders', actual, fixture['noReplay']['state']); current['afterRaw'] = ref
                     live, ref = export_live(page); whole('complete live no-replay result matches independent API oracle', live, fixture['noReplay']['state']); current['afterLiveExport'] = ref
@@ -537,15 +596,14 @@ def worker(args):
             check('no application exceptions', not report['errors'], report['errors'])
             report['completed'] = True; report['result'] = 'passed'; flush(); browser.close()
     except BaseException as error:
-        report['failure'] = {'error': repr(error), 'traceback': traceback.format_exc(), 'scenario': current['id'] if current else 'binding'}
-        if active_page:
+        if 'failure' not in report:
             try:
-                dump('failure-dom.html', active_page.content())
-                dump('failure-storage.json', raw(active_page) or 'null')
-                active_page.screenshot(path=str(out / 'failure.png'), full_page=True, caret='initial')
-            except BaseException as capture_error:
-                report['failure']['captureError'] = repr(capture_error)
-        flush(); raise
+                # Startup/teardown errors can be recorded, but no page API is
+                # usable here. Live failures must never be captured again.
+                capture_failure(error, capture_page=False)
+            except BaseException:
+                pass
+        raise
     return 0
 
 

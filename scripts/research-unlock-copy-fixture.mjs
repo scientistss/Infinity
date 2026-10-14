@@ -17,7 +17,8 @@ const WORLD_SEED = 20261013;
 const ARCADE_SEED = 49303029;
 const MAX_ENGINE_SECONDS = 300;
 const MAX_ACTIONS = 320;
-const EXPECTED_EFFECT = "1 级解锁深空星环机（信标版）";
+const EXPECTED_EFFECT = "1 级解锁深空星环机（信标版）（第 2 阶段后续版本开放）";
+const HISTORICAL_SOURCE = "49303d3740cf223955386ff984b335ca9b110087";
 const sha256 = value => createHash("sha256").update(value).digest("hex");
 const plain = value => JSON.parse(JSON.stringify(value));
 const args = process.argv.slice(2);
@@ -33,6 +34,12 @@ assert(["generate", "read"].includes(mode), "Use generate --out DIR or read --in
 for (const key of Object.keys(options)) assert(["out", "input", "source-root"].includes(key), `Unknown option ${key}`);
 assert(options.out, "--out is required; output is never written into an implicit report location");
 const sourceRoot = resolve(options["source-root"] ?? dirname(fileURLToPath(import.meta.url)), options["source-root"] ? "." : "..");
+if (mode === "generate") {
+  assert(options["source-root"], "Generation requires the explicit immutable old493 source root");
+  assert.equal(git("rev-parse", "HEAD"), HISTORICAL_SOURCE, "Actual old493 engine and serializer required");
+  assert.equal(git("status", "--porcelain=v1", "--untracked-files=all"), "", "Clean genuine historical generation source");
+  assert.equal(git("ls-files", "--others", "--ignored", "--exclude-standard", "--", "src"), "", "No ignored production shadows");
+}
 const moduleAt = relative => import(pathToFileURL(resolve(sourceRoot, relative)).href);
 const [{ createInitialState }, { activePlanet }, { canEnqueue, enqueue }, { tick, emptyTickLog },
   { exportSave, importSave, deserializeState, serializeState }, { economy },
@@ -183,7 +190,7 @@ if (mode === "read") {
     // Simulated duration is state.totalTime; it is not forged elapsed wall time.
     const rawFirstLab = exportSave(state, savedAt, savedAt);
     const projection = readProjection(rawFirstLab);
-    assert.equal(projection.astrophysics.effect, EXPECTED_EFFECT, "Generate expected candidate view only from the corrected presenter");
+    assert.equal(projection.astrophysics.effect, EXPECTED_EFFECT, "Generate genuine old493 view only from its own historical presenter");
     const expected = { schema: "infinity-research-unlock-expected-v1", source, ...projection };
     await writeFile(resolve(out, "raw-first-lab.json"), rawFirstLab, { flag: "wx" });
     await writeFile(resolve(out, "expected-view.json"), JSON.stringify(expected, null, 2) + "\n", { flag: "wx" });

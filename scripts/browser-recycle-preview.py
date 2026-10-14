@@ -27,7 +27,7 @@ from urllib.parse import urljoin, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 HOST_STARTED_MONOTONIC = time.monotonic()
 WIDTHS = (320, 390, 768, 1440)
-CANDIDATE_VERSION = '0.6.31-alpha.1'
+CANDIDATE_VERSION = '0.6.32-alpha.1'
 NATIVE_CLASSIFICATION = 'Explicit synthetic-origin real-engine paid battle/debris/return checkpoint; native readonly UI evidence only. Zero-only controlled functional clock. No natural progression, native payment, timing or paint claim.'
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 PANEL = '#recycle-preview'
@@ -108,8 +108,8 @@ def validate_fixture(value, original_bytes, source, runtime_node):
       or hashlib.sha256(value['adoptedRaw'].encode()).hexdigest() != value['adoptedRawSha256']
       or json.loads(value['adoptedRaw']) != value['base']):
         raise ValueError('Separate exact post-load explicit Save bytes required')
-    if value['base']['version'] != 9 or value['base']['revision'] != 14 or value['base']['savedAt'] != value['base']['lastTickAt']:
-        raise ValueError('Unchanged v9/r14 zero-gap envelope required')
+    if value['base']['version'] != 9 or value['base']['revision'] != 16 or value['base']['savedAt'] != value['base']['lastTickAt']:
+        raise ValueError('Unchanged v9/r16 zero-gap envelope required')
     battle = steps[2]['result']['deepSpace']['reports'][0]
     if battle['symbol'] != 'pirate' or not 1 <= len(battle['battle']['rounds']) <= 6 or not prior['deepSpace']['reports'][0]['returned'] or prior['fleets']:
         raise ValueError('Real pirate battle and survivor return required')
@@ -699,7 +699,7 @@ def main():
                     ref=persist_json('actual-google-chrome',{'actual':info,'expectedExecutable':args.chromium})
                     check('actual prerequisite Google Chrome native browser',info['product'].startswith(('Chrome/','HeadlessChrome/')),ref)
                     context,page=boot(fixtures['initialRaw'])
-                    check('exact candidate release and unchanged save schema',release_metadata['version']==CANDIDATE_VERSION and release_metadata['saveVersion']==9 and release_metadata['saveRevision']==14,release_metadata)
+                    check('exact candidate release and unchanged save schema',release_metadata['version']==CANDIDATE_VERSION and release_metadata['saveVersion']==9 and release_metadata['saveRevision']==16,release_metadata)
                     assets=[]
                     for name,digest in release_metadata['files'].items():
                         response=page.request.get(urljoin(args.url,name)); body=response.body()

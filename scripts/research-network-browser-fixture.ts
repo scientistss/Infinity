@@ -59,7 +59,7 @@ const milestones = Object.fromEntries(Object.entries(names).map(([key, name]) =>
   check(m.strictRoundtrips === 2 && m.stateAdoptedFromReload === true && m.subsequentLiveTickObserved === true
     && Number.isSafeInteger(m.firstSubsequentLiveTickAt) && m.firstSubsequentLiveTickAt > m.gameSeconds, `${name}: live strict handoff incomplete`);
   check(m.save.schema === SAVE_SCHEMA && m.save.version === SAVE_VERSION && m.save.revision === SAVE_REVISION
-    && SAVE_REVISION === 14 && Number.isSafeInteger(m.save.savedAt) && m.save.savedAt === m.save.lastTickAt, `${name}: strict zero-gap current envelope required`);
+    && SAVE_REVISION === 16 && Number.isSafeInteger(m.save.savedAt) && m.save.savedAt === m.save.lastTickAt, `${name}: strict zero-gap current envelope required`);
   const imported = importSave(JSON.stringify(m.save)), state = deserializeState(imported.state);
   exact(imported, m.save, `${name}: strict reader changed full save envelope`);
   exact(serializeState(state), m.save.state, `${name}: strict reader changed full state`);

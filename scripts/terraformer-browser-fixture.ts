@@ -4,7 +4,7 @@
  * independently asserted as well. Historical faults are separately classified.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
-import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import historical from "../tests/fixtures/terraformer-r9.json";
 import { setProductionPct } from "../src/automation/engine";
 import { catchUp } from "../src/core/offline";
@@ -43,7 +43,7 @@ const clone = (state: GameState): GameState => deserializeState(importSave(expor
 const saved = (state: GameState) => JSON.parse(exportSave(state, EPOCH));
 const load = (key: keyof typeof names) => {
   const source = milestones[key].save;
-  check(source.version === 9 && source.revision === 14 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
+  check(source.version === 9 && source.revision === 16 && source.savedAt === source.lastTickAt, `${key}: current zero-gap save required`);
   const state = deserializeState(importSave(JSON.stringify(source)).state);
   assertNpcEconomy(state, expectedNpcEconomy(milestones[key].npcAdoptedSegmentsSeconds), `${key}: counted natural continuation NPC age`);
   exact(serializeState(state), source.state, `${key}: strict import changes natural game state`);

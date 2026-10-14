@@ -11,7 +11,8 @@ import argparse
 from npc_display_contract import SAMPLE_JS as NPC_DISPLAY_SAMPLE_JS, normalize_npc_display, normalize_empty_lab_blockers, normalize_manual_unit_display
 from demolition_display_contract import FACILITY_DEMOLITION_SAMPLE_JS, normalize_demolition_display
 from building_batch_display_contract import SAMPLE_JS as BUILDING_BATCH_SAMPLE_JS, assert_building_batch_source_contract, normalize_building_batch_display, normalize_legacy_building_library
-from r14_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r14
+from r16_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r16
+from energy_challenge_display_contract import SAMPLE_JS as ENERGY_CHALLENGE_SAMPLE_JS, assert_energy_challenge_source_contract, normalize_energy_challenge_display
 import base64
 import copy
 import hashlib
@@ -33,6 +34,7 @@ parser.add_argument('--chromium')
 args=parser.parse_args()
 CURRENT_PACKAGE_VERSION=json.loads((Path(__file__).resolve().parents[1]/'package.json').read_text())['version']
 assert_building_batch_source_contract()
+assert_energy_challenge_source_contract()
 fixtures=json.loads(Path(args.fixture).read_text())
 KEY,BACKUP,EPOCH=fixtures['key'],fixtures['backupKey'],fixtures['epoch']
 HOME,COLONY=fixtures['homeId'],fixtures['colonyId']
@@ -170,7 +172,7 @@ def exact_state(actual, expected):
 
 
 def lift_r8_state(state, grant_job_floor, *, npc_wallet):
-    return lift_legacy_state_to_r14(state, source_revision=8, grant_job_floor=grant_job_floor, npc_wallet=npc_wallet)
+    return lift_legacy_state_to_r16(state, source_revision=8, grant_job_floor=grant_job_floor, npc_wallet=npc_wallet)
 
 
 def expected_npc_wallet(name):
@@ -487,6 +489,19 @@ def snapshot(page, omit_building_addition=False, ring_base=None, order_base=None
         'panelHTML':page.locator('[data-tab-panel="'+result['tab']+'"]').evaluate('(node)=>node.outerHTML'),
         'stored':raw(page),'controlledClock':page.evaluate('window.__renderProbe.at()')},ensure_ascii=False,indent=2))
     parity_captures.append({'side':side,'tab':result['tab'],'rawArtifact':artifact})
+    if result['tab']=='curvature':
+        stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
+        evidence=page.evaluate(ENERGY_CHALLENGE_SAMPLE_JS)
+        artifact=f'panel-parity-energy-challenge-{side}-{len(audits)}-raw.json'
+        (out/artifact).write_text(json.dumps({'snapshot':result,'evidence':evidence,'stored':stored,'controlledClock':at},ensure_ascii=False,indent=2))
+        check('challenge projection begins at the complete unchanged old base state: '+side,
+              exact_state(json.loads(stored)['state'],expected_state('base.initial',page)))
+        result=normalize_energy_challenge_display(result,evidence,json.loads(stored)['state'],side)
+        check('challenge projection never changes native DOM, storage or time: '+side,
+              raw(page)==stored and page.evaluate('window.__renderProbe.at()')==at and
+              page.locator('[data-tab-panel="curvature"]').evaluate('(node)=>node.outerHTML')==evidence['panelHTML'])
+        audits.append({'kind':'exact-inactive-challenge-display-addition','side':side,'rawArtifact':artifact,
+            'constraint':'Full source-bound constructor, unique insertion boundary, every identity, literal default text and original native button permission are asserted before removing only the new inactive region from copied evidence. Existing curvature panel, controls, status and all state remain exact.'})
     if result['tab']=='orders':
         stored=raw(page);at=page.evaluate('window.__renderProbe.at()')
         evidence=page.evaluate(BUILDING_BATCH_SAMPLE_JS)
@@ -1021,7 +1036,7 @@ def run_cases():
         before,count_before=differential_trace(name,args.before_url)
         after,count_after=differential_trace(name,args.url)
         check('trace metadata retains its original migration boundary even after new payments',assert_zero_grant_metadata(after,before,grant_job_floor=fixtures['base']['state']['orders']['nextJobId'],npc_wallet=expected_npc_wallet(name)))
-        check('every archived field matches on identical trace with only exact r9/r10/r11/r14 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'],npc_wallet=expected_npc_wallet(name))))
+        check('every archived field matches on identical trace with only exact r9/r10/r11/r14/r16 metadata',exact_state(after,lift_r8_state(before,fixtures['base']['state']['orders']['nextJobId'],npc_wallet=expected_npc_wallet(name))))
         if name.startswith('steady'):
             check('old bundle updates on every requested frame',count_before==len(fixtures['traces'][name]))
             check('ordinary latest-only rendering is bounded at 10Hz',18<=count_after<=21,{'before':count_before,'after':count_after})
@@ -1062,12 +1077,14 @@ def run_cases():
                 revision=8 if label=='before' else CURRENT_REVISION
                 paragraph=page.locator('[data-tab-panel="save"] p').first.inner_text()
                 cap=page.locator('[data-tab-panel="save"] p [data-bind="offline-cap"]').inner_text()
+                migration_text = ('有效 r2–r7 先备份后升级，' if label=='before' else
+                    '有效 r2–r14 先备份后升级；未发布的 r15 不支持。')
                 expected_paragraph=(f'原版 P4 开发存档使用独立位置，不读取或覆盖线上版本。接受 schema=infinity-original-p4 的 v9 / r{revision} 存档；'
-                    f'有效 r2–r{revision-1} 先备份后升级，仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。'
+                    +migration_text+'仅 r2 / r3 的旧自动跑灯授权不会沿用。v8 和其他分支格式不会导入。'
                     '读取失败时保留原件并暂停保存，可用“导出”取回。离线进度最多结算 '+cap+'。')
                 check('entire save metadata paragraph is the exact original text with its verified revision values',paragraph==expected_paragraph)
                 tokens={f'v9 / r{revision} 存档': 'v9 / r<current> 存档',
-                        f'有效 r2–r{revision-1} 先备份后升级': '有效 r2–r<previous> 先备份后升级'}
+                        migration_text: '有效 <strictly-verified-historical-revisions> 先备份后升级，'}
                 normalized=paragraph
                 for token,replacement in tokens.items():
                     check('save notice contains its exact supported revision metadata once',paragraph.count(token)==1)
@@ -1231,7 +1248,7 @@ def run_cases():
 
     case='labeled injected save failure freezes simulation and bounds protected painting'
     context,page=boot();tab(page,'save');baseline=raw(page)
-    # Migration already wrote canonical r14 at time zero. Re-saving identical
+    # Migration already wrote canonical r16 at time zero. Re-saving identical
     # bytes is a legitimate no-op, so make only the save envelope 1 ms newer.
     before_events=page.evaluate('window.__renderProbe.snapshot().events')
     page.evaluate('window.__renderProbe.advance(1)')
@@ -1305,7 +1322,7 @@ with sync_playwright() as playwright:
     finally:
         report={'completed':completed,'mode':MODE,'url':args.url,'beforeUrl':args.before_url,'fixture':fixtures['description'],
             'stateSchemaAddition':'Actual r8 source input is migrated by the current reader; every old state field stays exact; empty buildingTemplates, fixed migration floor and zero per-planet grant ledgers are independently asserted. Before visible snapshots, both bundles perform the same genuine manual save; all status text remains compared.',
-            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r14/r13) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded count-one manual-unit delta, manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
+            'parityMetadataException':f'Only the exact galaxy package-version token (verified releases 0.6.7-alpha.1 / {CURRENT_PACKAGE_VERSION}, with current version independently loaded from package.json) and the two exact save-notice current/previous revision tokens (verified r8/r7 and r16 with exact supported r2–r14 plus explicit r15 rejection) are normalized. The exact final closed #building-templates summary is separately asserted and omitted only from the paired orders snapshot; its independent browser suite checks the new region. Outside the separately recorded count-one manual-unit delta, manual-first ring, exact initial order-quote, final terraformer option, IRN-copy and precisely asserted demolition-control additions, complete paragraph boundaries, all other visible text, status, and controls remain exact. New NPC metadata is independently checked against fixed-old-engine adopted segment witnesses before every old-state comparison.',
             'parityBuildingBatchException':'At every folded/open/reopened orders capture, the full source-bound unopened batch block is independently checked and archived, including all IDs, native controls, values, permission states, attributes, exact text and final sibling boundary. Only its literal copied HTML and unique final summary suffix are projected; the former building-library last-child proof then runs on the exact remaining tree. Existing native full-panel immutability checks and every old state, shared amount, text and control comparison remain unchanged. No CPU trace/probe/model input is modified.',
             'parityNpcDisplayException':'The copied r8 base comparison retains every original message HTML node, text, time, and order. Only independently bound keyed old scout unavailable notices and the exact initial hidden rehearsal region are removed after full node-count/order/HTML/control-value checks; typed observations cannot use this projection. The copied evidence records all hidden data. Current state receives only validated null snapshot fields, and raw bytes, DOM and clock remain unchanged.',
             'parityResearchException':'At the complete unchanged historical base state, completed IRN is exactly zero, both labs are exactly level two, and only the literal paid active energy-1 job exists. The exact obsolete IRN later paragraph text becomes empty. Both complete old/new nodes, unique sibling boundaries, unchanged active detail and all sixteen ordered cards/actions are asserted before copied-evidence normalization. Separately, all actual planet queues and demolitions must contain no paid lab work; only the unique complete empty, hidden, closed lab-blocker disclosure in its exact intro-to-queue position is removed. Full remaining research DOM, every price/time/control/attribute and whole state compare exactly; raw before/after evidence is retained. No queue detail or time exception applies to this base fixture.',

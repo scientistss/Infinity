@@ -13,7 +13,7 @@ import { deserializeState, exportSave, importSave, serializeState } from "../src
 import { rehearseNpcScout } from "../src/game/npc-rehearsal";
 import { STORAGE_KEY } from "../src/game/content";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
-import { liftR13StateToR14, projectVerifiedScoutSnapshots } from "./r14-compatibility.mjs";
+import { liftR13StateToR16, projectVerifiedScoutSnapshots } from "./r16-compatibility.mjs";
 import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection";
 import type { GameState } from "../src/game/types";
 import type { NpcScoutSnapshotV1 } from "../src/game/npc-scout-state";
@@ -59,7 +59,7 @@ function stockAt(wallet: Obj, now: number) {
   return a.stock.map((n: number, i: number) => Math.min([50000, 30000, 10000][i]!, n + [5, 2.5, 1][i]! * (now - a.mark)));
 }
 function expectedStateOf(value: any) {
-  const expected = liftR13StateToR14(old.save.serializeState(value));
+  const expected = liftR13StateToR16(old.save.serializeState(value));
   for (const m of expected.messages) {
     const observed = snapshots.get(m.id);
     if (observed) { m.npcScoutSnapshot = structuredClone(observed); m.at = Math.min(1e12, old.decimal.big(observed.observedAt).toNumber()); }
@@ -189,7 +189,7 @@ try {
     fixturePoolSha256: hash(poolBytes), routeScriptSha256: hash(readFileSync(new URL(import.meta.url))), runtimeNode: process.version,
     oldSourceSha: PIN, oldSourceBindings: binding.sourceFiles, dependencyLockSha256: hash(readFileSync(resolve(ROOT, "package-lock.json"))) };
   state = deserializeState(importSave(row.raw).state); control = old.save.deserializeState(old.save.importSave(row.raw).state);
-  exact("all old messages gain only explicit null snapshot slot", serializeState(state), liftR13StateToR14(old.save.serializeState(control)));
+  exact("all old messages gain only explicit null snapshot slot", serializeState(state), liftR13StateToR16(old.save.serializeState(control)));
   exact("actual unchanged seed", state.universe.seed, 20261010);
   check("independent target occupancy and untouched weak initial garrison", independentRandom(20261010, 1, 56, 15) === .23852863418869674 && independentRandom(20261010, 1, 56, 15, 101) === .08924779412336648 && !control.npcEconomy.sites[TARGET_KEY]);
   checkpoint("migrated-paid31-final");
@@ -256,7 +256,7 @@ try {
   exact("curvature exact native confirmation matches archived source", prestigeConfirmation(state, curve), curveConfirmation);
   exact("curvature earned gain matches archived source", curve.gain.toString(), oldCurve.gain.toString());
   if (curve.gain.gte(1)) {
-    const expected = liftR13StateToR14(old.save.serializeState(oldCurve.next));
+    const expected = liftR13StateToR16(old.save.serializeState(oldCurve.next));
     expected.messages = expected.messages.map((m: Obj) => ({ ...m, ...(snapshots.has(m.id) ? { at: Math.min(1e12, old.decimal.big(snapshots.get(m.id)!.observedAt).toNumber()), npcScoutSnapshot: structuredClone(snapshots.get(m.id)) } : {}) }));
     exact("natural actual curvature preserves typed history and all old domains", serializeState(curve.next), expected);
     branches.curvature = { confirmation: curveConfirmation, classification: "Actual natural evaluatePrestige branch, no economy injection", before: branchEnvelope(state), expected: branchEnvelope(curve.next) };

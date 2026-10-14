@@ -42,7 +42,7 @@ PANEL = PREFIX + 'panel'
 MAX_FORMATION_QUANTITY = 1_000_000
 MAX_MANUAL_QUANTITY = 1_000_000_000_000
 NATURAL_FORMATION_NAME = '原生护航 <舰&🚀>'
-CANDIDATE_VERSION = '0.6.31-alpha.1'
+CANDIDATE_VERSION = '0.6.32-alpha.1'
 SOURCE_AREAS = ('src', 'scripts', 'tests', 'public', '.github')
 
 
@@ -1075,9 +1075,9 @@ def main():
             browser = playwright.chromium.launch(headless=True, **({'executable_path': args.chromium} if args.chromium else {}))
             begin_case('natural-original-paid31-native-named-formation-route')
             context, page = boot(fixtures['origin']['raw'])
-            check('served release has this explicit candidate version and unchanged v9/r14 schema',
+            check('served release has this explicit candidate version and unchanged v9/r16 schema',
                   release_metadata['version'] == args.expected_version and release_metadata['saveVersion'] == 9
-                  and release_metadata['saveRevision'] == 14)
+                  and release_metadata['saveRevision'] == 16)
             captures = replay_natural_formation_route(page); context.close()
             natural_raw = captures['run-cancel-reopen-fill-still-unpaid']
             insufficient_stock_boundaries(natural_raw)

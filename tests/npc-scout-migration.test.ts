@@ -1,3 +1,4 @@
+import { expectedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { describe, expect, it } from "vitest";
 import provenance from "./fixtures/npc-scout-legacy.json";
 import { deserializeState, importSave, serializeState } from "../src/game/save";
@@ -19,7 +20,7 @@ describe("genuine r2–r13 historical scout migration", () => {
   });
   it.each(provenance.rows)("preserves the exact archived r13 projection plus null slot: $id", row => {
     const old = row.r13ReaderOutput;
-    const expected = { ...old, revision: 14, state: { ...old.state,
+    const expected = { ...old, revision: 16, state: { ...old.state, energyChallenge: expectedInactiveEnergyChallenge(),
       messages: old.state.messages.map(message => ({ ...message, npcScoutSnapshot: null })) } };
     const before = JSON.stringify(row), current = importSave(row.raw);
     expect(current).toEqual(expected); expect(JSON.stringify(row)).toBe(before);

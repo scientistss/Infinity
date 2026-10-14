@@ -249,7 +249,7 @@ describe("actual space-panel historical rehearsal wiring", () => {
 
 describe("main host adoption and pre-confirmation wiring", () => {
   it("uses explicit adoption and retires before an import await or replacement dialog", () => {
-    expect(mainSource).toContain('if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) {\n    view.retireNpcRehearsal();\n    view.retireManualUnits();\n    view.retireBuildingTemplateBatch();\n  }');
+    expect(mainSource).toContain('if (["import-text", "import-file", "reset", "prestige"].includes(action.type)) {\n    view.retireNpcRehearsal();\n    view.retireManualUnits();\n    view.retireBuildingTemplateBatch();\n    view.retireEnergyChallenge();\n  }');
     expect(mainSource).toContain('view.retireNpcRehearsal();\n    view.retireManualUnits();\n    view.retireBuildingTemplateBatch();\n    if (!prepared.ok)');
     expect(mainSource).toContain("state = result.state;\n  view.adoptNpcRehearsalWorld();");
     expect(mainSource).toContain("if (state.universe === adoptedUniverse) return;"); expect(mainSource).not.toContain("let adoptedLaunches");

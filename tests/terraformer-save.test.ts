@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge, stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripVerifiedNpcMetadata } from "./helpers";
 import { describe, expect, it } from "vitest";
 import historical from "./fixtures/terraformer-r9.json";
@@ -71,7 +72,7 @@ class MemoryStore implements KeyValueStore {
 describe("strict r10 terraformer field accounting", () => {
   it("starts at 163/0 with floor 1 and round-trips without a grant", () => {
     const file = current(), restored = read(file);
-    expect(restored.revision).toBe(14); expect(SAVE_REVISION).toBe(14);
+    expect(restored.revision).toBe(16); expect(SAVE_REVISION).toBe(16);
     expect(restored.state.terraformerGrantJobFloor).toBe(1);
     expect(restored.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
     expect(restored).toEqual(file);
@@ -262,10 +263,10 @@ describe("fixed historical r9 to r10 additive migration", () => {
   });
   it.each(historical.rows)("preserves the old reader's complete semantic output: $name", row => {
     const migrated = importSave(row.raw);
-    expect(migrated.revision).toBe(14);
+    expect(migrated.revision).toBe(16);
     expect(migrated.savedAt).toBe(row.oldReaderOutput.savedAt);
     expect(migrated.lastTickAt).toBe(row.oldReaderOutput.lastTickAt);
-    expect(projection(migrated.state)).toEqual(row.oldReaderOutput.state);
+    expect(projection(migrated.state)).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
     expect(migrated.state.terraformerGrantJobFloor).toBe(row.oldReaderOutput.state.orders.nextJobId);
     for (const planet of migrated.state.planets) expect(planet.terraformerFields).toEqual({ base: planet.fieldsMax, grantedLevels: 0 });
     expect(read(migrated)).toEqual(migrated);
@@ -284,7 +285,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
       const sources = old.planets.flatMap((planet: any) => planet.buildQueue.filter((job: any) => job.building === "terraformer").map((job: any) => job.source));
       expect(new Set(sources)).toEqual(new Set(["manual", "protocol", "plan"]));
       expect(migrated.state.buildingTemplates).toEqual(old.buildingTemplates);
-      expect(projection(migrated.state)).toEqual(old);
+      expect(projection(migrated.state)).toEqual(liftLegacyEnergyChallenge(old));
     }
   });
   it("keeps the real old normalization boundary and original bytes separate", () => {
@@ -294,7 +295,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
     expect(raw.state.planets[0]).not.toHaveProperty("fieldsMax");
     expect(row.oldReaderOutput.state.planets[0]!.buildQueue[0]!.remainingSeconds).toBe(10);
     const migrated = importSave(row.raw);
-    expect(projection(migrated.state)).toEqual(row.oldReaderOutput.state);
+    expect(projection(migrated.state)).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
     expect(migrated.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
     const store = new MemoryStore(row.raw), session = new SaveSession(store, 900);
     expect(session.mode).toBe("ready"); expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
@@ -320,7 +321,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
     expect(() => read(file)).toThrow(/r10/);
   });
   it("cannot hide missing r10 accounting by changing only its revision to r9", () => {
-    const file = current(); stripVerifiedNpcMetadata(file.state, 0); file.revision = 9;
+    const file = current(); stripVerifiedInactiveEnergyChallenge(file.state); stripVerifiedNpcMetadata(file.state, 0); file.revision = 9;
     for (const planet of file.state.planets) delete planet.demolition;
     expect(() => read(file)).toThrow(/r10/);
     delete file.state.terraformerGrantJobFloor;
@@ -330,7 +331,7 @@ describe("fixed historical r9 to r10 additive migration", () => {
     const source: any = structuredClone(archivedR8.fixtures[phase]), migrated = read(source);
     const { buildingTemplates, ...withoutR9 } = projection(migrated.state);
     expect(buildingTemplates).toEqual({ nextTemplateId: 1, templates: [] });
-    expect(withoutR9).toEqual(source.state);
+    expect(withoutR9).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(migrated.state.terraformerGrantJobFloor).toBe(source.state.orders.nextJobId);
     expect(migrated.state.orders.tasks[0]!.transport!.trips[0]!.phase.kind).toBe(phase);
   });
@@ -351,8 +352,8 @@ describe("r10 migration storage protection", () => {
     expect(backup).toBeGreaterThan(-1); expect(write).toBeGreaterThan(backup);
     expect(store.events.slice(backup + 1, write)).toContain(`read:${BACKUP_KEY}`);
     expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
-    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(14);
-    expect(projection(serializeState(session.loaded.state))).toEqual(row.oldReaderOutput.state);
+    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(16);
+    expect(projection(serializeState(session.loaded.state))).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
     const cold = new SaveSession(store, 900);
     expect(cold.mode).toBe("ready"); expect(cold.loaded.state.planets[0]!.terraformerFields.grantedLevels).toBe(0);
     expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
@@ -361,7 +362,7 @@ describe("r10 migration storage protection", () => {
     const row = historicalRow("continuous_manual"), store = new MemoryStore(row.raw); store.fault = fault;
     const session = new SaveSession(store, 5900);
     expect(session.mode).toBe("protected"); expect(session.loaded.appliedSeconds).toBe(0);
-    expect(projection(serializeState(session.loaded.state))).toEqual(row.oldReaderOutput.state);
+    expect(projection(serializeState(session.loaded.state))).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
     expect(session.loaded.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
     expect(session.export(session.loaded.state)).toEqual({ raw: row.raw, protected: true });
     expect(session.save(session.loaded.state)).toMatchObject({ ok: false });
@@ -382,7 +383,7 @@ describe("r10 migration storage protection", () => {
     const row = historicalRow("continuous_manual"), result = session.importText(row.raw, 1000);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(projection(serializeState(result.state))).toEqual(row.oldReaderOutput.state);
+    expect(projection(serializeState(result.state))).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
     expect(result.state.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 0 });
     expect(result.state.terraformerGrantJobFloor).toBe(row.oldReaderOutput.state.orders.nextJobId);
   });

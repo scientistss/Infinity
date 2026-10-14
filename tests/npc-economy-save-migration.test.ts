@@ -1,3 +1,4 @@
+import { expectedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { expectedFreshNpcWallet, expectedFullNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import fixedR10 from "./fixtures/demolition-r10.json";
@@ -10,7 +11,7 @@ import { createInitialState } from "../src/game/state";
 
 const INITIAL = expectedFreshNpcWallet();
 function liftR10(old: any) {
-  return { ...old, revision: 14, state: { ...old.state, messages: old.state.messages.map((message: any) => ({ ...message, npcScoutSnapshot: null })), npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(),
+  return { ...old, revision: 16, state: { ...old.state, energyChallenge: expectedInactiveEnergyChallenge(), messages: old.state.messages.map((message: any) => ({ ...message, npcScoutSnapshot: null })), npcEconomy: INITIAL, npcBattles: expectedEmptyNpcBattles(),
     planets: old.state.planets.map((planet: any) => ({ ...planet, demolition: null, npcResourceRemainder: expectedZeroNpcRemainder() })) } };
 }
 function fixture(id: string) {
@@ -114,7 +115,7 @@ describe("SaveSession NPC upgrade is adopted only after verified persistence", (
     expect(session.notice).not.toContain("升级为");
     if (fault === "primary-read") {
       // The write happened; only adoption is refused. Never claim disk is unchanged.
-      expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(14);
+      expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(16);
       expect(JSON.parse(store.values.get(STORAGE_KEY)!).state.npcEconomy.now).toBe(7200);
     } else if (fault === "primary-corrupt") expect(store.values.get(STORAGE_KEY)).toBe("corrupted write");
     else if (fault === "concurrent") expect(store.values.get(STORAGE_KEY)).toBe("other tab changed the slot");

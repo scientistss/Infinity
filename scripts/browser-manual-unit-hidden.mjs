@@ -216,7 +216,7 @@ async function realSave(label, expected) {
   await tab('save'); await click('[data-action="save"]');
   const observed = await storage(label), raw = observed.local[input.key], envelope = JSON.parse(raw);
   const ref = await json(label + '-entire-state', { raw, envelope, expected, excludedFields: [] });
-  check(label + ': real Save witnesses exact entire current state', envelope.schema === 'infinity-original-p4' && envelope.version === 9 && envelope.revision === 14 && isDeepStrictEqual(envelope.state, expected), ref);
+  check(label + ': real Save witnesses exact entire current state', envelope.schema === 'infinity-original-p4' && envelope.version === 9 && envelope.revision === 16 && isDeepStrictEqual(envelope.state, expected), ref);
   return { raw, state: envelope.state, envelope, storage: observed, evidence: ref };
 }
 async function bodyOf(response, label) {

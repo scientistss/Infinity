@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge, stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import { SHIP_IDS, unitById } from "../src/data/units";
@@ -61,7 +62,7 @@ function appendHistory(value: any): any {
 }
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7): any {
   const value = revision >= 5 ? unpaidFile() : file();
-  stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
+  stripVerifiedInactiveEnergyChallenge(value.state); stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
   delete value.state.buildingTemplates;
   delete value.state.formations;
   for (const task of value.state.orders.tasks) delete task.formationOrigin;
@@ -359,7 +360,7 @@ describe("r8 additive migration and SaveSession protection", () => {
       const projection: any = expectTerraformerMigration(imported.state, source.state, 0); delete projection.formations;
       expect(projection.buildingTemplates).toEqual({ nextTemplateId: 1, templates: [] }); delete projection.buildingTemplates;
       for (const task of projection.orders.tasks) delete task.formationOrigin;
-      expect(projection).toEqual(source.state);
+      expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     }
   });
   it.each([2, 3, 4, 5, 6, 7] as const)("rejects new r8 fields smuggled anywhere in r%d, including null and empty values", revision => {

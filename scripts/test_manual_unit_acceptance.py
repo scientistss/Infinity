@@ -577,7 +577,7 @@ class NativeHiddenOriginalValidationTests(unittest.TestCase):
         module.load_reviewed_helpers()
         h='a'*64; sha='b'*40; url='http://127.0.0.1:4173/Infinity/'; key='save'
         files={name:h for name in ['index.html','app.js','style.css',*('resource-'+str(i) for i in range(59))]}
-        release={'sourceSha':sha,'version':module.CANDIDATE_VERSION,'files':files,'saveVersion':9,'saveRevision':14}
+        release={'sourceSha':sha,'version':module.CANDIDATE_VERSION,'files':files,'saveVersion':9,'saveRevision':16}
         request={'expectedSha':sha,'expectedVersion':module.CANDIDATE_VERSION,'expectedBrowserVersion':'154.0.8037.97','chromium':'/usr/bin/google-chrome','expectedRelease':release,'key':key,'url':url,'beforeState':{'value':1},'expectedState':{'value':2},'initialRaw':'original','clockScript':'unchanged clock'}
         native={k:True for k in ('storageGet','storageSet','fileText','confirm','timeout','interval','hidden','visibility','noOwnHidden','noOwnVisibility','storageInstance')}
         event=lambda seq,kind,hidden,trusted=True:{'seq':seq,'id':'same-document','type':kind,'trusted':trusted,'hidden':hidden,'state':'hidden' if hidden else 'visible','nativeMono':seq*10,'action':'manual-unit-pay' if kind=='click' else None}

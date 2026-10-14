@@ -1,3 +1,4 @@
+import { stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import { armAutoRunner, equipCard, refreshUnlocks } from "../src/automation/engine";
@@ -163,7 +164,7 @@ describe("read-only file preparation", () => {
 
   it("reports the file's original revision without rewriting a supported migration", async () => {
     const legacy = JSON.parse(raw(91));
-    stripSyntheticTerraformerMetadata(legacy.state, 0); legacy.revision = 7;
+    stripVerifiedInactiveEnergyChallenge(legacy.state); stripSyntheticTerraformerMetadata(legacy.state, 0); legacy.revision = 7;
     delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy), store = new MemoryStore(), session = new SaveSession(store, NOW);

@@ -31,7 +31,7 @@ def offline_fixture():
     source={'sourceSha':'a'*40,'fullTree':'b'*40,'sourceCode':{'scripts/recycle-preview-fixture.ts':'c'*64,
       'scripts/deep-fixture.ts':'d'*64,'package-lock.json':'e'*64}}
     origin={'fleets':[],'research':{'levels':{'hyperspace_tech':2}},'deepSpace':{'debris':[],'reports':[]}}
-    envelope={'version':9,'revision':14,'savedAt':1,'lastTickAt':1,'state':origin}
+    envelope={'version':9,'revision':16,'savedAt':1,'lastTickAt':1,'state':origin}
     original=json.dumps(envelope)
     producer={'sourceSha':source['sourceSha'],'fullTree':source['fullTree'],'scriptSha256':'c'*64,
       'inputProducerSha256':'d'*64,'dependencyLockSha256':'e'*64,'runtimeNode':'v22.0.0'}

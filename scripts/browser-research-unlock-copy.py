@@ -8,6 +8,7 @@ Native RAF dispatch, Storage, File.text, timers, confirm, clicks and scrolling
 remain untouched. No game-state/resource/RNG injection or UI restyling is used.
 """
 import argparse
+from r16_compatibility import lift_r14_state_to_r16
 import ast
 import copy
 import hashlib
@@ -401,10 +402,10 @@ def worker(args):
         initial, incoming = strict_json(initial_bytes), strict_json(incoming_bytes)
         report['initial'] = dump('source-raw-initial.json', initial_bytes)
         report['firstLab'] = dump('source-raw-first-lab.json', incoming_bytes)
-        validate_fixture(receipt, initial_bytes, incoming_bytes, args.expected_sha)
+        validate_fixture(receipt, initial_bytes, incoming_bytes, OLD_SHA)
         declared_files = {row['path']: row['sha256'] for row in receipt['source']['files']}
-        actual_files = {path: digest for path, digest in report['sources']['after']['files'].items() if path.startswith('src/') or path in ('package.json', 'package-lock.json')}
-        check('all generator source inputs exactly match actual candidate source binding', declared_files == actual_files)
+        actual_files = {path: digest for path, digest in report['sources']['before']['files'].items() if path.startswith('src/') or path in ('package.json', 'package-lock.json')}
+        check('all generator source inputs exactly match genuine old493 source binding', declared_files == actual_files)
         generator_bytes = (Path(args.source_root) / 'scripts/research-unlock-copy-fixture.mjs').read_bytes()
         committed_generator = subprocess.check_output(['git', 'show', args.expected_sha + ':scripts/research-unlock-copy-fixture.mjs'], cwd=args.source_root, timeout=10)
         check('independent generator itself is clean and Git-bound', generator_bytes == committed_generator and sha(generator_bytes) == receipt['source']['generator']['sha256'])
@@ -414,7 +415,7 @@ def worker(args):
             check(side + ': exactly one homeworld with zero research and unchanged lock', len(state['planets']) == 1 and state['activePlanetId'] == state['planets'][0]['id'] and all(type(level) is int and level == 0 for level in state['research']['levels'].values()) and not state['research']['queue'])
         buildings = incoming['state']['planets'][0]['buildings']
         check('checkpoint has earned solar1/deuterium1/lab1 only', buildings['solar_plant'] == buildings['deuterium_synth'] == buildings['research_lab'] == 1 and all(level == 0 for name, level in buildings.items() if name not in ('solar_plant', 'deuterium_synth', 'research_lab')))
-        check('first lab checkpoint is coherent and current revision', incoming['savedAt'] == incoming['lastTickAt'] and incoming['revision'] == initial['revision'] and incoming['version'] == initial['version'])
+        check('first lab checkpoint is coherent genuine old493 r14 serializer output', incoming['savedAt'] == incoming['lastTickAt'] and incoming['revision'] == initial['revision'] == 14 and incoming['version'] == initial['version'] == 9)
         observations = {}
         with sync_playwright() as playwright, retain_before_teardown():
             browser = playwright.chromium.launch(executable_path=args.chromium or shutil.which('google-chrome') or shutil.which('chromium'), headless=True, args=['--no-sandbox', args.owner_marker])
@@ -432,7 +433,7 @@ def worker(args):
                 check(side + ': release actual HTTP200 at expected URL', response.status == 200 and response.url == urljoin(url, 'release.json'))
                 release = strict_json(body)
                 check(side + ': release closed schema has no unknown fields', set(release) == {'version', 'sourceSha', 'lineage', 'saveVersion', 'saveRevision', 'ringVisualVersion', 'ringIconCount', 'deepUiVersion', 'features', 'files'})
-                check(side + ': release bound to exact source/revision', release['sourceSha'] == expected and release['saveRevision'] == incoming['revision'] and release['saveVersion'] == incoming['version'])
+                check(side + ': release bound to exact source/revision', release['sourceSha'] == expected and release['saveRevision'] == (14 if side == 'before' else 16) and release['saveVersion'] == incoming['version'])
                 check(side + ': HTTP release equals locally built release', body == (Path(root) / 'dist/release.json').read_bytes())
                 check(side + ': asset manifest has files and index', isinstance(release['files'], dict) and bool(release['files']) and 'index.html' in release['files'])
                 for name, digest in release['files'].items():
@@ -491,7 +492,8 @@ def worker(args):
                     flush()
                     check('single native file import confirmation explicitly identifies replacement', len(stage['dialogs']) == 1 and stage['dialogs'][0]['accepted'])
                     check('unwrapped native File.text saw exact independent source', file['trusted'] is True and file['name'] == 'raw-first-lab.json' and file['size'] == len(incoming_bytes) and file['text'].encode() == incoming_bytes and file['error'] is None)
-                    check('complete natural checkpoint state adopted without modification', exact(strict_json(adopted)['state'], incoming['state']))
+                    expected_state = incoming['state'] if side == 'before' else lift_r14_state_to_r16(incoming['state'])
+                    check('complete historical checkpoint has only exact inactive r16 addition', strict_json(adopted)['revision'] == (14 if side == 'before' else 16) and exact(strict_json(adopted)['state'], expected_state))
                     backups = page.evaluate('(key)=>Object.keys(localStorage).filter(k=>k.startsWith(key+".backup")).map(k=>({key:k,raw:localStorage.getItem(k)}))', KEY)
                     stage['backupHashes'] = [{'key': item['key'], 'sha256': sha(item['raw'])} for item in backups]
                     check('actual initial saved bytes remain in native backup', any(row['raw'] == previous for row in backups))
@@ -537,7 +539,7 @@ def worker(args):
                     stage['savedAfterDisplay'] = dump(case + '-saved-after-display.json', saved_after_display)
                     stage['nativeTabPreferenceAfterSave'] = page.evaluate('localStorage.getItem("infinity.ui.tab")')
                     flush()
-                    check('actual Save proves complete live engine state unchanged by display', exact(strict_json(saved_after_display)['state'], incoming['state']))
+                    check('actual Save proves complete live engine state unchanged by display', strict_json(saved_after_display)['revision'] == (14 if side == 'before' else 16) and exact(strict_json(saved_after_display)['state'], expected_state))
                     script_urls = [event['url'] for event in executed]
                     check('executed scripts are nonempty and unique', bool(script_urls) and len(set(script_urls)) == len(script_urls))
                     for event in executed:
@@ -619,6 +621,9 @@ def validate_fixture(receipt, initial_bytes, incoming_bytes, expected_sha):
         row = receipt[name]
         assert set(row) == {'path', 'sha256'} and Path(row['path']).name == expected_file and row['sha256'] == sha(data)
         raw = strict_json(data)
+        assert raw.get('schema') == 'infinity-original-p4' and type(raw.get('version')) is int and raw['version'] == 9
+        assert type(raw.get('revision')) is int and raw['revision'] == 14
+        lift_r14_state_to_r16(raw['state'])  # Reject challenge markers; preserve all genuine old fields.
         assert raw['savedAt'] == raw['lastTickAt'] == receipt['savedAt'] == receipt['lastTickAt']
         snapshot = receipt['initial' if name == 'rawInitial' else 'final']
         state = raw['state']
@@ -663,7 +668,7 @@ def validate_fixture(receipt, initial_bytes, incoming_bytes, expected_sha):
     assert receipt['final']['totalTime'] == '88' and receipt['final']['buildQueue'] == []
     assert receipt['final']['darkMatter'] == '1000' and receipt['final']['unlocked'] == ['first_deuterium', 'first_lab']
     assert set(receipt['expectedView']) == {'path', 'effect'} and Path(receipt['expectedView']['path']).name == 'expected-view.json'
-    assert receipt['expectedView']['effect'] == NEW_EFFECT
+    assert receipt['expectedView']['effect'] == OLD_EFFECT
 
 
 def main():

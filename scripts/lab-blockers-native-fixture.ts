@@ -4,6 +4,7 @@
  * Usage: node --import tsx scripts/lab-blockers-native-fixture.ts REPORT REPORT_SHA256 SOURCE_SHA
  */
 declare const process: { argv: string[]; version: string; stdout: { write(text: string): void } };
+import { liftR14EnvelopeToR16, liftR14StateToR16 } from "./r16-compatibility.mjs";
 import { SAVE_REVISION, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { catchUp } from "../src/core/offline";
 import { big } from "../src/game/decimal";
@@ -41,14 +42,14 @@ check(report.schema === "infinity-natural-research-network-journey-v1" && report
   && report.source.sourceSha === HISTORICAL_SHA && report.source.gitHead === HISTORICAL_SHA
   && report.source.sourceScopeStatusPorcelain === "" && report.source.worktreeStatusPorcelain === "", "Historical natural report binding failed");
 check(report.provenance.injectedGameState === false && ["noSyntheticFunds", "noSyntheticTech", "noSyntheticJobs", "noRawSettingsPatches", "noRingRewardReveals", "noClockAssignments"].every(key => report.provenance[key] === true), "Natural provenance flags failed");
-check(SAVE_VERSION === 9 && SAVE_REVISION === 14, "This acceptance does not authorize save-format changes");
+check(SAVE_VERSION === 9 && SAVE_REVISION === 16, "Current r16 schema required");
 const origin = report.milestones[0], final = report.milestones[1];
 check(origin.name === "00-unchanged-origin-full-world-imported-and-reloaded"
   && final.name === "01-four-real-paid-lab-upgrades-main10-colony3-and-reloaded", "Exact historical handoffs required");
 for (const milestone of [origin, final]) {
   check(milestone.strictRoundtrips === 2 && milestone.stateAdoptedFromReload && milestone.subsequentLiveTickObserved
     && milestone.save.savedAt === milestone.save.lastTickAt, "Verified strict zero-gap handoff required");
-  exact(importSave(JSON.stringify(milestone.save)), milestone.save, "Current reader changed historical r14 envelope");
+  exact(importSave(JSON.stringify(milestone.save)), liftR14EnvelopeToR16(milestone.save), "Current reader must preserve complete historical r14 envelope plus exact inactive r16 field");
 }
 const initialRaw = JSON.stringify(origin.save), epoch = origin.save.savedAt;
 const load = () => deserializeState(importSave(initialRaw).state);
@@ -64,7 +65,7 @@ function advance(seconds: number, name: string) {
   for (let i = 0; i < seconds; i++) state = tick(state, 1, "live");
   elapsed += seconds; tape.push({ kind: "advance", seconds }); checkpoint(name);
 }
-exact(serializeState(catchUp(state, 0).state), origin.save.state, "Natural zero-gap startup changed state");
+exact(serializeState(catchUp(state, 0).state), liftR14StateToR16(origin.save.state), "Natural zero-gap startup changed state");
 checkpoint("origin"); selection(HOME, "selected-home");
 const paidAt = [0, 5, 14, 384], duration = [4.189090909090909, 8.378181818181819, 16.756363636363638, 33.512727272727275];
 let paidFinal: GameState | null = null;
@@ -90,7 +91,7 @@ for (let offset = 0; offset < 4; offset++) {
   selection(HOME, `lab${level}-home`); advance(Math.ceil(duration[offset]!), `lab${level}-complete`);
 }
 check(elapsed === 418, "Natural route tick count drift");
-exact(serializeState(state), final.save.state, "Full natural route differs from historical milestone01");
+exact(serializeState(state), liftR14StateToR16(final.save.state), "Full natural route differs from historical milestone01");
 check(paidFinal !== null, "Natural final paid checkpoint missing");
 const cancelSelected = selectPlanet(paidFinal, HOME), cancelled = accept(cancel(cancelSelected, 0));
 expected.cancelHome = serializeState(cancelSelected); expected.cancelled = serializeState(cancelled);

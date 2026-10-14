@@ -167,7 +167,7 @@ export function rejectEnergyChallengeFields(raw: unknown, legacy: boolean, envel
     const descriptor = Object.getOwnPropertyDescriptor(source, "energyChallenge");
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return fail();
     const challenge = readEnergyChallengeState(descriptor.value);
-    if (challenge.active || challenge.completion) {
+    if (challenge.nextAttemptId > 1) {
       // Read these prerequisites before the historical core reader can infer a
       // prestige flag from core holdings or fill absent historical counters.
       const prestige = Object.getOwnPropertyDescriptor(source, "hasPrestiged"), stats = Object.getOwnPropertyDescriptor(source, "stats");
@@ -175,7 +175,7 @@ export function rejectEnergyChallengeFields(raw: unknown, legacy: boolean, envel
         ? Object.getOwnPropertyDescriptor(stats.value, "launches") : undefined;
       if (!prestige || !("value" in prestige) || !prestige.enumerable || prestige.value !== true
         || !stats?.enumerable || !launches || !("value" in launches) || !launches.enumerable
-        || !integer(launches.value, challenge.completion ? 2 : 1)) return fail();
+        || !integer(launches.value, challenge.nextAttemptId - 1 + (challenge.completion ? 1 : 0))) return fail();
     }
   }
 }

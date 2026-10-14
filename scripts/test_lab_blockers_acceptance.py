@@ -256,7 +256,7 @@ class FixturePreparationContractTests(unittest.TestCase):
         for text in (module.REPORT_SHA, module.HISTORICAL_SHA, 'const initialRaw = JSON.stringify(origin.save)',
                      'paidAt = [0, 5, 14, 384]', '4.189090909090909', '33.512727272727275',
                      '183 + offset', '12800 * 2 ** offset', 'elapsed === 418',
-                     'exact(serializeState(state), final.save.state', 'tick(state, 1, "live")'):
+                     'exact(serializeState(state), liftR14StateToR16(final.save.state)', 'tick(state, 1, "live")'):
             self.assertIn(text, source)
         natural = source.split('// Every synthetic input')[0]
         for forbidden in ('resources =', 'planet.name =', 'createInitialState(', 'state.research.levels.'):

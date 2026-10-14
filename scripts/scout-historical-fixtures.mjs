@@ -5,6 +5,7 @@
  * imports the candidate. Synthetic source-produced fixtures are explicitly labeled.
  */
 import assert from 'node:assert/strict';
+import { liftR14EnvelopeToR16 } from './r16-compatibility.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
@@ -212,7 +213,7 @@ if (mode === 'generate') {
     assert.deepEqual(sourceReader.importSave(row.raw), row.sourceReaderOutput, `${row.id}: original old reader acceptance`);
     assert.deepEqual(r13.importSave(row.raw), row.r13ReaderOutput, `${row.id}: independently fixed r13 baseline`);
     const actual = candidate.importSave(row.raw);
-    assert.deepEqual(actual, expectedR14(row.r13ReaderOutput), `${row.id}: exact full old-normalized envelope, only null slots and output revision added`);
+    assert.deepEqual(actual, liftR14EnvelopeToR16(expectedR14(row.r13ReaderOutput)), `${row.id}: exact full old-normalized envelope, only independently verified null slots, inactive challenge field and output revision added`);
     assert.deepEqual(candidate.importSave(json(actual)), actual, `${row.id}: candidate stable roundtrip`);
     const refusalEvidence = refusal(sourceReader, json(actual));
     const invalid = JSON.parse(row.raw); invalid.state.nextFleetId = 0;

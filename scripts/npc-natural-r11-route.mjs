@@ -17,7 +17,7 @@ import { emptyCargo, quoteFlight, resolveFleetArrivals, sendFleet } from "../src
 import { npcAt } from "../src/game/galaxy.ts";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save.ts";
 import { expectedNpcEconomy, advanceExpectedNpcWallet, projectVerifiedNpcEconomy as projectR13NpcEconomy } from "./r13-compatibility.mjs";
-import { liftR13StateToR14, projectVerifiedScoutSnapshots, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { liftR13StateToR16, projectVerifiedScoutSnapshots, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import { projectNpc } from "../src/game/npc-wallet.ts";
 import { npcWalletContext } from "../src/game/npc-attack.ts";
@@ -308,7 +308,7 @@ try {
     const imported = importSave(r11Raw), projected=projectVerifiedNpcEconomy(imported.state,expectedNpcEconomy(),'pure r11 migration zero rights');
     equal("r11→r14 pure migration preserves every complete old state field",projected,r11.state);
     equal("r11→r14 initial NPC age is zero regardless of old totalTime",imported.state.npcEconomy,expectedNpcEconomy());
-    equal("current strict import revision",imported.revision,14);
+    equal("current strict import revision",imported.revision,16);
     control=legacy.save.deserializeState(r11.state);
     state = deserializeState(imported.state);
     origin = serializeState(state);
@@ -375,7 +375,7 @@ try {
     for(const file of source.historicalProducer.sourceFiles)check("historical source unchanged: "+file.path,sha(readFileSync(resolve(LEGACY,file.path)))===file.sha256);
     legacyIdentityRaw=legacy.save.exportSave(control,originalAt+elapsed*1000,originalAt+elapsed*1000);
     const oldIdentity=importSave(legacyIdentityRaw);
-    equal("separate real ca5 identity-report branch migrates without rewriting either report",oldIdentity.state.messages,liftR13StateToR14(legacy.save.serializeState(control)).messages);
+    equal("separate real ca5 identity-report branch migrates without rewriting either report",oldIdentity.state.messages,liftR13StateToR16(legacy.save.serializeState(control)).messages);
     equal("separate old identity branch starts age zero",oldIdentity.state.npcEconomy,expectedNpcEconomy());
     const final=milestones.find(m=>m.name==="final-returned-and-reloaded");
     const evaluation=evaluatePrestige(state);check("real naturally earned curvature eligibility",evaluation.next!==state && evaluation.gain.gte(1));

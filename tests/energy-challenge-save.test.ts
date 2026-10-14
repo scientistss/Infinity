@@ -198,6 +198,14 @@ describe("r16 immutable attempt history feasibility", () => {
     state.hasPrestiged = false;
     expect(() => validateEnergyChallengeReferences(state)).toThrow();
   });
+  it("does not infer an abandoned entry's missing raw prestige authority from core holdings", () => {
+    const state = active(); state.energyChallenge.active = null;
+    const raw = serializeState(state);
+    raw.warpCores = "10"; raw.hasPrestiged = false;
+    const original = JSON.stringify(raw);
+    expect(() => deserializeState(raw)).toThrow();
+    expect(JSON.stringify(raw)).toBe(original);
+  });
   it("rejects immutable entry floors without four issuable IDs, preserving the boundary", () => {
     const state = active();
     const floor = Number.MAX_SAFE_INTEGER - 4;

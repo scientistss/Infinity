@@ -5,7 +5,7 @@
  * or candidate NPC field supplies the independently replayed NPC wallet.
  */
 import assert from 'node:assert/strict';
-import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR14, projectVerifiedNpcEconomy } from './r14-compatibility.mjs';
+import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR16, projectVerifiedNpcEconomy } from './r16-compatibility.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -37,10 +37,10 @@ function milliseconds(value, where) {
 }
 function currentState(oldState, age) {
   assert.equal(Object.hasOwn(oldState, 'npcEconomy'), false, 'ca5 state must not contain current NPC data');
-  return liftR11StateToR14(oldState, age);
+  return liftR11StateToR16(oldState, age);
 }
 function currentEnvelope(oldEnvelope, age) {
-  return { ...oldEnvelope, revision: 14, state: currentState(oldEnvelope.state, age) };
+  return { ...oldEnvelope, revision: 16, state: currentState(oldEnvelope.state, age) };
 }
 function assertState(actual, oldState, age, where) {
   assert.deepEqual(actual, currentState(oldState, age), `${where}: complete current state equals independent ca5 state plus independently replayed NPC wallet`);

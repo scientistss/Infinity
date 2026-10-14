@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge, stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripVerifiedNpcRemainders, stripVerifiedNullNpcScoutSnapshots } from "./helpers";
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { stripSyntheticTerraformerMetadata, stripVerifiedNpcMetadata, expectTerraformerMigration } from "./helpers";
@@ -159,7 +160,7 @@ const money = (metal = "0", crystal = "0", deuterium = "0") => ({ metal, crystal
 /** Synthetic boundary fixture; actual source-generated r8 evidence lives in check-order-migration.mjs. */
 function legacy(revision: 2 | 3 | 4 | 5 | 6 | 7 | 8): any {
   const value = file();
-  stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
+  stripVerifiedInactiveEnergyChallenge(value.state); stripSyntheticTerraformerMetadata(value.state, 0); value.revision = revision;
   delete value.state.buildingTemplates;
   if (revision < 8) delete value.state.formations;
   if (revision < 7) delete value.state.researchTemplates;
@@ -215,7 +216,7 @@ describe("r9 additive migration boundaries", () => {
     if (revision >= 7) expect(imported.state.researchTemplates).toEqual(source.state.researchTemplates);
     if (revision === 8) {
       const { buildingTemplates: _templates, ...projection } = expectTerraformerMigration(imported.state, source.state, 0);
-      expect(projection).toEqual(source.state);
+      expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     }
     expect(read(imported)).toEqual(imported);
   });
@@ -241,7 +242,7 @@ describe("r9 additive migration boundaries", () => {
     const source = paidR8(), before = structuredClone(source), migrated = read(source);
     const { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(source).toEqual(before);
     expect(read(migrated)).toEqual(migrated);
     expect(serializeState(deserializeState(migrated.state))).toEqual(migrated.state);
@@ -261,7 +262,7 @@ describe("r9 additive migration boundaries", () => {
     expect(store.getItem(BACKUP_KEY)).toBe(raw);
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
     const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.notice).toContain("已有命名编成与计划来源完整保留");
     expect(session.notice).toContain("已有研究模板完整保留");
@@ -282,7 +283,7 @@ describe("r9 additive migration boundaries", () => {
     expect(session.mode).toBe("protected");
     expect(session.loaded.appliedSeconds).toBe(0);
     const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
     expect(session.export(session.loaded.state, NOW)).toEqual({ raw, protected: true });
     expect(session.save(session.loaded.state, NOW)).toMatchObject({ ok: false });
@@ -354,7 +355,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(source.state.fleets).toHaveLength(1);
     const migrated = read(source), { buildingTemplates, ...projection } = expectTerraformerMigration(migrated.state, source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(source).toEqual(before);
     expect(migrated.savedAt).toBe(source.savedAt);
     expect(migrated.lastTickAt).toBe(source.lastTickAt);
@@ -369,7 +370,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(store.writes).toEqual([BACKUP_KEY, STORAGE_KEY]);
     const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
   });
   it.each(["outbound", "returning"] as const)("keeps actual %s receipts and queues frozen when backup fails", phase => {
     const source = archivedR8.fixtures[phase], raw = JSON.stringify(source, null, 2), store = new MemoryStore(raw);
@@ -379,7 +380,7 @@ describe("pinned source-generated r8 migration", () => {
     expect(session.loaded.appliedSeconds).toBe(0);
     const { buildingTemplates, ...projection } = expectTerraformerMigration(serializeState(session.loaded.state), source.state, 0);
     expect(buildingTemplates).toEqual(createBuildingTemplateState());
-    expect(projection).toEqual(source.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(source.state));
     expect(session.export(session.loaded.state)).toEqual({ raw, protected: true });
     expect(store.getItem(STORAGE_KEY)).toBe(raw);
     expect(session.save(session.loaded.state)).toMatchObject({ ok: false });
@@ -444,5 +445,43 @@ describe("strict synthetic legacy NPC projection", () => {
   });
   it("refuses a missing NPC object rather than treating it as already projected", () => {
     expect(() => stripVerifiedNpcMetadata({ prior: 1 }, 0)).toThrow();
+  });
+});
+
+
+describe("strict synthetic legacy energy preparation", () => {
+  it("removes only the independent exact unused default and preserves every other field", () => {
+    const source = file().state, before = structuredClone(source);
+    stripVerifiedInactiveEnergyChallenge(source);
+    expect(liftLegacyEnergyChallenge(source)).toStrictEqual(before);
+    expect(source).not.toHaveProperty("energyChallenge");
+  });
+  it.each(["attempted", "active", "completed", "wrong-model", "extra", "symbol", "hidden", "accessor", "inherited", "missing"])
+  ("refuses %s metadata before touching any world data", kind => {
+    const source = file().state;
+    let reads = 0;
+    if (kind === "attempted") source.energyChallenge.nextAttemptId = 2;
+    if (kind === "active") source.energyChallenge.active = { attemptId: 1 };
+    if (kind === "completed") source.energyChallenge.completion = { attempt: { attemptId: 1 } };
+    if (kind === "wrong-model") source.energyChallenge.model = "other-model";
+    if (kind === "extra") source.energyChallenge.unknown = undefined;
+    if (kind === "symbol") source.energyChallenge[Symbol("authority")] = null;
+    if (kind === "hidden") Object.defineProperty(source.energyChallenge, "active", { value: null, enumerable: false });
+    if (kind === "accessor") Object.defineProperty(source.energyChallenge, "active", { get() { reads++; throw Error("must not execute"); } });
+    if (kind === "inherited") Object.setPrototypeOf(source.energyChallenge, { authority: null });
+    if (kind === "missing") delete source.energyChallenge;
+    const worldBefore = Object.getOwnPropertyDescriptors(source);
+    const challengeBefore = source.energyChallenge && Object.getOwnPropertyDescriptors(source.energyChallenge);
+    expect(() => stripVerifiedInactiveEnergyChallenge(source)).toThrow();
+    expect(Object.getOwnPropertyDescriptors(source)).toEqual(worldBefore);
+    if (challengeBefore) expect(Object.getOwnPropertyDescriptors(source.energyChallenge)).toEqual(challengeBefore);
+    expect(reads).toBe(0);
+  });
+  it("does not overwrite an old oracle already carrying any challenge field", () => {
+    for (const energyChallenge of [undefined, null, {}, { model: "energy-tightening-v1", nextAttemptId: 1, active: null, completion: null }]) {
+      const source = { energyChallenge, retained: { paid: "123" } }, before = structuredClone(source);
+      expect(() => liftLegacyEnergyChallenge(source)).toThrow();
+      expect(source).toStrictEqual(before);
+    }
   });
 });

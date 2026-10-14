@@ -705,7 +705,7 @@
     },
     "src/ui/building-template-batch-panel.ts": {
       "mode": "100644",
-      "sha256": "49bfac6b21dfb7c82f576d3d694d036c5f3ea520771395c029c64aac9300abdf"
+      "sha256": "c84a8929d18771023e70da7629565d422ae6e9ed94b0373efb9e5231c3b420f6"
     },
     "src/ui/building-template-batch-present.ts": {
       "mode": "100644",
@@ -1095,13 +1095,13 @@
       "before": null,
       "after": {
         "mode": "100644",
-        "sha256": "49bfac6b21dfb7c82f576d3d694d036c5f3ea520771395c029c64aac9300abdf"
+        "sha256": "c84a8929d18771023e70da7629565d422ae6e9ed94b0373efb9e5231c3b420f6"
       },
-      "patchSha256": "9f997d7e87845768fd857c8d8a7932f9462ca55ed311b7e5ac5a123f4b3e32fb",
+      "patchSha256": "a8ca262438ab8145b80205fdb9505bbfea7308857bba0f7b7f61ea8bc87e241b",
       "hunks": [
         {
-          "header": "@@ -0,0 +1,386 @@",
-          "sha256": "66bcf70c0a350f3a7e36dd282f26977717a8934af8a2241a59b048189baf7885"
+          "header": "@@ -0,0 +1,389 @@",
+          "sha256": "f840c8532168bb2f9a1dd034efcc2eb662af4cc3378e419e4ee5d6454e344d4d"
         }
       ]
     },

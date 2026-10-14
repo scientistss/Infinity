@@ -1,4 +1,4 @@
-"""Read-only r14 scout fixture identity. No Node, build, browser, or writes.
+"""Read-only genuine historical/current-r16 scout fixture identity. No Node, build, browser, or writes.
 
 Call only after validating the real workspace against clean_source_summary.
 The summary must contain sourceSha and sourceCode (path -> SHA256).
@@ -73,6 +73,21 @@ def _source_file(workspace, current, relative):
     return raw
 
 
+
+def _approved_predecessor(workspace, path, raw):
+    """Project only full current support bytes covered by the exact r16 seal."""
+    from test_energy_challenge_provenance import project_bytes
+    return project_bytes(path, raw, repository=Path(workspace))
+
+
+def _historical_producer_bytes(workspace, current, path, expected_sha256):
+    raw = _source_file(workspace, current, path)
+    if _sha(raw) != expected_sha256:
+        raw = _approved_predecessor(workspace, path, raw)
+    _require(_sha(raw) == expected_sha256, 'Fixture producer bytes mismatch')
+    return raw
+
+
 def _historical_source_bindings(workspace, pool):
     """Read exact Git objects; retain original list order in returned identity."""
     bindings = pool['sourceBindings']
@@ -121,7 +136,7 @@ def scout_fixture_identity(workspace, clean_source_summary, runtime):
         ('path', 'sha256', 'scripts/scout-historical-fixtures.mjs'),
         ('preparationPath', 'preparationSha256', 'scripts/scout-historical-fixtures.py')):
         _require(generated[path_key] == expected_path, 'Wrong fixture producer path')
-        _require(generated[digest_key] == _sha(_source_file(workspace, current, expected_path)), 'Fixture producer bytes mismatch')
+        _historical_producer_bytes(workspace, current, expected_path, generated[digest_key])
     # Historical generation really used Node 24 and the prior release lock.
     # Preserve that metadata; it must not be rewritten to look like this run.
     _require(isinstance(generated['runtimeNode'], str) and re.fullmatch(r'v\d+\.\d+\.\d+', generated['runtimeNode']), 'Invalid historical runtime')
@@ -131,9 +146,13 @@ def scout_fixture_identity(workspace, clean_source_summary, runtime):
     current_lock_raw = _source_file(workspace, current, 'package-lock.json')
     after_lock = _json(current_lock_raw)
     _require(before_lock['version'] == before_lock['packages']['']['version'] == '0.6.21-alpha.1', 'Wrong original lock release')
-    _require(after_lock['version'] == after_lock['packages']['']['version'] == '0.6.31-alpha.1', 'Wrong r14 lock release')
-    before_lock['version'] = before_lock['packages']['']['version'] = '0.6.31-alpha.1'
+    _require(after_lock['version'] == after_lock['packages']['']['version'] == '0.6.32-alpha.1', 'Wrong current r16 lock release')
+    before_lock['version'] = before_lock['packages']['']['version'] = '0.6.32-alpha.1'
     _require(before_lock == after_lock, 'Dependency contents differ from fixture producer')
+    predecessor_lock = _json(_approved_predecessor(workspace, 'package-lock.json', current_lock_raw))
+    expected_predecessor = copy.deepcopy(after_lock)
+    expected_predecessor['version'] = expected_predecessor['packages']['']['version'] = '0.6.31-alpha.1'
+    _require(predecessor_lock == expected_predecessor, 'Pinned predecessor lock differs beyond the exact current release tokens')
     _require(generated['decimalPackageVersion'] == after_lock['packages']['node_modules/break_infinity.js']['version'], 'Historical decimal package mismatch')
     bindings = _historical_source_bindings(workspace, pool)
     rows = pool['rows']

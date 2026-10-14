@@ -1,3 +1,4 @@
+import { expectedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles } from "./npc-wallet-expectations";
 import { stripVerifiedNpcRemainders, stripVerifiedNullNpcScoutSnapshots } from "./helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,10 +13,10 @@ import { deserializeState, exportSave, importSave } from "../src/game/save";
 afterEach(() => { vi.doUnmock("../src/game/content"); vi.resetModules(); });
 
 describe("demolition historical boundary remains r10 forever", () => {
-  it("preserves current r14 paid partial work and earned terra grants under explicit future r15 support", async () => {
+  it("preserves current r16 paid partial work and earned terra grants under explicit future r17 support", async () => {
     const source = historical.rows.find(row => row.id === "G10a-earned-grant")!;
     const state = deserializeState(importSave(source.raw).state), planet = activePlanet(state);
-    // Synthetic prerequisites/wallet only; the current r14 job is produced by real quote/payment/tick.
+    // Synthetic prerequisites/wallet only; the current r16 job is produced by real quote/payment/tick.
     planet.buildings.metal_mine = 10; planet.buildings.robotics_factory = 0; planet.buildings.nanite_factory = 0;
     planet.resources = { metal: big(1e6), crystal: big(1e6), deuterium: big(1e6) };
     state.research.levels.ion_tech = 1;
@@ -25,7 +26,7 @@ describe("demolition historical boundary remains r10 forever", () => {
     const issuedTotal = activePlanet(payment.state).demolition!.totalSeconds;
     expect(Math.abs(issuedTotal - 4.6104)).toBeLessThanOrEqual(Number.EPSILON * 4.6104);
     const partial = tick(payment.state, 0.25), raw = exportSave(partial, 1250), original = importSave(raw);
-    expect(original.revision).toBe(14);
+    expect(original.revision).toBe(16);
     expect(original.state.npcEconomy).toEqual(expectedFreshNpcWallet(0.25));
     expect(original.state.planets[0]!.demolition).toMatchObject({ jobId: 2, paid: { metal: "1476", crystal: "369", deuterium: "0" },
       totalSeconds: issuedTotal, remainingSeconds: issuedTotal - 0.25, fromLevel: 10, toLevel: 9 });
@@ -34,16 +35,16 @@ describe("demolition historical boundary remains r10 forever", () => {
     vi.resetModules();
     vi.doMock("../src/game/content", async () => ({
       ...await vi.importActual<typeof import("../src/game/content")>("../src/game/content"),
-      SAVE_REVISION: 15, SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      SAVE_REVISION: 17, SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17],
     }));
     const future = await import("../src/game/save"), adopted = future.importSave(raw);
-    expect(adopted).toEqual({ ...original, revision: 15 });
+    expect(adopted).toEqual({ ...original, revision: 17 });
     expect(future.importSave(JSON.stringify(adopted))).toEqual(adopted);
     expect(() => importSave(JSON.stringify(adopted))).toThrow(/修订不兼容/);
     const missing = structuredClone(original) as any; delete missing.state.planets[0].demolition;
     expect(() => future.importSave(JSON.stringify(missing))).toThrow(/拆除槽/);
   });
-  it("preserves actual ca5 r11 paid partial work and earned grants through r14 and explicit future r15", async () => {
+  it("preserves actual ca5 r11 paid partial work and earned grants through r16 and explicit future r17", async () => {
     const { createHash } = await import("node:crypto" as string);
     expect(actualR11.sourceSha).toBe("ca5ef0c769856f2c4c8925e76a5c7d322822fe1b");
     const source = actualR11.rows.find(row => row.id === "partial-demolition-earned-grants")!;
@@ -64,15 +65,15 @@ describe("demolition historical boundary remains r10 forever", () => {
     const migrated = importSave(source.raw);
     const verified = structuredClone(migrated);
     stripVerifiedNpcRemainders(verified.state); stripVerifiedNullNpcScoutSnapshots(verified.state);
-    expect(verified).toEqual({ ...original, revision: 14,
-      state: { ...original.state, npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles() } });
+    expect(verified).toEqual({ ...original, revision: 16,
+      state: { ...original.state, energyChallenge: expectedInactiveEnergyChallenge(), npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles() } });
     vi.resetModules();
     vi.doMock("../src/game/content", async () => ({
       ...await vi.importActual<typeof import("../src/game/content")>("../src/game/content"),
-      SAVE_REVISION: 15, SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      SAVE_REVISION: 17, SUPPORTED_SAVE_REVISIONS: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17],
     }));
     const future = await import("../src/game/save"), adopted = future.importSave(source.raw);
-    expect(adopted).toEqual({ ...migrated, revision: 15 });
+    expect(adopted).toEqual({ ...migrated, revision: 17 });
     expect(future.importSave(JSON.stringify(adopted))).toEqual(adopted);
     expect(() => importSave(JSON.stringify(adopted))).toThrow(/修订不兼容/);
     const missing = structuredClone(original) as any; delete missing.state.planets[0].demolition;

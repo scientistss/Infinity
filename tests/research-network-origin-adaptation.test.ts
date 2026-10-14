@@ -1,3 +1,4 @@
+import { expectedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { expectedFreshNpcWallet, expectedEmptyNpcBattles, expectedZeroNpcRemainder } from "./npc-wallet-expectations";
 import { describe, expect, it } from "vitest";
 import originalR10 from "./fixtures/demolition-origin-r10-save.json";
@@ -16,10 +17,10 @@ type Save = ReturnType<typeof importSave>;
 const old = () => structuredClone(originalR10) as unknown as Save;
 
 describe("IRN origin revision adapter", () => {
-  it("adds only revision14, zero NPC wallet and rights plus explicit null slots, preserving complete raw input and earned fields", () => {
+  it("adds only revision16, inactive challenge, zero NPC wallet and rights plus explicit null slots, preserving complete raw input and earned fields", () => {
     const source = old(), bytes = JSON.stringify(source);
     const result = readNaturalResearchOrigin(source, PINNED_R10);
-    expect(result.imported).toEqual({ ...source, revision: 14, state: { ...source.state, messages: source.state.messages.map(message => ({ ...message, npcScoutSnapshot: null })), npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: source.state.planets.map(p => ({ ...p, demolition: null, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
+    expect(result.imported).toEqual({ ...source, revision: 16, state: { ...source.state, energyChallenge: expectedInactiveEnergyChallenge(), messages: source.state.messages.map(message => ({ ...message, npcScoutSnapshot: null })), npcEconomy: expectedFreshNpcWallet(), npcBattles: expectedEmptyNpcBattles(), planets: source.state.planets.map(p => ({ ...p, demolition: null, npcResourceRemainder: expectedZeroNpcRemainder() })) } });
     expect(JSON.stringify(source)).toBe(bytes);
     expect(result.candidate.terraformerGrantJobFloor).toBe(89);
     expect(result.candidate.planets[0]!.terraformerFields).toEqual({ base: 163, grantedLevels: 2 });

@@ -906,7 +906,7 @@ try:
           hashlib.sha256(fixtures['origin']['originalSaveRaw'].encode()).hexdigest() == 'd456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a'
           and hashlib.sha256(fixtures['originalSaveRaw'].encode()).hexdigest() == fixtures['origin']['r11Sha256']
           and source_report['source']['historicalProducer']['sourceSha'] == 'ca5ef0c769856f2c4c8925e76a5c7d322822fe1b'
-          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 14)
+          and fixtures['originalSave']['revision'] == 11 and fixtures['base']['revision'] == 16)
     for key, row in fixtures['naturalMilestones'].items():
         matches = [m for m in source_report['milestones'] if m['name'] == key]
         check('entire genuine milestone unchanged: ' + key, len(matches) == 1 and exact_json(matches[0], row) and row['strictRoundtrips'] == 2 and row['stateAdoptedFromReload'])
@@ -1022,7 +1022,7 @@ try:
 
         begin_case('suite integrity')
         check('no app errors or failed production requests', not errors and not failed_requests, {'errors': errors, 'failedRequests': failed_requests})
-        check('served exact release is v9/r14', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)
+        check('served exact release is v9/r16', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 16)
         completed = True; flush(); browser.close()
 except BaseException as error:
     if failure is None:

@@ -7,6 +7,7 @@ request interception, internal game-state access, or new quote import is used.
 Functional Date/performance/RAF and actual host/native-frame clocks are distinct.
 """
 import argparse
+from r16_compatibility import lift_r14_state_to_r16
 import ast
 import copy
 import hashlib
@@ -24,7 +25,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
-CANDIDATE_VERSION = '0.6.31-alpha.1'
+CANDIDATE_VERSION = '0.6.32-alpha.1'
 OLD_SHA = '241a51de31364e9086abcc304884bf9df7cd6912'
 REPORT_SHA = '9102da6f8fc52427b642883389d186726a8cf0c02747aa6c135150566458d8ea'
 WIDTHS = (320, 390, 768, 1440)
@@ -295,7 +296,7 @@ def verify_bundle(page,response):
     release_url=urljoin(args.url,'release.json'); release_response=page.request.get(release_url)
     release_body=release_response.body(); release=json.loads(release_body)
     ref=original_bytes('http-release',release_body,'json')
-    check('actual same-origin HTTP200 release pins exact SHA version and v9r14',release_response.status==200 and release_response.url==release_url and release['sourceSha']==args.expected_sha and release['version']==CANDIDATE_VERSION and release['saveVersion']==9 and release['saveRevision']==14,ref)
+    check('actual same-origin HTTP200 release pins exact SHA version and v9r16',release_response.status==200 and release_response.url==release_url and release['sourceSha']==args.expected_sha and release['version']==CANDIDATE_VERSION and release['saveVersion']==9 and release['saveRevision']==16,ref)
     if release_metadata is not None: check('every anonymous context receives identical production release',release==release_metadata,ref)
     release_metadata=release; capture=page_sources[page]; rows=[]; bodies={}; v8=[]
     for r in capture['responses']:
@@ -407,7 +408,7 @@ def snap(page,unit,label):
 def natural_route():
     begin_case('natural05-real-count-fill-max-payments')
     with live_context(fixtures['initialRaw']) as (_context,page):
-        before=save(page); whole_state('untouched-natural05-handoff',before,fixtures['base']['state'])
+        before=save(page); whole_state('untouched-natural05-handoff',before,lift_r14_state_to_r16(fixtures['base']['state']))
         tab(page,'shipyard'); default=card(page,'small_cargo'); ref=persist_json('first-visible-default-one',default)
         check('first visible card retains valid default one with a separate enabled payment',default['input']=='1' and not default['payDisabled'],ref)
         assert_quote(page,'small_cargo',1,before)

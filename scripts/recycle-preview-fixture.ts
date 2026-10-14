@@ -23,7 +23,7 @@ check(process.argv.length === 5 && /^[a-f0-9]{64}$/.test(inputHash ?? "") && /^[
 const git = (...args: string[]) => String(execFileSync("git", args, { cwd: new URL("../", import.meta.url), encoding: "utf8", timeout: 10000 })).trimEnd();
 check(git("rev-parse", "HEAD") === sourceSha && git("diff", "HEAD", "--") === "", "Clean exact committed producer required");
 check(git("status", "--porcelain=v1", "--untracked-files=all", "--", "src", "scripts", "tests", "public", ".github", "package.json", "package-lock.json") === "", "Source scope must be clean");
-check(SAVE_VERSION === 9 && SAVE_REVISION === 14, "No save schema change is authorized");
+check(SAVE_VERSION === 9 && SAVE_REVISION === 16, "Current r16 schema required");
 const inputBytes = readFileSync(inputPath); check(hash(inputBytes) === inputHash, "Exact pirate input byte mismatch");
 const inputRaw = String(inputBytes), input = importSave(inputRaw), epoch = input.savedAt;
 check(JSON.stringify(input) === JSON.stringify(JSON.parse(inputRaw)), "Strict input must not migrate or normalize");

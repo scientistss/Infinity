@@ -1,3 +1,4 @@
+import { stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { activePlanet, withPlanet } from "../src/game/empire";
 import { describe, expect, it } from "vitest";
@@ -141,7 +142,7 @@ function legacyFile(revision: 2 | 3) {
   state.arcade.seed = 819;
   for (let i = 0; i < 3; i++) state = grantRun(state, "bonus").state;
   const file = JSON.parse(exportSave(state, 123));
-  stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
+  stripVerifiedInactiveEnergyChallenge(file.state); stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;

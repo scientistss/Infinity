@@ -2,7 +2,7 @@
  * node --import tsx --test scripts/test-r13-native-replay-oracle.mjs
  */
 import assert from 'node:assert/strict';
-import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR14, projectVerifiedNpcEconomy } from './r14-compatibility.mjs';
+import { expectedNpcEconomy, advanceExpectedNpcWallet, liftR11StateToR16, projectVerifiedNpcEconomy } from './r16-compatibility.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -41,11 +41,11 @@ function syntheticTrace(raw, specs = [
     age = advanceExpectedNpcWallet(age, observed.adoptedSegmentsSeconds);
   }
   function withNpc() {
-    return liftR11StateToR14(save.serializeState(state),age);
+    return liftR11StateToR16(save.serializeState(state),age);
   }
   function write(savedAt, lastTickAt) {
     oldFile = JSON.parse(save.exportSave(state, savedAt, lastTickAt));
-    previousRaw = JSON.stringify({ ...oldFile, revision: 14, state: withNpc() }, null, 2);
+    previousRaw = JSON.stringify({ ...oldFile, revision: 16, state: withNpc() }, null, 2);
     return previousRaw;
   }
   for (const [index, spec] of specs.entries()) {
@@ -144,7 +144,7 @@ test('every genuine fixture can replay without a second legacy normalization', a
     ]);
     const result = await replayNativeTrace(root, input);
     const actual = JSON.parse(events(input, 'save', 1).at(-1).raw);
-    assert.deepEqual(actual.state, liftR11StateToR14(result.state,result.npcWallet));
+    assert.deepEqual(actual.state, liftR11StateToR16(result.state,result.npcWallet));
   }
 });
 

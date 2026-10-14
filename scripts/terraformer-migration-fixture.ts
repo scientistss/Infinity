@@ -5,7 +5,7 @@
  * used only to verify additive r10 metadata, r11 null slots and exact zero-age r14 NPC metadata, plus rejection by the old reader.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
-import { expectedNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import archivedR8 from "../tests/fixtures/building-templates-r8.json";
 import { importSave as importCurrent } from "../src/game/save";
 
@@ -103,7 +103,7 @@ export async function createTerraformerMigrationFixtures(root: string) {
   }
   for (const row of rows) {
     const current = importCurrent(row.raw);
-    check(current.revision === 14 && current.savedAt === row.oldReaderOutput.savedAt && current.lastTickAt === row.oldReaderOutput.lastTickAt,
+    check(current.revision === 16 && current.savedAt === row.oldReaderOutput.savedAt && current.lastTickAt === row.oldReaderOutput.lastTickAt,
       `${row.name}: revision/wall-clock migration drift`);
     check(stable(withoutTerraformerMetadata(current.state)) === stable(row.oldReaderOutput.state), `${row.name}: old-reader semantics changed`);
     check(current.state.terraformerGrantJobFloor === row.oldReaderOutput.state.orders.nextJobId, `${row.name}: paid-job boundary changed`);

@@ -15,7 +15,7 @@ import { retryNpcAttackDock } from "../src/game/npc-attack";
 import { deserializeState, exportSave, importSave, serializeState } from "../src/game/save";
 import { SaveSession } from "../src/game/save-session";
 import { STORAGE_KEY } from "../src/game/content";
-import { liftR13StateToR14 } from "./r14-compatibility.mjs";
+import { liftR13StateToR16, liftR14StateToR16 } from "./r16-compatibility.mjs";
 import { NPC_SCOUT_UI_SELECTION } from "./npc-scout-ui-selection";
 import type { GameState } from "../src/game/types";
 declare const process: { argv: string[]; version: string; exitCode?: number; stdout: { write(text: string): void } };
@@ -111,11 +111,11 @@ function shadowState() {
   value.messages = independentMessages(value.messages);
   value.planets = value.planets.map((p: RecordValue) => ({ ...p, npcResourceRemainder: { ...remainders[p.id] } }));
   value.fleets = [...value.fleets, ...structuredClone(attacks)].sort((a: RecordValue, b: RecordValue) => a.id - b.id);
-  return value;
+  return liftR14StateToR16(value);
 }
 function invariant() {
   exact("every state field equals independent NPC oracle + pinned eef legacy engine", serializeState(state), shadowState());
-  exact("old reports remain historical", state.messages.slice(0, original.state.messages.length), liftR13StateToR14(original.state).messages);
+  exact("old reports remain historical", state.messages.slice(0, original.state.messages.length), liftR13StateToR16(original.state).messages);
   exact("ring and deep RNG/loot unaffected", [state.arcade, state.deepSpace], [deserializeState(importSave(original.raw).state).arcade, deserializeState(importSave(original.raw).state).deepSpace]);
   check("no actual fixture injection", state.totalTime.gte(25876)); budget();
 }

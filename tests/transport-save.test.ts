@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge, stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../src/game/state";
@@ -314,7 +315,7 @@ describe("r6 strict transport structure and identity", () => {
 describe("r6 to r7 retains the complete existing transport state", () => {
   it.each(["pending", "paid-research", "outbound", "returning"])("adds only empty intent to %s source state", scenario => {
     const file = scenario === "pending" ? pendingFile() : scenario === "paid-research" ? paidFile("research") : tripFile(scenario);
-    stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 6; delete file.state.buildingTemplates; delete file.state.researchTemplates; delete file.state.formations;
+    stripVerifiedInactiveEnergyChallenge(file.state); stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 6; delete file.state.buildingTemplates; delete file.state.researchTemplates; delete file.state.formations;
     for (const task of file.state.orders.tasks) delete task.formationOrigin;
     const original = structuredClone(file), imported = read(file);
     expect(file).toEqual(original);
@@ -323,12 +324,12 @@ describe("r6 to r7 retains the complete existing transport state", () => {
     expect(formations).toEqual({ nextFormationId: 1, entries: [] });
     for (const task of projection.orders.tasks as any[]) { expect(task.formationOrigin).toBeNull(); delete task.formationOrigin; }
     expect(researchTemplates).toEqual({ nextTemplateId: 1, templates: [] });
-    expect(projection).toEqual(file.state);
+    expect(projection).toEqual(liftLegacyEnergyChallenge(file.state));
     expect(read(imported)).toEqual(imported);
   });
   it("keeps paid r6 research and transport receipts frozen when migration backup fails", () => {
     for (const file of [paidFile("research"), tripFile()]) {
-      stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 6; delete file.state.buildingTemplates; delete file.state.researchTemplates; delete file.state.formations;
+      stripVerifiedInactiveEnergyChallenge(file.state); stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 6; delete file.state.buildingTemplates; delete file.state.researchTemplates; delete file.state.formations;
       for (const task of file.state.orders.tasks) delete task.formationOrigin;
       const raw = JSON.stringify(file), data = new Map([[STORAGE_KEY, raw]]);
       const store = { getItem: (key: string) => data.get(key) ?? null,
@@ -341,7 +342,7 @@ describe("r6 to r7 retains the complete existing transport state", () => {
       expect(formations).toEqual({ nextFormationId: 1, entries: [] });
       for (const task of projection.orders.tasks as any[]) { expect(task.formationOrigin).toBeNull(); delete task.formationOrigin; }
       expect(researchTemplates).toEqual({ nextTemplateId: 1, templates: [] });
-      expect(projection).toEqual(file.state);
+      expect(projection).toEqual(liftLegacyEnergyChallenge(file.state));
       expect(session.export(session.loaded.state, 6000)).toEqual({ raw, protected: true });
       expect(data.get(STORAGE_KEY)).toBe(raw);
     }
@@ -352,7 +353,7 @@ describe("r5 transport migration is additive and cannot erase smuggled authority
   function r5(): any {
     const file = paidFile("shipyard");
     const task = file.state.orders.tasks[0];
-    stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 5; delete file.state.buildingTemplates; delete file.state.formations; delete task.formationOrigin; delete file.state.researchTemplates; delete file.state.orders.nextWorkId; delete task.transport; delete task.currentWork;
+    stripVerifiedInactiveEnergyChallenge(file.state); stripSyntheticTerraformerMetadata(file.state, 0); file.revision = 5; delete file.state.buildingTemplates; delete file.state.formations; delete task.formationOrigin; delete file.state.researchTemplates; delete file.state.orders.nextWorkId; delete task.transport; delete task.currentWork;
     return file;
   }
   it("preserves paid local identities, partial progress and all original ledgers", () => {
@@ -365,7 +366,7 @@ describe("r5 transport migration is additive and cannot erase smuggled authority
     for (const task of projected.orders.tasks) {
       expect(task.transport).toBeNull(); expect(task.currentWork).toBeNull(); delete task.transport; delete task.currentWork;
     }
-    expect(projected).toEqual(file.state);
+    expect(projected).toEqual(liftLegacyEnergyChallenge(file.state));
     expect(read(first)).toEqual(first);
   });
   it.each(["transport", "currentWork", "nextWorkId", "orderTransport", "workId", "shipmentFleetId", "grossCargoCap"])("rejects even null r6 %s on an old revision", key => {

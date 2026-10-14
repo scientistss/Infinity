@@ -2,7 +2,7 @@
  * Only anonymous prepared snapshots. All historical fields stay exact; only explicitly asserted r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r14 NPC state are added.
  * Usage: node --import tsx scripts/check-shipyard-census-parity.mjs BEFORE FIXTURE MODERATE
  */
-import { expectedNpcEconomy, assertR8StatePreserved, advanceExpectedNpcWallet , assertHistoricalSource } from './r14-compatibility.mjs';
+import { expectedNpcEconomy, assertR8StatePreserved, advanceExpectedNpcWallet , assertHistoricalSource } from './r16-compatibility.mjs';
 import { captureAdoptedSteps } from './capture-adopted-steps.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';

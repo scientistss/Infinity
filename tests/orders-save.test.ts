@@ -1,3 +1,4 @@
+import { stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata, expectTerraformerMigration } from "./helpers";
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../src/game/state";
@@ -52,7 +53,7 @@ function queueFile() {
 }
 function legacyFile(revision: 2 | 3 | 4) {
   const file = queueFile();
-  stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
+  stripVerifiedInactiveEnergyChallenge(file.state); stripSyntheticTerraformerMetadata(file.state, 0); file.revision = revision;
   delete file.state.buildingTemplates;
   delete file.state.researchTemplates;
   delete file.state.formations;

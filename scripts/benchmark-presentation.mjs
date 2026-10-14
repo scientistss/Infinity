@@ -9,7 +9,7 @@
  * Generate fixtures before this process. Keep the archived original source and
  * its dependency resolution intact. No absolute machine-time CI thresholds.
  */
-import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR14, assertHistoricalSource, assertZeroNpcResourceRemainders } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, liftR8StateToR16, assertHistoricalSource, assertZeroNpcResourceRemainders } from "./r16-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -72,7 +72,7 @@ assert.equal(Buffer.byteLength(fixture.save), fixture.manifest.utf8Bytes, "nativ
 assert.deepEqual(JSON.parse(fixture.save), fixture.ready, "save/ready contract");
 assert.equal(fixture.ready.revision, 8, "common bytes must come from the actual r8 serializer");
 const migratedFile = afterSave.importSave(fixture.save);
-assert.equal(migratedFile.revision, 14, "new reader must perform the real r8-to-r14 migration");
+assert.equal(migratedFile.revision, 16, "new reader must perform the real r8-to-r16 migration");
 const migrationFloor = fixture.ready.state.orders.nextJobId;
 const sourceState = afterSave.deserializeState(migratedFile.state);
 const beforeState = beforeSave.deserializeState(beforeSave.importSave(fixture.save).state);
@@ -171,11 +171,37 @@ assert.deepEqual(fullOriginal.research.items.map(card => card.id), researchIds, 
 assert.equal(fullOriginal.research.items[irnIndex].later, oldNetworkLater, "complete obsolete archived IRN field");
 assert.equal(fullOriginal.research.queue.items.length, 2, "exact archived active/waiting queue cardinality");
 assert.deepEqual(fullOriginal.research.queue.items[1], oldWaitingResearch, "complete archived waiting row is independently specified");
+const energyChallengeSourceProof = (() => {
+  const manifestPath = "tests/fixtures/energy-challenge-provenance.json";
+  const raw = readFileSync(resolve(afterRoot, manifestPath));
+  const manifestSha256 = sha256(raw);
+  assert.equal(manifestSha256, "3477fefc65c98e3741f39e8bdd674b9988397036c96c1960eba6e5be6fef301b", "exact independently frozen energy source seal");
+  const manifest = JSON.parse(raw);
+  const sourceAudit = JSON.parse(execFileSync("python3",
+    ["-B", "scripts/test_energy_challenge_provenance.py", "--verify-ui-baseline"], { cwd: afterRoot, encoding: "utf8" }));
+  const paths = ["src/automation/engine.ts", "src/game/content.ts", "src/game/dark-matter.ts", "src/game/economy.ts", "src/game/energy-challenge-progress.ts", "src/game/energy-challenge-save.ts", "src/game/energy-challenge-score.ts", "src/game/energy-challenge-state.ts", "src/game/energy-challenge.ts", "src/game/logic.ts", "src/game/queue.ts", "src/game/save.ts", "src/game/state.ts", "src/game/types.ts", "src/main.ts", "src/ui/energy-challenge-panel.ts", "src/ui/energy-challenge-present.ts", "src/ui/energy-challenge.css", "src/ui/planet-selector.ts", "src/ui/protocol-safety.ts", "src/ui/space-panel.ts"];
+  assert.equal(sourceAudit.contract, "exact-declared-energy-challenge-source-delta", "complete current r16 source contract");
+  assert.equal(sourceAudit.sourceBaseline, "166c77fe0fc36ac40eb390804c2a96598870006e", "exact A predecessor");
+  assert.equal(sourceAudit.manifestSha256, manifestSha256, "independently verified energy source seal");
+  assert.deepEqual(sourceAudit.approvedSourceDeltaPaths, paths, "only the finite reviewed energy paths");
+  assert.ok(Number.isInteger(sourceAudit.checks) && sourceAudit.checks > 193, "complete current and all historical source checks");
+  assert.equal(manifest.schema, "infinity-ring-protection-energy-challenge-provenance-v1");
+  assert.equal(manifest.previousAdoptionSourceSha, sourceAudit.sourceBaseline);
+  assert.equal(Object.keys(manifest.productionInventory).length, 223, "complete current production inventory");
+  assert.equal(manifest.previousManifests.length, 15, "all fifteen immutable predecessor seals");
+  assert.deepEqual(manifest.changedPaths.map(row => row.path), paths);
+  assert.deepEqual(manifest.previousManifests[14], { path: "tests/fixtures/building-batch-provenance.json",
+    sha256: "218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece" });
+  assert.deepEqual(sourceAudit.originalUiBaseline, manifest.originalUiBaseline);
+  return { manifestPath, manifestSha256, contract: sourceAudit.contract, sourceBaseline: sourceAudit.sourceBaseline,
+    productionEntries: 223, previousSeals: 15, approvedSourceDeltaPaths: paths, checks: sourceAudit.checks,
+    scope: "Exact complete current r16 source identity; subsequent batch and research proofs are historical. Native behavior and performance require separate acceptance." };
+})();
 const buildingBatchSourceProof = (() => {
   const manifestPath = "tests/fixtures/building-batch-provenance.json";
   const raw = readFileSync(resolve(afterRoot, manifestPath));
   const manifestSha256 = sha256(raw);
-  assert.equal(manifestSha256, "d05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1", "exact independently frozen building-batch source seal");
+  assert.equal(manifestSha256, "218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece", "exact independently frozen building-batch source seal");
   const manifest = JSON.parse(raw);
   const sourceAudit = JSON.parse(execFileSync("python3",
     ["-B", "scripts/test_building_batch_provenance.py", "--verify-ui-baseline"], { cwd: afterRoot, encoding: "utf8" }));
@@ -196,7 +222,7 @@ const buildingBatchSourceProof = (() => {
   assert.deepEqual(sourceAudit.originalUiBaseline, manifest.originalUiBaseline, "unchanged original cumulative UI and art bindings");
   return { manifestPath, manifestSha256, contract: sourceAudit.contract, sourceBaseline: sourceAudit.sourceBaseline,
     productionEntries: 215, previousSeals: 14, approvedSourceDeltaPaths: paths, checks: sourceAudit.checks,
-    scope: "Exact complete current batch source identity. The following 210-entry research proof is explicitly historical; native behavior and measured performance are separate evidence." };
+    scope: "Exact historical batch source identity after complete current r16 verification. The following 210-entry research proof is explicitly historical; native behavior and measured performance are separate evidence." };
 })();
 // This adapter is intentionally specific to the old no-lab-work workload.
 // Tests execute this exact function against hostile copied inputs, without
@@ -474,8 +500,8 @@ const separateResults = [
 assert.equal(JSON.stringify(afterSave.serializeState(state)), serialized, "no measured model or simulation mutated the shared frozen input");
 assert.equal(JSON.stringify(beforeSave.serializeState(archivedState)), archivedSerialized, "no measurement mutated the actual archived serialization input");
 assert.equal(beforeSave.exportSave(archivedState, fixture.manifest.savedAt), fixture.save, "archived exact serialization parity");
-const expectedR14 = { ...fixture.ready, revision: 14, state: liftR8StateToR14(fixture.ready.state, migrationFloor, expectedNpcEconomy()) };
-assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR14, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r13 NPC metadata, explicit null scout snapshot slots and r14 envelope");
+const expectedR16 = { ...fixture.ready, revision: 16, state: liftR8StateToR16(fixture.ready.state, migrationFloor, expectedNpcEconomy()) };
+assert.equal(afterSave.exportSave(state, fixture.manifest.savedAt), JSON.stringify(expectedR16, null, 2), "current exact native serialization is the exact empty-library and grant-ledger lift plus explicit null demolition slots and zero-age r13 NPC metadata, explicit null scout snapshot slots, an independently verified inactive challenge and r16 envelope");
 for (const delta of [0, 1 / 60, 0.125]) {
   const witnessed = captureAdoptedSteps(beforeState, input => ({ state: beforeLogic.tick(input, delta) }), beforeSave.serializeState);
   assertR8StatePreserved(afterSave.serializeState(afterLogic.tick(state, delta)),
@@ -487,7 +513,7 @@ process.stdout.write(JSON.stringify({
   scope: "Native Node performance.now wall-time model measurements on the identical frozen current state from the real r8 strict-reader fixture after observed r14 migration; native serialization uses the separately frozen actual archived/current schemas, proven complete old-field equal, so the archived serializer cannot retain new message slots; the save adds only independently asserted empty buildingTemplates and fixed-floor, zero-grant metadata plus explicit null demolition slots and exact zero-age wallet/empty-receipt metadata. Model parity permits exactly one fully asserted appended terraformer card, removal of the exact obsolete IRN later field, the exact waiting-research quote wording, and the fully asserted empty lab-blocker field (explicit null when hidden). Every original paid construction row/order and null demolition slot is proven before adapting that one field. The fixed transport draft independently requires exactly one null recyclePreview at its declared full/fleet model key position before removing only that field; active previews and every other field remain outside that exception. The independently asserted IRN-zero workload permits no network speed or active-timer exception; every historical card, queue identity, other field and full simulation state remains exact. Paired old archived full presenters versus new visible presenters, alternating sample order, with explicit warmups and raw samples. No fake time, no browser/DOM/FPS claim, no absolute millisecond gate, no player data.",
   environment: { node: process.version, platform: platform(), release: release(), arch: process.arch, cpu: cpus()[0]?.model, logicalCpus: cpus().length },
   fixture: { path: resolve(fixturePath), profile: fixture.profile, manifest: fixture.manifest },
-  sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot), currentBuildingBatch: buildingBatchSourceProof },
+  sources: { beforeRoot, afterRoot, before: sourceHashes(beforeRoot), after: sourceHashes(afterRoot), currentEnergyChallenge: energyChallengeSourceProof, historicalBuildingBatch: buildingBatchSourceProof },
   metadataException: { field: "spaceView.phase / spaceGalaxyView.phase", beforePackageVersion: beforeVersion, afterPackageVersion: afterVersion,
     rule: "Assert each exact respective package version occurs once with its original display-token boundaries; replace only that version token for parity comparison. Every other phase byte and model field remains exact. Native timing callbacks receive no normalization.",
     normalizedToken: "v<package-version>" },

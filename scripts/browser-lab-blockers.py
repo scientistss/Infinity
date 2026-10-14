@@ -9,6 +9,7 @@ No model import, interception, private state read/write, or production replaceme
 occurs in the browser. All original state/storage/expected evidence precedes asserts.
 """
 import argparse
+from r16_compatibility import lift_r14_state_to_r16, lift_r14_envelope_to_r16
 import ast
 import copy
 import gzip
@@ -29,7 +30,7 @@ from urllib.parse import urljoin, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 HOST_STARTED_MONOTONIC = time.monotonic()
 WIDTHS = (320, 390, 768, 1440)
-CANDIDATE_VERSION = '0.6.31-alpha.1'
+CANDIDATE_VERSION = '0.6.32-alpha.1'
 REPORT_SHA = '1acb454d5a8bffcefa680d6bcb091ea4014a4bf4621c44eb157deef2053e3f2d'
 GZIP_SHA = '0ddea5009ff9832630bf5621a1f51b1c1c8211bd253045c45025d43f5c1bc8db'
 GZIP_PATH = 'tests/fixtures/lab-blockers-be0-research-network-report.json.gz'
@@ -499,7 +500,7 @@ def replay_natural_route(page):
         elif kind == 'four-widths': four_widths(page, fixtures['expected'][operation['checkpoint']], 'natural-paid-lab10')
         else: raise ValueError('Unknown natural tape operation: ' + kind)
         evidence.append({'kind': 'actual-natural-operation', 'index': index, 'operation': operation}); flush()
-    whole_state('historical-milestone01-complete', save(page), fixtures['finalSave']['state'])
+    whole_state('historical-milestone01-complete', save(page), lift_r14_state_to_r16(fixtures['finalSave']['state']))
     assert_adopted_epoch(page, 'historical-milestone01-complete', 418)
     select(page, '#planet-select', COLONY); tab(page, 'research')
     assert_blockers(page, fixtures['expected']['completeColony'], 'actual-completion-clears-summary')
@@ -547,7 +548,7 @@ def lifecycle_boundaries(natural_raw):
         if kind == 'tab-away': tab(page, 'facilities')
         elif kind in ('cancelled-import', 'different-world-import'):
             import_file(page, fixtures['initialRaw'], kind == 'different-world-import', kind)
-            if kind == 'different-world-import': expected = fixtures['base']['state']
+            if kind == 'different-world-import': expected = lift_r14_state_to_r16(fixtures['base']['state'])
         else:
             tab(page, 'save'); dialogs = []
             def answer(dialog):
@@ -594,9 +595,9 @@ def protection_boundary(natural_raw):
     summary_toggle(page, True); summary_toggle(page, False)
     storage_check('frozen display never writes over competing raw or backups', page, before, {**before, KEY: competing_raw})
     other.close(); reload_bound(page); tab(page, 'research')
-    assert_blockers(page, fixtures['base']['state'], 'recovery-loads-current-world-no-old-details')
+    assert_blockers(page, lift_r14_state_to_r16(fixtures['base']['state']), 'recovery-loads-current-world-no-old-details')
     # A one-millisecond stale metadata gap does not fund a whole simulation tick.
-    whole_state('recovery-current-full-world', save(page), fixtures['base']['state']); context.close()
+    whole_state('recovery-current-full-world', save(page), lift_r14_state_to_r16(fixtures['base']['state'])); context.close()
 
 
 def source_identity(workspace, expected_sha):
@@ -708,15 +709,15 @@ def main():
             browser = playwright.chromium.launch(headless=True, **({'executable_path': args.chromium} if args.chromium else {}))
             begin_case('natural-cold-context-actual-native-file-import')
             context, page = boot(fixtures['initialRaw'], empty=True)
-            check('served release exact candidate version and unchanged v9/r14', release_metadata['version'] == CANDIDATE_VERSION
-                  and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)
+            check('served release exact candidate version and unchanged v9/r16', release_metadata['version'] == CANDIDATE_VERSION
+                  and release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 16)
             save(page)  # Native new-world save supplies the genuine import-confirmation source.
             persist_json('native-file-import-before', {'storage': all_storage(page), 'fileRaw': fixtures['initialRaw'],
-                'expectedEnvelope': fixtures['base'], 'expectedState': fixtures['base']['state']})
+                'expectedEnvelope': lift_r14_envelope_to_r16(fixtures['base']), 'expectedState': lift_r14_state_to_r16(fixtures['base']['state'])})
             import_file(page, fixtures['initialRaw'], True, 'unchanged-natural-milestone00')
             persist_json('native-file-import-after', {'storage': all_storage(page), 'raw': raw(page),
-                'expectedEnvelope': fixtures['base'], 'expectedState': fixtures['base']['state']})
-            whole_state('actual-native-file-import-complete-world', save(page), fixtures['base']['state'])
+                'expectedEnvelope': lift_r14_envelope_to_r16(fixtures['base']), 'expectedState': lift_r14_state_to_r16(fixtures['base']['state'])})
+            whole_state('actual-native-file-import-complete-world', save(page), lift_r14_state_to_r16(fixtures['base']['state']))
             captures = replay_natural_route(page); context.close()
             genuine_paid = captures['lab10-colony']
             cancellation_boundary(genuine_paid)

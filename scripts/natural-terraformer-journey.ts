@@ -21,7 +21,7 @@ declare const process: {
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 const npcAdoptedSegmentsSeconds: number[] = [];
 let independentlyExpectedNpcWallet = expectedNpcEconomy();
-import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import { setProductionPct } from "../src/automation/engine";
 import type { BuildingId } from "../src/data/buildings";
 import type { ResearchId } from "../src/data/research";
@@ -462,7 +462,7 @@ async function loadOrigin(): Promise<void> {
     milestoneName: ORIGIN_MILESTONE, strictRoundtrips: old.strictRoundtrips, subsequentLiveTickObserved: old.subsequentLiveTickObserved,
     sourceBinding: "Pinned immutable CI report plus verified source artifact binding; the old report does not itself embed sourceSha.", originalSave: old.save };
   const migrated = importSave(JSON.stringify(old.save)); state = deserializeState(migrated.state); stateInitialized = true;
-  check(migrated.revision === 14 && SAVE_REVISION === 14 && SAVE_VERSION === 9, "formal r9-to-r14 migration is not active");
+  check(migrated.revision === 16 && SAVE_REVISION === 16 && SAVE_VERSION === 9, "formal r9-to-r16 migration is not active");
   check(migrated.savedAt === old.save.savedAt && migrated.lastTickAt === old.save.lastTickAt, "migration changed original envelope clocks");
   const projected = projectVerifiedNpcEconomy(serializeState(state), expectedNpcEconomy(), "pure r9 migration must not backfill historical NPC age or rights");
   delete projected.terraformerGrantJobFloor;

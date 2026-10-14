@@ -104,13 +104,69 @@ function fixture() {
   const planet = (id: string) => node("planets").all().find(value => value.dataset.batchPlanet === id)!;
   const choose = () => { select.value = "1"; select.emit("change"); };
   const check = (id: string, checked = true) => { const input = planet(id); input.checked = checked; input.emit("change"); };
+  const activate = (id: string, viaLabel = false) => {
+    const input = planet(id);
+    if (viaLabel) input.parentElement!.children[1]!.emit("click");
+    if (input.disabled) return;
+    // Checkbox pre-activation changes checked before click bubbles. A label's
+    // default action forwards that same sequence to its associated input.
+    input.checked = !input.checked;
+    input.emit("click"); input.emit("input"); input.emit("change");
+  };
   const setup = () => { choose(); check("homeworld"); check("colony-2"); };
   const reviewNow = () => node("review").emit("click");
   controller.update(state, true);
-  return {root, body, host, panel, select, review, controller, actions, accepted, node, planet, choose, check, setup, reviewNow,
+  return {root, body, host, panel, select, review, controller, actions, accepted, node, planet, choose, check, activate, setup, reviewNow,
     state:() => state, setState:(next: GameState) => { state = next; }, before:(run: (action: BuildingTemplateBatchAction) => void) => { beforeConsume = run; }};
 }
 describe("multi-planet building-template one-shot panel", () => {
+  it("preserves checkbox pre-activation through click before accepting input and change", () => {
+    const f = fixture(); f.choose(); const input = f.planet("homeworld");
+    input.checked = true; input.emit("click");
+    expect(input.checked).toBe(true); expect(f.select.value).toBe("1");
+    expect(f.node("budgets").all().filter(node => node.tagName === "input")).toHaveLength(0);
+    input.emit("input");
+    expect(f.node("selection").textContent).toContain("1 / 4");
+    expect(f.node("budgets").all().filter(node => node.tagName === "input")).toHaveLength(3);
+    input.emit("change");
+    expect(input.checked).toBe(true); expect(f.node("selection").textContent).toContain("1 / 4");
+    expect(f.node("budgets").all().filter(node => node.tagName === "input")).toHaveLength(3);
+    f.activate("colony-2"); f.reviewNow(); f.node("apply").emit("click");
+    expect(f.accepted).toEqual([true]);
+    expect(f.actions[0]!.request.planets.map(planet => planet.planetId)).toEqual(["homeworld", "colony-2"]);
+  });
+  it("supports label-forwarded activation and unchecking while preserving other budgets and retiring review", () => {
+    const f = fixture(); f.choose(); f.activate("homeworld", true); f.activate("colony-2", true);
+    const budget = f.node("budgets").all().filter(node => node.tagName === "input")[3]!;
+    budget.value = "12"; budget.emit("input"); f.reviewNow(); const old = f.node("apply");
+    f.activate("homeworld", true);
+    expect(f.select.value).toBe("1"); expect(f.planet("homeworld").checked).toBe(false); expect(f.planet("colony-2").checked).toBe(true);
+    expect(f.node("selection").textContent).toContain("1 / 4");
+    expect(f.node("budgets").all().filter(node => node.tagName === "input").map(node => node.value)).toEqual(["12", "0", "0"]);
+    old.emit("click"); expect(f.actions).toHaveLength(0); expect(f.node("apply").disabled).toBe(true);
+    f.activate("homeworld"); f.reviewNow(); f.node("apply").emit("click");
+    expect(f.accepted).toEqual([true]);
+    expect(f.actions[0]!.request.planets.find(planet => planet.planetId === "colony-2")!.budgets[0]!.budget.metal).toBe("12");
+  });
+  it("enforces the four-planet cap through checkbox and label activation and releases it on uncheck", () => {
+    const f = fixture(); f.choose(); f.activate("homeworld"); f.activate("colony-2", true); f.activate("colony-3"); f.activate("colony-4", true);
+    expect(f.node("selection").textContent).toContain("4 / 4"); expect(f.planet("colony-5").disabled).toBe(true);
+    f.activate("colony-5"); f.activate("colony-5", true);
+    expect(f.planet("colony-5").checked).toBe(false); expect(f.node("selection").textContent).toContain("4 / 4");
+    f.activate("colony-2"); expect(f.planet("colony-5").disabled).toBe(false);
+    f.activate("colony-5", true); expect(f.planet("colony-2").disabled).toBe(true);
+    expect(f.node("selection").textContent).toContain("4 / 4");
+    f.reviewNow(); f.node("apply").emit("click"); expect(f.accepted).toEqual([true]);
+    expect(f.actions[0]!.request.planets.map(planet => planet.planetId)).toEqual(["homeworld", "colony-3", "colony-4", "colony-5"]);
+  });
+  it.each(["observe", "button"])("still rejects silent checkbox changes during %s authority checks", trigger => {
+    const f = fixture(); f.setup(); f.reviewNow(); const old = f.node("apply");
+    f.planet("homeworld").checked = false;
+    if (trigger === "observe") f.controller.observe(f.state(), true);
+    else old.emit("click");
+    expect(f.select.value).toBe(""); expect(f.planet("colony-2").checked).toBe(false); expect(f.node("apply").disabled).toBe(true);
+    f.planet("homeworld").checked = true; old.emit("click"); expect(f.actions).toHaveLength(0);
+  });
   it("has no default selections, independent zero budgets and no observation pricing", () => {
     const f = fixture(), price = vi.spyOn(pricing, "costFor");
     expect(f.select.value).toBe(""); expect(f.node("review").disabled).toBe(true); f.setup();

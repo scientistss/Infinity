@@ -12,7 +12,7 @@ reloads revalidate complete executed script bytes; no cache-performance claim is
 made. Total native wall-clock budget is 90 seconds.
 """
 import argparse
-from r14_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r14
+from r16_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, exact_json, lift_legacy_state_to_r16
 import asyncio
 import copy
 import hashlib
@@ -645,9 +645,9 @@ class Case:
             replaced_raw = import_updates[0]['oldValue']
             self.data['importCurrentUpdate'] = import_updates[0]
             check(self.name, 'actual old input has no building template field', 'buildingTemplates' not in incoming['state'])
-            expected_state = lift_legacy_state_to_r14(incoming['state'], source_revision=8, grant_job_floor=incoming['state']['orders']['nextJobId'])
+            expected_state = lift_legacy_state_to_r16(incoming['state'], source_revision=8, grant_job_floor=incoming['state']['orders']['nextJobId'])
             check(self.name, 'new fixed floor and every planet ledger independently match the selected old source', assert_zero_grant_metadata(accepted['state'], incoming['state'], grant_job_floor=incoming['state']['orders']['nextJobId'], npc_wallet=expected_npc_economy()))
-            check(self.name, 'acceptance adds only exact r9/r10/r11/r13 metadata and r14 null scout slots and preserves every old value, scalar type and array position', exact_json(accepted['state'], expected_state))
+            check(self.name, 'acceptance adds only exact r9/r10/r11/r13 metadata and r14 null scout slots plus exact inactive r16 challenge and preserves every old value, scalar type and array position', exact_json(accepted['state'], expected_state))
             expected_source = {**incoming, 'revision': args.expected_revision, 'state': expected_state}
             expected_raw = await self.page.evaluate('({source,savedAt,lastTickAt}) => JSON.stringify({...source,savedAt,lastTickAt},null,2)',
                 {'source': expected_source, 'savedAt': accepted['savedAt'], 'lastTickAt': accepted['lastTickAt']})

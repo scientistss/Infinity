@@ -209,6 +209,9 @@ def building_batch_render_contract_before(current: str) -> str:
     root = Path(__file__).resolve().parents[1]
     path = 'scripts/browser-render-scheduling.py'
     digest = lambda text: hashlib.sha256(text.encode('utf-8')).hexdigest()
+    if isinstance(current, str) and digest(current) != '686f5d4a43c2b7913bc256749194e3800fe02b977e93b0de6c6e2e2642110744':
+        from test_energy_challenge_provenance import project_bytes
+        current = project_bytes(path, current.encode('utf-8')).decode('utf-8')
     assert isinstance(current, str) and digest(current) == '686f5d4a43c2b7913bc256749194e3800fe02b977e93b0de6c6e2e2642110744', 'Exact complete reviewed batch runner required'
     before = subprocess.check_output(['git', '--no-replace-objects', '-C', str(root), 'show',
                                       '6f73735534ffc1b0e47a01935d8c6e3ff786c989:' + path]).decode('utf-8')

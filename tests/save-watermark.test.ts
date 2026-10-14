@@ -1,3 +1,4 @@
+import { stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripSyntheticTerraformerMetadata } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import { equipCard } from "../src/automation/engine";
@@ -409,7 +410,7 @@ describe("watermarks respect existing failure and replacement boundaries", () =>
 
   it.each([false, true])("migration uses the old watermark and pairs only its successful replacement (failure=%s)", failed => {
     const legacy = JSON.parse(exportSave(game(), START + 45_000, START));
-    stripSyntheticTerraformerMetadata(legacy.state, 0); legacy.revision = 7;
+    stripVerifiedInactiveEnergyChallenge(legacy.state); stripSyntheticTerraformerMetadata(legacy.state, 0); legacy.revision = 7;
     delete legacy.state.buildingTemplates;
     delete legacy.state.formations;
     const source = JSON.stringify(legacy);

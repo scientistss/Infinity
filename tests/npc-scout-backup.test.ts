@@ -28,19 +28,19 @@ class Store implements KeyValueStore {
 describe("r14 null-history migration preserves raw backup protection", () => {
   it.each(historical.rows)("only adds null to genuine normalized r11 messages: $id", row => {
     const migrated = importSave(row.raw);
-    expect(migrated.revision).toBe(14);
+    expect(migrated.revision).toBe(16);
     expect(migrated.state.messages).toEqual(row.oldReaderOutput.state.messages.map(message => ({ ...message, npcScoutSnapshot: null })));
     expect(migrated.state.nextFleetId).toBe(row.oldReaderOutput.state.nextFleetId);
     expect(migrated.state.fleets).toEqual(row.oldReaderOutput.state.fleets);
     expect(migrated.state.totalTime).toBe(row.oldReaderOutput.state.totalTime);
     expect(importSave(JSON.stringify(migrated))).toEqual(migrated);
   });
-  it("writes and verifies the exact original bytes before the r14 adoption", () => {
+  it("writes and verifies the exact original bytes before the r16 adoption", () => {
     const row = historical.rows[0], source = JSON.parse(row.raw), store = new Store(row.raw);
     const session = new SaveSession(store, source.lastTickAt);
     expect(session.mode).toBe("ready"); expect(session.loaded.appliedSeconds).toBe(0);
     expect(store.values.get(BACKUP_KEY)).toBe(row.raw);
-    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(14);
+    expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(16);
     const backup = store.events.indexOf(`write:${BACKUP_KEY}`), primary = store.events.indexOf(`write:${STORAGE_KEY}`);
     expect(primary).toBeGreaterThan(backup); expect(store.events.slice(backup + 1, primary)).toContain(`read:${BACKUP_KEY}`);
     expect(session.loaded.state.messages.every(message => message.npcScoutSnapshot === null)).toBe(true);
@@ -53,7 +53,7 @@ describe("r14 null-history migration preserves raw backup protection", () => {
     expect(session.loaded.appliedSeconds).toBe(0); expect(serializeState(session.loaded.state)).toEqual(expected.state);
     expect(session.export(session.loaded.state)).toEqual({ raw: row.raw, protected: true });
     expect(session.save(session.loaded.state).ok).toBe(false);
-    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(14);
+    if (fault === "primary-read") expect(JSON.parse(store.values.get(STORAGE_KEY)!).revision).toBe(16);
     else if (fault === "primary-corrupt") expect(store.values.get(STORAGE_KEY)).toBe("corrupted write");
     else if (fault === "concurrent") expect(store.values.get(STORAGE_KEY)).toBe("other tab changed the slot");
     else expect(store.values.get(STORAGE_KEY)).toBe(row.raw);

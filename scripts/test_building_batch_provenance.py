@@ -24,7 +24,7 @@ from test_lab_blockers_provenance import ObjectDatabase
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = '6f73735534ffc1b0e47a01935d8c6e3ff786c989'
 MANIFEST = 'tests/fixtures/building-batch-provenance.json'
-MANIFEST_SHA256 = 'd05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1'
+MANIFEST_SHA256 = '218ba04e9d310501b60d2fb4e37aa6b1b070f9039cc5af872a4a3cdc33f01ece'
 RESEARCH_MANIFEST_SHA256 = 'ee3d929da35f41aef0aad587a11ab6acba0726abde44f0de5f753a74c4cb6999'
 SCHEMA = 'infinity-ring-protection-building-batch-provenance-v1'
 CONTRACT = 'exact-declared-building-batch-source-delta'
@@ -83,10 +83,10 @@ APPROVED_ROWS = [{'path': 'src/game/building-template-batch-state.ts',
              'sha256': '8f4063772bf75e8d582690d3efdbc52b3ac80e443d3beaabdcf704a63f4fccbc'}]},
  {'path': 'src/ui/building-template-batch-panel.ts',
   'before': None,
-  'after': {'mode': '100644', 'sha256': '49bfac6b21dfb7c82f576d3d694d036c5f3ea520771395c029c64aac9300abdf'},
-  'patchSha256': '9f997d7e87845768fd857c8d8a7932f9462ca55ed311b7e5ac5a123f4b3e32fb',
-  'hunks': [{'header': '@@ -0,0 +1,386 @@',
-             'sha256': '66bcf70c0a350f3a7e36dd282f26977717a8934af8a2241a59b048189baf7885'}]},
+  'after': {'mode': '100644', 'sha256': 'c84a8929d18771023e70da7629565d422ae6e9ed94b0373efb9e5231c3b420f6'},
+  'patchSha256': 'a8ca262438ab8145b80205fdb9505bbfea7308857bba0f7b7f61ea8bc87e241b',
+  'hunks': [{'header': '@@ -0,0 +1,389 @@',
+             'sha256': 'f840c8532168bb2f9a1dd034efcc2eb662af4cc3378e419e4ee5d6454e344d4d'}]},
  {'path': 'src/ui/building-template-batch-present.ts',
   'before': None,
   'after': {'mode': '100644', 'sha256': '144258b64e9116ea6cd33053f6d7fe6ff28c235b4eef02984a97491d5e86d942'},
@@ -391,6 +391,9 @@ def previous_benchmark_bytes(current, repository=None):
     repository = ROOT if repository is None else repository
     read_manifest(repository)
     before = historical_bytes('scripts/benchmark-presentation.mjs')
+    if current != benchmark_transition(before, MANIFEST_SHA256):
+        from test_energy_challenge_provenance import project_bytes
+        current = project_bytes('scripts/benchmark-presentation.mjs', current, repository)
     assert current == benchmark_transition(before, MANIFEST_SHA256), 'Exact complete building-batch benchmark transition required'
     return before
 
@@ -399,6 +402,9 @@ def previous_display_contract_bytes(current, repository=None):
     repository = ROOT if repository is None else repository
     read_manifest(repository)
     before = historical_bytes('scripts/test_recycle_preview_display_contract.py')
+    if current != display_transition(before):
+        from test_energy_challenge_provenance import project_bytes
+        current = project_bytes('scripts/test_recycle_preview_display_contract.py', current, repository)
     assert current == display_transition(before), 'Exact complete building-batch display-contract transition required'
     return before
 
@@ -412,7 +418,11 @@ def previous_bytes(path, repository=None):
                    ADAPTER_PATHS[2]: research_transition, ADAPTER_PATHS[3]: formation_transition,
                    ADAPTER_PATHS[4]: lambda raw: benchmark_transition(raw, MANIFEST_SHA256),
                    ADAPTER_PATHS[5]: display_transition, ADAPTER_PATHS[6]: browser_test_transition}
-    assert ordinary_bytes(repository/path) == transitions[path](before), ('Unapproved building-batch compatibility adapter drift', path)
+    current = ordinary_bytes(repository/path)
+    if current != transitions[path](before):
+        from test_energy_challenge_provenance import previous_bytes as energy_previous_bytes
+        current = energy_previous_bytes(path, repository)
+    assert current == transitions[path](before), ('Unapproved building-batch compatibility adapter drift', path)
     return before
 
 
@@ -442,6 +452,9 @@ def build_worktree_manifest(destination):
 
 
 def verify_ui_baseline():
+    if (ROOT/'tests/fixtures/energy-challenge-provenance.json').exists():
+        from test_energy_challenge_provenance import verify_previous_ui_baseline
+        return verify_previous_ui_baseline()
     db = ObjectDatabase()
     try:
         candidate, expected = capture_worktree(db)
@@ -479,6 +492,9 @@ def verify_previous_ui_baseline():
 
 def verify_candidate(candidate):
     candidate = git_read('rev-parse', candidate+'^{commit}').decode().strip()
+    if git_read('ls-tree', candidate, '--', 'tests/fixtures/energy-challenge-provenance.json'):
+        from test_energy_challenge_provenance import verify_candidate as verify_energy_candidate
+        return verify_energy_candidate(candidate)['previousProvenance']
     assert candidate != REFERENCE, 'Building-batch candidate must be committed separately from its public baseline'
     for path in (*ADAPTER_PATHS, *UNCHANGED_CHECKER_PATHS, 'scripts/test_building_batch_provenance.py', MANIFEST):
         raw = ordinary_bytes(ROOT/path)
@@ -508,7 +524,8 @@ class BuildingBatchSyntheticTests(unittest.TestCase):
             local = self.view/path; local.parent.mkdir(parents=True, exist_ok=True)
             if local.is_symlink(): local.unlink()
             local.write_bytes(self.git('show', REFERENCE+':'+path)); local.chmod(0o644)
-        self.sources = {path: ordinary_bytes(ROOT/path) for path in CHANGED_PATHS}
+        from test_energy_challenge_provenance import historical_bytes as energy_baseline_bytes
+        self.sources = {path: energy_baseline_bytes(path) for path in CHANGED_PATHS}
         self.provisional = self.make(REFERENCE, {path: ('100644', raw) for path, raw in self.sources.items()})
         self.manifest = make_manifest(self.ring, self.git, self.provisional)
         self.raw = manifest_bytes(self.manifest)

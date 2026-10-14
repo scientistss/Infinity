@@ -96,6 +96,13 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
         patch.start(); self.addCleanup(patch.stop)
         patch = mock.patch.object(m, '_historical_source_bindings', return_value=self.bindings)
         patch.start(); self.addCleanup(patch.stop)
+        self.approved_current = {path: (self.workspace / path).read_bytes() for path in FILES}
+        self.approved_before = {path: READ_ONLY_GIT(ROOT, 'show', 'HEAD:' + path) for path in FILES}
+        def predecessor(workspace, path, raw):
+            if raw != self.approved_current[path]: raise ValueError('Unapproved current support bytes')
+            return self.approved_before[path]
+        patch = mock.patch.object(m, '_approved_predecessor', side_effect=predecessor)
+        patch.start(); self.addCleanup(patch.stop)
 
     def git(self, root, *args):
         self.assertEqual(args, ('show', m.LOCK_ORIGIN + ':package-lock.json'))
@@ -119,8 +126,8 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
         path = self.workspace / 'package-lock.json'
         original = path.read_bytes()
         lock = json.loads(original)
-        self.assertEqual(lock['version'], '0.6.31-alpha.1')
-        self.assertEqual(lock['packages']['']['version'], '0.6.31-alpha.1')
+        self.assertEqual(lock['version'], '0.6.32-alpha.1')
+        self.assertEqual(lock['packages']['']['version'], '0.6.32-alpha.1')
         for field in ('top', 'package'):
             for version in ('0.6.22-alpha.2', '0.6.23-alpha.1', '0.6.23-alpha.2', '0.6.24-alpha.1', '0.6.24-alpha.2', '0.6.26-alpha.2', '0.6.24', True, None):
                 changed = copy.deepcopy(lock)
@@ -130,7 +137,7 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
                 path.write_bytes(body)
                 self.current['sourceCode']['package-lock.json'] = m._sha(body)
                 self.natural['source']['dependencyLockSha256'] = m._sha(body)
-                with self.subTest(field=field, version=version), self.assertRaisesRegex(ValueError, 'Wrong r14 lock release'):
+                with self.subTest(field=field, version=version), self.assertRaisesRegex(ValueError, 'Wrong current r16 lock release'):
                     self.run_identity()
         changed = copy.deepcopy(lock)
         changed['packages']['node_modules/break_infinity.js']['version'] = '0.0.0'
@@ -242,6 +249,26 @@ class ScoutFixtureIdentityTests(unittest.TestCase):
                 elif name == 'duplicateFile': binding['sourceFiles'].append(copy.deepcopy(binding['sourceFiles'][0]))
                 else: binding['serializerSha256'] = '0' * 64
                 with mock.patch.object(m, '_git', READ_ONLY_GIT), self.assertRaises(ValueError): VERIFY_HISTORICAL(ROOT, pool)
+
+    def test_changed_producer_requires_exact_approved_predecessor_bytes(self):
+        path = 'scripts/scout-historical-fixtures.mjs'
+        expected = self.pool['generatedBy']['sha256']
+        with mock.patch.object(m, '_approved_predecessor', return_value=b'forged historical producer'):
+            with self.assertRaisesRegex(ValueError, 'Fixture producer bytes mismatch'):
+                m._historical_producer_bytes(self.workspace, self.current, path, expected)
+        for error in (AssertionError('Unapproved support delta'), PermissionError('No source access')):
+            with mock.patch.object(m, '_approved_predecessor', side_effect=error):
+                with self.assertRaises(type(error)):
+                    m._historical_producer_bytes(self.workspace, self.current, path, expected)
+
+    def test_current_lock_whitespace_cannot_be_repinned_around_source_projection(self):
+        path = self.workspace / 'package-lock.json'
+        changed = path.read_bytes() + b'\n'
+        path.write_bytes(changed)
+        self.current['sourceCode']['package-lock.json'] = m._sha(changed)
+        self.natural['source']['dependencyLockSha256'] = m._sha(changed)
+        with self.assertRaisesRegex(ValueError, 'Unapproved current support bytes'):
+            self.run_identity()
 
     def test_producer_lock_and_current_pool_tamper_rejected(self):
         old = self.old_lock; self.old_lock += b' '

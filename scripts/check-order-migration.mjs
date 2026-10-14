@@ -2,7 +2,7 @@
  * Inputs are synthetic, pre-funded states; this is not natural player progression.
  * Usage: node --import tsx scripts/check-order-migration.mjs r2-root r3-root r4-root r5-root r6-root r7-root r8-root
  */
-import { expectedNpcEconomy, assertR8StatePreserved, assertTerraformerMetadata, assertHistoricalSource } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, assertTerraformerMetadata, assertHistoricalSource } from "./r16-compatibility.mjs";
 import { createLegacyR8Fixtures } from "./legacy-r8-fixture.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -193,7 +193,7 @@ for (const [phase, actual] of Object.entries(await createLegacyR8Fixtures(resolv
   assert.equal(createHash("sha256").update(nativeRaw).digest("hex"), pinnedR8.sha256[phase], `r8 ${phase}: native byte hash`);
   assert.equal(actual.revision, 8);
   assert.equal(actual.version, 9);
-  assert.equal(migratedFile.revision, 14);
+  assert.equal(migratedFile.revision, 16);
   assertR8StatePreserved(migratedFile.state, old, `r8 ${phase}: complete prior state`, old.orders.nextJobId, expectedNpcEconomy());
   assert.equal(old.researchTemplates.templates.length, 2);
   assert.equal(old.formations.entries.length, 1);

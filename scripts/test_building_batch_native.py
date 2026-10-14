@@ -1,8 +1,12 @@
 """Offline contracts for the independent bounded native lane; no browser execution."""
 import ast
+from contextlib import contextmanager
+import copy
 import importlib.util
+import json
 from pathlib import Path
 import re
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +97,198 @@ class NativeContract(unittest.TestCase):
         self.assertNotIn('pkill', source)
         self.assertNotIn('killall', source)
         self.assertIn("raise ValueError('Native output must be a fresh empty directory')", source)
+
+
+class DiagnosticPage:
+    """Offline double: every page API rejects capture after context teardown."""
+    DOM = '<html><input type="checkbox" data-batch-planet="homeworld"></html>'
+    RAW = '{"state":{"unchanged":"original bytes"}}'
+    WITNESS = {'documentId': 'offline-document', 'navigationSequence': 1,
+               'events': [{'kind': 'change', 'trusted': True, 'planet': 'homeworld'}]}
+
+    def __init__(self, failures=()):
+        self.failures = set(failures)
+        self.calls = []
+        self.alive = False
+
+    def capture(self, step):
+        self.calls.append(step)
+        if not self.alive:
+            raise RuntimeError('Event loop is closed')
+        if step in self.failures:
+            raise RuntimeError('unavailable ' + step)
+
+    def content(self):
+        self.capture('DOM')
+        return self.DOM
+
+    def evaluate(self, expression, *arguments):
+        if expression == 'window.__batchWitness':
+            self.capture('events')
+            return copy.deepcopy(self.WITNESS)
+        if expression == '(key)=>localStorage.getItem(key)' and len(arguments) == 1:
+            self.capture('storage')
+            return self.RAW
+        raise AssertionError('Unexpected diagnostic evaluation: ' + expression)
+
+    def screenshot(self, *, path, full_page, caret):
+        self.capture('screenshot')
+        assert full_page is True and caret == 'initial'
+        Path(path).write_bytes(b'offline screenshot bytes')
+
+    @contextmanager
+    def live(self):
+        self.alive = True
+        try:
+            yield self
+        finally:
+            self.alive = False
+            self.calls.append('Playwright stopped')
+
+
+class FailureCaptureContract(unittest.TestCase):
+    """Execute the actual failure handlers with doubles, never a browser."""
+    def setUp(self):
+        self.script = ROOT / 'scripts/browser-building-batch.py'
+        self.browser = load('batch_failure_contract', 'scripts/browser-building-batch.py')
+        tree = ast.parse(self.script.read_text())
+        self.worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'worker')
+        self.lifecycle = copy.deepcopy(next(node for node in self.worker.body if isinstance(node, ast.Try)))
+        self.context = self.lifecycle.body[0]
+        self.assertIsInstance(self.context, ast.With)
+        temporary = tempfile.TemporaryDirectory(prefix='batch-failure-offline-')
+        self.addCleanup(temporary.cleanup)
+        self.out = Path(temporary.name)
+        self.namespace = dict(vars(self.browser), out=self.out, started=self.browser.time.monotonic(),
+                              current={'id': 'natural-payments-reload-no-replay'},
+                              report={'completed': True, 'evidence': []})
+        names = {'flush', 'dump', 'raw', 'capture_failure', 'retain_before_teardown'}
+        helpers = [node for node in self.worker.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        self.assertEqual({node.name for node in helpers}, names)
+        exec(compile(ast.Module(body=helpers, type_ignores=[]), str(self.script), 'exec'), self.namespace)
+
+    def fail_live(self, page, original=None):
+        original = original or AssertionError('original checkbox acceptance failure')
+        self.namespace.update(active_page=page, sync_playwright=page.live, original=original)
+        # Keep the real with/except flow; replace only its browser workload with
+        # a deliberate failure. This also executes the outer fallback handler.
+        self.context.body = [ast.Raise(exc=ast.Name(id='original', ctx=ast.Load()), cause=None)]
+        code = ast.fix_missing_locations(ast.Module(body=[self.lifecycle], type_ignores=[]))
+        with self.assertRaises(type(original)) as caught:
+            exec(compile(code, str(self.script), 'exec'), self.namespace)
+        self.assertIs(caught.exception, original)
+        self.assertFalse(self.namespace['report']['completed'])
+        self.assertEqual(page.calls[-1], 'Playwright stopped')
+        return self.namespace['report']['failure']
+
+    def test_actual_capture_guard_exits_before_playwright_and_outer_fallback_has_no_page_access(self):
+        self.assertEqual([item.context_expr.func.id for item in self.context.items],
+                         ['sync_playwright', 'retain_before_teardown'])
+        outer = ast.unparse(self.lifecycle.handlers[0])
+        self.assertIn("if 'failure' not in report:", outer)
+        self.assertIn('capture_failure(error, capture_page=False)', outer)
+        for forbidden in ('active_page.', 'dump(', 'raw(', 'flush('):
+            self.assertNotIn(forbidden, outer)
+
+    def test_all_evidence_captured_once_before_close_and_original_exception_preserved(self):
+        page = DiagnosticPage()
+        failure = self.fail_live(page)
+        self.assertEqual(page.calls, ['DOM', 'storage', 'events', 'screenshot', 'Playwright stopped'])
+        self.assertNotIn('captureErrors', failure)
+        self.assertIn('original checkbox acceptance failure', failure['traceback'])
+        self.assertEqual(failure['scenario'], 'natural-payments-reload-no-replay')
+        self.assertEqual(next(self.out.glob('*-failure-dom.html')).read_text(), page.DOM)
+        self.assertEqual(next(self.out.glob('*-failure-storage.json')).read_text(), page.RAW)
+        self.assertEqual(json.loads(next(self.out.glob('*-failure-events.json')).read_text()), page.WITNESS)
+        self.assertEqual((self.out / 'failure.png').read_bytes(), b'offline screenshot bytes')
+        for evidence in self.namespace['report']['evidence']:
+            data = (self.out / evidence['file']).read_bytes()
+            self.assertEqual(evidence['sha256'], self.browser.sha(data))
+            self.assertEqual(evidence['bytes'], len(data))
+        self.assertEqual(json.loads((self.out / 'report.json').read_text())['failure'], failure)
+
+    def test_each_capture_error_keeps_other_evidence_and_never_retries_or_replaces_original(self):
+        for unavailable in ('DOM', 'storage', 'events', 'screenshot'):
+            with self.subTest(unavailable=unavailable):
+                self.namespace['report'] = {'completed': True, 'evidence': []}
+                page = DiagnosticPage(failures={unavailable})
+                failure = self.fail_live(page)
+                self.assertEqual(page.calls, ['DOM', 'storage', 'events', 'screenshot', 'Playwright stopped'])
+                self.assertEqual(failure['captureErrors'], [{'step': unavailable, 'error': repr(RuntimeError('unavailable ' + unavailable))}])
+                self.assertEqual(failure['error'], repr(AssertionError('original checkbox acceptance failure')))
+
+    def test_report_write_failure_does_not_mask_original_or_prevent_page_capture(self):
+        def unavailable():
+            raise OSError('report filesystem unavailable')
+        self.namespace['flush'] = unavailable
+        page = DiagnosticPage()
+        failure = self.fail_live(page, original=KeyboardInterrupt('original worker interruption'))
+        self.assertEqual(page.calls, ['DOM', 'storage', 'events', 'screenshot', 'Playwright stopped'])
+        self.assertEqual([row['step'] for row in failure['captureErrors']],
+                         ['original failure report', 'DOM', 'storage', 'events', 'final failure report'])
+        self.assertEqual((self.out / 'failure.png').read_bytes(), b'offline screenshot bytes')
+
+    def test_unexpected_capture_error_preserves_original_and_still_closes_context(self):
+        original_capture = self.namespace['capture_failure']
+        def broken_capture(error, capture_page=True):
+            original_capture(error, capture_page=capture_page)
+            raise RuntimeError('unexpected capture implementation failure')
+        self.namespace['capture_failure'] = broken_capture
+        page = DiagnosticPage()
+        failure = self.fail_live(page)
+        self.assertEqual(page.calls, ['DOM', 'storage', 'events', 'screenshot', 'Playwright stopped'])
+        self.assertIn('original checkbox acceptance failure', failure['error'])
+
+    def test_startup_failure_only_records_report_without_using_dead_page(self):
+        page = DiagnosticPage()
+        original = RuntimeError('Playwright startup failed')
+        @contextmanager
+        def unavailable():
+            raise original
+            yield
+        self.namespace.update(active_page=page, sync_playwright=unavailable, current=None)
+        self.context.body = [ast.Pass()]
+        code = ast.fix_missing_locations(ast.Module(body=[self.lifecycle], type_ignores=[]))
+        with self.assertRaises(RuntimeError) as caught:
+            exec(compile(code, str(self.script), 'exec'), self.namespace)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(page.calls, [])
+        self.assertEqual(self.namespace['report']['failure']['scenario'], 'binding')
+        self.assertFalse(self.namespace['report']['completed'])
+
+
+
+class ColdReloadSourceContract(unittest.TestCase):
+    def test_response_metadata_preserves_status_and_redirect_chain(self):
+        from types import SimpleNamespace
+        module = load('batch_http_contract', 'scripts/browser-building-batch.py')
+        first = SimpleNamespace(url='http://localhost/start.js', resource_type='script', redirected_from=None)
+        final = SimpleNamespace(url='http://localhost/final.js', resource_type='script', redirected_from=first)
+        response = SimpleNamespace(url=final.url, status=304, request=final,
+                                   headers={'etag': 'literal-tag', 'cache-control': 'max-age=0', 'unrelated': 'not selected'})
+        result = module.http_response_evidence(response)
+        self.assertEqual(result, {'url': final.url, 'status': 304,
+            'requestChainFinalFirst': [{'url': final.url, 'resourceType': 'script'}, {'url': first.url, 'resourceType': 'script'}],
+            'cacheHeaders': {'etag': 'literal-tag', 'cache-control': 'max-age=0'}})
+        first.redirected_from = final
+        with self.assertRaisesRegex(ValueError, 'Nonfinite HTTP redirect chain'):
+            module.http_response_evidence(response)
+
+    def test_cold_navigation_keeps_strict_full_byte_gate_and_records_before_assertion(self):
+        source = (ROOT / 'scripts/browser-building-batch.py').read_text()
+        tree = ast.parse(source)
+        worker = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'worker')
+        boot = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'boot')
+        boot_text = ast.get_source_segment(source, boot)
+        self.assertLess(boot_text.index("send('Network.enable')"), boot_text.index("send('Network.setCacheDisabled', {'cacheDisabled': True})"))
+        self.assertLess(boot_text.index("send('Network.setCacheDisabled', {'cacheDisabled': True})"), boot_text.index('page.goto('))
+        seal = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'seal_scripts')
+        seal_text = ast.get_source_segment(source, seal)
+        self.assertLess(seal_text.index('identity_ref = dump('), seal_text.index("check('executed production asset has one real HTTP response'"))
+        self.assertIn("len(responses) == 1 and responses[0].status == 200 and relative in release['files']", seal_text)
+        self.assertIn("row['httpSha256'] == row['v8Sha256'] == row['releaseSha256']", seal_text)
+        self.assertEqual(source.count("page.reload(wait_until='networkidle')"), 1)
+        self.assertIn("capture['responseEvents'].clear()", source)
 
 
 if __name__ == '__main__':

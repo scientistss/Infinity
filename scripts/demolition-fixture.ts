@@ -3,7 +3,7 @@
  * Helpers are also used by unit tests and the domain journey.
  */
 declare const process: { argv: string[]; stdout: { write(text: string): void } };
-import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, assertNpcEconomy, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION, STORAGE_KEY } from "../src/game/content";
 import { clearSlot, equipCard, refreshUnlocks, toggleSlot, unlockedSlotCount } from "../src/automation/engine";
 import { big } from "../src/game/decimal";
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   for (const key of DEMOLITION_MILESTONES) {
     const matches = report.milestones.filter((row: { name: string }) => row.name === key);
     requireEvidence(matches.length === 1, `Missing/duplicate milestone ${key}`); const row = matches[0];
-    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 14 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
+    requireEvidence(row.strictRoundtrips === 2 && row.stateAdoptedFromReload && row.save.schema === SAVE_SCHEMA && row.save.version === SAVE_VERSION && row.save.revision === SAVE_REVISION && SAVE_REVISION === 16 && row.save.savedAt === row.save.lastTickAt, `Incomplete strict current save ${key}`);
     assertNpcEconomy(row.save.state, expectedNpcEconomy(row.npcAdoptedSegmentsSeconds), `${key}: one original adopted second plus counted natural continuation`);
     const parsed = importSave(JSON.stringify(row.save)), state = deserializeState(parsed.state);
     exactEvidence(parsed, row.save, `${key}: entire strict envelope unchanged`);

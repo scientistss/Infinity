@@ -86,14 +86,17 @@ def assert_gate(workflow,baseline):
     assert workflow==expected_workflow(baseline),'Unapproved building-batch eight-job workflow drift'
 
 def assert_release_transitions():
+    from test_energy_challenge_gate import previous_release_files
+    projected = previous_release_files()
     for path,count in RELEASE_FILES.items():
         before=baseline_bytes(path)
         assert before.count(OLD_VERSION.encode())==count,(path,'historical literal count')
-        assert ordinary(path).read_bytes()==before.replace(OLD_VERSION.encode(),VERSION.encode()),('Exact batch release-only transition',path)
+        assert projected[path]==before.replace(OLD_VERSION.encode(),VERSION.encode()),('Exact batch release-only transition',path)
 
 def previous_workflow(workflow=None):
     baseline=baseline_workflow()
-    assert_gate(ordinary(WORKFLOW_PATH).read_bytes().decode('utf-8'),baseline)
+    from test_energy_challenge_gate import previous_workflow as successor_workflow
+    assert_gate(successor_workflow(),baseline)
     if workflow is not None: assert_gate(workflow,baseline)
     assert_release_transitions()
     return baseline
@@ -110,7 +113,8 @@ def previous_release_files():
 class BuildingBatchGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow=ordinary(WORKFLOW_PATH).read_bytes().decode('utf-8');cls.baseline=baseline_workflow()
+        from test_energy_challenge_gate import previous_workflow as successor_workflow
+        cls.workflow=successor_workflow();cls.baseline=baseline_workflow()
         cls.current=jobs(cls.workflow);cls.old=jobs(cls.baseline)
 
     def reject(self,before,after):

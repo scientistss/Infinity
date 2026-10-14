@@ -1,5 +1,5 @@
 /** Compare real old and new rule engines. Usage: node --import tsx scripts/check-original-parity.mjs /path/to/69eca71 */
-import { expectedNpcEconomy, projectVerifiedNpcEconomy, advanceExpectedNpcWallet , assertHistoricalSource } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, projectVerifiedNpcEconomy, advanceExpectedNpcWallet , assertHistoricalSource } from "./r16-compatibility.mjs";
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";

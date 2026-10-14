@@ -91,7 +91,7 @@ def synthetic_receipt():
     def raw(value):
         state = {key: copy.deepcopy(value[key]) for key in ('totalTime', 'research', 'darkMatter', 'unlocked', 'stats')}
         state['planets'] = [{key: copy.deepcopy(value[key]) for key in ('resources', 'buildings', 'buildQueue')}]
-        return json.dumps({'savedAt': 1000, 'lastTickAt': 1000, 'state': state}).encode()
+        return json.dumps({'schema': 'infinity-original-p4', 'version': 9, 'revision': 14, 'savedAt': 1000, 'lastTickAt': 1000, 'state': state}).encode()
     initial_bytes, final_bytes = raw(initial), raw(snapshot)
     files = [{'path': name, 'sha256': 'b' * 64} for name in sorted(('package.json', 'package-lock.json', 'src/data/research.ts', 'src/ui/present.ts'))]
     source = dict(sourceRoot='/fake', head='a' * 40, changedSourceFiles=[], files=files,
@@ -103,7 +103,7 @@ def synthetic_receipt():
                    bounds={'maxEngineSeconds': 300, 'maxActions': 320, 'maxTickSeconds': 1, 'mode': 'live'}, savedAt=1000, lastTickAt=1000,
                    initial=initial, actions=actions, rawInitial={'path': '/fake/raw-initial.json', 'sha256': BROWSER.sha(initial_bytes)}, exclusions=[],
                    final=copy.deepcopy(snapshot), totalEngineSeconds=88, actionCount=91, rawFirstLab={'path': '/fake/raw-first-lab.json', 'sha256': BROWSER.sha(final_bytes)},
-                   expectedView={'path': '/fake/expected-view.json', 'effect': BROWSER.NEW_EFFECT}, researchVisible=True, arcadeUnlocked=False,
+                   expectedView={'path': '/fake/expected-view.json', 'effect': BROWSER.OLD_EFFECT}, researchVisible=True, arcadeUnlocked=False,
                    earnedAchievements=['first_deuterium', 'first_lab'], earnedDarkMatter='1000')
     return receipt, initial_bytes, final_bytes, 'a' * 40
 
@@ -162,7 +162,7 @@ class BrowserContracts(unittest.TestCase):
         self.assertEqual(BROWSER.WIDTHS, (320, 390, 768, 1440))
         self.assertLessEqual(BROWSER.WORK_SECONDS, 180)
         self.assertLessEqual(BROWSER.SUPERVISOR_SECONDS, 210)
-        for text in ('Debugger.getScriptSource', 'Network.setCacheDisabled', "relative in releases[side]['files']", "sha(http_bytes)", "sha(source)", "matches[0].status == 200", "len(matches) == 1", "len(set(script_urls)) == len(script_urls)", "data == (Path(root) / 'dist' / name).read_bytes()", "body == (Path(root) / 'dist/release.json').read_bytes()", 'source_binding(root, expected)', "'savedAfterDisplay'", "check('both real native Save actions fired exactly once in their phases'", "caret='initial'", "'native scroll geometry settled across two real RAF dispatches'", 'validate_fixture(receipt, initial_bytes, incoming_bytes, args.expected_sha)', "page.locator('[data-tab=\"research\"]').click()", "set_input_files(str(fixture / 'raw-first-lab.json'))", "dialog.accept() if accepted else dialog.dismiss()", "all(row['trusted'] for row in events)", "full_page=False", 'document.elementFromPoint', "window.scrollBy({top:top-desired", "[.1,.1],[.9,.1],[.5,.5],[.1,.9],[.9,.9]", "'failure-document.html'", "'failure-storage.json'", "'failure-viewport.png'", "startTimeTicks", "'survivors': survivors"):
+        for text in ('Debugger.getScriptSource', 'Network.setCacheDisabled', "relative in releases[side]['files']", "sha(http_bytes)", "sha(source)", "matches[0].status == 200", "len(matches) == 1", "len(set(script_urls)) == len(script_urls)", "data == (Path(root) / 'dist' / name).read_bytes()", "body == (Path(root) / 'dist/release.json').read_bytes()", 'source_binding(root, expected)', "'savedAfterDisplay'", "check('both real native Save actions fired exactly once in their phases'", "caret='initial'", "'native scroll geometry settled across two real RAF dispatches'", 'validate_fixture(receipt, initial_bytes, incoming_bytes, OLD_SHA)', "page.locator('[data-tab=\"research\"]').click()", "set_input_files(str(fixture / 'raw-first-lab.json'))", "dialog.accept() if accepted else dialog.dismiss()", "all(row['trusted'] for row in events)", "full_page=False", 'document.elementFromPoint', "window.scrollBy({top:top-desired", "[.1,.1],[.9,.1],[.5,.5],[.1,.9],[.9,.9]", "'failure-document.html'", "'failure-storage.json'", "'failure-viewport.png'", "startTimeTicks", "'survivors': survivors"):
             with self.subTest(text=text): self.assertIn(text, source)
         for forbidden in ('add_style_tag', 'set_content(', '.set_viewport_size(', 'Storage.prototype.setItem=', 'File.prototype.text=', 'page.route(', "element.click()", "window.__advance"):
             self.assertNotIn(forbidden, source)
@@ -241,6 +241,15 @@ class BrowserContracts(unittest.TestCase):
             elif kind == 'count': receipt['actionCount'] = True
             elif kind == 'unknown-expected': receipt['expectedView']['ignored'] = True
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
+                BROWSER.validate_fixture(*args)
+
+    def test_genuine_old_source_cannot_be_retagged_or_smuggle_challenge_data(self):
+        for revision, challenge in ((13, None), (15, None), (16, None), (14, {})):
+            args = list(synthetic_receipt()); value = json.loads(args[2]); value['revision'] = revision
+            if challenge is not None: value['state']['energyChallenge'] = challenge
+            args[2] = json.dumps(value).encode()
+            args[0]['rawFirstLab']['sha256'] = BROWSER.sha(args[2])
+            with self.subTest(revision=revision, challenge=challenge), self.assertRaises(AssertionError):
                 BROWSER.validate_fixture(*args)
 
     def test_supervisor_never_upgrades_failure_missing_report_or_timeout_to_pass(self):

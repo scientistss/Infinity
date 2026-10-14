@@ -50,10 +50,10 @@ const expected = {
   "public/icons/warp_core.webp": "9058e8d170e6b9bdca3b7f5af3391f6b765980a811ebdc335a1a92fa31e666ed"
 };
 // The original baseline map above is immutable. The two changed UI files are
-// explicitly adopted through the complete original-to-building-batch cumulative source seal; no asset or
+// explicitly adopted through the complete original-to-energy-challenge cumulative source seal; no asset or
 // directory is exempted and neither changed file is called original-byte-identical.
-const BUILDING_BATCH_MANIFEST_SHA256 = "d05cec8f03492743713b38ffda518c59116f7b74a55cc741f77ceea20bd2b4c1";
-const manifestPath = "tests/fixtures/building-batch-provenance.json";
+const ENERGY_CHALLENGE_MANIFEST_SHA256 = "3477fefc65c98e3741f39e8bdd674b9988397036c96c1960eba6e5be6fef301b";
+const manifestPath = "tests/fixtures/energy-challenge-provenance.json";
 const deltaPaths = ["src/style.css", "src/ui/view.ts"];
 const hash = value => createHash("sha256").update(value).digest("hex");
 let sourceAudit = null;
@@ -61,31 +61,31 @@ let approvedRows = [];
 if (existsSync(manifestPath)) {
   const local = lstatSync(manifestPath);
   if (!local.isFile() || local.isSymbolicLink() || (local.mode & 0o111))
-    throw new Error("多星球建造批次 UI 来源清单必须为普通只读来源文件");
+    throw new Error("能量紧缩挑战 UI 来源清单必须为普通只读来源文件");
   const raw = readFileSync(manifestPath);
-  if (hash(raw) !== BUILDING_BATCH_MANIFEST_SHA256)
-    throw new Error("多星球建造批次 UI 来源清单摘要不匹配");
+  if (hash(raw) !== ENERGY_CHALLENGE_MANIFEST_SHA256)
+    throw new Error("能量紧缩挑战 UI 来源清单摘要不匹配");
   // Python/Git-only verification covers the entire current src/public tree,
-  // exact ancestry, fourteen earlier seals, modes, full patches and every hunk.
+  // exact ancestry, fifteen earlier seals, modes, full patches and every hunk.
   sourceAudit = JSON.parse(execFileSync("python3",
-    ["-B", "scripts/test_building_batch_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
+    ["-B", "scripts/test_energy_challenge_provenance.py", "--verify-ui-baseline"], { encoding: "utf8" }));
   const manifest = JSON.parse(raw);
   const baseline = sourceAudit.originalUiBaseline;
-  if (sourceAudit.contract !== "exact-declared-building-batch-source-delta"
-      || sourceAudit.sourceBaseline !== "6f73735534ffc1b0e47a01935d8c6e3ff786c989"
-      || sourceAudit.manifestSha256 !== BUILDING_BATCH_MANIFEST_SHA256
+  if (sourceAudit.contract !== "exact-declared-energy-challenge-source-delta"
+      || sourceAudit.sourceBaseline !== "166c77fe0fc36ac40eb390804c2a96598870006e"
+      || sourceAudit.manifestSha256 !== ENERGY_CHALLENGE_MANIFEST_SHA256
       || JSON.stringify(baseline) !== JSON.stringify(manifest.originalUiBaseline)
       || baseline.baseline !== "69eca71"
       || JSON.stringify(baseline.exactDeltaPaths) !== JSON.stringify(deltaPaths)
       || JSON.stringify(baseline.changedPaths.map(row => row.path)) !== JSON.stringify(deltaPaths))
-    throw new Error("多星球建造批次 UI 增量范围或完整来源核验不匹配");
+    throw new Error("能量紧缩挑战 UI 增量范围或完整来源核验不匹配");
   approvedRows = baseline.changedPaths;
   for (const row of approvedRows) {
     if (baseline.expected[row.path] !== expected[row.path]
         || row.before.mode !== "100644" || row.before.sha256 !== expected[row.path]
         || row.after.mode !== "100644" || !row.hunks.length
         || !/^[0-9a-f]{64}$/.test(row.patchSha256))
-      throw new Error(`多星球建造批次 UI 增量不是原版精确来源：${row.path}`);
+      throw new Error(`能量紧缩挑战 UI 增量不是原版精确来源：${row.path}`);
   }
 }
 for (const [path, digest] of Object.entries(expected)) {
@@ -96,9 +96,9 @@ for (const [path, digest] of Object.entries(expected)) {
 }
 console.log(JSON.stringify({ baseline: "69eca71", verified: Object.keys(expected).length,
   result: "passed", scope: sourceAudit
-    ? "all original public assets unchanged; view.ts/style.css have exact approved unchanged public-6f73735 cumulative UI deltas with exact building batch adoption"
+    ? "all original public assets unchanged; view.ts/style.css have exact approved unchanged original cumulative UI deltas with exact energy challenge adoption"
     : "original view.ts, style.css, all original public assets; selector and narrow-table wrappers are separate",
   ...(sourceAudit ? { approvedUiDeltaPaths: deltaPaths,
     approvedSourceDeltaPaths: sourceAudit.approvedSourceDeltaPaths,
-    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: BUILDING_BATCH_MANIFEST_SHA256 } : {})
+    sourceBaseline: sourceAudit.sourceBaseline, manifestSha256: ENERGY_CHALLENGE_MANIFEST_SHA256 } : {})
 }, null, 2));

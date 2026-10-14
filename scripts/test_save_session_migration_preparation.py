@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from r12_compatibility import npc_elapsed_from_segments
-from r14_compatibility import exact_json, lift_r10_state_to_r14, lift_r11_state_to_r14, expected_npc_economy, advance_expected_npc_wallet, expected_npc_from_r12_snapshot
+from r16_compatibility import exact_json, lift_r10_state_to_r16, lift_r11_state_to_r16, expected_npc_economy, advance_expected_npc_wallet, expected_npc_from_r12_snapshot
 
 SCRIPT = Path(__file__).with_name('browser-save-session.py')
 TREE = ast.parse(SCRIPT.read_text(encoding='utf-8'))
@@ -16,7 +16,7 @@ TREE = ast.parse(SCRIPT.read_text(encoding='utf-8'))
 def helpers():
     names = {'migration_differences', 'capture_startup_migration'}
     nodes = [node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    namespace = {'json': json, 'hashlib': hashlib, 'lift_r10_state_to_r14': lift_r10_state_to_r14, 'expected_npc_economy':expected_npc_economy}
+    namespace = {'json': json, 'hashlib': hashlib, 'lift_r10_state_to_r16': lift_r10_state_to_r16, 'expected_npc_economy':expected_npc_economy}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SCRIPT), 'exec'), namespace)
     return namespace
 
@@ -27,8 +27,8 @@ class MigrationDiagnosticTests(unittest.TestCase):
         self.source = {'schema': 'test', 'revision': 10, 'version': 9, 'savedAt': 1000, 'lastTickAt': 1000,
                        'state': {'messages': [], 'totalTime': '0', 'orders': {'nextJobId': 1},
                                  'planets': [{'id': 'homeworld', 'buildQueue': [], 'resources': {'metal': '500'}}]}}
-        self.first = {**copy.deepcopy(self.source), 'revision': 14, 'savedAt': 1125, 'lastTickAt': 1125,
-                      'state': lift_r10_state_to_r14(self.source['state'])}
+        self.first = {**copy.deepcopy(self.source), 'revision': 16, 'savedAt': 1125, 'lastTickAt': 1125,
+                      'state': lift_r10_state_to_r16(self.source['state'])}
         self.first['state']['npcEconomy']['now'] = 0.125
         self.first['state']['totalTime'] = '0.125'
         self.first['state']['planets'][0]['resources']['metal'] = '500.001'
@@ -96,7 +96,7 @@ class OracleContracts(unittest.TestCase):
  def setUp(self):
   def check(name,ok):
    if not ok:raise AssertionError(name)
-  self.ns=dict(json=json,hashlib=hashlib,exact_json=exact_json,lift_r10_state_to_r14=lift_r10_state_to_r14,CURRENT_REVISION=14,expected_npc_economy=expected_npc_economy,advance_expected_npc_wallet=advance_expected_npc_wallet,npc_elapsed_from_segments=npc_elapsed_from_segments,check=check)
+  self.ns=dict(json=json,hashlib=hashlib,exact_json=exact_json,lift_r10_state_to_r16=lift_r10_state_to_r16,CURRENT_REVISION=16,expected_npc_economy=expected_npc_economy,advance_expected_npc_wallet=advance_expected_npc_wallet,npc_elapsed_from_segments=npc_elapsed_from_segments,check=check)
   node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r10_startup')
   exec(compile(ast.Module(body=[node],type_ignores=[]),'prepared-helper','exec'),self.ns)
   self.old={'schema':'infinity-original-p4','version':9,'revision':10,'savedAt':1000,'lastTickAt':1000,'state':{'messages':[],'offlineBonusHours':0,'totalTime':'0','orders':{'nextJobId':1},'planets':[{'id':'homeworld','buildQueue':[],'resources':{'metal':'500'}}]}}
@@ -105,7 +105,7 @@ class OracleContracts(unittest.TestCase):
   self.observed['state']['totalTime']='0.125';self.observed['state']['planets'][0]['resources']['metal']='500.001'
   self.observed['dependencyIdentity']={'breakInfinity':{'version':'2.2.0','commonSha256':'f3be0918a5ed463a887e5b622574de81dd035c393021af7db9485f34400bda06','esmSha256':'1e1825ab4fa711c16fc7225790d0163cf6b5f5611ab77b39cbb2cd381cb8f71a'},'padEnd':{'version':'1.0.2','entrySha256':'063c31f8b5eeb14835a8a358b0dc0099528a5b4719b25057db9e48c752f9c330'}}
   self.observed.update(adoptedSegmentsSeconds=[0.125],npcElapsedSeconds=0.125,adoptedTimeObservation='old-totalTime-add; full unobserved old-state equivalence verified')
-  self.candidate={**self.old,'revision':14,'savedAt':1125,'lastTickAt':1125,'state':lift_r10_state_to_r14(self.observed['state'],npc_wallet=expected_npc_economy([0.125]))}
+  self.candidate={**self.old,'revision':16,'savedAt':1125,'lastTickAt':1125,'state':lift_r10_state_to_r16(self.observed['state'],npc_wallet=expected_npc_economy([0.125]))}
  def test_full_envelope_has_only_true_old_elapsed_semantics_and_null(self):
   self.assertTrue(exact_json(self.ns['expected_r10_startup'](self.raw,self.candidate,self.observed),self.candidate))
  def test_every_claimed_metadata_mutation_is_rejected(self):
@@ -158,8 +158,8 @@ class Ca5OracleContracts(OracleContracts):
   self.observed['inputRawSha256']=hashlib.sha256(self.raw.encode()).hexdigest()
   self.observed['state']['planets'][0]['demolition']=None
   self.observed.update(sourceRevision=11,sourceEnvelope={k:v for k,v in self.old.items() if k!='state'},rawSeconds=.125,oldObservedAndUnobservedStateEqual=True)
-  self.candidate={**self.old,'revision':14,'savedAt':1125,'lastTickAt':1125,'state':lift_r11_state_to_r14(self.observed['state'],npc_wallet=expected_npc_economy([.125]))}
-  self.ns['lift_r11_state_to_r14']=lift_r11_state_to_r14
+  self.candidate={**self.old,'revision':16,'savedAt':1125,'lastTickAt':1125,'state':lift_r11_state_to_r16(self.observed['state'],npc_wallet=expected_npc_economy([.125]))}
+  self.ns['lift_r11_state_to_r16']=lift_r11_state_to_r16
   node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r11_startup')
   exec(compile(ast.Module(body=[node],type_ignores=[]),'prepared-ca5-helper','exec'),self.ns)
   # Reuse all exact full-state/metadata mutation obligations from the r10 contract.
@@ -208,8 +208,8 @@ class R12SnapshotStartupTests(unittest.TestCase):
   observed['state']['npcEconomy']={'model':'fixed-production-v1','elapsedSeconds':.1+.2+.125}
   wallet=advance_expected_npc_wallet(expected_npc_from_r12_snapshot(old['state']['npcEconomy']),[.125])
   prior=copy.deepcopy(observed['state']);del prior['npcEconomy']
-  candidate={**old,'revision':14,'savedAt':1125,'lastTickAt':1125,'state':lift_r11_state_to_r14(prior,npc_wallet=wallet)}
-  ns={**base.ns,'copy':copy,'lift_r11_state_to_r14':lift_r11_state_to_r14,'expected_npc_from_r12_snapshot':expected_npc_from_r12_snapshot}
+  candidate={**old,'revision':16,'savedAt':1125,'lastTickAt':1125,'state':lift_r11_state_to_r16(prior,npc_wallet=wallet)}
+  ns={**base.ns,'copy':copy,'lift_r11_state_to_r16':lift_r11_state_to_r16,'expected_npc_from_r12_snapshot':expected_npc_from_r12_snapshot}
   node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r12_startup')
   exec(compile(ast.Module(body=[node],type_ignores=[]),'r12-snapshot-current-startup','exec'),ns)
   return original,observed,candidate,ns
@@ -234,7 +234,7 @@ class R13WalletStartupTests(unittest.TestCase):
  def fixture(self):
   base=Ca5OracleContracts();base.setUp()
   from r13_compatibility import lift_r11_state_to_r13
-  from r14_compatibility import lift_r13_state_to_r14
+  from r16_compatibility import lift_r13_state_to_r16
   old=copy.deepcopy(base.old);old['revision']=13
   old['state']['messages']=[{'id':'scout-2','at':.1+.2,'text':'old rounded report'}]
   old['state']=lift_r11_state_to_r13(old['state'],npc_wallet=expected_npc_economy([.1,.2]))
@@ -248,8 +248,8 @@ class R13WalletStartupTests(unittest.TestCase):
   observed['state']['npcEconomy']['now']+=.125
   observed['state']['totalTime']='0.125'
   observed['state']['planets'][0]['resources']['metal']='500.001'
-  candidate={**old,'revision':14,'savedAt':1125,'lastTickAt':1125,'state':lift_r13_state_to_r14(observed['state'])}
-  ns={**base.ns,'lift_r13_state_to_r14':lift_r13_state_to_r14}
+  candidate={**old,'revision':16,'savedAt':1125,'lastTickAt':1125,'state':lift_r13_state_to_r16(observed['state'])}
+  ns={**base.ns,'lift_r13_state_to_r16':lift_r13_state_to_r16}
   node=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r13_startup')
   exec(compile(ast.Module(body=[node],type_ignores=[]),'r13-full-wallet-current-startup','exec'),ns)
   return original,observed,candidate,ns
@@ -295,8 +295,8 @@ class R13WalletStartupTests(unittest.TestCase):
   self.assertEqual(ast.unparse(assignment.value),"{'originalRaw': original, 'constructorNow': candidate['savedAt']}")
   expected=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name=='expected_r13_startup')
   calls={n.func.id for n in ast.walk(expected) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name)}
-  self.assertIn('lift_r13_state_to_r14',calls)
-  self.assertFalse(calls & {'expected_npc_economy','advance_expected_npc_wallet','expected_npc_from_r12_snapshot','lift_r11_state_to_r14'})
+  self.assertIn('lift_r13_state_to_r16',calls)
+  self.assertFalse(calls & {'expected_npc_economy','advance_expected_npc_wallet','expected_npc_from_r12_snapshot','lift_r11_state_to_r16'})
 
 
 class ReloadEvidenceTests(unittest.TestCase):
@@ -316,7 +316,7 @@ class ReloadEvidenceTests(unittest.TestCase):
  def test_full_reload_bytes_first_reads_writes_and_all_differences_are_retained(self):
   ns=self.helpers()
   original=' {"revision":9,"state":{}}\n'
-  prior={'revision':14,'savedAt':1000,'lastTickAt':1000,'state':{'npcEconomy':expected_npc_economy(), 'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'wallet':'10'}}
+  prior={'revision':16,'savedAt':1000,'lastTickAt':1000,'state':{'npcEconomy':expected_npc_economy(), 'npcBattles':{'model':'npc-battle-receipts-v1','reports':[]},'wallet':'10'}}
   current=copy.deepcopy(prior);current.update(savedAt=1500,lastTickAt=1450)
   current['state']['npcEconomy']['now']=.45;current['state']['wallet']='10.01'
   before=json.dumps(prior);after=json.dumps(current)
@@ -429,15 +429,15 @@ class NativeReplayWiringTests(unittest.TestCase):
   def check(label,condition):
    if not condition:raise AssertionError(label)
   self.ns=dict(json=json,hashlib=hashlib,re=re,urljoin=urljoin,urlparse=urlparse,copy=copy,Path=Path,
-               exact_json=exact_json,lift_r11_state_to_r14=lift_r11_state_to_r14,npc_elapsed_from_segments=npc_elapsed_from_segments,
-               CURRENT_REVISION=14,expected_npc_economy=expected_npc_economy,advance_expected_npc_wallet=advance_expected_npc_wallet,KEY='current',case='offline navigation test',out=Path(self.temp.name),check=check,args=SimpleNamespace(url='https://example.invalid/Infinity/',expected_sha='a'*40))
+               exact_json=exact_json,lift_r11_state_to_r16=lift_r11_state_to_r16,npc_elapsed_from_segments=npc_elapsed_from_segments,
+               CURRENT_REVISION=16,expected_npc_economy=expected_npc_economy,advance_expected_npc_wallet=advance_expected_npc_wallet,KEY='current',case='offline navigation test',out=Path(self.temp.name),check=check,args=SimpleNamespace(url='https://example.invalid/Infinity/',expected_sha='a'*40))
   names={'prepare_r9_trace_plan','capture_r9_navigation_evidence','start_r9_native_trace','verify_r9_trace_navigation','verify_r9_native_storage','verify_r9_native_readbacks','verify_r9_replay_result'}
   nodes=[n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name in names]
   exec(compile(ast.Module(body=nodes,type_ignores=[]),'r9-wiring-helpers','exec'),self.ns)
 
  def http_fixture(self):
   base=self.ns['args'].url; html=b'<html>unmodified production</html>'; js=b'complete production source'
-  release={'sourceSha':'a'*40,'saveRevision':14,'saveVersion':9,'files':{'index.html':hashlib.sha256(html).hexdigest(),'assets/index-test.js':hashlib.sha256(js).hexdigest()}}
+  release={'sourceSha':'a'*40,'saveRevision':16,'saveVersion':9,'files':{'index.html':hashlib.sha256(html).hexdigest(),'assets/index-test.js':hashlib.sha256(js).hexdigest()}}
   self_outer=self
   class Response:
    status=200
@@ -652,7 +652,7 @@ class NativeReplayWiringTests(unittest.TestCase):
 
  def replay_fixture(self):
   old={'wallet':'500','planets':[],'messages':[]};source={'revision':9,'savedAt':2000,'lastTickAt':2000,'state':old};original=json.dumps(source)
-  def raw(age,saved,watermark):return json.dumps({'revision':14,'savedAt':saved,'lastTickAt':watermark,'state':lift_r11_state_to_r14(old,npc_wallet=expected_npc_economy([age]))})
+  def raw(age,saved,watermark):return json.dumps({'revision':16,'savedAt':saved,'lastTickAt':watermark,'state':lift_r11_state_to_r16(old,npc_wallet=expected_npc_economy([age]))})
   a,b1,b2,c=raw(0,1000,1000),raw(.1,1102,1100),raw(.1,1108,1100),raw(.1+.1+.1,1302,1300)
   def save(value,reason):return {'kind':'save','raw':value,'reason':reason}
   epochs=[{'constructorNow':1000,'sourceRaw':original,'migrationRaw':a,'events':[{'kind':'frame','gapSeconds':.1},save(b1,'beforeunload'),save(b2,'visibility-hidden')]},

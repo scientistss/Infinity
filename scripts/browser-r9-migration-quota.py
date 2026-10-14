@@ -8,7 +8,7 @@ no partial adoption, and protected frozen UI. A successful replacement must reta
 both originals. The parent process bounds the complete worker and its browser.
 """
 import argparse
-from r14_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r14
+from r16_compatibility import expected_npc_economy, advance_expected_npc_wallet, CURRENT_REVISION, assert_zero_grant_metadata, lift_legacy_state_to_r16
 import hashlib
 import json
 import os
@@ -251,7 +251,7 @@ def worker():
             release_response = context.request.get(urljoin(args.url,'release.json'))
             check('actual HTTP release is available',release_response.status==200)
             release = release_response.json(); report['release'] = release
-            check('served source and r14 reader are the exact expected release',release['sourceSha']==args.expected_sha and release['saveRevision']==CURRENT_REVISION and release['saveVersion']==9)
+            check('served source and r16 reader are the exact expected release',release['sourceSha']==args.expected_sha and release['saveRevision']==CURRENT_REVISION and release['saveVersion']==9)
             report['assets'] = []
             for path, digest in release['files'].items():
                 if not path.endswith('.js'): continue
@@ -295,7 +295,7 @@ def worker():
             report['originalR8']=save_raw('original-r8.json',initial['seeded'])
             report['initialR14']=save_raw('initial-r14.json',migrated['current'])
             check('real r8 startup migration independently validates zero grants and fixed floor',assert_zero_grant_metadata(current['state'],seeded['state'],grant_job_floor=seeded['state']['orders']['nextJobId'], npc_wallet=expected_npc_economy()))
-            check('real r8 startup migration adds only specified r9/r10/r11/r13 metadata and r14 null scout slots',current['revision']==CURRENT_REVISION and exact(current['state'],lift_legacy_state_to_r14(seeded['state'],source_revision=8,grant_job_floor=seeded['state']['orders']['nextJobId'])))
+            check('real r8 startup migration adds only specified r9/r10/r11/r13 metadata and r14 null scout slots plus exact inactive r16 challenge',current['revision']==CURRENT_REVISION and exact(current['state'],lift_legacy_state_to_r16(seeded['state'],source_revision=8,grant_job_floor=seeded['state']['orders']['nextJobId'])))
             check('real migration preserves exactly the original native r8 bytes',migrated['backups']=={key+'.backup':initial['seeded']})
             page.wait_for_timeout(500)
             page.locator('[data-tab="overview"]').click()
@@ -362,7 +362,7 @@ def worker():
                 accepted=json.loads(terminal['current'])
                 check('successful replacement independently validates each new grant field',assert_zero_grant_metadata(accepted['state'],incoming['state'],grant_job_floor=incoming['state']['orders']['nextJobId'], npc_wallet=expected_npc_economy()))
                 expected={**incoming,'revision':CURRENT_REVISION,'savedAt':accepted['savedAt'],'lastTickAt':accepted['lastTickAt'],
-                          'state':lift_legacy_state_to_r14(incoming['state'],source_revision=8,grant_job_floor=incoming['state']['orders']['nextJobId'])}
+                          'state':lift_legacy_state_to_r16(incoming['state'],source_revision=8,grant_job_floor=incoming['state']['orders']['nextJobId'])}
                 expected_raw=page.evaluate('source=>JSON.stringify(source,null,2)',expected)
                 check('successful replacement commits the entire exact native r14 envelope',terminal['current']==expected_raw)
                 check('successful replacement retains the second exact original',len(new_backups)==1)

@@ -5,6 +5,7 @@
  * This module deliberately does not import the new manual-unit quote/controller.
  */
 declare const process: { argv: string[]; version: string; stdout: { write(value: string): void } };
+import { liftR14EnvelopeToR16, liftR14StateToR16 } from "./r16-compatibility.mjs";
 import { SAVE_VERSION, SAVE_REVISION, STORAGE_KEY } from "../src/game/content";
 import { catchUp } from "../src/core/offline";
 import { UNIT_IDS, unitById, type UnitId } from "../src/data/units";
@@ -36,15 +37,15 @@ const natural = JSON.parse(String(reportBytes)), sourceBinding = JSON.parse(Stri
 check(sourceBinding.complete === true && sourceBinding.codeSourceSha === OLD_SHA, "Fresh immutable 241a producer source binding required");
 check(natural.outcome.status === "passed" && natural.provenance.injectedGameState === false
   && natural.seeds.world === 20261010 && natural.seeds.arcade === 20261010, "Natural report provenance failed");
-check(SAVE_VERSION === 9 && SAVE_REVISION === 14, "No save-format change authorized");
+check(SAVE_VERSION === 9 && SAVE_REVISION === 16, "Current r16 schema required");
 const m05 = natural.milestones.find((row: { name: string }) => row.name === "05-home-research-naturally-paid-and-completed");
 const m09 = natural.milestones.find((row: { name: string }) => row.name === "09-home-manufacturing-colony-research");
 check(m05 && m09, "Exact natural handoffs required");
-for (const m of [m05, m09]) exact(importSave(JSON.stringify(m.save)), m.save, "Historical handoff changed during current strict import");
+for (const m of [m05, m09]) exact(importSave(JSON.stringify(m.save)), liftR14EnvelopeToR16(m.save), "Historical handoff changed during current strict import");
 const epoch: number = m05.save.savedAt;
 const load = (save = m05.save): GameState => deserializeState(importSave(JSON.stringify(save)).state);
 const clone = (s: GameState): GameState => deserializeState(importSave(exportSave(s, epoch)).state);
-for (const milestone of [m05,m09]) exact(serializeState(catchUp(load(milestone.save),0).state),milestone.save.state,"Natural unchanged handoff must also be unchanged through actual zero-gap startup");
+for (const milestone of [m05,m09]) exact(serializeState(catchUp(load(milestone.save),0).state),liftR14StateToR16(milestone.save.state),"Natural unchanged handoff must also be unchanged through actual zero-gap startup");
 const accepted = (r: { state: GameState; ok: boolean; reason: string }): GameState => { check(r.ok, r.reason); return r.state; };
 // Independent catalog golden: literal design prices, never derived from new quote code.
 const GOLDEN: Record<UnitId, readonly [number, number, number]> = {

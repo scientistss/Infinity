@@ -13,7 +13,7 @@ const json = (raw: unknown) => importSave(JSON.stringify(raw));
 
 describe("r13 exact NPC wallet persistence and historical r12 reader", () => {
   it("keeps the branch and storage key, and emits exactly one explicit age-zero object", () => {
-    expect(SAVE_REVISION).toBe(14);
+    expect(SAVE_REVISION).toBe(16);
     expect(SAVE_SCHEMA).toBe("infinity-original-p4");
     expect(STORAGE_KEY).toBe("infinity.original-p4.save.v1");
     const raw = current();

@@ -2,7 +2,7 @@
  * Usage: node --import tsx scripts/check-prestige-parity.mjs /path/to/6016391
  * Synthetic engine-built fixtures only; no production saves; only explicitly asserted empty r9 intent and r10 grant metadata, r11 null demolition slots, and independently witnessed r14 NPC state are added.
  */
-import { expectedNpcEconomy, assertR8StatePreserved, assertHistoricalSource } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, assertR8StatePreserved, assertHistoricalSource } from "./r16-compatibility.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

@@ -249,7 +249,12 @@ class NativeReloadScheduleContract(unittest.TestCase):
         research_adapter = b'    from test_research_unlock_copy_gate import previous_workflow as successor_workflow\n'
         batch_adapter = b'    from test_building_batch_gate import previous_workflow as successor_workflow\n'
         research_gate = original_read(ROOT / 'scripts/test_research_unlock_copy_gate.py')
-        if batch_adapter in research_gate:
+        energy_adapter = b'    from test_energy_challenge_gate import previous_workflow as successor_workflow\n'
+        batch_gate = original_read(ROOT / 'scripts/test_building_batch_gate.py')
+        if energy_adapter in batch_gate:
+            self.assertIn(batch_adapter, research_gate)
+            expected_error = 'Unapproved energy eleven-job workflow drift'
+        elif batch_adapter in research_gate:
             self.assertIn(research_adapter, fleet_gate)
             self.assertIn(fleet_adapter, recycle_gate)
             expected_error = 'Unapproved building-batch eight-job workflow drift'
@@ -1084,14 +1089,14 @@ class R14ExistingNativeScoutContract(unittest.TestCase):
         for source, old_revision, origin_hash in ((self.attack, 12, '047d49cbf04fd5424bca4d7d45e861e0439a0d51c4ac54700f77e263bb8eadcc'),
               (self.economy, 11, 'd456cbee26543071ce0a53b64f718dd707c59b4f47ccb5c07d10a292cd45aa2a')):
             self.assertIn("fixtures['originalSave']['revision'] == " + str(old_revision), source)
-            self.assertIn("fixtures['base']['revision'] == 14", source)
-            self.assertIn("release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14", source)
+            self.assertIn("fixtures['base']['revision'] == 16", source)
+            self.assertIn("release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 16", source)
             self.assertIn(origin_hash, source)
             self.assertIn("same = exact_json(actual, expected)", source)
             self.assertNotIn("pop('npcScoutSnapshot'", source)
         render = (ROOT / 'scripts/browser-render-scheduling.py').read_text()
-        self.assertIn('from r14_compatibility import', render)
-        self.assertIn('lift_legacy_state_to_r14(state, source_revision=8', render)
+        self.assertIn('from r16_compatibility import', render)
+        self.assertIn('lift_legacy_state_to_r16(state, source_revision=8', render)
         self.assertIn("seed['revision']==8", render)
 
     def test_both_literal_arrivals_have_every_exact_typed_field(self):

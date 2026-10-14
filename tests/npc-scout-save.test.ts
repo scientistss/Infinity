@@ -1,3 +1,4 @@
+import { stripVerifiedInactiveEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { describe, expect, it, vi } from "vitest";
 import { big } from "../src/game/decimal";
 import { emptyCargo, type Fleet } from "../src/game/fleet";
@@ -40,7 +41,7 @@ describe("r14 scout history persistence", () => {
     const project = vi.spyOn(wallet, "projectNpc");
     try {
       const saved = exportSave(state, 1000), file = importSave(saved), restored = deserializeState(file.state);
-      expect(file.revision).toBe(14); expect(serializeState(restored)).toEqual(before);
+      expect(file.revision).toBe(16); expect(serializeState(restored)).toEqual(before);
       expect(restored.messages[0].npcScoutSnapshot).toEqual(state.messages[0].npcScoutSnapshot);
       expect(restored.messages[0].npcScoutSnapshot).not.toBe(state.messages[0].npcScoutSnapshot);
       expect(Object.keys(restored.npcEconomy.sites)).toEqual([]); expect(project).not.toHaveBeenCalled();
@@ -171,7 +172,7 @@ describe("untouched-source scout marker protection", () => {
     expect(() => rejectNpcScoutFields({ extra: { unrelated: NPC_SCOUT_SNAPSHOT_MODEL } }, false)).toThrow();
   });
   it.each([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])("rejects retagging and any-depth reserved markers in r%s", revision => {
-    const current = JSON.parse(exportSave(historical())); current.revision = revision;
+    const current = JSON.parse(exportSave(historical())); stripVerifiedInactiveEnergyChallenge(current.state); current.revision = revision;
     expect(() => importSave(JSON.stringify(current))).toThrow(/NPC/);
     for (const marker of [{ npcScoutSnapshot: null }, { arbitrary: NPC_SCOUT_SNAPSHOT_MODEL }]) {
       const nested = { metadata: { list: [{ far: marker }] }, state: { messages: [] } };

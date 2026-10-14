@@ -40,7 +40,7 @@ class ManualUnitHiddenHelperTests(unittest.TestCase):
         self.assertIn('isDeepStrictEqual(paidEnvelope.state, input.expectedState)', source)
         self.assertIn("realSave('hidden-resume-entire-state', input.expectedState)", source)
         self.assertIn("envelope.schema === 'infinity-original-p4'", source)
-        self.assertIn('envelope.version === 9 && envelope.revision === 14', source)
+        self.assertIn('envelope.version === 9 && envelope.revision === 16', source)
 
     def test_original_clock_only_zero_advances_visible_and_native_clocks_separate(self):
         source = HELPER.read_text()

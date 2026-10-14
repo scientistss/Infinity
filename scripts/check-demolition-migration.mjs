@@ -1,5 +1,5 @@
 /** Independent ac3 r10 reader oracle, exact raw hashes, and an exact zero-age r14 lift composed with the frozen null-only r11 contract. */
-import { expectedNpcEconomy, liftR10StateToR14, projectVerifiedNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, liftR10StateToR16, projectVerifiedNpcEconomy } from "./r16-compatibility.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -21,14 +21,14 @@ const sha = text => createHash("sha256").update(text).digest("hex");
 function verify(raw, old, label) {
   assert.deepEqual(previous.importSave(raw), old, `${label}: actual fixed r10 reader output`);
   const migrated = importSave(raw);
-  assert.equal(migrated.revision, 14);
+  assert.equal(migrated.revision, 16);
   assert.equal(migrated.savedAt, old.savedAt); assert.equal(migrated.lastTickAt, old.lastTickAt);
   assert.equal(migrated.state.planets.length, old.state.planets.length);
   for (const planet of migrated.state.planets) {
     assert.equal(Object.hasOwn(planet, "demolition"), true, `${label}: explicit slot`);
     assert.equal(planet.demolition, null, `${label}: no new authority`);
   }
-  assert.deepEqual(migrated.state, liftR10StateToR14(old.state, expectedNpcEconomy()), `${label}: exact zero-age NPC plus null-demolition lift`);
+  assert.deepEqual(migrated.state, liftR10StateToR16(old.state, expectedNpcEconomy()), `${label}: exact zero-age NPC plus null-demolition lift`);
   const prior = { ...structuredClone(migrated), state: projectVerifiedNpcEconomy(migrated.state, expectedNpcEconomy(), label) };
   prior.revision = 10;
   for (const planet of prior.state.planets) delete planet.demolition;

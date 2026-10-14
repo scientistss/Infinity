@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripVerifiedNullNpcScoutSnapshots } from "./helpers";
 import { describe, expect, it } from "vitest";
 import historical from "./fixtures/npc-economy-r11.json";
@@ -162,7 +163,7 @@ describe("bounded per-planet NPC remainder persistence", () => {
 describe("raw namespace and historical source boundaries", () => {
   it.each(Array.from({ length: 11 }, (_, index) => index + 2))("initializes r%d only after its historical reader and leaves source bytes untouched", revision => {
     const original = legacy(revision), before = JSON.stringify(original), result = importSave(before);
-    expect(result.revision).toBe(14);
+    expect(result.revision).toBe(16);
     expect(result.state.planets.map(planet => planet.npcResourceRemainder)).toEqual([ZERO]);
     expect(result.state.planets[0].resources).toEqual(historical.rows[0].oldReaderOutput.state.planets[0].resources);
     expect(JSON.stringify(original)).toBe(before);
@@ -179,7 +180,7 @@ describe("raw namespace and historical source boundaries", () => {
         expect(npcResourceRemainder).toEqual(ZERO); return planet;
       }) };
       stripVerifiedNullNpcScoutSnapshots(oldProjection);
-      expect(oldProjection).toEqual(source);
+      expect(oldProjection).toEqual(liftLegacyEnergyChallenge(source));
     }
   });
 

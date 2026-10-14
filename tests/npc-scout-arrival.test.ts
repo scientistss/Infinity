@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import sourceR11 from "./fixtures/npc-economy-r11.json";
 import legacyScouts from "./fixtures/npc-scout-legacy.json";
@@ -402,12 +403,12 @@ describe("archived r13 reader-admitted synthetic scout boundaries", () => {
     expect(reports(arrived)).toHaveLength(1);
     expect(reports(arrived)[0]!.npcScoutSnapshot).toMatchObject({ fleetId: fleet.id, originId: fleet.originId, target: fleet.target });
     expect(arrived.fleets[0]!.cargo).toEqual(fleet.cargo);
-    expect(historicalMessageProjection(arrived)).toEqual(boundary.oldArrivalState);
+    expect(historicalMessageProjection(arrived)).toEqual(liftLegacyEnergyChallenge(boundary.oldArrivalState));
     expect(reload(arrived).messages).toEqual(arrived.messages);
     expect(resolveFleetArrivals(arrived)).toBe(arrived);
     const returned = tick(arrived, boundary.returnSeconds);
     expect(returned.fleets).toHaveLength(0);
-    expect(historicalMessageProjection(returned)).toEqual(boundary.oldReturnState);
+    expect(historicalMessageProjection(returned)).toEqual(liftLegacyEnergyChallenge(boundary.oldReturnState));
     expect(serializeState(reload(returned))).toEqual(serializeState(returned));
     expect(serializeState(state)).toEqual(before);
     expect(row.raw).toBe(rawBefore);
@@ -431,7 +432,7 @@ describe("archived r13 reader-admitted synthetic scout boundaries", () => {
     }
     const arrived = tick(state, boundary.arrivalSeconds), { messages: _oldArrivalMessages, ...oldArrival } = boundary.oldArrivalState;
     const { messages: _newArrivalMessages, ...newArrival } = serializeState(arrived);
-    expect(newArrival).toEqual(oldArrival);
+    expect(newArrival).toEqual(liftLegacyEnergyChallenge(oldArrival));
     expect(reports(arrived)).toHaveLength(0);
     expect(arrived.messages.at(-1)).toMatchObject({ id: `scout-${fleet.id}-observation-1`, npcScoutSnapshot: null });
     expect(arrived.messages.at(-1)!.text).toContain("历史消息编号冲突，未生成新的可预演快照");
@@ -441,7 +442,7 @@ describe("archived r13 reader-admitted synthetic scout boundaries", () => {
     expect(resolveFleetArrivals(arrived)).toBe(arrived);
     const returned = tick(arrived, boundary.returnSeconds), { messages: _oldReturnMessages, ...oldReturn } = boundary.oldReturnState;
     const { messages: _newReturnMessages, ...newReturn } = serializeState(returned);
-    expect(newReturn).toEqual(oldReturn);
+    expect(newReturn).toEqual(liftLegacyEnergyChallenge(oldReturn));
     expect(returned.fleets).toHaveLength(0);
     expect(reports(returned)).toHaveLength(0);
     expect(serializeState(reload(returned))).toEqual(serializeState(returned));

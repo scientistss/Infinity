@@ -1,3 +1,4 @@
+import { liftLegacyEnergyChallenge } from "./helpers/energy-challenge-legacy";
 import { stripVerifiedNpcRemainders, stripVerifiedNullNpcScoutSnapshots } from "./helpers";
 import { describe, expect, it, vi } from "vitest";
 import historical from "./fixtures/npc-economy-r11.json";
@@ -68,14 +69,14 @@ describe("r13 exact source migration", () => {
   it.each([0, 60, .1, Number.MIN_VALUE, 11900])("copies actual accepted r12 age %s snapshot at new local origin", age => {
     const source = r12(age), before = JSON.stringify(source), migrated = importSave(before);
     const resources = npcEconomySnapshot({ model: "fixed-production-v1", elapsedSeconds: age }).resources;
-    expect(migrated.revision).toBe(14);
+    expect(migrated.revision).toBe(16);
     expect(migrated.state.npcEconomy).toEqual({ model: "npc-wallet-garrison-v1", now: 0,
       baseline: { stock: [resources.metal, resources.crystal, resources.deuterium], mark: 0 }, sites: {} });
     expect(migrated.state.npcBattles).toEqual(createNpcBattleState());
     const { npcEconomy: _old, ...oldWorld } = source.state;
     const { npcEconomy: _new, npcBattles: _reports, ...newWorld } = migrated.state;
     const oldProjection = structuredClone(newWorld); stripVerifiedNpcRemainders(oldProjection); stripVerifiedNullNpcScoutSnapshots(oldProjection);
-    expect(oldProjection).toEqual(oldWorld); expect(JSON.stringify(source)).toBe(before);
+    expect(oldProjection).toEqual(liftLegacyEnergyChallenge(oldWorld)); expect(JSON.stringify(source)).toBe(before);
     expect(importSave(JSON.stringify(migrated))).toEqual(migrated);
   });
   it("preserves MIN_VALUE and huge player/time Decimal representation without time backfill", () => {
@@ -112,7 +113,7 @@ describe("r13 exact source migration", () => {
       const adopted = importSave(row.raw);
       const { npcEconomy: _economy, npcBattles: _battle, ...world } = adopted.state;
       const oldProjection = structuredClone(world); stripVerifiedNpcRemainders(oldProjection); stripVerifiedNullNpcScoutSnapshots(oldProjection);
-      expect(oldProjection).toEqual(row.oldReaderOutput.state);
+      expect(oldProjection).toEqual(liftLegacyEnergyChallenge(row.oldReaderOutput.state));
       expect(adopted.state.npcEconomy.baseline.stock).toEqual([500, 250, 0]);
     }
   });

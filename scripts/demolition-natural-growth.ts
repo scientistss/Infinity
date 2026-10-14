@@ -9,7 +9,7 @@ declare const process: { argv: string[]; env: Record<string, string | undefined>
 import { captureAdoptedSteps } from "./capture-adopted-steps.mjs";
 let independentlyExpectedNpcWallet = expectedNpcEconomy(), independentlyExpectedControlWallet = expectedNpcEconomy();
 const npcAdoptedSegmentsSeconds: number[] = [];
-import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy } from "./r14-compatibility.mjs";
+import { expectedNpcEconomy, advanceExpectedNpcWallet, assertNpcEconomy } from "./r16-compatibility.mjs";
 import { SAVE_REVISION, SAVE_SCHEMA, SAVE_VERSION } from "../src/game/content";
 import { quoteDemolition, commitDemolition, cancelDemolition } from "../src/game/demolition";
 import type { DemolitionJobRef } from "../src/game/demolition-state";
@@ -184,7 +184,7 @@ async function loadOrigin() {
   }
   check(report.schema === "infinity-natural-research-network-journey-v1" && report.outcome.status === "passed" && report.source.sourceSha === GOLD.sourceSha && report.source.gitHead === GOLD.sourceSha && report.source.worktreeStatusPorcelain === "" && report.source.sourceScopeStatusPorcelain === "", "Prior source/report did not pass exact clean origin contract");
   const matches = report.milestones.filter((m: { name: string }) => m.name === GOLD.sourceMilestone); check(matches.length === 1, "Exact final serializer milestone missing/duplicated"); const m = matches[0];
-  check(m.gameSeconds === GOLD.sourceGameSeconds && m.strictRoundtrips === 2 && m.stateAdoptedFromReload && m.subsequentLiveTickObserved && m.firstSubsequentLiveTickAt === GOLD.originGameSeconds && m.save.schema === SAVE_SCHEMA && m.save.version === SAVE_VERSION && m.save.revision === 10 && SAVE_REVISION === 14 && m.save.savedAt === m.save.lastTickAt, "Original actual r10 serializer/reload/live-tick chain is incomplete");
+  check(m.gameSeconds === GOLD.sourceGameSeconds && m.strictRoundtrips === 2 && m.stateAdoptedFromReload && m.subsequentLiveTickObserved && m.firstSubsequentLiveTickAt === GOLD.originGameSeconds && m.save.schema === SAVE_SCHEMA && m.save.version === SAVE_VERSION && m.save.revision === 10 && SAVE_REVISION === 16 && m.save.savedAt === m.save.lastTickAt, "Original actual r10 serializer/reload/live-tick chain is incomplete");
   exact(JSON.parse(rawOrigin), m.save, "Literal original serializer bytes equal exact prior complete milestone save");
   const migrated = importSave(rawOrigin); projectR14ZeroToR10(migrated.state, m.save.state);
   exact({ ...migrated, revision: 10, state: m.save.state }, m.save, "Only revision, exact zero NPC age and null fields added; original envelope clocks preserved");
