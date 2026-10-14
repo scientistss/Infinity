@@ -1,11 +1,25 @@
 # Energy tightening: first playable contract
 
-Status: independent implementation candidate, not a release. These are this
-project's explicit challenge rules, not a claim about OGame. Save output is
-v9/r16; published r14 remains the compatibility source. No r15 migration is
-defined.
+Status: accepted and released at [6af7a5e85a522ba89478c5e95d919a2c04fb2e55](https://github.com/scientistss/Infinity/commit/6af7a5e85a522ba89478c5e95d919a2c04fb2e55)
+(0.6.32-alpha.1 / v9/r16), with all twelve required jobs and their aggregate
+successful in [run 38505882754](https://github.com/scientistss/Infinity/actions/runs/38505882754). The exact artifact was separately verified and deployed successfully; the
+additional promotion run is tracked separately in [current status](ENERGY_CHALLENGE_DOMAIN_STATUS.md).
+These are this project's explicit challenge rules, not a claim about OGame.
+Only fully validated same-lineage r2–r14 sources migrate; unknown r15 is protected.
 
 ## Player loop
+
+UI path: 曲率 → 能源紧缩 → 核对入场并发射 → 继续，核对最新结果 →
+final native confirmation. Review alone does not reset. For completion use
+核对完成并发射; for abandonment use 核对放弃.
+
+Both entry and successful finish perform the ordinary curvature reset: old
+planets, stock, local units and fleets are cleared; paid unfinished work is
+cancelled without refund. Completed research, curvature upgrades, banked dark
+matter, items and saved designs follow the existing retention rules. Read the
+fresh final confirmation for complete losses. Entry explicitly disables every
+enabled automatic-curvature action, including locked slots; configuration stays.
+Other cards retain their enabled settings.
 
 At an ordinary, legally available manual curvature, the player may explicitly
 choose to reset and enter **Energy tightening**. All player mines demand twice
@@ -21,9 +35,15 @@ completion proof. Actual accelerated completion uses the same paid-job hook.
 
 The player then explicitly confirms a second legal curvature to finish. Its
 ordinary reward and reset occur once, together with a bounded completion
-receipt. That receipt opens a total of three ordinary building/research queue
-positions. An active challenge still permits two. Old legal 3–5-job paid queues
-are preserved and continue normally; only new admissions use the current cap.
+receipt. That receipt raises each planet's building queue and the one empire-wide
+research queue from two total positions to three, counting the active job.
+Each building queue and the shared research queue remain serial, one active
+job each; this is not three simultaneous builds/researches. The shipyard's
+separate ten-order cap is unchanged. An active challenge still permits two.
+Old legal 3–5-job paid queues are preserved and continue normally; only new
+admissions use the current cap, so an over-cap queue must first drain below
+that cap. Manual, protocol and finite-plan payments use the same admission check.
+The completed receipt survives ordinary curvature; a new game clears it.
 
 ## Conservative production points
 
@@ -82,8 +102,9 @@ resource-disposal choices still obey the ordinary economy and its limits.
 Entry explicitly confirms disabling every enabled automatic-curvature card,
 including locked slots, while preserving its configuration. During the
 challenge it cannot be enabled or executed. Abandonment and completion leave
-it disabled until the player manually enables it again. Other cards and
-finite plans continue normally.
+it disabled until the player manually enables it again. Other cards retain
+their enabled settings. Finite plans remain usable during the challenge,
+subject to the ordinary reset termination rules on entry and completion.
 
 Review is an ephemeral UI intent. Final confirmation uses current consequences
 and a fresh one-use domain quote synchronously, then the existing SaveSession

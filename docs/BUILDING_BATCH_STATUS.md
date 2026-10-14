@@ -1,5 +1,17 @@
 # Multi-planet building template release
 
+## Current continuation
+
+The A-stage release below remains accepted. Its separate
+[promotion run 38488563403](https://github.com/scientistss/Infinity/actions/runs/38488563403)
+subsequently succeeded. The B-stage successor 6af7a5e / 0.6.32-alpha.1 / v9/r16
+was accepted and released after all twelve required jobs and the aggregate
+passed, including this batch's 25 native cases. See [the current challenge acceptance](ENERGY_CHALLENGE_DOMAIN_STATUS.md).
+The r16 successor preserves this finite batch's independent budgets, local
+payment and authorization rules. New paid admissions use the current challenge-
+aware queue capacity; registration itself still does not pay.
+The earlier pending status and failures below are preserved as historical records.
+
 ## Released 2026-10-14
 
 Version **0.6.31-alpha.1**, save v9/r14, was accepted at

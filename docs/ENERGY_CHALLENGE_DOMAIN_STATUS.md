@@ -1,5 +1,111 @@
 # Energy tightening implementation checkpoints
 
+## Current exact-source acceptance and release — 2026-10-14
+
+**0.6.32-alpha.1 / v9/r16**, source
+[`6af7a5e85a522ba89478c5e95d919a2c04fb2e55`](https://github.com/scientistss/Infinity/commit/6af7a5e85a522ba89478c5e95d919a2c04fb2e55), passed
+[run 38505882754](https://github.com/scientistss/Infinity/actions/runs/38505882754): all twelve mandatory workers and the aggregate succeeded.
+All twelve share the exact source/build identity: 719 tracked source files,
+62 production assets plus release metadata, Node v22.23.3. The primary worker
+passed all 5,012 unit tests. This acceptance belongs to the exact game SHA;
+a later documentation commit does not inherit its CI result.
+
+The development ref was advanced without force from 166c77f to 6af7a5e and read
+back at that SHA. The separate [promotion run 38510286345](https://github.com/scientistss/Infinity/actions/runs/38510286345)
+completed successfully at **2026-10-14 04:53 UTC**. An independent readback at
+05:01 UTC confirmed all twelve required jobs and the aggregate succeeded,
+the development ref remained at 6af7a5e, and `main` remained unchanged at
+`ebbabd7854a5bb77fc154a63202c1a1b705d3c39`. Its result is separate from the
+candidate run. The exact candidate artifact was separately published at
+04:15 UTC with a succeeded result, after the release metadata and all 62
+production asset hashes were verified.
+Release JSON SHA-256:
+`327ead4aa33749136c24ff966a6b4337e9ad00114dd39907f8324abf4179d030`.
+The A-stage atomic-building release remains recorded in [its own status](BUILDING_BATCH_STATUS.md).
+
+### Accepted evidence and its limits
+
+- The 68 native challenge cases comprise 18 controls, 35 lifecycle/authority/
+  storage cases and 15 migration/protection cases. All retained gates, including
+  atomic building batches, NPC orbital combat and scout rehearsal, also passed
+  at this SHA; no earlier green substitutes for an unrun current gate.
+- A separate continuous solar route starts from a pristine fixed-seed new game:
+  4,383 actions, 4,201 original one-second engine frames, 149 actual building
+  payments, four research payments, two manual curvature confirmations and
+  22 actual save/reload checkpoints. It earns the score without importing an
+  eligibility checkpoint, then actually pays for and completes the third
+  building/research queue positions. The solar lane records 18,487 checks
+  and no screenshots. Separate native controls provide the 320/390/768/1440
+  viewport evidence; those screenshots are not from the continuous solar lane.
+- This is **compressed logical time**, not 4,201 seconds of natural wall-clock
+  play, an all-strategy balance result or a real-device endurance test. The
+  three earlier strategy checks remain separate transition evidence; their
+  imported earned eligibility checkpoints do not become continuous playthroughs.
+- The same-Chrome reference is sealed before the native application context
+  starts. It independently executes the same domain engine against fixed actions;
+  it is not an independent mathematical engine. Independent price/payment,
+  completion and production-score checks supplement exact complete-state,
+  receipt and save-byte comparisons. No floating tolerance was introduced.
+- Supported same-lineage r2–r14 inputs pass their complete old validation and
+  backup/write/readback path before receiving an inactive, zero-score challenge.
+  Native r14 coverage includes real startup migration, byte-exact original backup,
+  upgrade and continued state. The seven startup migration storage faults are
+  separate Map-backed unit evidence within the 97 formally passing tests in
+  `tests/energy-challenge-migration.test.ts`: backup quota/drop/read, primary
+  quota/drop/read and concurrent modification. That suite's r14 input is the
+  public additive r13→r14 projection of actual archived r13-reader output,
+  adding explicit null scout-snapshot slots; it is not a native r14 producer.
+  The six native enter/abandon/finish write/readback failure cases cover
+  challenge operations, not those seven r14 startup-migration faults. Unknown
+  r15 and malformed r16 receipts are protected rejections, not arbitrary
+  cross-route compatibility.
+- Two optional historical archive-replay tests were skipped in the primary job
+  (old render-order snapshot replay and the pinned 2,889-check orbital-journal
+  replay). Required current gates remained mandatory and passed. An additional
+  22-checkpoint inactive-world differential passed locally on Node v24.19.0;
+  this is supplemental synthetic domain evidence, not Node 22 CI or native
+  browser coverage, and does not establish every inactive gameplay behavior.
+
+### Performance boundary
+
+The existing paired benchmark uses fixed historical 4b / 0.6.11, spanning
+multiple releases. Current ordinary navigation EventTiming P95 is 48 ms, with
+no observed steady long tasks in those sampled windows; extreme P95 is 248 ms.
+The extreme sample's maximum steady long task is 80 ms; maximum startup long
+task is 448 ms. These observations do not establish a
+challenge-specific speedup, general smoothness or a save optimization.
+The pressure fixture has **no active challenge**, so active-challenge extreme
+performance remains unmeasured. A future active-challenge diagnostic is a
+remaining validation task, not a result or a performance improvement already
+delivered. See the [remaining roadmap](ROADMAP_ACCEPTANCE.md#剩余路线分组).
+
+## Historical checkpoints
+
+The following records retain their original timing and outcomes. Later success
+does not turn a failed run green or make an earlier unreleased checkpoint a release.
+
+### Final two-worker failure and test-only successor
+
+[`7b1b9028`](https://github.com/scientistss/Infinity/commit/7b1b9028ce78478287c9e8d63c3e3798c47dafb4),
+[run 38503753970](https://github.com/scientistss/Infinity/actions/runs/38503753970),
+failed `energy-solar-route` and `verify-continuation`; the aggregate also failed.
+Ten other required workers passed, which did not make that run releasable.
+
+The solar route had completed its states, payments and reloads before the final
+storage audit rejected genuine pre-RAF autosaves. In three captured receipts,
+`savedAt` was one second later than the most recent completed `lastTickAt`:
+the timer saved before the next frame. The test had assumed the clocks always
+matched. The successor binds those exact pre-frame receipts to the complete
+trace and unchanged raw bytes; it does not tolerate arbitrary clock differences.
+
+The separate continuation failure came from an old randomized deployment
+fixture: its fixed destination could equal the randomized home's coordinates.
+The test-only repair chooses a provably distinct legal destination and preserves
+explicit regressions rejecting captured duplicate-coordinate seeds. These two
+repairs are independent and leave production rules unchanged. The fresh 6af run
+passed its own complete gates; neither diagnostic replay nor later success
+reclassifies the original 7b run.
+
 ## Same-browser reference and migration evidence repair (unreleased)
 
 The complete [309ec203 run](https://github.com/scientistss/Infinity/actions/runs/38496521976)
