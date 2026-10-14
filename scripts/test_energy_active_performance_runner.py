@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stdlib-only supervisor/partial-evidence tests. Never native CPU evidence."""
 import contextlib
+import ast
 import importlib.util
 import io
 import json
@@ -17,6 +18,43 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RunnerTests(unittest.TestCase):
+    def test_all_actual_listener_callbacks_match_adapter_contract(self):
+        source = Path(RUNNER.__file__).read_text()
+        calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == 'on']
+        self.assertEqual(sorted(node.args[0].value for node in calls),
+                         ['Debugger.scriptParsed', 'pageerror', 'requestfailed', 'response'])
+        run = {'pageErrors': [], 'failedRequests': []}
+        responses, parsed_scripts = [], []
+        scope = {'run': run, 'responses': responses, 'parsed_scripts': parsed_scripts,
+                 'append_event': RUNNER.append_event}
+        for node in calls:
+            callback = eval(compile(ast.Expression(node.args[1]), '<listener>', 'eval'), scope)
+            setattr(callback, '_pw_impl_instance_', object())
+            event = node.args[0].value
+            payload = types.SimpleNamespace(url='https://example.test/one')
+            callback(payload)
+            if event == 'pageerror': self.assertEqual(run['pageErrors'], [str(payload)])
+            elif event == 'requestfailed': self.assertEqual(run['failedRequests'], [payload.url])
+            elif event == 'response': self.assertIs(responses[0], payload)
+            else: self.assertIs(parsed_scripts[0], payload)
+        self.assertEqual([len(run['pageErrors']), len(run['failedRequests']), len(responses), len(parsed_scripts)], [1]*4)
+
+    def test_event_callbacks_accept_wrapper_metadata_without_changing_payloads(self):
+        rows = []
+        with self.assertRaises(AttributeError):
+            setattr(rows.append, '_pw_impl_instance_', object())
+        callback = RUNNER.append_event(rows)
+        wrapper = object()
+        setattr(callback, '_pw_impl_instance_', wrapper)
+        first, second = object(), {'scriptId': '1'}
+        callback(first); callback(second); callback(first)
+        self.assertIs(getattr(callback, '_pw_impl_instance_'), wrapper)
+        self.assertEqual(len(rows), 3)
+        self.assertIs(rows[0], first)
+        self.assertIs(rows[1], second)
+        self.assertIs(rows[2], first)
+
     def setUp(self):
         # Honor workspace-only scratch rather than assuming /tmp capacity.
         self.temporary = tempfile.TemporaryDirectory(prefix='energy-runner-unit-', dir=Path(__file__).resolve().parents[2])

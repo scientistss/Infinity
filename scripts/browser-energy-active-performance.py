@@ -21,6 +21,7 @@ import statistics
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from urllib.parse import urljoin, urlparse
 
@@ -432,6 +433,14 @@ def light(page):
     return page.evaluate('() => window.__activeEnergyDiagnostic.light()')
 
 
+def append_event(rows):
+    # Playwright caches its wrapper on the callback. list.append is a builtin
+    # method and cannot accept that attribute; keep the original payload/order.
+    def receive(value):
+        rows.append(value)
+    return receive
+
+
 def saved_summary(r, value):
     state = value['state']; expected = r.current_fixture['state']
     caps = {row['id']: row['caps'] for row in r.current_fixture_summary['planets']}
@@ -624,9 +633,9 @@ def run_context(r, browser, fixture, run, release):
         page.set_default_timeout(15000)
         page.on('pageerror', lambda error: run['pageErrors'].append(str(error)))
         page.on('requestfailed', lambda request: run['failedRequests'].append(request.url))
-        page.on('response', responses.append)
+        r.call('page.response-listener', lambda: page.on('response', append_event(responses)))
         cdp = r.call('cdp.create', lambda: context.new_cdp_session(page))
-        cdp.on('Debugger.scriptParsed', parsed_scripts.append)
+        r.call('cdp.script-listener', lambda: cdp.on('Debugger.scriptParsed', append_event(parsed_scripts)))
         r.call('identity.debugger-enable', lambda: cdp.send('Debugger.enable'))
         r.call('metrics.enable', lambda: cdp.send('Performance.enable', {'timeDomain': 'timeTicks'}))
         response = r.call('page.native-navigation', lambda: page.goto(r.args.url, wait_until='networkidle', timeout=45000))
@@ -664,6 +673,7 @@ def run_context(r, browser, fixture, run, release):
         run['completed'] = run['qualified'] = True
     except BaseException as error:
         run['errors'].append(str(error)[:2000]); run['qualified'] = False
+        run['failureTraceback'] = r.raw(run['id'] + '-failure-traceback.txt', traceback.format_exc())
         r.phase('run.failed', 'error')
         if page is not None:
             try:
