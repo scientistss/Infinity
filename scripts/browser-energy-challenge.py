@@ -241,7 +241,7 @@ class ManualStorageBoundary:
     synthesized from a successful save; the complete receipt chain must match.
     """
     def __init__(self,application_url,preserve=None):
-        self.application_url=application_url;self.events=[];self.frozen=None;self.result=None;self.preserve=preserve
+        self.application_url=application_url;self.events=[];self.frozen=None;self.result=None;self.preserve=preserve;self.ui_navigation=None
     def record(self,kind,row):
         self.events.append(deepcopy({'kind':kind,**row}));self._finish()
     def capture(self,observer,marker):
@@ -249,12 +249,14 @@ class ManualStorageBoundary:
         self.frozen=freeze_manual_boundary(observer,self.events,marker);self._finish()
     def _finish(self):
         if self.frozen is None or self.result is not None:return
+        if self.ui_navigation is not None and self.ui_navigation.get('manual') is None:return
         final=self.frozen['trace']['events'][-1]['primaryRaw']
         if not any(row.get('key')==KEY and row['kind'] in ('added','updated') and row['newValue']==final for row in self.events):return
         receipts=deepcopy(self.events)
         # Save the exact candidate chain before validation, including rejects.
         if self.preserve is not None:self.preserve(self.frozen,receipts)
-        request=derive_realclock_request(self.frozen['trace'],receipts,self.frozen['marker'],self.application_url)
+        arguments=(self.frozen['trace'],receipts,self.frozen['marker'],self.application_url)
+        request=derive_realclock_request(*arguments,self.ui_navigation) if self.ui_navigation is not None else derive_realclock_request(*arguments)
         self.result={**self.frozen,'storageEvents':receipts,'writes':request['nativePrimaryWrites']}
 
 
@@ -592,7 +594,27 @@ def worker(args):
                  'loaded':ready['loaded'],'primaryRaw':ready['primaryRaw'],'backupRaw':ready['backupRaw'],'lastTickAt':ready['lastTickAt']}
         check('real-clock startup source and recoverable backup are byte exact',startup['sourceRaw']==startup['backupRaw']==source)
         if page.locator('[data-bind="offline-modal"]').is_visible():page.locator('[data-action="dismiss-offline"]').click()
+        def navigation_snapshot():
+            snapshot=page.evaluate("""()=>({documentId:window.__ecWitness.documentId,navigationSequence:window.__ecWitness.navigationSequence,
+                events:structuredClone(window.__ecWitness.events),storage:Object.fromEntries(Object.keys(localStorage).map(key=>[key,localStorage.getItem(key)])),
+                wallAt:Date.now(),frameAt:performance.now(),origin:location.origin})""")
+            # Only deliver pending observations; do not repeat a click or replace a clock.
+            deadline=min(time.monotonic()+2,report['_started']+BUDGETS[args.lane]-10)
+            while True:
+                observed={KEY:source}
+                for receipt in storage_boundary.events:
+                    if receipt['kind'] in ('added','updated'):observed[receipt['key']]=receipt['newValue']
+                if observed==snapshot['storage']:break
+                if time.monotonic()>=deadline:raise AssertionError('Native navigation storage receipts not delivered in time')
+                page.wait_for_timeout(10)
+            snapshot['storageCount']=len(storage_boundary.events)
+            snapshot['traceSequence']=cap['trace'].events[-1]['sequence']
+            return snapshot
+        ui_before=navigation_snapshot()
         page.locator('[data-tab="save"]').click()
+        ui_after=navigation_snapshot()
+        storage_boundary.ui_navigation={'before':ui_before,'after':ui_after,'manual':None}
+        current['realClockUiNavigationBeforeManual']=dump('real-clock-ui-navigation-before-manual.json',canonical(storage_boundary.ui_navigation))
         marker=cap['trace'].events[-1]['sequence']
         def capture_boundary(event):
             if event['sequence']>marker and event['kind']=='save-result' and any(row['sequence']>marker and row['kind']=='action' and row.get('actionType')=='save' for row in cap['trace'].events):
@@ -603,8 +625,12 @@ def worker(args):
         page.locator('[data-action="save"]').click()
         # Original trace prefix ends at this complete real manual-save result.
         # Live frames after it cannot fit, replace, or alter those captured clocks.
-        page.evaluate('0')
+        manual_snapshot=navigation_snapshot()
         check('manual result froze exact original trace prefix',storage_boundary.frozen is not None and not cap['trace'].failures)
+        manual_snapshot['traceSequence']=storage_boundary.frozen['endSequence']
+        storage_boundary.ui_navigation['manual']=manual_snapshot
+        current['realClockUiNavigationWitness']=dump('real-clock-ui-navigation-witness.json',canonical(storage_boundary.ui_navigation))
+        storage_boundary._finish()
         # Pump delivery of the independent CDP storage stream only. This never
         # retries the manual action, replays a frame or substitutes a clock.
         receipt_deadline=min(time.monotonic()+7,report['_started']+BUDGETS[args.lane]-10)
@@ -630,7 +656,8 @@ def worker(args):
         current['realClock']={'classification':'unmodified-native-Date-performance-RAF; exact-observed-event-replay',
             'request':request_ref,'result':stdout,'stderr':stderr,'nativeStorageEvents':dump('real-clock-native-storage-events.json',canonical(boundary['storageEvents'])),
             'trace':dump('real-clock-original-trace.json',canonical(boundary['trace'])),'nativeClockFunctions':witness['nativeClocks'],
-            'manualMarker':marker,'manualEndSequence':boundary['endSequence'],'documentId':witness['documentId']}
+            'manualMarker':marker,'manualEndSequence':boundary['endSequence'],'documentId':witness['documentId'],
+            'uiNavigationWitness':current['realClockUiNavigationWitness']}
         page.locator('[data-action="export"]').click();check('real-clock export uses trusted native control',bool(page.locator('[data-bind="transfer"]').input_value()))
         seal_scope(page,cap);context.close();active_page=None
     def capture_failure(error):

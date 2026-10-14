@@ -334,23 +334,44 @@ class RealProjectionTests(unittest.TestCase):
                 return subprocess.check_output(['git', '-C', str(root), *args], env=env, stderr=subprocess.PIPE)
             subprocess.check_call(['git', 'clone', '--quiet', '--shared', str(self.root), str(root)], env=env)
             head = git('rev-parse', 'HEAD').decode().strip()
-            gates.project(gates.prepare(root), 'manual_workflow')
-            faults = [(path, fault) for path in sorted(gates.NEW_PATHS) for fault in ('bytes', 'mode')]
-            faults.append(('scripts/unknown-support.py', 'unknown'))
-            for path, fault in faults:
+            value = gates.prepare(root)
+            expected = gates.project(value, 'manual_workflow')
+            # A completed sealed projection never rereads the modified root;
+            # the next public call must capture again and reject that drift.
+            drift = root/'scripts/browser-energy-challenge-solar.py'
+            original = drift.read_bytes()
+            try:
+                drift.write_bytes(original+b'\n# post-capture root drift\n')
+                with patch.object(subprocess, 'check_output', side_effect=AssertionError('Pure projection attempted Git IO')), \
+                     patch.object(Path, 'read_bytes', side_effect=AssertionError('Pure projection attempted file IO')):
+                    self.assertEqual(gates.project(value, 'manual_workflow'), expected)
+                with self.assertRaisesRegex(AssertionError, 'Current bytes differ from committed object'):
+                    gates.call('manual_workflow', root)
+            finally:
+                drift.write_bytes(original)
+            faults = [(path, fault, 'Ordinary pinned support source required' if fault == 'mode'
+                       else 'Exact adopted support bytes required')
+                      for path in sorted(gates.NEW_PATHS) for fault in ('bytes', 'mode')]
+            faults.extend((path, fault, 'Ordinary source follow-up mode required' if fault == 'mode'
+                           else 'Exact bounded solar source follow-up required')
+                          for path in sorted(gates.SOURCE_FOLLOWUP_ROWS) for fault in ('bytes', 'mode'))
+            faults.extend((gates.SOLAR_SOURCE, fault, 'Ordinary pinned support source required' if fault == 'mode'
+                           else 'Exact solar workflow source adaptation required') for fault in ('bytes', 'mode'))
+            faults.extend(('scripts/browser-npc-attack.py', fault, 'Unapproved adopted source change')
+                          for fault in ('bytes', 'mode'))
+            faults.append(('scripts/unknown-support.py', 'unknown', 'Exact adopted file inventory required'))
+            for path, fault, error in faults:
                 with self.subTest(path=path, fault=fault):
                     local = root/path
                     if fault == 'mode':
                         local.chmod(0o755)
-                        expected = 'Ordinary pinned support source required'
                     else:
                         local.write_bytes((local.read_bytes() if local.exists() else b'')+b'\n# unapproved support source\n')
-                        expected = 'Exact adopted support bytes required' if fault == 'bytes' else 'Exact adopted file inventory required'
                     git('add', path)
                     git('-c', 'user.name=Offline rejection fixture', '-c', 'user.email=offline@example.invalid',
                         'commit', '-qm', 'Unapproved support witness')
                     try:
-                        with self.assertRaisesRegex(AssertionError, expected):
+                        with self.assertRaisesRegex(AssertionError, error):
                             gates.project(gates.prepare(root), 'manual_workflow')
                     finally:
                         git('reset', '--hard', '--quiet', head)

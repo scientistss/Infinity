@@ -1,5 +1,53 @@
 # Energy tightening implementation checkpoints
 
+## Same-browser reference and migration evidence repair (unreleased)
+
+The complete [309ec203 run](https://github.com/scientistss/Infinity/actions/runs/38496521976)
+failed. Seven of its twelve required workers succeeded; five and the aggregate
+failed. Controls completed 18 cases and lifecycle completed 35 cases. Those
+results do not establish a releasable challenge version.
+
+The [08ad6d00 numerical diagnostic](https://github.com/scientistss/Infinity/actions/runs/38499599843)
+reproduced the first solar disagreement using the original application bytes.
+The first 116 complete states agreed. At event 117, Node 22.23.3 and Chrome
+154.0.8037.97 differed by one binary ULP in Math.pow(1.1, 4), crossing the existing
+Decimal addition's rounding boundary. The only state difference was the final
+digit of the deuterium balance. Neither save adoption nor tick count differed.
+This diagnostic is not completion of the solar playthrough.
+
+The follow-up therefore adds a separate, source-bound reference run in the
+same Chrome launch. Its input contains only the fixed 4,383 actions, never
+observed UI state or precomputed monetary outcomes. It constructs a new game,
+replays the domain APIs, and performs its own 22 Map-backed SaveSession
+checkpoints. Complete states, receipts and raw saves are sealed before this
+isolated context closes and the native application context starts. This is
+an independently executed reference using the same domain engine, not an
+independent mathematical implementation. Independent catalog-price, payment,
+completion and production-score checks remain additional requirements.
+
+The original Node report and oracle are retained as different-runtime evidence.
+Native comparisons remain exact for every complete state, payment receipt and
+save byte; no rounding tolerance is added to those comparisons. Production math
+is unchanged. Reference preparation has an explicit 60-second bound, followed
+by the unchanged 600-second native window and 20-second cleanup allowance.
+The job remains limited to 15 minutes; any failed preparation terminates the
+run without recalculating expectations from native observations.
+
+The [56ac3f06 migration diagnostic](https://github.com/scientistss/Infinity/actions/runs/38501009650)
+remained red but preserved the previously missing receipt details. Its real
+r14 startup wrote the facilities UI preference, then a trusted navigation to
+the save page changed that preference to save. The storage checker had allowed
+only primary and backup keys. The follow-up binds these two specific preference
+writes to native navigation witnesses and storage cuts while retaining the
+complete primary/backup replay. Other keys, extra transitions and changed
+values remain rejected. The original 309 migration failure lacked those rows;
+its exact cause cannot be retrospectively established from this new run.
+
+All twelve required workers and their aggregate must succeed at the final
+source SHA before this candidate can replace the published atomic-building
+version. Local preparation, diagnostic success and partial native runs do not
+satisfy that release requirement.
+
 ## Native checkpoint evidence and continuous-route gate
 
 The source repair checkpoint

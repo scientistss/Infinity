@@ -15,6 +15,7 @@ import zipfile
 from urllib.parse import urljoin, urlparse
 import energy_challenge_census as C
 import energy_challenge_trace as T
+import energy_challenge_solar_reference as R
 
 SCHEMA='infinity-energy-challenge-solar-native-v1'
 CENSUS_SCHEMA='infinity-energy-challenge-solar-native-census-v1'
@@ -240,7 +241,10 @@ def validate(root,expected_sha):
     assert report['schema']==SCHEMA and report['caseId']==CASE_ID and report['sourceSha']==expected_sha
     assert report['runId']==seal['runId']==supervisor['runId'] and report['completed'] is True and report['errors']==[]
     assert report['budgetSeconds']==BUDGET and type(report['hostElapsedSeconds']) in (int,float) and 0<=report['hostElapsedSeconds']<BUDGET
-    assert supervisor['budgetSeconds']==BUDGET+20 and supervisor['workerExitCode']==0 and not supervisor['expired'] and not supervisor['error'] and not supervisor['survivors']
+    assert report['preparationBudgetSeconds']==R.PREPARATION_BUDGET and type(report['preparationElapsedSeconds']) in (int,float) and 0<=report['preparationElapsedSeconds']<R.PREPARATION_BUDGET
+    assert type(report['workerElapsedSeconds']) in (int,float) and max(report['hostElapsedSeconds'],report['preparationElapsedSeconds'])<=report['workerElapsedSeconds']<BUDGET+R.PREPARATION_BUDGET
+    assert supervisor['preparationBudgetSeconds']==R.PREPARATION_BUDGET and supervisor['nativeBudgetSeconds']==BUDGET and supervisor['cleanupBudgetSeconds']==20
+    assert supervisor['budgetSeconds']==BUDGET+R.PREPARATION_BUDGET+20 and supervisor['workerExitCode']==0 and not supervisor['expired'] and not supervisor['error'] and not supervisor['survivors']
     checks=[decode(line) for line in C.original(root/'checks.jsonl').splitlines()]
     assert len(checks)==report['checkCount'] and [r['sequence'] for r in checks]==list(range(len(checks))) and all(r['passed'] is True for r in checks)
     common=decode(C.resolve_reference(root,report['commonIdentity']));identity=common['identity']
@@ -260,6 +264,8 @@ def validate(root,expected_sha):
     assert natural['sourceTree']==identity['source']['fullTree'] and oracle['runtimeNode']==report['runtimeNode']
     assert C.reference_identity(decode(C.resolve_reference(root,report['oracleOriginal'])))==C.reference_identity(oracle)
     assert oracle['producer']['sha256']==inventory['scripts/energy-challenge-solar-oracle.mjs']
+    build=R.load_preserved_build(root,report['browserReferenceBuild'],identity,plan)
+    plan,states=R.validate_reference(root,report,build,initial,plan)
     sources=[]
     for row in report['executedSources']:
         response=decode(C.resolve_reference(root,row['response']))
@@ -337,7 +343,9 @@ def validate(root,expected_sha):
     return {'schema':CENSUS_SCHEMA,'sourceSha':expected_sha,'runId':report['runId'],'caseCount':1,'caseId':CASE_ID,'logicalSeconds':4201,
             'buildingPayments':149,'researchPayments':4,'challengeConfirmations':2,'checkpointCount':22,'documentCount':23,
             'documentIds':sorted(d['documentId'] for d in documents),
-            'commonIdentitySha256':common['identitySha256'],'sealSha256':C.sha(seal_raw),'checks':len(checks)}
+            'commonIdentitySha256':common['identitySha256'],'sealSha256':C.sha(seal_raw),'checks':len(checks),
+            'browserReferenceSha256':report['browserReference']['sha256'],'referencePreparationBudgetSeconds':R.PREPARATION_BUDGET,
+            'nativeBudgetSeconds':BUDGET,'runtimeKind':'same-Chrome-isolated-reference-before-native'}
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--expected-sha',required=True);p.add_argument('directory',type=Path);args=p.parse_args()

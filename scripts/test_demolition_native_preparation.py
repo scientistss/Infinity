@@ -15,6 +15,7 @@ from pathlib import Path
 import tempfile
 import traceback
 import unittest
+from unittest.mock import patch
 from test_terraformer_native_preparation import TargetPage as OriginalTargetPage, DiagnosticPage as OriginalDiagnosticPage
 
 SCRIPT = Path(__file__).with_name('browser-demolition.py')
@@ -565,15 +566,52 @@ class FrameWaitDiagnosticContracts(unittest.TestCase):
         self.assertNotIn('check(', ast.unparse(next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'responsive_checkpoint')))
 
     def test_original_business_check_and_advance_call_census_is_byte_for_byte_ast_exact(self):
-        def census(names):
-            calls = [ast.dump(node, include_attributes=False) for node in sorted(ast.walk(TREE), key=lambda node: getattr(node, 'lineno', 0))
-                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names]
-            return len(calls), hashlib.sha256(json.dumps(calls).encode()).hexdigest()
+        def calls(names):
+            return [ast.dump(node, include_attributes=False) for node in sorted(ast.walk(TREE), key=lambda node: getattr(node, 'lineno', 0))
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names]
+        def census(values):
+            return len(values), hashlib.sha256(json.dumps(values).encode()).hexdigest()
         # Pinned from 7ab569045996a1a6ad8ce1aee477092144dfad74, whose green artifact
         # executed 1225 checks and 50 positive one-second advances. Static census
         # protects every original assertion and every advance call; it is not a rerun.
-        self.assertEqual(census({'check'}), (109, 'baae104d3af444105bfbae93f5313ee27ce3c7f0cf30f4d4d8a04e2eaa437948'))
-        self.assertEqual(census({'advance', 'one_seconds'}), (23, 'f2a321de7342851c48a202daa6efe2ac6fb554e1f7ded724fb3dc535ae8e3576'))
+        # Only the final, exact current-release metadata check is the declared
+        # v9/r14 -> v9/r16 adaptation. Map one immutable AST string in a copy;
+        # every other check and every advance must retain the original census.
+        before = ast.dump(ast.parse(
+            "check('actual production release is expected v9/r14', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 14)"
+        ).body[0].value, include_attributes=False)
+        after = ast.dump(ast.parse(
+            "check('actual production release is expected v9/r16', release_metadata['saveVersion'] == 9 and release_metadata['saveRevision'] == 16)"
+        ).body[0].value, include_attributes=False)
+        actual = calls({'check'})
+        self.assertEqual([index for index, call in enumerate(actual) if call == after], [108])
+        self.assertNotIn(before, actual)
+        original = actual.copy()
+        original[108] = before
+        self.assertEqual(census(original), (109, 'baae104d3af444105bfbae93f5313ee27ce3c7f0cf30f4d4d8a04e2eaa437948'))
+        self.assertEqual(census(calls({'advance', 'one_seconds'})), (23, 'f2a321de7342851c48a202daa6efe2ac6fb554e1f7ded724fb3dc535ae8e3576'))
+
+    def test_release_check_projection_rejects_wrong_revision_duplicate_position_and_other_check_drift(self):
+        original = ast.dump(TREE, include_attributes=True)
+        for mutation in ('revision', 'label', 'missing', 'duplicate', 'position', 'other_check'):
+            changed = copy.deepcopy(TREE)
+            checks = [node for node in sorted(ast.walk(changed), key=lambda node: getattr(node, 'lineno', 0))
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'check']
+            if mutation == 'revision':
+                checks[108].args[1].values[1].comparators[0].value = 15
+            elif mutation == 'label':
+                checks[108].args[0].value = 'actual production release is expected v9/r14'
+            elif mutation == 'missing':
+                checks[108].func.id = 'omitted_check'
+            elif mutation == 'duplicate':
+                changed.body.append(ast.Expr(value=copy.deepcopy(checks[108])))
+            elif mutation == 'position':
+                checks[108].lineno = 0
+            else:
+                checks[0].args[0] = ast.Constant(value='unapproved business check change')
+            with self.subTest(mutation=mutation), patch(__name__ + '.TREE', changed), self.assertRaises(AssertionError):
+                self.test_original_business_check_and_advance_call_census_is_byte_for_byte_ast_exact()
+        self.assertEqual(ast.dump(TREE, include_attributes=True), original)
 
 
 class DiagnosticDeadlineTests(unittest.TestCase):

@@ -39,13 +39,42 @@ SOLAR_TEST = 'scripts/test_energy_challenge_solar_gate.py'
 VERIFIED_INPUT_ANCHOR = "          python -m unittest discover -s scripts -p 'test_research_unlock_copy_browser.py' -v\n"
 VERIFIED_INPUT_COMMAND = "          python -m unittest discover -s scripts -p 'test_energy_verified_input.py' -v\n"
 
-SOURCE_FOLLOWUP_ROWS = {'scripts/browser-energy-challenge-solar.py': {'before': 'cc98de66ac040d4e13775fa1e29e9640e0a3253a053b9a0270aab679bbc9552d',
-                                               'after': '0ad2aa62b9ff03848c2e92265b504fff68d5080efea2195086b37d7b6a9fc03a'},
+SOURCE_FOLLOWUP_ROWS = {'docs/ENERGY_CHALLENGE_DOMAIN_STATUS.md': {'before': '2e6cdf526dcc62642f0d29bd489ad23d3c21ecf6e6cb61739287cdae49271a5a',
+                                            'after': 'f5c8dff917dc0c6d79bd54d1d13d6e77645de479b6e8db8a256ae3a6869dcec6'},
+ 'scripts/browser-energy-challenge-solar.py': {'before': 'cc98de66ac040d4e13775fa1e29e9640e0a3253a053b9a0270aab679bbc9552d',
+                                               'after': '699273661b49ae5e3b4326af94332b58efa39aabc2fde0e0c85b03598abb5d3c'},
+ 'scripts/browser-energy-challenge.py': {'before': 'e125a0c0e821256ef02d81223b19815a1978e3eac6a6f16685205193cbfff33b',
+                                         'after': 'd7753666ce3909f7cbdb13d6810f3205f4347d4cf16e1b756f7786d9ce1b8de4'},
+ 'scripts/browser-lab-blockers.py': {'before': 'f8d5504136e49b2dbc0ccbef64a3aa42e398bc85c55974b64c1123852cd4349a',
+                                     'after': '4c03ded286c18b4114c953c3d7cdfb28c234ba95825d43c60cc35b9d1ff59016'},
+ 'scripts/energy_challenge_census.py': {'before': 'cf91b2a1f5cfe0576836e16de3d913b22265416463d2d5996276799e9afdbb45',
+                                        'after': '940ee72beae89b4d7a7dd1419876b04e0f671d0f278ff77ff6f2100ec31b2a9a'},
+ 'scripts/energy_challenge_solar_census.py': {'before': 'c3e08c3c47cac5d224411085c5482bede6b775ae8f7f1defb7e215b45b4f6951',
+                                              'after': '703e101353c2715f58a2341c22c5b98ff6bf0aea2a7c8897137b474113f157f7'},
+ 'scripts/test_demolition_native_preparation.py': {'before': 'c26f7176ffe3e7b0e387fd4188fe8eab4a6a651a14f0c12f6e50475732574da1',
+                                                   'after': '87cf5e4a92149e555b76e99eb32c02a9c32af687d311ea35812ecfdddc17f920'},
+ 'scripts/test_energy_challenge_native.py': {'before': 'd732a12db51d1f9eba6f00409fabb36f85cfe571146ca1fef8eb83243a7cbf24',
+                                             'after': 'e2bccd22fa9acc03d74ccd41f4bf049d9f2de3afa35aa6b3343d046d2a68cdd5'},
  'scripts/test_energy_challenge_solar.py': {'before': '110263180c0d1786bfebebef0827a082dc18922d3364ccb95a49a86f46be2447',
-                                            'after': '40d3567b277b9080db5e0db52704f92a98b6d19b531c34e47e1cfe240479a29d'}}
+                                            'after': '4df675435bf402f1d2be26c7fa8db2c7ce953d13fdb65c7b267a538e6fd8d3f9'},
+ 'scripts/test_energy_challenge_solar_gate.py': {'before': '11c0f1386e952428a330089028d9cb98e54887e2fd4414a35a2ed7ac5b17f3d0',
+                                                 'after': '6dd0cde5229e53c660dc183d79eb3b49147d84b18fe7b8769f2d4a28bfc347ab'},
+ 'scripts/test_lab_blockers_acceptance.py': {'before': '4676ffc6004806ad5394453883f969705e8366f621d4a3eee8b0bdabdff6010e',
+                                             'after': '4124d797037dc05d6c27f3a67727362e87bda6579b9bab56f50b8d51f5c59904'},
+ 'scripts/test_npc_attack_acceptance.py': {'before': 'dc2e0aee70a0f4911fb00a8bdfd4e41f20d839516726617f7bc73fcdb2145ab7',
+                                           'after': '484ad50b958abdb465361d037a5d9fcc3904e5063ac645ed831bebd1a55ca40f'}}
 RELEASE_FILES = tuple(batch.RELEASE_FILES)
-NEW_PATHS = {'scripts/energy_verified_input.py', 'scripts/energy_verified_gate_projection.py',
-             'scripts/test_energy_verified_input.py'}
+NEW_PATH_MODES = {
+    'scripts/energy-challenge-solar-browser-reference.mjs': '100644',
+    'scripts/energy-challenge-solar-browser-reference.ts': '100644',
+    'scripts/energy_challenge_solar_reference.py': '100644',
+    'scripts/energy_verified_gate_projection.py': '100644',
+    'scripts/energy_verified_input.py': '100644',
+    'scripts/test-energy-challenge-solar-reference.mjs': '100644',
+    'scripts/test_energy_challenge_solar_reference.py': '100644',
+    'scripts/test_energy_verified_input.py': '100644',
+}
+NEW_PATHS = set(NEW_PATH_MODES)
 ADAPTERS = {
     'scripts/test_manual_unit_gate.py': {
         'previous_six_workflow': ('workflow=None', "'manual_six', ROOT, workflow"),
@@ -58,6 +87,7 @@ ADAPTERS = {
         'previous_release_bytes': ('relative', "'lab_release', ROOT, relative"),
     },
 }
+NEW_HISTORICAL_SUPPORT = set(ADAPTERS) | {'scripts/test_demolition_native_preparation.py'}
 OPERATIONS = {'manual_six', 'manual_workflow', 'manual_release',
               'lab_workflow', 'lab_release', 'lab_transitions'}
 
@@ -105,14 +135,34 @@ def adapted_solar_source(raw):
                  'VERIFIED_INPUT_COMMAND = '+repr(VERIFIED_INPUT_COMMAND)+'\n\n\n')
     text = solar.exact(text, anchor, constants+anchor)
     anchor = '    current=exact(before,LAB_IMPORT_BEFORE,LAB_IMPORT_AFTER)\n'
-    return solar.exact(text, anchor, anchor+
-        '    current=exact(current,VERIFIED_INPUT_ANCHOR,VERIFIED_INPUT_ANCHOR+VERIFIED_INPUT_COMMAND)\n').encode()
+    text = solar.exact(text, anchor, anchor+
+        '    current=exact(current,VERIFIED_INPUT_ANCHOR,VERIFIED_INPUT_ANCHOR+VERIFIED_INPUT_COMMAND)\n')
+    anchor = ('          (cd "$RUNNER_TEMP/energy-solar-current" && ENERGY_SOLAR_NATURAL="$GITHUB_WORKSPACE/energy-natural/report.json" '
+              'node --import tsx --test scripts/test-energy-challenge-solar-oracle.mjs)\n')
+    text = solar.exact(text, anchor, anchor+
+        '          (cd "$RUNNER_TEMP/energy-solar-current" && node scripts/energy-challenge-solar-browser-reference.mjs '
+        '--natural "$GITHUB_WORKSPACE/energy-natural/report.json" --out "$GITHUB_WORKSPACE/energy-solar-reference") '
+        '> energy-solar-reference.log 2>&1\n'
+        '          (cd "$RUNNER_TEMP/energy-solar-current" && ENERGY_SOLAR_NATURAL="$GITHUB_WORKSPACE/energy-natural/report.json" '
+        'node --import tsx --test scripts/test-energy-challenge-solar-reference.mjs)\n')
+    for before, after in (
+        ('      - name: Mandatory continuous solar route, 600 seconds plus 20-second cleanup\n',
+         '      - name: Mandatory solar reference preparation 60 seconds then native route 600 seconds and cleanup 20 seconds\n'),
+        ('timeout --signal=TERM --kill-after=20s 600s xvfb-run -a python scripts/browser-energy-challenge-solar.py',
+         'timeout --signal=TERM --kill-after=20s 660s xvfb-run -a python scripts/browser-energy-challenge-solar.py'),
+        ('--oracle energy-solar-oracle/manifest.json --expected-sha',
+         '--oracle energy-solar-oracle/manifest.json --browser-reference energy-solar-reference/manifest.json --expected-sha'),
+        ('            energy-solar-oracle\n            energy-solar-evidence\n',
+         '            energy-solar-oracle\n            energy-solar-reference\n            energy-solar-evidence\n'),
+    ):
+        text = solar.exact(text, before, after)
+    return text.encode()
 
 
 def requests():
     values = {PREDECESSOR: set(ADAPTERS) | set(SOURCE_FOLLOWUP_ROWS) | {PIN_FILE, SOLAR_SOURCE, SOLAR_TEST},
               solar.BASE_SHA: {energy.WORKFLOW_PATH},
-              energy.BASE_SHA: {energy.WORKFLOW_PATH, *RELEASE_FILES, *ADAPTERS}}
+              energy.BASE_SHA: {energy.WORKFLOW_PATH, *RELEASE_FILES, *NEW_HISTORICAL_SUPPORT}}
     for stage in (batch, research, fleet, recycle, manual, lab):
         values.setdefault(stage.BASE_SHA, set()).update((energy.WORKFLOW_PATH, *stage.RELEASE_FILES))
     values.setdefault(manual.SIX_BASE_SHA, set()).add(energy.WORKFLOW_PATH)
@@ -129,6 +179,8 @@ def verify_adoption_delta(value):
     before, after = value.histories[PREDECESSOR], value.histories[value.candidate]
     adopted = set(ADAPTERS) | NEW_PATHS | set(SOURCE_FOLLOWUP_ROWS) | {energy.WORKFLOW_PATH, SOLAR_SOURCE, SOLAR_TEST}
     assert set(after) == set(before) | NEW_PATHS, 'Exact adopted file inventory required'
+    for path, mode in NEW_PATH_MODES.items():
+        assert after[path][0] == mode, ('Ordinary pinned support source required', path)
     for path in before:
         if path in ADAPTERS:
             original = value.historical(PREDECESSOR, path)
@@ -138,6 +190,7 @@ def verify_adoption_delta(value):
             assert after[path] == before[path], ('Unapproved adopted source change', path)
     assert value.files[SOLAR_SOURCE] == adapted_solar_source(value.historical(PREDECESSOR, SOLAR_SOURCE)), 'Exact solar workflow source adaptation required'
     for path, expected in SOURCE_FOLLOWUP_ROWS.items():
+        assert after[path][0] == before[path][0] == '100644', ('Ordinary source follow-up mode required', path)
         assert sha(value.historical(PREDECESSOR, path)) == expected['before'], ('Exact source follow-up predecessor required', path)
         assert sha(value.files[path]) == expected['after'], ('Exact bounded solar source follow-up required', path)
     original_pins = value.historical(PREDECESSOR, PIN_FILE)
@@ -148,7 +201,7 @@ def verify_adoption_delta(value):
     old = {item['path']: item for item in previous_rows}
     current = {item['path']: item for item in current_rows}
     assert len(current) == len(current_rows) and tuple(current) == tuple(sorted(current)), 'Unique ordered support rows required'
-    assert set(current) == set(old) | NEW_PATHS | set(ADAPTERS), 'Exact support row inventory required'
+    assert set(current) == set(old) | NEW_PATHS | NEW_HISTORICAL_SUPPORT, 'Exact support row inventory required'
     for path, item in current.items():
         assert after[path][0] == '100644', ('Ordinary pinned support source required', path)
         assert item['after'] == {'mode': '100644', 'sha256': sha(value.files[path])}, ('Exact adopted support bytes required', path)
@@ -159,7 +212,7 @@ def verify_adoption_delta(value):
         elif path in NEW_PATHS:
             assert item['before'] is None, ('New support path has historical identity', path)
         else:
-            assert path in ADAPTERS, ('Unapproved new historical support row', path)
+            assert path in NEW_HISTORICAL_SUPPORT, ('Unapproved new historical support row', path)
             original = value.historical(energy.BASE_SHA, path)
             assert item['before'] == {'mode': '100644', 'sha256': sha(original)}, ('Exact original helper support identity required', path)
     assert after[PIN_FILE][0] == '100644'

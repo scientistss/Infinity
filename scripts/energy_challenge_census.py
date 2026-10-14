@@ -11,6 +11,7 @@ from copy import deepcopy
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -169,7 +170,62 @@ def validate_trace_identity(snapshot, sources, release, application_url):
     return plan
 
 
-def derive_realclock_request(snapshot, storage_events, marker, application_url):
+def validate_realclock_ui_navigation(witness, storage_events, startup, manual_saved_at, trace_events, marker):
+    """Only the observed startup facilities preference and one trusted save-tab move."""
+    assert type(witness) is dict and set(witness)=={'before','after','manual'}
+    before,after,manual=witness['before'],witness['after'],witness['manual']
+    keys={'documentId','navigationSequence','events','storage','wallAt','frameAt','origin','traceSequence','storageCount'}
+    assert all(type(item) is dict and set(item)==keys for item in (before,after,manual))
+    assert type(before['documentId']) is str and before['documentId'] and before['documentId']==after['documentId']==manual['documentId']
+    assert type(before['navigationSequence']) is int and type(after['navigationSequence']) is int and type(manual['navigationSequence']) is int
+    assert before['navigationSequence']==after['navigationSequence']==manual['navigationSequence']==1
+    for field in ('wallAt','frameAt'):
+        assert all(type(item[field]) in (int,float) and math.isfinite(item[field]) for item in (before,after,manual))
+        assert 0<=before[field]<=after[field]<=manual[field]
+    assert startup['constructorNow']<=before['wallAt']<=after['wallAt']<=manual_saved_at<=manual['wallAt']
+    assert trace_events[1]['startupClock']['frameAt']<=before['frameAt']
+    for item in (before,after,manual):
+        assert type(item['traceSequence']) is int and type(item['storageCount']) is int
+        assert 0<=item['storageCount']<=len(storage_events)
+    assert 1<=before['traceSequence']<=after['traceSequence']<=marker<manual['traceSequence']==trace_events[-1]['sequence']
+    assert 0<before['storageCount']<after['storageCount']<manual['storageCount']==len(storage_events)
+    dismiss={'kind':'click','trusted':True,'id':'','tab':None,'action':'dismiss-offline'}
+    navigate={'kind':'click','trusted':True,'id':'','tab':'save','action':None}
+    assert canonical(before['events']) in (canonical([]),canonical([dismiss]))
+    assert canonical(after['events'])==canonical(before['events']+[navigate]), 'Exactly one trusted save-tab navigation required'
+    save={'kind':'click','trusted':True,'id':'','tab':None,'action':'save'}
+    assert canonical(manual['events'])==canonical(after['events']+[save]), 'Navigation must be exact prefix of actual trusted manual-save witness'
+    ui_key='infinity.ui.tab'
+    for item,tab in ((before,'facilities'),(after,'save'),(manual,'save')):
+        assert type(item['storage']) is dict and set(item['storage'])=={KEY,KEY+'.backup',ui_key}
+        assert item['storage'][ui_key]==tab and item['storage'][KEY+'.backup']==startup['sourceRaw']
+        assert type(item['storage'][KEY]) is str
+        saved=json.loads(item['storage'][KEY])['savedAt']
+        assert type(saved) in (int,float) and math.isfinite(saved) and saved<=item['wallAt']
+    preference_indices=[i for i,row in enumerate(storage_events) if row.get('key')==ui_key]
+    assert len(preference_indices)==2
+    assert preference_indices[0]<before['storageCount']<=preference_indices[1]<after['storageCount']
+    assert after['storageCount']<=len(storage_events)-1
+    assert storage_events[-1]['key']==KEY and storage_events[-1]['newValue']==manual['storage'][KEY]
+    # Every snapshot is an exact prefix of the complete raw native storage chain.
+    for item in (before,after,manual):
+        durable={KEY:startup['sourceRaw']}
+        for row in storage_events[:item['storageCount']]:
+            assert row['kind'] in ('added','updated')
+            if row['kind']=='added':assert row['key'] not in durable
+            else:assert row['key'] in durable and row['oldValue']==durable[row['key']]
+            durable[row['key']]=row['newValue']
+        assert durable==item['storage'], 'Navigation storage snapshot does not match its actual receipt cut'
+    preferences=[storage_events[index] for index in preference_indices]
+    assert len(preferences)==2, 'Exactly two source-bound UI preference receipts required'
+    first,second=preferences
+    assert first['kind']=='added' and 'oldValue' not in first and first['newValue']=='facilities'
+    assert second['kind']=='updated' and second['oldValue']=='facilities' and second['newValue']=='save'
+    assert all(row['storageId']['securityOrigin']==before['origin']==after['origin']==manual['origin'] for row in preferences)
+    return ui_key
+
+
+def derive_realclock_request(snapshot, storage_events, marker, application_url, ui_navigation=None):
     """Derive the entire oracle request from the immutable manual-boundary receipts."""
     from energy_challenge_trace import through_manual_save, to_replay_epoch
     events=snapshot['events'];prefix=through_manual_save(events,marker)
@@ -187,9 +243,13 @@ def derive_realclock_request(snapshot, storage_events, marker, application_url):
     url=urlparse(application_url);origin=f'{url.scheme}://{url.netloc}'
     durable={KEY:startup['sourceRaw']};writes=[]
     assert storage_events
+    ui_key=None
+    if ui_navigation is not None:
+        ui_key=validate_realclock_ui_navigation(ui_navigation,storage_events,startup,events[-1]['savedAt'],events,marker)
+        assert ui_navigation['before']['origin']==origin
     for sequence,row in enumerate(storage_events):
         assert row['storageId']['isLocalStorage'] is True and row['storageId']['securityOrigin']==origin
-        assert row['kind'] in ('added','updated') and row['key'] in (KEY,KEY+'.backup'), (
+        assert row['kind'] in ('added','updated') and row['key'] in ((KEY,KEY+'.backup',ui_key) if ui_key else (KEY,KEY+'.backup')), (
             'Unexpected real-clock native storage receipt',sequence,row.get('kind'),row.get('key'))
         key=row['key'];new=row['newValue'];assert type(new) is str
         if row['kind']=='added':assert key not in durable
@@ -198,7 +258,8 @@ def derive_realclock_request(snapshot, storage_events, marker, application_url):
         if key==KEY:
             assert durable.get(KEY+'.backup')==startup['sourceRaw'], 'Recoverable original must precede migration adoption'
             writes.append(new)
-        else:assert new==startup['sourceRaw']
+        elif key==KEY+'.backup':assert new==startup['sourceRaw']
+        else:assert ui_key and key==ui_key and KEY+'.backup' in durable and writes
     expected_writes=[startup['primaryRaw']];last_raw=startup['primaryRaw'];pending=None
     for event in events:
         if event['kind']=='save-input':
@@ -211,7 +272,11 @@ def derive_realclock_request(snapshot, storage_events, marker, application_url):
             if event['candidateRaw']!=last_raw:expected_writes.append(event['candidateRaw'])
             last_raw=event['candidateRaw'];pending=None
     assert pending is None and writes==expected_writes
-    assert durable=={KEY:last_raw,KEY+'.backup':startup['sourceRaw']}
+    expected_durable={KEY:last_raw,KEY+'.backup':startup['sourceRaw']}
+    if ui_key:
+        expected_durable[ui_key]='save'
+        assert all(item['storage'][KEY] in expected_writes for item in ui_navigation.values())
+    assert durable==expected_durable
     return {'epoch':to_replay_epoch(events),'startup':startup,'nativePrimaryWrites':writes,
             'finalPrimaryRaw':events[-1]['primaryRaw'],'finalBackupRaw':events[-1]['backupRaw']}
 
@@ -537,7 +602,13 @@ def validate(directory, expected_sha, lane):
         complete_trace=json.loads(resolve_reference(root,scope['trace']))
         assert trace=={**complete_trace,'events':complete_trace['events'][:real['manualEndSequence']+1]}
         assert trace['events'][-1]['sequence']==real['manualEndSequence'] and len(trace['executedScripts'])==1
-        assert request==derive_realclock_request(trace,events,real['manualMarker'],report['applicationUrl'])
+        ui_navigation=json.loads(resolve_reference(root,real['uiNavigationWitness']))
+        assert ui_navigation['before']['documentId']==ui_navigation['after']['documentId']==ui_navigation['manual']['documentId']==real['documentId']
+        final_witness=json.loads(resolve_reference(root,case['eventScopes'][-1]['original']))
+        assert final_witness['documentId']==real['documentId']
+        actual_events=final_witness['events'];prefix=ui_navigation['manual']['events']
+        assert canonical(actual_events[:len(prefix)])==canonical(prefix)
+        assert request==derive_realclock_request(trace,events,real['manualMarker'],report['applicationUrl'],ui_navigation)
         prepared_case=next(row for row in prepared['cases'] if row['id']=='migrate-r14')
         assert request['startup']['sourceRaw'].encode()==resolve_reference(root,prepared_case.get('realClockInput',prepared_case['input']))
         migration_manifest=json.loads(resolve_reference(root,prepared['producerOriginals']['migrations']))

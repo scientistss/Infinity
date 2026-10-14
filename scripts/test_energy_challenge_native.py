@@ -155,6 +155,52 @@ class NativeContract(unittest.TestCase):
             with self.subTest(mutation=mutate),self.assertRaises((AssertionError,ValueError,KeyError)):
                 census.derive_realclock_request(bad,changed,3,'https://example.invalid/Infinity/')
 
+    def test_realclock_two_ui_preferences_require_exact_trusted_navigation_and_full_save_chain(self):
+        _,observer,storage=realclock_receipts();snapshot=observer.snapshot();original=census.derive_realclock_request(snapshot,storage,3,'https://example.invalid/Infinity/')
+        storage_id=deepcopy(storage[0]['storageId']);key='infinity.ui.tab'
+        events=storage[:2]+[{'kind':'added','storageId':storage_id,'key':key,'newValue':'facilities'},
+            {'kind':'updated','storageId':storage_id,'key':key,'oldValue':'facilities','newValue':'save'}]+storage[2:]
+        first=storage[1]['newValue'];source=storage[0]['newValue']
+        before={'documentId':'same-native-document','navigationSequence':1,'events':[],
+            'storage':{browser.KEY:first,browser.KEY+'.backup':source,key:'facilities'},
+            'wallAt':1020,'frameAt':20,'origin':'https://example.invalid','traceSequence':2,'storageCount':3}
+        after=deepcopy(before);after.update(wallAt=1030,frameAt=30,traceSequence=3,storageCount=4)
+        after['storage'][key]='save';after['events']=[{'kind':'click','trusted':True,'id':'','tab':'save','action':None}]
+        manual=deepcopy(after);manual.update(wallAt=1041,frameAt=41,traceSequence=7,storageCount=5)
+        manual['storage'][browser.KEY]=storage[-1]['newValue']
+        manual['events'].append({'kind':'click','trusted':True,'id':'','tab':None,'action':'save'})
+        witness={'before':before,'after':after,'manual':manual};saved=deepcopy((events,witness))
+        self.assertEqual(census.derive_realclock_request(snapshot,events,3,'https://example.invalid/Infinity/',witness),original)
+        self.assertEqual((events,witness),saved)
+        boundary=browser.ManualStorageBoundary('https://example.invalid/Infinity/');boundary.ui_navigation=deepcopy(witness)
+        for row in events:boundary.record(row['kind'],{k:v for k,v in row.items() if k!='kind'})
+        boundary.capture(observer,3);self.assertEqual(boundary.result['writes'],original['nativePrimaryWrites'])
+        mutations=[lambda e,w:e.pop(2),lambda e,w:e.insert(3,deepcopy(e[2])),
+            lambda e,w:e.__setitem__(slice(2,4),list(reversed(e[2:4]))),
+            lambda e,w:e[2].update(newValue='research'),lambda e,w:e[3].update(oldValue='research'),
+            lambda e,w:e[3].update(newValue='curvature'),lambda e,w:e[2].update(oldValue=''),
+            lambda e,w:e[3].update(key='other-key'),lambda e,w:e[3]['storageId'].update(securityOrigin='https://other.invalid'),
+            lambda e,w:e.append({'kind':'added','storageId':storage_id,'key':'unknown','newValue':'x'}),
+            lambda e,w:w['after']['events'][0].update(trusted=False),lambda e,w:w['after']['events'][0].update(trusted=1),
+            lambda e,w:w['after']['events'].append(deepcopy(w['after']['events'][0])),
+            lambda e,w:w['after'].update(documentId='another-document'),lambda e,w:w['after'].update(navigationSequence=True),
+            lambda e,w:w['after'].update(wallAt=999),lambda e,w:w['before'].update(frameAt=float('nan')),
+            lambda e,w:w['before']['storage'].update(extra='x'),lambda e,w:w['after']['storage'].__setitem__(key,'facilities'),
+            lambda e,w:w['before']['storage'].__setitem__(browser.KEY,storage[-1]['newValue']),
+            lambda e,w:e.pop(0),lambda e,w:e[-1].update(oldValue='changed-original'),
+            lambda e,w:e.__setitem__(slice(3,5),list(reversed(e[3:5]))),
+            lambda e,w:e.__setitem__(slice(None),[e[0],e[1],e[-1],e[2],e[3]]),
+            lambda e,w:w['before'].update(frameAt=0),lambda e,w:w['after'].update(frameAt=1e15),
+            lambda e,w:w['after'].update(traceSequence=7),lambda e,w:w['before'].update(storageCount=2),
+            lambda e,w:w['after'].update(storageCount=5),lambda e,w:w['manual']['events'].pop(),
+            lambda e,w:w['manual']['events'][-1].update(trusted=False)]
+        for mutate in mutations:
+            changed,seen=deepcopy(events),deepcopy(witness);mutate(changed,seen)
+            with self.subTest(mutation=mutate),self.assertRaises((AssertionError,ValueError,KeyError)):
+                census.derive_realclock_request(snapshot,changed,3,'https://example.invalid/Infinity/',seen)
+        with self.assertRaises(AssertionError):census.derive_realclock_request(snapshot,events,3,'https://example.invalid/Infinity/')
+        with self.assertRaises(AssertionError):census.derive_realclock_request(snapshot,storage,3,'https://example.invalid/Infinity/',witness)
+
     def test_manual_boundary_freezes_host_copies_without_freezing_browser(self):
         cdp,observer,storage=realclock_receipts()
         frozen=trace.freeze_manual_boundary(observer,storage,3);original=deepcopy(frozen)

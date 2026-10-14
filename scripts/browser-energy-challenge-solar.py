@@ -22,6 +22,7 @@ import uuid
 import zipfile
 from urllib.parse import urljoin,urlparse,unquote
 import energy_challenge_solar_census as S
+import energy_challenge_solar_reference as R
 from energy_challenge_census import canonical,original,reference,resolve_reference,sha
 from energy_challenge_trace import NativeFrameTrace
 
@@ -43,7 +44,9 @@ def copy_original(source,destination):
 
 def worker(args):
     from playwright.sync_api import sync_playwright
-    out=Path(args.output);start=time.monotonic()
+    out=Path(args.output);preparation_start=time.monotonic();start=preparation_start;native_started=False
+    def deadline_expired(_signal,_frame):raise TimeoutError('Explicit solar phase budget expired')
+    signal.signal(signal.SIGALRM,deadline_expired);signal.setitimer(signal.ITIMER_REAL,R.PREPARATION_BUDGET)
     natural_dir=Path(args.natural).resolve();oracle_path=Path(args.oracle).resolve()
     natural,route,plan,oracle,expected,initial=S.load_inputs(natural_dir,oracle_path,args.expected_sha)
     common_raw=original(args.common_identity);common=json.loads(common_raw);identity=common['identity']
@@ -54,9 +57,13 @@ def worker(args):
     report={'schema':S.SCHEMA,'caseId':S.CASE_ID,'runId':args.run_id,'sourceSha':args.expected_sha,'runtimeNode':args.runtime_node,
             'version':args.expected_version,'applicationUrl':args.url,'budgetSeconds':S.BUDGET,'completed':False,'errors':[],
             'classification':'fixed-continuous-native-UI-with-compressed-one-second-original-RAF; not-human-elapsed-time',
-            'checkCount':0,'_started':start,'assets':[],'executedSources':[],'documents':[]}
+            'checkCount':0,'_started':start,'assets':[],'executedSources':[],'documents':[],
+            'preparationBudgetSeconds':R.PREPARATION_BUDGET,'contextChronology':[]}
     evidence=BASE.Evidence(out,report);evidence.scenario=S.CASE_ID;check=evidence.check;dump=evidence.dump
     report['commonIdentity']=dump('common-identity.json',common_raw)
+    build=R.load_build(Path(args.browser_reference),identity,plan,source_root=ROOT)
+    build=R.preserve_build(build,dump,out)
+    report['browserReferenceBuild']=build['portableReference']
     copy_original(natural_dir/'report.json',out/'natural/report.json')
     refs=[route['receipts'],route['productionTrace'],*route['checkpoints'].values()]
     for name in sorted({r['file'] for r in refs}):
@@ -132,10 +139,20 @@ def worker(args):
                     report['assets'].append({'file':name,'original':dump('http-'+name.replace('/','_'),body)})
                     if name.endswith('.js') and BASE.production_action_handlers(body.decode()):plans.append(S.prepare_trace(urljoin(args.url,name),body,digest))
                 check('one exact source-derived solar observation plan',len(plans)==1);trace_plan=plans[0];request.dispose()
+                report['browserReference'],plan,expected,reference_runtime=R.execute_reference(browser,build,initial,plan,dump,report['contextChronology'])
+                report['preparationElapsedSeconds']=time.monotonic()-preparation_start
+                check('bounded independent reference prep sealed and closed before native UI',report['preparationElapsedSeconds']<R.PREPARATION_BUDGET)
+                signal.setitimer(signal.ITIMER_REAL,0)
+                start=time.monotonic();native_started=True;report['_started']=start;report['nativeStartedMonotonic']=start
+                signal.setitimer(signal.ITIMER_REAL,S.BUDGET)
+                report['nativeBrowserRuntime']=R.runtime_identity(browser)
+                R.validate_runtime(reference_runtime,report['nativeBrowserRuntime'],browser.version)
                 context=browser.new_context(viewport={'width':1440,'height':1000},service_workers='block',storage_state={
                     'cookies':[],'origins':[{'origin':origin,'localStorage':[{'name':KEY,'value':initial.decode()}]}]})
                 context.add_init_script(CLOCK.replace('__ORIGIN__',json.dumps(origin)).replace('__EPOCH__',str(S.EPOCH)).replace('__STARTUP__',''))
-                page=context.new_page();page.set_default_timeout(7000);page.set_default_navigation_timeout(10000)
+                page=context.new_page();report['nativeContext']=R.context_identity(context,page)
+                R.chronology_append(report['contextChronology'],'native-context-created',context=report['nativeContext'],browserContextIds=R.browser_contexts(browser))
+                page.set_default_timeout(7000);page.set_default_navigation_timeout(10000)
                 cap={'cdp':context.new_cdp_session(page),'executed':[],'responses':[]}
                 cap['cdp'].send('Network.enable');cap['cdp'].send('Network.setCacheDisabled',{'cacheDisabled':True})
                 cap['trace']=NativeFrameTrace(cap['cdp'],trace_plan);cap['trace'].install()
@@ -148,6 +165,7 @@ def worker(args):
                         storage_events.append({'kind':kind,**deepcopy(row)})
                 for method,kind in [('domStorageItemAdded','added'),('domStorageItemUpdated','updated'),('domStorageItemRemoved','removed'),('domStorageItemsCleared','cleared')]:
                     cap['cdp'].on('DOMStorage.'+method,lambda row,kind=kind:store_event(kind,row))
+                R.chronology_append(report['contextChronology'],'native-navigation-start',context=report['nativeContext'])
                 response=page.goto(args.url,wait_until='networkidle');check('initial native application HTTP200',response is not None and response.status==200);seal_scripts()
                 check('first source read is exact pristine fixed-seed original',cap['trace'].events[0]['kind']=='source-read' and cap['trace'].events[0]['raw'].encode()==initial)
                 for event,expect in zip(plan,expected):
@@ -218,8 +236,14 @@ def worker(args):
     except BaseException as error:
         report.setdefault('failure',{'error':repr(error),'traceback':traceback.format_exc(),'eventIndex':current_index,'captureStatus':'outside-live-playwright'})
     finally:
+        signal.setitimer(signal.ITIMER_REAL,0)
         records_handle.close();report['records']=reference(records_path,out);evidence.journal.close()
-        report['hostElapsedSeconds']=time.monotonic()-report.pop('_started')
+        report.pop('_started');report['workerElapsedSeconds']=time.monotonic()-preparation_start
+        report['hostElapsedSeconds']=time.monotonic()-start if native_started else 0
+        report.setdefault('preparationElapsedSeconds',report['workerElapsedSeconds'])
+        if report['preparationElapsedSeconds']>=R.PREPARATION_BUDGET:
+            report['completed']=False
+            report.setdefault('failure',{'error':'Explicit 60-second preparation budget expired','eventIndex':current_index})
         if report['hostElapsedSeconds']>=S.BUDGET:
             report['completed']=False
             report.setdefault('failure',{'error':'Fixed 600-second worker budget expired','eventIndex':current_index})
@@ -263,7 +287,7 @@ def supervise(args):
         child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:],
             '--worker', '--run-id='+run_id, '--owner-marker='+marker], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         # The two bounded termination waits below consume the final four seconds.
-        deadline=time.monotonic()+BUDGETS[args.lane]+20-4
+        deadline=time.monotonic()+BUDGETS[args.lane]+R.PREPARATION_BUDGET+20-4
         try:
             while child.poll() is None:
                 collect(child.pid)
@@ -278,7 +302,8 @@ def supervise(args):
             collect(child.pid); terminate(signal.SIGKILL); child.wait(timeout=2)
     survivors=[process_identity(pid) for pid,known in owned.items() if process_identity(pid)
                and process_identity(pid)['start']==known['start'] and process_identity(pid)['state']!='Z']
-    exclusive_json(out/'supervisor.json',{'runId':run_id,'budgetSeconds':BUDGETS[args.lane]+20,'expired':expired,
+    exclusive_json(out/'supervisor.json',{'runId':run_id,'budgetSeconds':BUDGETS[args.lane]+R.PREPARATION_BUDGET+20,
+        'preparationBudgetSeconds':R.PREPARATION_BUDGET,'nativeBudgetSeconds':BUDGETS[args.lane],'cleanupBudgetSeconds':20,'expired':expired,
         'error':error,'workerExitCode':code,'ownedProcesses':list(owned.values()),'signals':signals,'survivors':survivors})
     files=[]
     for path in sorted(out.rglob('*')):
@@ -290,7 +315,7 @@ def supervise(args):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    for key in ('url','expected-sha','expected-version','runtime-node','common-identity','natural','oracle','output'):p.add_argument('--'+key,required=True)
+    for key in ('url','expected-sha','expected-version','runtime-node','common-identity','natural','oracle','browser-reference','output'):p.add_argument('--'+key,required=True)
     p.add_argument('--node',default='node');p.add_argument('--chromium');p.add_argument('--worker',action='store_true');p.add_argument('--run-id');p.add_argument('--owner-marker')
     args=p.parse_args();args.lane='solar'
     return worker(args) if args.worker else supervise(args)

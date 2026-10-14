@@ -210,7 +210,7 @@ class SolarContract(unittest.TestCase):
         self.assertNotIn("subprocess.run(",RUNNER)
 
     def test_bounded_supervisor_and_native_failure_capture(self):
-        for required in ("current['start'] == observed['start']",'marker.encode()',"BUDGETS[args.lane]+20",'fresh empty directory',"'inside-live-playwright'","'storage-events'",'start_new_session=True'):
+        for required in ("current['start'] == observed['start']",'marker.encode()',"BUDGETS[args.lane]+R.PREPARATION_BUDGET+20",'fresh empty directory',"'inside-live-playwright'","'storage-events'",'start_new_session=True'):
             self.assertIn(required,RUNNER)
         self.assertNotIn('pkill',RUNNER);self.assertNotIn('killall',RUNNER)
         tree=ast.parse(RUNNER);worker=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='worker')
@@ -218,16 +218,16 @@ class SolarContract(unittest.TestCase):
         self.assertIsInstance(scope.body[0],ast.Try)
         self.assertTrue(scope.body[0].handlers)
 
-    def test_supervisor_reserves_termination_waits_inside_total_620_seconds(self):
+    def test_supervisor_keeps_600_native_plus_60_preparation_and_20_cleanup_seconds(self):
         tree=ast.parse(RUNNER);supervisor=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='supervise')
         assignment=next(n for n in ast.walk(supervisor) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='deadline' for t in n.targets))
         start=1000
         deadline=eval(compile(ast.Expression(assignment.value),'<actual supervisor deadline>','eval'),
-                      {'time':SimpleNamespace(monotonic=lambda:start),'BUDGETS':{'solar':S.BUDGET},'args':SimpleNamespace(lane='solar')})
+                      {'time':SimpleNamespace(monotonic=lambda:start),'BUDGETS':{'solar':S.BUDGET},'R':SimpleNamespace(PREPARATION_BUDGET=60),'args':SimpleNamespace(lane='solar')})
         waits=[next(k.value.value for k in n.keywords if k.arg=='timeout') for n in ast.walk(supervisor)
                if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='wait' and any(k.arg=='timeout' for k in n.keywords)]
-        self.assertEqual(waits,[2,2]);self.assertEqual(deadline-start,616)
-        self.assertEqual(deadline-start+sum(waits),S.BUDGET+20)
+        self.assertEqual(waits,[2,2]);self.assertEqual(deadline-start,676)
+        self.assertEqual(deadline-start+sum(waits),S.BUDGET+60+20)
         self.assertEqual(S.BUDGET,600)
 
 if __name__=='__main__':unittest.main()

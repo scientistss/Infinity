@@ -67,11 +67,13 @@ SOLAR_JOB = r'''  energy-solar-route:
           (cd "$RUNNER_TEMP/energy-solar-current" && node --import tsx scripts/energy-challenge-solar-oracle.mjs --natural "$GITHUB_WORKSPACE/energy-natural/report.json" --out "$GITHUB_WORKSPACE/energy-solar-oracle") > energy-solar-oracle.log 2>&1
           (cd "$RUNNER_TEMP/energy-solar-current" && python scripts/check-energy-challenge-solar-oracle.py --oracle "$GITHUB_WORKSPACE/energy-solar-oracle/manifest.json" --require-clean)
           (cd "$RUNNER_TEMP/energy-solar-current" && ENERGY_SOLAR_NATURAL="$GITHUB_WORKSPACE/energy-natural/report.json" node --import tsx --test scripts/test-energy-challenge-solar-oracle.mjs)
+          (cd "$RUNNER_TEMP/energy-solar-current" && node scripts/energy-challenge-solar-browser-reference.mjs --natural "$GITHUB_WORKSPACE/energy-natural/report.json" --out "$GITHUB_WORKSPACE/energy-solar-reference") > energy-solar-reference.log 2>&1
+          (cd "$RUNNER_TEMP/energy-solar-current" && ENERGY_SOLAR_NATURAL="$GITHUB_WORKSPACE/energy-natural/report.json" node --import tsx --test scripts/test-energy-challenge-solar-reference.mjs)
           test -z "$(git -C "$RUNNER_TEMP/energy-solar-current" status --porcelain=v1 --untracked-files=all)"
       - name: Browser prerequisites
         timeout-minutes: 4
         run: bash scripts/browser-prerequisites.sh
-      - name: Mandatory continuous solar route, 600 seconds plus 20-second cleanup
+      - name: Mandatory solar reference preparation 60 seconds then native route 600 seconds and cleanup 20 seconds
         shell: bash
         run: |
           npm run preview -- --host 127.0.0.1 --port 4173 > energy-solar-preview.log 2>&1 &
@@ -84,7 +86,7 @@ SOLAR_JOB = r'''  energy-solar-route:
           done
           test "$READY" = 1
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          timeout --signal=TERM --kill-after=20s 600s xvfb-run -a python scripts/browser-energy-challenge-solar.py --url http://127.0.0.1:4173/Infinity/ --natural energy-natural --oracle energy-solar-oracle/manifest.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.32-alpha.1 --runtime-node "$(node --version)" --node "$(command -v node)" --common-identity common-identity.json --chromium "$CHROME" --output energy-solar-evidence
+          timeout --signal=TERM --kill-after=20s 660s xvfb-run -a python scripts/browser-energy-challenge-solar.py --url http://127.0.0.1:4173/Infinity/ --natural energy-natural --oracle energy-solar-oracle/manifest.json --browser-reference energy-solar-reference/manifest.json --expected-sha "$GITHUB_SHA" --expected-version 0.6.32-alpha.1 --runtime-node "$(node --version)" --node "$(command -v node)" --common-identity common-identity.json --chromium "$CHROME" --output energy-solar-evidence
       - name: Reopen every solar original and independently derive the completed route census
         id: solar_census
         run: |
@@ -104,6 +106,7 @@ SOLAR_JOB = r'''  energy-solar-route:
             common-identity.json
             energy-natural
             energy-solar-oracle
+            energy-solar-reference
             energy-solar-evidence
             energy-solar-census.json
             energy-solar-*.log

@@ -115,12 +115,27 @@ class SolarWorkflowTests(unittest.TestCase):
     def test_new_budget_source_runtime_and_raw_artifact_choices_are_exact(self):
         for old,new in (('timeout-minutes: 15','timeout-minutes: 16'),('node-version: 22','node-version: 24'),
                         ('persist-credentials: false','persist-credentials: true'),('fetch-depth: 0','fetch-depth: 1'),
-                        ('--kill-after=20s 600s','--kill-after=5s 660s'),('--require-clean','--allow-dirty'),
+                        ('--kill-after=20s 660s','--kill-after=5s 720s'),('--require-clean','--allow-dirty'),
                         ('--natural energy-natural','--natural energy-natural/report.json')):
             self.reject(wiring.SOLAR_JOB,wiring.SOLAR_JOB.replace(old,new,1))
         self.reject(wiring.LEGACY_JOB_PROJECTION,wiring.LEGACY_JOB_PROJECTION.replace('project-legacy-jobs','true',1))
         self.reject('energy-controls, energy-lifecycle, energy-migration, energy-solar-route]',
                     'energy-controls, energy-lifecycle, energy-migration]')
+
+    def test_same_runtime_reference_is_bounded_separate_and_has_original_artifacts(self):
+        job=jobs(self.current)[wiring.SOLAR_JOB_NAME]
+        self.assertIn('preparation 60 seconds then native route 600 seconds and cleanup 20 seconds',job)
+        self.assertEqual(job.count('timeout-minutes: 15'),1)
+        self.assertEqual(job.count('node scripts/energy-challenge-solar-browser-reference.mjs'),1)
+        self.assertEqual(job.count('node --import tsx --test scripts/test-energy-challenge-solar-reference.mjs'),1)
+        self.assertEqual(job.count('--browser-reference energy-solar-reference/manifest.json'),1)
+        self.assertIn('            energy-solar-oracle\n            energy-solar-reference\n',job)
+        self.assertLess(job.index('energy-challenge-solar-browser-reference.mjs'),job.index('browser-energy-challenge-solar.py'))
+        for before,after in (('--browser-reference energy-solar-reference/manifest.json',''),
+                             ('--kill-after=20s 660s','--kill-after=20s 661s'),
+                             ('            energy-solar-reference\n',''),
+                             ('--out "$GITHUB_WORKSPACE/energy-solar-reference"','--out "$GITHUB_WORKSPACE/energy-solar-oracle"')):
+            self.reject(wiring.SOLAR_JOB,wiring.SOLAR_JOB.replace(before,after,1))
 
     def test_original_aggregate_scripts_and_all_original_commands_survive_exact_projection(self):
         old,new=jobs(self.before)['required-gates'],jobs(self.current)['required-gates']
